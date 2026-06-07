@@ -17,6 +17,12 @@ def parse_args():
         """,
     )
     parser.add_argument(
+        "--version", "-v",
+        action="version",
+        version=_get_version_info(),
+        help="显示版本信息"
+    )
+    parser.add_argument(
         "--api-url",
         default=os.environ.get("API_BASE_URL", "http://localhost:8080"),
         help="后端 API 地址 (默认: http://localhost:8080)",
@@ -34,6 +40,15 @@ def parse_args():
     return parser.parse_args()
 
 
+def _get_version_info() -> str:
+    """获取版本信息"""
+    try:
+        from cortex.version import get_version_string
+        return get_version_string()
+    except ImportError:
+        return "unknown"
+
+
 def main():
     args = parse_args()
 
@@ -41,6 +56,14 @@ def main():
     os.environ.setdefault("LOGGING_ENABLED", "false")
 
     from .app import AICLIApp
+    from .version_check import get_update_prompt
+    from rich.console import Console
+
+    # 检查版本更新
+    update_prompt = get_update_prompt()
+    if update_prompt:
+        console = Console()
+        console.print(update_prompt)
 
     app = AICLIApp(api_url=args.api_url, api_key=args.api_key)
     app.run()

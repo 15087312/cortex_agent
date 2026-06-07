@@ -85,9 +85,10 @@ class Settings(BaseSettings):
     SECURITY_REVIEW_MODE: str = "auto"
 
     # 执行模式（仅工作模式有效，陪伴模式强制 plan）
-    # "plan":  只读 — 禁止所有写操作
-    # "edit":  确认 — 写操作前需用户确认
-    # "yolo":  宽松 — 仅安全专家检测，跳过用户确认
+    # "plan":    只读 — 禁止所有写操作
+    # "edit":    确认 — 写操作前需用户确认（LLM + 用户）
+    # "yolo":    宽松 — 仅安全专家检测，跳过用户确认
+    # "control": 用户完全控制 — MEDIUM+工具需用户单独确认，无LLM参与
     EXECUTION_MODE: str = "edit"
 
     # 上下文窗口配置
@@ -120,6 +121,13 @@ class Settings(BaseSettings):
         if self.COMPANION_MODE:
             return "plan"
         return self.EXECUTION_MODE
+
+    @property
+    def effective_security_review_mode(self) -> str:
+        """有效的审批模式（control 模式强制 user）"""
+        if self.effective_execution_mode == "control":
+            return "user"
+        return self.SECURITY_REVIEW_MODE
 
     @property
     def is_delegation_available(self) -> bool:
@@ -158,7 +166,7 @@ class Settings(BaseSettings):
     @field_validator("EXECUTION_MODE")
     @classmethod
     def validate_execution_mode(cls, v: str) -> str:
-        allowed = {"plan", "edit", "yolo"}
+        allowed = {"plan", "edit", "yolo", "control"}
         if v.lower() not in allowed:
             raise ValueError(f"EXECUTION_MODE must be one of {allowed}, got '{v}'")
         return v.lower()

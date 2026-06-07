@@ -179,6 +179,38 @@ class ToolSecurityGate:
                 pass
             return False, reason
 
+        # ── control 模式：所有非 LOW 工具需用户确认 ──
+        if exec_mode == "control":
+            if tool_name in HIGH_RISK_TOOLS or tool_name in MEDIUM_RISK_TOOLS:
+                _emit_security_event("等待用户审批", tool_name, caller_model_id, True, "control 模式，需用户确认")
+                allowed, reason = await self._check_user_review(
+                    tool_name, tool_params, caller_tier, caller_model_id
+                )
+                try:
+                    self._audit.log(
+                        event_type="tool_approved" if allowed else "tool_blocked",
+                        level="HIGH" if tool_name in HIGH_RISK_TOOLS else "MEDIUM",
+                        content=tool_name,
+                        result=allowed,
+                        metadata={"caller_model_id": caller_model_id, "caller_tier": caller_tier,
+                                 "reason": reason, "execution_mode": "control"},
+                    )
+                except Exception:
+                    pass
+                return allowed, reason
+            else:
+                # LOW 风险工具直接放行
+                try:
+                    self._audit.log(
+                        event_type="tool_approved", level="LOW",
+                        content=tool_name, result=True,
+                        metadata={"caller_model_id": caller_model_id, "caller_tier": caller_tier,
+                                 "reason": "LOW 风险工具，control 模式直接放行", "execution_mode": "control"},
+                    )
+                except Exception:
+                    pass
+                return True, "LOW 风险工具，control 模式直接放行"
+
         if tool_name in HIGH_RISK_TOOLS:
             _emit_security_event("审查中", tool_name, caller_model_id, True, "HIGH 风险，评估中...")
             start = time.time()
@@ -304,6 +336,11 @@ class ToolSecurityGate:
         params_summary = ", ".join(f"{k}={repr(v)[:100]}" for k, v in tool_params.items())
         if len(params_summary) > 300:
             params_summary = params_summary[:300] + "..."
+
+        # 确定风险等级和提示样式
+        is_high_risk = tool_name in HIGH_RISK_TOOLS
+        risk_icon = "🔴" if is_high_risk else "🟠"
+        risk_level = "HIGH" if is_high_risk else "MEDIUM"
 
         _emit_security_event(
             "等待用户审批",

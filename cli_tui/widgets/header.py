@@ -1,4 +1,4 @@
-"""顶栏 — 连接状态 + session + 统计"""
+"""顶栏 — 连接状态 + session + 统计 + 版本"""
 
 from datetime import datetime
 
@@ -8,6 +8,15 @@ from rich.text import Text
 from textual.widgets import Static
 
 from ..state import AppState
+
+
+def _get_version() -> str:
+    """获取版本信息"""
+    try:
+        from cortex.version import __version__, __version_name__
+        return f"{__version__} ({__version_name__})"
+    except ImportError:
+        return "unknown"
 
 
 class Header(Static):
@@ -58,8 +67,9 @@ class Header(Static):
                 ctx_str = f"[green]CTX {used_k:.1f}K/{total_k:.0f}K ({pct:.0f}%)[/green]"
             parts.append(ctx_str)
 
+        version = _get_version()
         return Panel(
             "  │  ".join(parts),
-            title="[bold]AI CLI[/bold]",
+            title=f"[bold]AI CLI[/bold] [dim]{version}[/dim]",
             border_style="blue",
         )

@@ -10,6 +10,7 @@ _MODE_LABELS = {
     "plan": ("📋", "Plan", "dim"),
     "edit": ("✏️ ", "Edit", "bold yellow"),
     "yolo": ("🚀", "YOLO", "bold red"),
+    "control": ("🔐", "Control", "bold cyan"),
 }
 
 
