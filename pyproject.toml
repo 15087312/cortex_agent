@@ -8,7 +8,7 @@ version = "1.0.0"
 description = "Cortex Agent — 类人智能后端系统"
 readme = "README.md"
 requires-python = ">=3.11"
-license = {text = "MIT"}
+license = {text = "Apache-2.0"}
 authors = [{name = "Cortex Agent"}]
 
 dependencies = [
