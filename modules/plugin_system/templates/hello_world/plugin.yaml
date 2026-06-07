@@ -1,0 +1,38 @@
+name: hello_world
+version: 1.0.0
+description: Low-risk example model-callable hello world plugin.
+author: plugin-author
+license: MIT
+
+extensions:
+  - type: tool
+    name: say_hello
+    entry: src.main:say_hello
+    description: Return a greeting for the supplied name.
+    params:
+      name:
+        type: string
+        description: Name to greet.
+        required: true
+        minLength: 1
+        maxLength: 80
+    returns:
+      type: object
+      required:
+        - greeting
+      properties:
+        greeting:
+          type: string
+          maxLength: 160
+      additionalProperties: false
+    permissions:
+      - compute: true
+
+permissions:
+  - compute: true
+
+runtime:
+  mode: sub_process
+  trust: third_party
+  timeout_seconds: 5
+  max_concurrency: 1

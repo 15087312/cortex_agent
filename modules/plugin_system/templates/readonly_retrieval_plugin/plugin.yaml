@@ -1,0 +1,61 @@
+name: readonly_retrieval_plugin
+version: 1.0.0
+description: Read-only retrieval plugin for bounded local memory lookups.
+author: plugin-author
+license: MIT
+
+extensions:
+  - type: tool
+    name: retrieve_records
+    entry: src.main:retrieve_records
+    description: Retrieve bounded read-only records for a search query.
+    params:
+      query:
+        type: string
+        description: Search query.
+        required: true
+        minLength: 1
+        maxLength: 160
+      limit:
+        type: integer
+        description: Maximum number of records to return.
+        required: false
+        minimum: 1
+        maximum: 5
+    returns:
+      type: object
+      required:
+        - results
+      properties:
+        results:
+          type: array
+          maxItems: 5
+          items:
+            type: object
+            required:
+              - id
+              - title
+              - snippet
+            properties:
+              id:
+                type: string
+                maxLength: 64
+              title:
+                type: string
+                maxLength: 120
+              snippet:
+                type: string
+                maxLength: 500
+            additionalProperties: false
+      additionalProperties: false
+    permissions:
+      - memory.read: true
+
+permissions:
+  - memory.read: true
+
+runtime:
+  mode: sub_process
+  trust: third_party
+  timeout_seconds: 5
+  max_concurrency: 1

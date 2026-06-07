@@ -1,0 +1,38 @@
+name: production_plugin_package
+version: 1.0.0
+description: Example package layout for a production-ready plugin artifact.
+author: plugin-author
+license: MIT
+
+extensions:
+  - type: tool
+    name: package_echo
+    entry: src.main:package_echo
+    description: Echo bounded text for package layout validation.
+    params:
+      text:
+        type: string
+        description: Text to echo.
+        required: true
+        minLength: 1
+        maxLength: 256
+    returns:
+      type: object
+      required:
+        - text
+      properties:
+        text:
+          type: string
+          maxLength: 256
+      additionalProperties: false
+    permissions:
+      - compute: true
+
+permissions:
+  - compute: true
+
+runtime:
+  mode: sub_process
+  trust: third_party
+  timeout_seconds: 5
+  max_concurrency: 1

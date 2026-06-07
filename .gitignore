@@ -1,0 +1,120 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.qoder
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+env/
+ENV/
+.venv
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Environment (secrets)
+.env
+.env.local
+
+# Logs
+logs/
+*.log
+
+# Runtime data (all)
+data/cache/
+data/memory/
+data/experience/
+data/classified_memories/
+data/test_*/
+data/search_cache/
+data/probe_cache/
+data/metrics/
+data/logs/
+data/security_audit.jsonl
+data/output_history.jsonl
+data/.omc/
+data/dynamic_roles.json
+data/expert_prompts/prompts.json
+api/data/
+
+# Scripts runtime data
+scripts/data/
+
+# Temporary files
+data/temp/
+*.tmp
+*.bak
+
+# Model cache
+models/
+*.pt
+*.pth
+*.bin
+*.onnx
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Dot-directories (AI tools, IDE, etc)
+.claude/
+.hermes/
+.omc/
+.qwen/
+.qoder/
+.spec-workflow/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# API
+openapi.json
+
+# Test coverage
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+
+# MyPy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Black
+.black
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+*.ipynb
+*.pynb
+
+# Third-party reference
+/Open-ClaudeCode/
+
+# TODO tracking
+/todo/

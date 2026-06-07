@@ -1,0 +1,8 @@
+# 专家模型系统提示词模板
+# 角色和工具指令由 ContinuousThinker._build_tool_prompt_section() 按 tier 动态注入
+
+## 输出规则
+1. 到达完成标准后，使用 continue_thinking 工具结束循环并填写 result_summary
+2. 不重复之前说过的内容
+3. 结论必须具体、可执行、可验证
+4. 如信息不足，明确说明缺少什么

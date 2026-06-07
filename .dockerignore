@@ -1,0 +1,45 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Python cache
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+*.egg-info
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# Data (volume-mount at runtime, don't bake in)
+data/
+logs/
+
+# Env files (contain secrets)
+.env
+.env.local
+.env.docker
+.env.example
+
+# Tests (not needed in production)
+tests/
+test_*.py
+
+# Docs
+docs/
+README.md
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node (frontend)
+node_modules
+package-lock.json
+package.json

@@ -1,0 +1,57 @@
+"""
+一键启动所有模块的脚本
+"""
+import signal
+import sys
+import os
+
+# 添加项目根目录到路径
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+_memory_scheduler = None
+
+
+def _graceful_shutdown(signum, frame):
+    """优雅退出：停止记忆调度器"""
+    global _memory_scheduler
+    print("\n正在关闭...")
+    if _memory_scheduler:
+        _memory_scheduler.stop()
+        print("✓ 记忆调度器已停止")
+    sys.exit(0)
+
+
+def main():
+    """启动服务"""
+    global _memory_scheduler
+
+    # 注册信号处理器
+    signal.signal(signal.SIGINT, _graceful_shutdown)
+    signal.signal(signal.SIGTERM, _graceful_shutdown)
+
+    print("Starting Humanoid AGI server...")
+
+    # 启动后台记忆管理 daemon
+    try:
+        from modules.memory.core.memory_scheduler import MemoryScheduler
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        _memory_scheduler = MemoryScheduler(data_dir=os.path.join(project_root, "data", "memory"))
+        _memory_scheduler.start()
+        print("记忆管理调度器已启动 ")
+    except Exception as e:
+        print(f"[WARNING] 记忆调度器启动失败: {e}")
+
+    import uvicorn
+    workers = int(os.environ.get("MAX_WORKERS", "1"))
+    uvicorn.run(
+        "api.main:app",
+        host="0.0.0.0",
+        port=int(os.environ.get("SERVER_PORT", "8080")),
+        workers=workers,
+        reload=False,
+        log_level="info"
+    )
+
+
+if __name__ == "__main__":
+    main()

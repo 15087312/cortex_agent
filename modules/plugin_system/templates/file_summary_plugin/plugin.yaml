@@ -1,0 +1,44 @@
+name: file_summary_plugin
+version: 1.0.0
+description: Expert-only file summary plugin for sandbox input files.
+author: plugin-author
+license: MIT
+
+extensions:
+  - type: tool
+    name: summarize_file
+    entry: src.main:summarize_file
+    description: Summarize an allowed file from the plugin data input directory.
+    params:
+      filename:
+        type: string
+        description: File name under data/input without path traversal.
+        required: true
+        minLength: 1
+        maxLength: 120
+    returns:
+      type: object
+      required:
+        - filename
+        - summary
+      properties:
+        filename:
+          type: string
+          maxLength: 120
+        summary:
+          type: string
+          maxLength: 1000
+      additionalProperties: false
+    permissions:
+      - fs.read:
+          - path: data/input/*
+
+permissions:
+  - fs.read:
+      - path: data/input/*
+
+runtime:
+  mode: sub_process
+  trust: third_party
+  timeout_seconds: 5
+  max_concurrency: 1

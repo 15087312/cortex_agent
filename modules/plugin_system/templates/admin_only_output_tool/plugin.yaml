@@ -1,0 +1,49 @@
+name: admin_only_output_tool
+version: 1.0.0
+description: Send a bounded operator message through an approved output channel.
+author: plugin-author
+license: MIT
+
+extensions:
+  - type: tool
+    name: send_operator_note
+    entry: src.main:send_operator_note
+    description: Send a short operator note through the host output gateway.
+    params:
+      message:
+        type: string
+        description: Operator note text.
+        required: true
+        minLength: 1
+        maxLength: 500
+      channel:
+        type: string
+        description: Output channel.
+        required: false
+        maxLength: 64
+        enum:
+          - default
+          - operations
+    returns:
+      type: object
+      required:
+        - sent
+        - channel
+      properties:
+        sent:
+          type: boolean
+        channel:
+          type: string
+          maxLength: 64
+      additionalProperties: false
+    permissions:
+      - output.send: true
+
+permissions:
+  - output.send: true
+
+runtime:
+  mode: sub_process
+  trust: third_party
+  timeout_seconds: 5
+  max_concurrency: 1

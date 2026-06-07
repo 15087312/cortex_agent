@@ -1,0 +1,13 @@
+name: hello_world
+version: 1.0.0
+description: A simple hello world example plugin
+author: system
+license: MIT
+
+extensions:
+  - type: tool
+    name: greet
+    entry: src.main:greet
+
+permissions:
+  - compute: true

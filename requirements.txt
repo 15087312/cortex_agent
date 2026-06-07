@@ -1,0 +1,63 @@
+# Web 框架
+fastapi>=0.104.1
+uvicorn[standard]>=0.24.0
+python-multipart>=0.0.6
+pydantic>=2.5.0
+
+# 配置
+PyYAML>=6.0
+pydantic-settings>=2.1.0
+
+# 安全/加密
+cryptography>=42.0.0
+
+# 异步支持
+aiohttp>=3.9.1
+
+# 数据库
+sqlalchemy>=2.0.0
+psycopg2-binary>=2.9.9
+redis>=5.0.1
+
+# AI/ML
+torch>=2.1.0
+transformers>=4.35.0
+jieba>=0.42.1
+sentence-transformers>=2.2.2
+accelerate>=0.25.0  # 模型加速
+mlx-lm>=0.19.0  # Apple Silicon MLX 推理框架
+scikit-learn>=1.3.0  # TF-IDF 语义匹配
+faiss-cpu>=1.7.4  # 向量索引
+
+# 语音处理
+SpeechRecognition>=3.10.0
+pyaudio>=0.2.14
+gTTS>=2.5.0
+
+# 图像处理
+Pillow>=10.1.0
+opencv-python>=4.8.1.78
+pyautogui>=0.9.54  # 鼠标键盘自动化
+pyserial>=3.5  # 串口通信
+
+# 工具库
+python-dotenv>=1.0.0
+loguru>=0.7.2
+tenacity>=8.2.3
+cachetools>=5.3.2
+
+# 序列化
+orjson>=3.9.10
+ujson>=5.8.0
+
+# 流式输出
+sse-starlette>=2.0.0
+
+# 监控与性能
+prometheus-client>=0.19.0
+psutil>=5.9.6
+
+# HTTP 客户端
+httpx>=0.25.2
+requests>=2.31.0
+crawl4ai>=0.2.0,<1.0.0
