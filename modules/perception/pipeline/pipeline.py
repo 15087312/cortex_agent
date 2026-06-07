@@ -211,7 +211,7 @@ class PerceptionPipeline:
 
         这些检测器不依赖屏幕帧，使用系统 API，每帧都运行。
         """
-        _NON_IMAGE_TYPES = {"window"}
+        _NON_IMAGE_TYPES = {"window", "voice"}
         for det_type in _NON_IMAGE_TYPES:
             detector = self._detectors.get(det_type)
             if not detector or not detector.is_available():

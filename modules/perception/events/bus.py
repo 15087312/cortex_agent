@@ -96,11 +96,11 @@ class PerceptionEventBus:
         """取消订阅"""
         with self._sub_lock:
             for event_type, subs in self._subscriptions.items():
-                for i, sub in enumerate(subs):
-                    if sub.sub_id == subscription_id:
-                        subs.pop(i)
-                        logger.debug(f"取消订阅: {subscription_id}")
-                        return True
+                original_len = len(subs)
+                self._subscriptions[event_type] = [s for s in subs if s.sub_id != subscription_id]
+                if len(self._subscriptions[event_type]) < original_len:
+                    logger.debug(f"取消订阅: {subscription_id}")
+                    return True
         return False
 
     def publish(self, event: PerceptionEvent) -> None:

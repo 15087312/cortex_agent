@@ -190,7 +190,7 @@ class TestFrameDiffDetector:
         fd.detect(frame1)
         result = fd.detect(frame2)
         assert result.has_changed is True
-        assert result.change_ratio > 0.1
+        assert result.change_ratio > 0.2  # 25% 变化应 > 20%
         assert len(result.changed_regions) > 0
 
     def test_small_change_ignored(self):
@@ -531,7 +531,7 @@ class TestPerceptionDifferenceSource:
             ))
 
         diffs = src.detect()
-        assert len(diffs) <= 2  # 队列最多 2 个
+        assert len(diffs) == 2, f"队列应恰好 2 个: {len(diffs)}"
 
         src.stop(bus)
 

@@ -18,6 +18,7 @@ class PerceptionEventType:
     SCREEN_WINDOW = "screen.window"         # 窗口状态变化
     FILE_CHANGE = "file.change"             # 文件变化
     DIALOG_CHANGE = "dialog.change"         # 对话变化
+    SPEECH_DETECTED = "speech.detected"     # 语音识别结果
 
     # 检测层产出
     DIFFERENCE_DETECTED = "difference.detected"  # 检测到差异

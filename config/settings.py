@@ -181,7 +181,26 @@ class Settings(BaseSettings):
     MODEL_TIMEOUT: int = 180  # 模型 HTTP 请求超时（秒），可被各模型配置覆盖
 
     # 感知系统配置
-    PERCEPTION_ENABLED: bool = True                    # 是否启用感知系统（文件/对话/屏幕监控）
+    PERCEPTION_ENABLED: bool = True                    # 是否启用感知系统（总开关）
+
+    # 感知子系统开关
+    PERCEPTION_SCREEN_ENABLED: bool = True             # 屏幕感知（帧差+OCR+UI+窗口）
+    PERCEPTION_VOICE_ENABLED: bool = False             # 语音感知（麦克风+Whisper STT）
+    PERCEPTION_FILE_ENABLED: bool = True               # 文件变化感知（watchdog）
+    PERCEPTION_DIALOG_ENABLED: bool = True             # 对话变化感知
+    PERCEPTION_INTERNAL_ENABLED: bool = True           # 内部状态感知（差异检测器已有）
+
+    # 语音感知配置
+    PERCEPTION_VOICE_DEVICE: Optional[int] = None      # 麦克风设备索引（None=系统默认）
+    PERCEPTION_VOICE_MODEL: str = "tiny"               # Whisper 模型大小 (tiny/base/small/medium/large)
+    PERCEPTION_VOICE_LANGUAGE: str = "zh"              # 语音识别语言
+    PERCEPTION_VOICE_ENERGY_THRESHOLD: int = 300       # 静音能量阈值（越低越灵敏）
+    PERCEPTION_VOICE_TIMEOUT: float = 10.0             # 单次录音超时（秒）
+
+    # 差异→思考触发配置
+    PERCEPTION_TRIGGER_THINK: bool = True              # 差异是否触发单次思考
+    PERCEPTION_TRIGGER_MIN_INTENSITY: float = 50.0     # 触发思考的最小差异强度 (0-100)
+    PERCEPTION_TRIGGER_COOLDOWN: int = 60              # 触发冷却（秒）
 
     # 差异检测器配置 (Stage 1: continuous perception)
     DIFFERENCE_DETECTOR_ENABLED: bool = True

@@ -82,15 +82,16 @@ class WorldStateManager:
         self._sub_ids.clear()
 
     def get_state(self) -> WorldState:
-        """获取当前状态快照"""
+        """获取当前状态快照（深拷贝，防止外部修改内部状态）"""
+        import copy
         with self._lock:
             return WorldState(
                 active_window=self._state.active_window,
                 active_app=self._state.active_app,
                 screen_text=self._state.screen_text,
                 recent_ocr=list(self._state.recent_ocr),
-                ui_elements=list(self._state.ui_elements),
-                recent_events=list(self._state.recent_events),
+                ui_elements=copy.deepcopy(self._state.ui_elements),
+                recent_events=copy.deepcopy(self._state.recent_events),
                 last_update=self._state.last_update,
             )
 

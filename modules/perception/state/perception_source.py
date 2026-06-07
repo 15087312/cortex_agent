@@ -21,6 +21,7 @@ _EVENT_CATEGORY_MAP = {
     PerceptionEventType.SCREEN_DIFF: ("screen_diff", 15.0),
     PerceptionEventType.FILE_CHANGE: ("file_change", 20.0),
     PerceptionEventType.DIALOG_CHANGE: ("dialog_change", 25.0),
+    PerceptionEventType.SPEECH_DETECTED: ("speech", 35.0),
 }
 
 
