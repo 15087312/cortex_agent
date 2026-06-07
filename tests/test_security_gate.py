@@ -20,15 +20,24 @@ from modules.security_system.tool_security_gate import (
 @pytest.fixture
 def gate():
     """ToolSecurityGate with no LLM model."""
-    return ToolSecurityGate(lite_model=None)
+    from config.settings import settings
+    object.__setattr__(settings, 'EXECUTION_MODE', 'yolo')
+    object.__setattr__(settings, 'COMPANION_MODE', False)
+    g = ToolSecurityGate(lite_model=None)
+    yield g
+    object.__setattr__(settings, 'EXECUTION_MODE', 'edit')
 
 
 @pytest.fixture
 def mock_audit_gate():
     """ToolSecurityGate with a mocked audit logger."""
+    from config.settings import settings
+    object.__setattr__(settings, 'EXECUTION_MODE', 'yolo')
+    object.__setattr__(settings, 'COMPANION_MODE', False)
     g = ToolSecurityGate(lite_model=None)
     g._audit = MagicMock()
-    return g
+    yield g
+    object.__setattr__(settings, 'EXECUTION_MODE', 'edit')
 
 
 # ------------------------------------------------------------------ #
