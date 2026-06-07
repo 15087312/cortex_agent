@@ -843,6 +843,7 @@ class ModelIdentity:
 # 专家能力列表生成（供主管提示词使用）
 # ---------------------------------------------------------------------------
 
+
 def build_expert_capability_list() -> str:
     """从 DEFAULT_IDENTITIES 动态生成专家能力列表，供主管委派任务时参考。
 

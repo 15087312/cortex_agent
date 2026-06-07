@@ -15,6 +15,10 @@ class AppState:
     session_id: str = ""
     processing: bool = False
 
+    # 执行模式: "plan" / "edit" / "yolo"
+    execution_mode: str = "edit"
+    companion_mode: bool = False  # 陪伴模式状态（陪伴模式下强制 plan）
+
     # 对话数据
     dialog_entries: List[Dict[str, Any]] = field(default_factory=list)
     max_entries: int = 100

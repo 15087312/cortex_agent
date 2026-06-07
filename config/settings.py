@@ -84,6 +84,12 @@ class Settings(BaseSettings):
     # 安全审查模式: "llm"=安全专家LLM审批, "user"=用户手动审批, "auto"=LLM可用时用LLM否则拒绝
     SECURITY_REVIEW_MODE: str = "auto"
 
+    # 执行模式（仅工作模式有效，陪伴模式强制 plan）
+    # "plan":  只读 — 禁止所有写操作
+    # "edit":  确认 — 写操作前需用户确认
+    # "yolo":  宽松 — 仅安全专家检测，跳过用户确认
+    EXECUTION_MODE: str = "edit"
+
     # 上下文窗口配置
     # CONTEXT_WINDOW_SIZE: 大模型上下文窗口大小（token 数）
     #   qwen-max: 128K, deepseek-v4: 128K, gpt-4o: 128K, claude-3.5: 200K
@@ -107,6 +113,13 @@ class Settings(BaseSettings):
 
     # 日志
     LOGGING_ENABLED: bool = True
+
+    @property
+    def effective_execution_mode(self) -> str:
+        """实际执行模式（陪伴模式强制 plan）"""
+        if self.COMPANION_MODE:
+            return "plan"
+        return self.EXECUTION_MODE
 
     @property
     def is_delegation_available(self) -> bool:
@@ -141,6 +154,14 @@ class Settings(BaseSettings):
         if not (0.05 <= v <= 0.95):
             raise ValueError(f"CONTEXT_COMPRESS_RATIO must be between 0.05 and 0.95, got {v}")
         return v
+
+    @field_validator("EXECUTION_MODE")
+    @classmethod
+    def validate_execution_mode(cls, v: str) -> str:
+        allowed = {"plan", "edit", "yolo"}
+        if v.lower() not in allowed:
+            raise ValueError(f"EXECUTION_MODE must be one of {allowed}, got '{v}'")
+        return v.lower()
 
     def validate_production(self) -> None:
         """Q-9: Validate critical settings for production deployment"""

@@ -11,7 +11,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import Screen
-from textual.widgets import Input, Footer
+from textual.widgets import Input, Footer, Static
 
 from ..commands import find_command, is_command, get_all, Command
 from ..services.api_client import APIClient
@@ -44,8 +44,7 @@ class REPL(Screen):
     #input-area {
         dock: bottom;
         height: auto;
-        max-height: 16;
-        margin: 0 1;
+        margin: 0 1 1 1;
     }
 
     #input-box {
@@ -104,6 +103,7 @@ class REPL(Screen):
         Binding("ctrl+y", "retry_last", "重试", show=True, priority=True),
         Binding("ctrl+c", "app_quit", "退出", show=True, priority=True),
         Binding("ctrl+x", "cancel_and_reset", "取消", show=True, priority=True),
+        Binding("shift+tab", "cycle_execution_mode", "切换模式", show=True),
     ]
 
     def __init__(self, state: AppState, ws_client: WSClient, api_client: APIClient):
@@ -132,14 +132,14 @@ class REPL(Screen):
                                classes="visible" if self.state.debug_enabled else ""):
                 yield DebugPanel(self.state)
 
+        with Vertical(id="status-container"):
+            yield StatusLine(self.state)
+
         with Vertical(id="input-area"):
             suggestions = CommandSuggestions()
             self._suggestions = suggestions
             yield suggestions
             yield PromptInput(self.state)
-
-        with Vertical(id="status-container"):
-            yield StatusLine(self.state)
 
     def on_mount(self):
         self._connect_ws()
@@ -171,6 +171,8 @@ class REPL(Screen):
             self.state.connected = True
             self.state.session_id = self.ws.session_id or ""
             self.notify("已连接到后端", severity="information", timeout=2)
+            # 同步执行模式
+            self._sync_execution_mode()
             # 注册持久事件回调 (只注册一次，避免回调累积)
             self.ws._event_callbacks.clear()
             self.ws.on_event(self._persistent_ws_callback)
@@ -612,10 +614,13 @@ class REPL(Screen):
         elif cmd.action == "stop":
             self._stop_thinking()
         elif cmd.action == "mode":
-            # 支持 /mode on/off
+            # 支持 /mode on/off (陪伴模式) 或 /mode plan/edit/yolo (执行模式)
             parts = text.split(" ", 1)
             toggle_value = parts[1].strip().lower() if len(parts) > 1 else None
-            self._toggle_companion_mode(toggle_value)
+            if toggle_value in ("plan", "edit", "yolo"):
+                self._set_execution_mode(toggle_value)
+            else:
+                self._toggle_companion_mode(toggle_value)
         elif cmd.action == "config":
             # 支持 /config 查看或 /config KEY VALUE 修改
             parts = text.split(" ", 1)
@@ -862,6 +867,8 @@ class REPL(Screen):
             if success:
                 mode_str = "开启" if toggle_value == "on" else "关闭"
                 self.notify(f"✓ 陪伴模式: {mode_str}", severity="information", timeout=2)
+                self.state.companion_mode = toggle_value == "on"
+                self._sync_execution_mode()
             else:
                 self.notify("✗ 设置失败", severity="error", timeout=2)
         else:
@@ -870,8 +877,63 @@ class REPL(Screen):
             if result is not None:
                 mode_str = "开启 (完全AI引导)" if result else "关闭 (工作模式)"
                 self.notify(f"✓ 陪伴模式: {mode_str}", severity="information", timeout=2)
+                self.state.companion_mode = result
+                self._sync_execution_mode()
             else:
                 self.notify("✗ 切换失败", severity="error", timeout=2)
+
+    def _sync_execution_mode(self):
+        """从后端同步执行模式到本地状态"""
+        # 先用本地 settings 初始化（TUI 和后端在同一进程时直接可用）
+        try:
+            from config.settings import settings
+            self.state.execution_mode = settings.effective_execution_mode
+            self.state.companion_mode = settings.COMPANION_MODE
+        except Exception:
+            pass
+        # 异步从后端获取最新值
+        self._fetch_execution_mode()
+
+    @work
+    async def _fetch_execution_mode(self):
+        """从后端 API 获取最新执行模式"""
+        config = await self.api.get_config()
+        if config:
+            if "EXECUTION_MODE" in config:
+                self.state.execution_mode = config["EXECUTION_MODE"]
+            if "COMPANION_MODE" in config:
+                self.state.companion_mode = config["COMPANION_MODE"]
+            # 陪伴模式下强制 plan
+            if self.state.companion_mode:
+                self.state.execution_mode = "plan"
+
+    def _set_execution_mode(self, mode: str):
+        """设置执行模式（本地 + 后端）"""
+        if self.state.companion_mode:
+            self.notify("陪伴模式下执行模式固定为 plan，无法切换", severity="warning", timeout=3)
+            return
+
+        _MODE_CYCLE = ["plan", "edit", "yolo"]
+        if mode not in _MODE_CYCLE:
+            self.notify(f"未知模式: {mode}，可选: plan/edit/yolo", severity="warning", timeout=3)
+            return
+
+        self.state.execution_mode = mode
+        self.api.update_config("EXECUTION_MODE", mode)
+        _LABELS = {"plan": "📋 Plan (只读)", "edit": "✏️ Edit (确认)", "yolo": "🚀 YOLO (宽松)"}
+        self.notify(f"✓ 执行模式: {_LABELS[mode]}", severity="information", timeout=2)
+
+    def action_cycle_execution_mode(self):
+        """Shift+Tab 循环切换执行模式: plan → edit → yolo → plan"""
+        if self.state.companion_mode:
+            self.notify("陪伴模式下执行模式固定为 plan", severity="warning", timeout=2)
+            return
+
+        _MODE_CYCLE = ["plan", "edit", "yolo"]
+        current = self.state.execution_mode
+        idx = _MODE_CYCLE.index(current) if current in _MODE_CYCLE else 1
+        next_mode = _MODE_CYCLE[(idx + 1) % len(_MODE_CYCLE)]
+        self._set_execution_mode(next_mode)
 
     @work
     async def _show_config(self):

@@ -1,22 +1,33 @@
 """底栏 — 模型信息 + 快捷键提示"""
 
 import time
-from rich.panel import Panel
+from rich.text import Text
 from textual.widgets import Static
 
 from ..state import AppState
 
+_MODE_LABELS = {
+    "plan": ("📋", "Plan", "dim"),
+    "edit": ("✏️ ", "Edit", "bold yellow"),
+    "yolo": ("🚀", "YOLO", "bold red"),
+}
+
 
 class StatusLine(Static):
-    """底部状态栏"""
+    """底部状态栏（纯文本，无边框）"""
 
     def __init__(self, state: AppState):
         super().__init__("")
         self._state = state
 
-    def render(self) -> Panel:
+    def render(self) -> Text:
         s = self._state
         parts = []
+
+        # 执行模式
+        mode = s.execution_mode
+        icon, label, style = _MODE_LABELS.get(mode, ("✏️ ", "Edit", "bold yellow"))
+        parts.append(f"[{style}]{icon} {label}[/{style}]")
 
         if s.trace_id:
             parts.append(f"trace: {s.trace_id[:12]}")
@@ -43,6 +54,6 @@ class StatusLine(Static):
         elif s.elapsed_ms:
             parts.append(f"耗时: {s.elapsed_ms:.0f}ms")
 
-        parts.append("/help 帮助 | /exit 退出 | Ctrl+X 取消")
+        parts.append("Shift+Tab 切换模式 │ ESC 停止思考 │ / 命令 │ Ctrl+C 退出")
 
-        return Panel("  │  ".join(parts), border_style="dim")
+        return Text.from_markup("  │  ".join(parts))

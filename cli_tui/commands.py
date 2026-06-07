@@ -55,7 +55,7 @@ register("/export", ["/e"], "导出工具调用为 JSON 文件", "export")
 register("/search", ["/find"], "搜索长期记忆 (用法: /search <query>)", "search")
 register("/context", ["/ctx"], "加载并显示当前上下文", "context")
 register("/stop", ["/pause"], "停止当前思考处理", "stop")
-register("/mode", ["/m"], "切换陪伴模式 (用法: /mode on/off)", "mode")
+register("/mode", ["/m"], "切换陪伴模式 (用法: /mode on/off) 或执行模式 (/mode plan/edit/yolo)", "mode")
 register("/config", ["/cfg"], "查看或修改配置 (用法: /config 或 /config KEY VALUE)", "config")
 
 

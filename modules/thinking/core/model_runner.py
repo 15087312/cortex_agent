@@ -541,6 +541,53 @@ class ModelRunner:
             if not (self.model_id and final_thought):
                 return
 
+            # ── Plan 模式输出检查：安全专家审查输出是否包含写操作 ──
+            try:
+                from modules.security_system.tool_security_gate import check_plan_output
+                check_text = final_thought
+                # 大模型全量检查，主管/专家按 3000 字分段检查
+                if self.tier == "large":
+                    allowed, reason = await check_plan_output(
+                        check_text, self.tier, self.model_id
+                    )
+                    if not allowed:
+                        logger.warning(f"[ModelRunner] plan 输出检查拦截: {self.model_id} reason={reason}")
+                        final_thought = (
+                            f"[Plan 模式拦截] 安全专家检测到输出包含写操作指令。\n"
+                            f"原因: {reason}\n"
+                            f"如需执行写操作，请输入 /mode edit 或 /mode yolo 切换模式。\n\n"
+                            f"原始分析结果已保存，切换模式后可继续执行。"
+                        )
+                        # 替换黑板上的最终回复
+                        if self.blackboard:
+                            self.blackboard.set_final_response(final_thought)
+                        return
+                elif self.tier in ("supervisor", "expert"):
+                    # 主管/专家：每 3000 字检查一次
+                    check_interval = 3000
+                    if not hasattr(self, '_plan_output_checked_len'):
+                        self._plan_output_checked_len = 0
+                    while self._plan_output_checked_len < len(check_text):
+                        segment = check_text[self._plan_output_checked_len:self._plan_output_checked_len + check_interval]
+                        self._plan_output_checked_len += check_interval
+                        if len(segment.strip()) < 50:
+                            continue
+                        allowed, reason = await check_plan_output(
+                            segment, self.tier, self.model_id
+                        )
+                        if not allowed:
+                            logger.warning(f"[ModelRunner] plan 输出检查拦截: {self.model_id} reason={reason}")
+                            final_thought = (
+                                f"[Plan 模式拦截] 安全专家检测到输出包含写操作指令。\n"
+                                f"原因: {reason}\n"
+                                f"如需执行写操作，请切换到 edit 或 yolo 模式。"
+                            )
+                            if self.blackboard:
+                                self.blackboard.set_final_response(final_thought)
+                            return
+            except Exception as e:
+                logger.debug(f"[ModelRunner] plan 输出检查异常 (非致命): {e}")
+
             # 判断是否为最终结果（有 result_summary）
             has_final_result = bool(
                 control_decision and getattr(control_decision, "result_summary", None)
@@ -1030,6 +1077,20 @@ class ModelRunner:
             except Exception as e:
                 logger.debug(f"[ModelRunner] 主管能力列表注入失败 (非致命): {e}")
 
+        # ── plan 模式：注入只读约束 ──
+        try:
+            from config.settings import settings as _cfg
+            if _cfg.effective_execution_mode == "plan":
+                base_prompt += (
+                    "\n\n【执行模式: PLAN（只读）】\n"
+                    "当前为只读模式。你只能执行查询、分析、搜索类任务。\n"
+                    "禁止：写入/修改/删除文件、执行命令、安装依赖、部署、提交代码。\n"
+                    "不要委派任何涉及写操作的任务给主管或专家。\n"
+                    "如果用户请求需要写操作，告知用户当前为 plan 模式，建议切换到 edit 或 yolo 模式。"
+                )
+        except Exception:
+            pass
+
         return base_prompt
 
     def _build_time_context(self) -> str:
@@ -1356,7 +1417,7 @@ class ModelRunner:
                         except Exception as e:
                             logger.debug(f"[ModelRunner] 控制工具处理异常 (非致命): {e}")
 
-                    # 2. delegate_task → 直接执行委托 + 记录到 thinker
+                    # 2. delegate_task → 执行模式检查 + 委托 + 记录到 thinker
                     if delegate_calls:
                         logger.info(f"[ModelRunner] {self.model_id} 检测到 delegate_task 工具调用: {len(delegate_calls)} 个")
                     for tc in delegate_calls:
@@ -1365,6 +1426,34 @@ class ModelRunner:
                             role = args.get("role", "").strip()
                             task = args.get("task", "").strip()
                             if role and task:
+                                # ── 执行模式检查：plan 模式拦截写操作委派 ──
+                                try:
+                                    from config.settings import settings
+                                    exec_mode = settings.effective_execution_mode
+                                except Exception:
+                                    exec_mode = "edit"
+                                if exec_mode == "plan":
+                                    _WRITE_KEYWORDS = {
+                                        "写入", "创建文件", "修改文件", "删除文件", "执行命令",
+                                        "安装", "部署", "推送", "提交代码", "编写代码",
+                                        "写文件", "新建文件", "编辑文件", "删除",
+                                        "write", "create file", "modify file", "delete file",
+                                        "execute command", "install", "deploy", "push",
+                                        "commit", "edit file", "run command", "build",
+                                    }
+                                    task_lower = task.lower()
+                                    matched = [kw for kw in _WRITE_KEYWORDS if kw in task_lower]
+                                    if matched:
+                                        logger.warning(
+                                            f"[ModelRunner] plan 模式拦截写操作委派: "
+                                            f"model={self.model_id} role={role} keywords={matched}"
+                                        )
+                                        return (
+                                            f"[安全门控拦截] 当前为 plan 模式（只读），检测到写操作关键词: {', '.join(matched)}。"
+                                            f"禁止委派写操作任务给「{role}」。\n"
+                                            "如需执行写操作，请切换到 edit 或 yolo 模式：输入 /mode edit 或 /mode yolo"
+                                        )
+
                                 from modules.thinking.core.delegation_port import (
                                     ProbeDelegationAdapter, DelegationRequest,
                                 )

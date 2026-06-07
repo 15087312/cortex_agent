@@ -15,6 +15,21 @@ from config.settings import settings as _settings
 _TOOL_API_TOKEN = _settings.TOOL_API_TOKEN
 
 
+async def _security_gate_check(tool_name: str, params: Dict[str, Any], caller_role: str) -> None:
+    """执行模式安全门检查，拦截则抛出 HTTPException"""
+    from modules.security_system.tool_security_gate import get_tool_security_gate
+    gate = get_tool_security_gate()
+    allowed, reason = await gate.check(
+        tool_name=tool_name,
+        tool_params=params,
+        caller_tier=caller_role,
+        caller_model_id=f"api:{caller_role}",
+    )
+    if not allowed:
+        logger.warning(f"[ToolAPI] 安全门控拦截: tool={tool_name} role={caller_role} reason={reason}")
+        raise HTTPException(status_code=403, detail=f"安全门控拦截: {reason}")
+
+
 def require_tool_auth(authorization: str = Header(None), caller_role: str = Header(default="expert")) -> tuple:
     """SEC-5: Verify authentication and extract caller role"""
     if not _TOOL_API_TOKEN:
@@ -75,8 +90,8 @@ async def call_tool(
     params: Dict[str, Any] = Body(default={}, description="工具参数"),
     caller_role: str = Header(default="expert", description="调用者角色")
 ):
-    """调用工具"""
-    # SEC-5: Pass caller_role to tool_manager
+    """调用工具（经过安全门检查）"""
+    await _security_gate_check(tool_name, params, caller_role)
     result = await tool_manager.call_tool(tool_name, params, caller_role=caller_role)
     return {"success": True, "data": result}
 
@@ -87,15 +102,24 @@ async def call_tool_sync(
     params: Dict[str, Any] = Body(default={}, description="工具参数"),
     caller_role: str = Header(default="expert", description="调用者角色")
 ):
-    """同步调用工具"""
-    # SEC-5: Pass caller_role to tool_manager
+    """同步调用工具（经过安全门检查）"""
+    await _security_gate_check(tool_name, params, caller_role)
     result = tool_manager.call_tool_sync(tool_name, params, caller_role=caller_role)
     return {"success": True, "data": result}
 
 
 @router.post("/call-json")
 async def call_from_json(json_str: str = Body(..., description="JSON格式的工具调用")):
-    """从JSON调用工具"""
+    """从JSON调用工具（经过安全门检查）"""
+    try:
+        import json
+        parsed = json.loads(json_str) if isinstance(json_str, str) else json_str
+        tool_name = parsed.get("tool_name") or parsed.get("name", "")
+        params = parsed.get("params") or parsed.get("arguments", {})
+        caller_role = parsed.get("caller_role", "expert")
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON format")
+    await _security_gate_check(tool_name, params, caller_role)
     result = tool_manager.call_from_json(json_str)
     return {"success": True, "data": result}
 

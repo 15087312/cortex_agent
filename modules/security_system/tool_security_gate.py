@@ -79,6 +79,15 @@ MEDIUM_RISK_TOOLS = {
     "create_plugin", "uninstall_plugin",
 }
 
+# 写操作工具 — plan 模式禁止，edit 模式需用户确认
+_MUTATION_TOOLS = {
+    "write_file", "file_edit", "append_file", "delete_file",
+    "exec_command", "run_command", "run_python",
+    "git_add", "git_commit", "git_push",
+    "install_dependency", "create_plugin", "uninstall_plugin",
+    "kill_process", "write_runtime_config", "external_api_call",
+}
+
 # 代码安全检查 — 禁止的危险模式
 _FORBIDDEN_CODE_PATTERNS = (
     "__import__('os')", "__import__('subprocess')",
@@ -131,6 +140,15 @@ class ToolSecurityGate:
         except Exception:
             return "auto"
 
+    @property
+    def _execution_mode(self) -> str:
+        """获取当前执行模式（陪伴模式强制 plan）"""
+        try:
+            from config.settings import settings
+            return settings.effective_execution_mode
+        except Exception:
+            return "edit"
+
     async def check(
         self,
         tool_name: str,
@@ -145,6 +163,22 @@ class ToolSecurityGate:
         Returns:
             (allowed, reason): 是否允许执行 + 原因
         """
+        exec_mode = self._execution_mode
+
+        # ── plan 模式：所有写操作直接拒绝 ──
+        if exec_mode == "plan" and tool_name in _MUTATION_TOOLS:
+            reason = f"当前为 plan 模式（只读），禁止执行 {tool_name}"
+            _emit_security_event("plan拦截", tool_name, caller_model_id, False, reason)
+            try:
+                self._audit.log(
+                    event_type="tool_blocked", level="MEDIUM",
+                    content=tool_name, result=False,
+                    metadata={"caller_model_id": caller_model_id, "reason": reason, "execution_mode": "plan"},
+                )
+            except Exception:
+                pass
+            return False, reason
+
         if tool_name in HIGH_RISK_TOOLS:
             _emit_security_event("审查中", tool_name, caller_model_id, True, "HIGH 风险，评估中...")
             start = time.time()
@@ -171,6 +205,12 @@ class ToolSecurityGate:
             allowed, reason = self._check_medium_risk(tool_name, tool_params)
             if not allowed:
                 _emit_security_event("拦截", tool_name, caller_model_id, False, reason)
+            else:
+                # edit 模式：写操作需用户确认
+                if exec_mode == "edit" and tool_name in _MUTATION_TOOLS:
+                    allowed, reason = await self._check_user_review(
+                        tool_name, tool_params, caller_tier, caller_model_id
+                    )
             try:
                 self._audit.log(
                     event_type="tool_approved" if allowed else "tool_blocked",
@@ -203,8 +243,18 @@ class ToolSecurityGate:
         caller_model_id: str,
         dialog_context: str,
     ) -> Tuple[bool, str]:
-        """HIGH 风险工具 — 根据审查模式选择审批方式"""
+        """HIGH 风险工具 — 根据审查模式和执行模式选择审批方式"""
+        exec_mode = self._execution_mode
         mode = self._review_mode
+
+        # yolo 模式：只走 LLM 审核，跳过用户确认
+        if exec_mode == "yolo":
+            if self._model_available:
+                return await self._check_llm_review(
+                    tool_name, tool_params, caller_tier, caller_model_id, dialog_context
+                )
+            else:
+                return False, "yolo 模式下安全专家不可用，拒绝 HIGH 风险操作"
 
         if mode == "user":
             return await self._check_user_review(
@@ -401,3 +451,96 @@ def get_tool_security_gate() -> ToolSecurityGate:
             logger.debug(f"获取 lite 模型失败，安全门控将无 LLM 审批: {e}")
         _tool_security_gate = ToolSecurityGate(lite_model=lite_model)
     return _tool_security_gate
+
+
+# ---------------------------------------------------------------------------
+# Plan 模式输出检查 — 安全专家 LLM 审查模型输出是否包含写操作
+# ---------------------------------------------------------------------------
+
+_PLAN_OUTPUT_REVIEW_PROMPT = """你是安全审查专家。当前系统处于 plan 模式（只读），检查以下模型输出是否包含写操作指令。
+
+【判定标准】
+- PASS: 输出仅包含查询结果、分析、建议、说明，没有实际的写操作指令
+- BLOCK: 输出包含实际的文件写入、代码修改、命令执行等写操作指令或代码
+
+【注意】
+- 提供建议和分析是允许的（如"建议修改xxx"、"分析结果如下"）
+- 实际执行写操作是禁止的（如直接给出要写入的文件内容、要执行的命令）
+- 如果输出只是告诉用户"当前为 plan 模式，无法执行写操作"，这是正确的 PASS 行为
+
+请严格按 JSON 格式回复：
+{{"decision": "PASS" 或 "BLOCK", "reason": "原因"}}"""
+
+
+async def check_plan_output(output_text: str, caller_tier: str, caller_model_id: str) -> Tuple[bool, str]:
+    """Plan 模式下检查模型输出是否包含写操作。
+
+    Args:
+        output_text: 模型输出文本
+        caller_tier: 调用者层级 (large/supervisor/expert)
+        caller_model_id: 调用者模型 ID
+
+    Returns:
+        (allowed, reason): True=通过, False=被拦截
+    """
+    # 非 plan 模式直接通过
+    try:
+        from config.settings import settings
+        if settings.effective_execution_mode != "plan":
+            return True, "非 plan 模式，跳过检查"
+    except Exception:
+        return True, "无法获取执行模式，跳过检查"
+
+    # 输出太短不检查
+    if len(output_text.strip()) < 50:
+        return True, "输出过短，跳过检查"
+
+    # 获取安全专家模型
+    gate = get_tool_security_gate()
+    if not gate._model_available:
+        logger.warning("[Plan输出检查] 安全专家不可用，放行")
+        return True, "安全专家不可用，放行"
+
+    check_text = output_text
+
+    try:
+        prompt = (
+            f"{_PLAN_OUTPUT_REVIEW_PROMPT}\n\n"
+            f"【调用者】{caller_tier} ({caller_model_id})\n"
+            f"【输出内容】\n{check_text}"
+        )
+        result = await gate._lite_model.generate(prompt, max_tokens=256, temperature=0.1)
+        return _parse_plan_check_result(result, caller_tier, caller_model_id)
+    except Exception as e:
+        logger.error(f"[Plan输出检查] 安全专家异常，放行: {e}")
+        return True, f"安全专家异常，放行: {e}"
+
+
+def _parse_plan_check_result(result: str, caller_tier: str, caller_model_id: str) -> Tuple[bool, str]:
+    """解析安全专家的 plan 输出检查结果"""
+    import json
+    try:
+        # 提取 JSON
+        text = result.strip()
+        start = text.find("{")
+        end = text.rfind("}") + 1
+        if start >= 0 and end > start:
+            parsed = json.loads(text[start:end])
+            decision = parsed.get("decision", "PASS").upper()
+            reason = parsed.get("reason", "")
+            if decision == "BLOCK":
+                _emit_security_event(
+                    "Plan输出拦截", f"{caller_tier}_output",
+                    caller_model_id, False, reason,
+                )
+                logger.warning(f"[Plan输出检查] 拦截: {caller_tier} ({caller_model_id}) reason={reason}")
+                return False, f"[Plan 模式拦截] {reason}"
+            else:
+                logger.debug(f"[Plan输出检查] 通过: {caller_tier} ({caller_model_id})")
+                return True, reason
+    except (json.JSONDecodeError, KeyError):
+        pass
+
+    # 解析失败 → 放行（不因解析问题阻断正常流程）
+    logger.warning(f"[Plan输出检查] 解析失败，放行: {result[:100]}")
+    return True, "解析失败，放行"
