@@ -6,33 +6,35 @@
 
 ## 快速开始
 
-### 1. 克隆项目
+### 一键安装（推荐）
 
 ```bash
-git clone https://github.com/15087312/cortex_agent.git
-cd cortex_agent
+curl -fsSL https://raw.githubusercontent.com/15087312/cortex_agent/main/install.sh | bash
 ```
 
-### 2. 安装依赖
-
-```bash
-pip install -e .
-```
-
-### 3. 配置 API Key
-
-```bash
-cp .env.example .env
-# 编辑 .env，填入你的模型 API Key（DeepSeek / OpenAI 等）
-```
-
-### 4. 启动
+安装完成后直接运行：
 
 ```bash
 cortex
 ```
 
-就这么简单。`cortex` 会自动启动后端服务并打开交互式终端。
+### 手动安装
+
+```bash
+# 1. 克隆
+git clone https://github.com/15087312/cortex_agent.git
+cd cortex_agent
+
+# 2. 安装
+pip install -e .
+
+# 3. 配置
+cp .env.example .env
+# 编辑 .env 填入你的 API Key
+
+# 4. 启动
+cortex
+```
 
 ---
 
