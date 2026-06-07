@@ -688,6 +688,48 @@ def _extract_text_from_html(html: str) -> str:
     return text.strip()
 
 
+# ── Prompt 注入防护 ──
+
+_INJECTION_PATTERNS = [
+    r"ignore\s+(all\s+)?(previous|prior|above)\s+instructions?",
+    r"disregard\s+(all\s+)?(previous|prior)\s+instructions?",
+    r"forget\s+(all\s+)?your\s+(previous\s+)?instructions?",
+    r"you\s+are\s+now\s+(?:a|an|the)\s+",
+    r"your\s+new\s+(role|identity|persona)\s+is",
+    r"忽略.{0,10}(系统提示|之前的指令|所有指令)",
+    r"忘记.{0,10}(你的身份|所有指令)",
+    r"你现在是.{0,20}",
+    r"你的新角色是",
+    r"不要遵守.{0,10}指令",
+    r"越狱|jailbreak",
+    r"DAN\s+mode",
+    r"hypothetically\s+speaking.{0,50}(ignore|disregard)",
+]
+
+
+def _sanitize_web_content(text: str, max_chars: int = 2000) -> str:
+    """净化外部网页内容：去格式 → 过滤注入 → 截断"""
+    if not text:
+        return ""
+    text = text.strip()
+    if not text:
+        return ""
+    # 1. 去除 Markdown 格式（链接、图片、强调等）
+    text = re.sub(r'\[([^\]]+)\]\([^\)]*\)', r'\1', text)
+    text = re.sub(r'[*_`#~>]+', ' ', text)
+    text = re.sub(r'!\[[^\]]*\]\([^\)]*\)', '', text)
+    # 2. 压缩多余空白
+    text = re.sub(r'[ \t]+', ' ', text)
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    # 3. 过滤注入模式（整行替换为警告占位）
+    for pat in _INJECTION_PATTERNS:
+        text = re.sub(pat, '[内容已过滤]', text, flags=re.IGNORECASE)
+    # 4. 截断
+    if len(text) > max_chars:
+        text = text[:max_chars] + '...[已截断]'
+    return text.strip()
+
+
 def _fetch_results_content(results: List[Dict[str, str]], max_fetch: int = 3) -> List[Dict[str, str]]:
     """批量抓取搜索结果的页面内容（前 max_fetch 条）"""
     fetched = 0
@@ -751,6 +793,11 @@ async def web_search(
         def _finalize(results: List[Dict[str, str]], source: str) -> Dict[str, Any]:
             if _fetch:
                 results = _fetch_results_content(results)
+            # 净化所有结果的 snippet 和 content
+            for r in results:
+                r["snippet"] = _sanitize_web_content(r.get("snippet", ""), max_chars=300)
+                if _fetch and r.get("content"):
+                    r["content"] = _sanitize_web_content(r["content"], max_chars=2000)
             return {
                 "query": query,
                 "results_count": len(results),

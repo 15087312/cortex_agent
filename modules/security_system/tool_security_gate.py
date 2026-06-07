@@ -256,6 +256,21 @@ class ToolSecurityGate:
             else:
                 return False, "yolo 模式下安全专家不可用，拒绝 HIGH 风险操作"
 
+        # edit 模式：先 LLM 审批，通过后再用户确认（AND 逻辑）
+        if exec_mode == "edit":
+            if self._model_available:
+                llm_ok, llm_reason = await self._check_llm_review(
+                    tool_name, tool_params, caller_tier, caller_model_id, dialog_context
+                )
+                if not llm_ok:
+                    return False, llm_reason  # LLM 拒绝直接拦截，不进用户审批
+            # LLM 通过（或不可用）后，必须用户确认
+            return await self._check_user_review(
+                tool_name, tool_params, caller_tier, caller_model_id
+            )
+
+        # plan 模式（写操作已在 check() 最顶层拦截，不应到达这里）
+        # 兜底按原 mode 路由（user/llm/auto）
         if mode == "user":
             return await self._check_user_review(
                 tool_name, tool_params, caller_tier, caller_model_id

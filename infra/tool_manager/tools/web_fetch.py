@@ -5,11 +5,13 @@
 """
 import asyncio
 import ipaddress
+import re
 import requests
 from typing import Dict, Any, Optional
 from urllib.parse import urlparse
 
 from infra.tool_manager.tool_registry import ToolRegistry
+from infra.tool_manager.tools.web_search import _sanitize_web_content
 from utils.logger import setup_logger
 
 logger = setup_logger("web_fetch")
@@ -94,6 +96,9 @@ async def web_fetch(
         if len(content) > MAX_CONTENT_LENGTH:
             content = content[:MAX_CONTENT_LENGTH]
             truncated = True
+
+        # 净化内容：去格式 + 过滤注入 + 截断
+        content = _sanitize_web_content(content, max_chars=8000)
 
         return {
             "url": resp.url,
