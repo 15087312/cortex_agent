@@ -308,35 +308,38 @@ class ModelRunner:
                         "tier": self.tier,
                         "session_id": self.session_id,
                         "expert_summary": expert_summary,
-                },
-            )
-            await bus.send(msg)
-
-            # 唤醒委托方：发送 thinking_result，让 _wait_for_wakeup_event 收到
-            wakeup_recipient = self._return_to_model_id or "large_primary"
-            if wakeup_recipient:
-                wakeup_msg = Message(
-                    msg_type=MessageType.SYSTEM,
-                    sender=self.model_id,
-                    recipient=wakeup_recipient,
-                    content={
-                        "action": "thinking_result",
-                        "source_model_id": self.model_id,
-                        "source_tier": self.tier,
-                        "source_role": self.identity.role if self.identity else "",
-                        "result": final_result or "",
-                        "delegation_id": self._task_id,
-                        "expert_summary": expert_summary,
                     },
                 )
-                await bus.send(wakeup_msg)
-                logger.info(
-                    f"[ModelRunner] 已唤醒 {wakeup_recipient}: "
-                    f"iterations={expert_summary['iterations']}, "
-                    f"tools={expert_summary['tool_calls']}"
-                )
-        except Exception as e:
-            logger.error(f"[ModelRunner] 唤醒失败: {e}")
+                await bus.send(msg)
+            except Exception as e:
+                logger.warning(f"[ModelRunner] 通知 orchestrator 失败: {e}")
+
+            # 唤醒委托方：发送 thinking_result，让 _wait_for_wakeup_event 收到
+            try:
+                wakeup_recipient = self._return_to_model_id or "large_primary"
+                if wakeup_recipient:
+                    wakeup_msg = Message(
+                        msg_type=MessageType.SYSTEM,
+                        sender=self.model_id,
+                        recipient=wakeup_recipient,
+                        content={
+                            "action": "thinking_result",
+                            "source_model_id": self.model_id,
+                            "source_tier": self.tier,
+                            "source_role": self.identity.role if self.identity else "",
+                            "result": final_result or "",
+                            "delegation_id": self._task_id,
+                            "expert_summary": expert_summary,
+                        },
+                    )
+                    await bus.send(wakeup_msg)
+                    logger.info(
+                        f"[ModelRunner] 已唤醒 {wakeup_recipient}: "
+                        f"iterations={expert_summary['iterations']}, "
+                        f"tools={expert_summary['tool_calls']}"
+                    )
+            except Exception as e:
+                logger.error(f"[ModelRunner] 唤醒失败: {e}")
 
         logger.info(
             f"[ModelRunner] RuntimeExpert {self.model_id} 完成 "
