@@ -127,9 +127,14 @@ class ToolSecurityGate:
         self._lite_model = lite_model
         self._model_available = lite_model is not None
         self._audit = SecurityAuditLogger()
+        self._active_blackboard = None  # 由编排层注入
         logger.info(
             f"ToolSecurityGate 初始化 (LLM={'可用' if self._model_available else '不可用'})"
         )
+
+    def set_active_blackboard(self, blackboard) -> None:
+        """注入当前活跃的 Blackboard（由编排层调用）"""
+        self._active_blackboard = blackboard
 
     @property
     def _review_mode(self) -> str:
@@ -165,6 +170,24 @@ class ToolSecurityGate:
         """
         exec_mode = self._execution_mode
 
+        # ── 安全最高指示：Blackboard 有安全拦截信号时，拒绝所有写操作 ──
+        if tool_name in _MUTATION_TOOLS:
+            try:
+                from modules.thinking.cognition.blackboard import CognitiveBlackboard
+                # 检查当前活跃的 Blackboard 是否有安全拦截
+                # 通过模块级变量获取（由编排层注入）
+                bb = getattr(self, '_active_blackboard', None)
+                if bb and bb.has_security_block():
+                    block = bb.get_security_block()
+                    reason = (
+                        f"安全系统已拦截: {block.get('description', '检测到安全风险')}。"
+                        f"请遵循最高指示后再继续。"
+                    )
+                    _emit_security_event("安全拦截", tool_name, caller_model_id, False, reason)
+                    return False, reason
+            except Exception:
+                pass
+
         # ── plan 模式：所有写操作直接拒绝 ──
         if exec_mode == "plan" and tool_name in _MUTATION_TOOLS:
             reason = f"当前为 plan 模式（只读），禁止执行 {tool_name}"
@@ -178,6 +201,28 @@ class ToolSecurityGate:
             except Exception:
                 pass
             return False, reason
+
+        # ── plan 模式：delegate_task 检查 task 参数中的写操作关键词 ──
+        if exec_mode == "plan" and tool_name == "delegate_task":
+            task = str(tool_params.get("task", "")).lower()
+            _DELEGATE_WRITE_KEYWORDS = {
+                "写入", "创建文件", "修改文件", "删除文件", "执行命令",
+                "安装", "部署", "推送", "提交代码", "编写代码", "写文件",
+                "新建文件", "编辑文件", "delete file", "execute command",
+                "install", "deploy", "push --force", "git push",
+                "commit", "edit file", "run command", "rm -rf",
+                "write file", "create file", "modify file",
+                "compile", "build", "write a", "write the",
+            }
+            matched = [kw for kw in _DELEGATE_WRITE_KEYWORDS if kw in task]
+            if matched:
+                reason = (
+                    f"plan 模式下禁止委派写操作任务。"
+                    f"检测到写操作关键词: {', '.join(matched[:3])}。"
+                    f"如需执行写操作，请切换到 edit 或 yolo 模式。"
+                )
+                _emit_security_event("plan委派拦截", tool_name, caller_model_id, False, reason)
+                return False, reason
 
         # ── control 模式：所有非 LOW 工具需用户确认 ──
         if exec_mode == "control":

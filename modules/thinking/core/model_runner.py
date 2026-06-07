@@ -258,48 +258,56 @@ class ModelRunner:
 
         logger.info(
             f"[ModelRunner] RuntimeExpert 模式启动: {self.model_id} "
-            f"expert={expert_cls.__name__} role={runtime_expert.identity.role}"
+            f"expert={expert_cls.__name__} role={runtime_expert.identity.role} "
+            f"persistent={runtime_expert.is_persistent}"
         )
 
-        # 🔑 改进：使用 CLI 模式，Expert 主动连续执行直到完成
-        expert_result = await runtime_expert.run_cli_mode(
-            task=self._task_description,
-            max_iterations=10,
-            timeout=300,  # 总体超时上限：300s
-            round_timeout=60,  # 每轮超时：60s，每轮独立计时
-        )
-
-        logger.info(
-            f"[ModelRunner] Expert 完成: "
-            f"success={expert_result.get('success')}, "
-            f"iterations={expert_result.get('iterations')}, "
-            f"tool_calls={expert_result.get('tool_calls')}"
-        )
-
-        # 提取最终结果
-        final_result = expert_result.get('result', '')
-        expert_summary = {
-            'iterations': expert_result.get('iterations'),
-            'tool_calls': expert_result.get('tool_calls'),
-            'success': expert_result.get('success'),
-        }
-
-        # 通知 orchestrator 专家已完成
-        try:
-            from modules.thinking.communication.interface import (
-                Message, MessageType, get_message_bus_port,
+        if runtime_expert.is_persistent:
+            # persistent 专家用 run_loop（事件驱动，每轮调 process()）
+            await runtime_expert.run_loop(
+                check_messages_fn=self._check_messages,
+                task_description=self._task_description,
             )
-            bus = get_message_bus_port()
-            msg = Message(
-                msg_type=MessageType.SYSTEM,
-                sender=self.model_id,
-                recipient="orchestrator",
-                content={
-                    "action": "thinking_complete",
-                    "model_id": self.model_id,
-                    "tier": self.tier,
-                    "session_id": self.session_id,
-                    "expert_summary": expert_summary,
+        else:
+            # on_demand 专家用 run_cli_mode（任务导向，完成后退出）
+            expert_result = await runtime_expert.run_cli_mode(
+                task=self._task_description,
+                max_iterations=10,
+                timeout=300,
+                round_timeout=60,
+            )
+
+            logger.info(
+                f"[ModelRunner] Expert 完成: "
+                f"success={expert_result.get('success')}, "
+                f"iterations={expert_result.get('iterations')}, "
+                f"tool_calls={expert_result.get('tool_calls')}"
+            )
+
+            # 提取最终结果
+            final_result = expert_result.get('result', '')
+            expert_summary = {
+                'iterations': expert_result.get('iterations'),
+                'tool_calls': expert_result.get('tool_calls'),
+                'success': expert_result.get('success'),
+            }
+
+            # 通知 orchestrator 专家已完成
+            try:
+                from modules.thinking.communication.interface import (
+                    Message, MessageType, get_message_bus_port,
+                )
+                bus = get_message_bus_port()
+                msg = Message(
+                    msg_type=MessageType.SYSTEM,
+                    sender=self.model_id,
+                    recipient="orchestrator",
+                    content={
+                        "action": "thinking_complete",
+                        "model_id": self.model_id,
+                        "tier": self.tier,
+                        "session_id": self.session_id,
+                        "expert_summary": expert_summary,
                 },
             )
             await bus.send(msg)
@@ -1043,6 +1051,18 @@ class ModelRunner:
                 )
         except Exception:
             pass
+
+        # ── 安全最高指示规则（所有模式、所有 tier）──
+        base_prompt += (
+            "\n\n【安全规则 — 强制执行】\n"
+            "Blackboard 中可能出现带 must_follow=True 标记的条目（来自安全监察专家）。\n"
+            "当你看到此类条目时：\n"
+            "1. 立即停止当前任务\n"
+            "2. 阅读并遵循指示内容\n"
+            "3. 如指示要求停止写操作，不得再调用任何写工具或委派写任务\n"
+            "4. 违反最高指示将导致会话被安全系统终止\n"
+            "用户目标是最高优先级，安全监察专家负责确保团队不偏离用户目标。"
+        )
 
         return base_prompt
 
@@ -2146,6 +2166,9 @@ class ModelRunnerManager:
                 elif action == "probe_stopped":
                     await self._handle_probe_stopped(content)
                     handled += 1
+                elif action == "terminate_session":
+                    await self._handle_terminate_session(content)
+                    handled += 1
 
         if handled:
             logger.debug(f"[ModelRunnerManager] probe 命令处理完成: {handled} 条")
@@ -2207,6 +2230,28 @@ class ModelRunnerManager:
                 return
 
         logger.warning(f"[ModelRunnerManager] 无法找到 probe_stopped 对应的 runner: {probe_id}")
+
+    async def _handle_terminate_session(self, content: Dict[str, Any]) -> None:
+        """处理安全系统会话终止信号 — 取消所有活跃的 runner"""
+        reason = content.get("reason", "安全系统终止")
+        risk_level = content.get("risk_level", "critical")
+        logger.critical(
+            f"[ModelRunnerManager] 安全终止信号: risk={risk_level} reason={reason[:100]}"
+        )
+
+        with self._lock:
+            runners_snapshot = list(self._runners.items())
+
+        for model_id, runner in runners_snapshot:
+            try:
+                await runner.stop()
+                logger.info(f"[ModelRunnerManager] 已终止 runner: {model_id}")
+            except Exception as e:
+                logger.warning(f"[ModelRunnerManager] 终止 runner 失败: {model_id} {e}")
+
+        # 停止监听
+        self._running = False
+        self._message_event.set()
 
     # ------------------------------------------------------------------
     # 内部工具方法

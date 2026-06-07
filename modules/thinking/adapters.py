@@ -100,25 +100,17 @@ class OutputSystemReviewAdapter:
     """由 OutputSystem 支持的输出审查端口。"""
 
     async def review(self, raw_response: str, user_input: str = "", expert_guidance: dict = None) -> str:
+        """只做输出清洗（格式化），不做安全拦截。
+
+        安全拦截由 SecurityMonitor 在 Blackboard 层面处理，
+        OutputSystem 只负责统一输出格式。
+        """
         if not raw_response:
             return ""
 
         try:
             from modules.output_system.core import OutputSystem
-
-            raw_response = OutputSystem.clean_response(raw_response)
+            return OutputSystem.clean_response(raw_response)
         except Exception as e:
             logger.debug(f"[输出清洗] clean_response 失败，使用原始响应: {e}")
-
-        try:
-            from modules.output_system.core import OutputSystem
-
-            output_system = OutputSystem()
-            passed, validated = output_system.validate(raw_response, "text")
-            if not passed:
-                logger.warning(f"[输出安全拦截] {validated}")
-                return "[内容已被安全系统拦截]"
-            return validated
-        except Exception as e:
-            logger.error(f"[输出系统] 处理失败，拒绝输出: {e}")
-            return "[输出系统异常，内容被拦截]"
+            return raw_response

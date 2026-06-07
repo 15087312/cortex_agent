@@ -297,7 +297,7 @@ class MultiModelOrchestrator:
         probe_signals = thinking_result.get("probe_signals", [])
 
         # ---- 5. 输出审查 (专家系统) ----
-        final_response = await self._review_output(raw_response, user_input, expert_guidance)
+        final_response = await self._review_output(raw_response, user_input, expert_guidance, blackboard)
 
         # ---- 6. 记忆存储 + GCM 同步 ----
         await self._save_memory(mm, session_id, user_input, final_response, self._gcm_pool, thinking_turns)
@@ -442,6 +442,24 @@ class MultiModelOrchestrator:
                 logger.debug(f"[SessionLifecycle] 初始化失败 (非致命): {e}")
                 blackboard = None
                 turn_context = None
+
+            # 注册 SecurityMonitor model_id 到 Blackboard（用于触发安全审查）
+            if blackboard:
+                try:
+                    from modules.thinking.identity import get_identities
+                    identities = get_identities()
+                    sm_identity = identities.get("expert_security_monitor", {})
+                    sm_model_id = sm_identity.get("model_id", "expert_security_monitor_001")
+                    blackboard.set_security_monitor_id(sm_model_id)
+                except Exception:
+                    blackboard.set_security_monitor_id("expert_security_monitor_001")
+
+                # 注入 Blackboard 到 ToolSecurityGate（用于安全拦截检查）
+                try:
+                    from modules.security_system.tool_security_gate import get_tool_security_gate
+                    get_tool_security_gate().set_active_blackboard(blackboard)
+                except Exception:
+                    pass
 
             # ---- ModelRunnerManager: 监听 probe_start/probe_stop 命令 ----
             try:
@@ -717,9 +735,28 @@ class MultiModelOrchestrator:
     # 6. 输出审查
     # ------------------------------------------------------------------
 
-    async def _review_output(self, raw_response: str, user_input: str = "", expert_guidance: dict = None) -> str:
-        """专家系统审查 + 输出系统验证"""
-        return await self._get_output_reviewer().review(raw_response, user_input, expert_guidance)
+    async def _review_output(self, raw_response: str, user_input: str = "", expert_guidance: dict = None, blackboard=None) -> str:
+        """输出清洗 + 安全信号检查"""
+        # 先做输出清洗
+        cleaned = await self._get_output_reviewer().review(raw_response, user_input, expert_guidance)
+
+        # 检查 Blackboard 中的安全拦截信号
+        try:
+            if blackboard and blackboard.has_security_block():
+                block = blackboard.get_security_block()
+                if block:
+                    logger.warning(
+                        f"[安全拦截] {block.get('category', '')}: {block.get('description', '')[:100]}"
+                    )
+                    return (
+                        f"[安全审查拦截] {block.get('description', '检测到安全风险')}\n"
+                        f"风险级别: {block.get('risk_level', 'high')}\n"
+                        f"如需继续，请检查操作是否安全后重试。"
+                    )
+        except Exception:
+            pass
+
+        return cleaned
 
     # ------------------------------------------------------------------
     # 7. 记忆存储
