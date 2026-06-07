@@ -48,6 +48,7 @@ class VersionChecker:
             loop = asyncio.get_event_loop()
             # 如果已有运行中的循环，创建新任务
             if loop.is_running():
+                logger.debug("[版本检查] 当前在异步上下文中，跳过同步版本检查（可在异步上下文调用 _async_check_for_updates）")
                 return None
             return loop.run_until_complete(cls._async_check_for_updates())
         except (RuntimeError, OSError):
@@ -145,6 +146,11 @@ class VersionChecker:
             if cls.CACHE_FILE.exists():
                 with open(cls.CACHE_FILE, "r") as f:
                     return json.load(f)
+        except json.JSONDecodeError:
+            try:
+                cls.CACHE_FILE.unlink()  # 删除损坏缓存文件
+            except OSError:
+                pass
         except Exception:
             pass
         return None

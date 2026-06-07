@@ -3,6 +3,7 @@
 """
 
 from pathlib import Path
+import re
 
 
 def _read_version_file() -> str:
@@ -14,9 +15,14 @@ def _read_version_file() -> str:
     return "0.0.0-unknown"
 
 
+_VERSION_PATTERN = re.compile(r"^\d+\.\d+\.\d+(?:-[a-zA-Z0-9][a-zA-Z0-9-]*)?$")
+
+
 def _get_version_name(version: str) -> str:
     """根据版本号推导版本名称"""
-    if "control" in version:
+    if "unknown" in version:
+        return "Unknown"
+    elif "control" in version:
         return "Control Mode"
     elif "beta" in version:
         return "Beta"
@@ -32,7 +38,7 @@ __version_name__ = _get_version_name(__version__)
 __build_date__ = "2026-06-07"
 
 # 版本组件解析
-_version_parts = __version__.split("-")
+_version_parts = __version__.split("-", 1)
 __version_core__ = _version_parts[0]  # x.y.z
 __version_suffix__ = _version_parts[1] if len(_version_parts) > 1 else None
 
@@ -63,6 +69,9 @@ def update_version(new_version: str) -> bool:
     Returns:
         是否更新成功
     """
+    if not _VERSION_PATTERN.match(new_version):
+        print(f"更新版本号失败: 无效格式 '{new_version}'，期望 x.y.z 或 x.y.z-suffix")
+        return False
     try:
         version_file = Path(__file__).parent.parent / "VERSION"
         with open(version_file, "w") as f:

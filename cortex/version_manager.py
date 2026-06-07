@@ -102,7 +102,7 @@ class VersionManager:
     @staticmethod
     def _validate_version(version: str) -> bool:
         """验证版本格式"""
-        return bool(re.match(r"^\d+\.\d+\.\d+(?:-[a-zA-Z0-9]+)?$", version))
+        return bool(re.match(r"^\d+\.\d+\.\d+(?:-[a-zA-Z0-9][a-zA-Z0-9-]*)?$", version))
 
 
 def main():
