@@ -618,7 +618,7 @@ class ModelRunner:
             return None
 
         # 在线程池中等待 threading.Event，不阻塞事件循环
-        loop = _asyncio.get_event_loop()
+        loop = _asyncio.get_running_loop()
         try:
             signaled = await loop.run_in_executor(
                 None, event.wait, timeout

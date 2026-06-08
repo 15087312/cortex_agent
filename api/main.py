@@ -11,7 +11,6 @@ import os
 import time
 import uuid
 import hmac
-import hashlib
 import asyncio
 
 from api.errors import (
@@ -72,7 +71,7 @@ async def lifespan(app: FastAPI):
     # 初始化全局错误总线的asyncio处理器
     try:
         from modules.management.core.error_bus import error_bus
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         error_bus.setup_asyncio_handler(loop)
         logger.info("✓ 全局错误总线已初始化")
     except Exception as e:
@@ -271,7 +270,7 @@ async def request_id_middleware(request: Request, call_next):
 # 日志中间件
 @app.middleware("http")
 async def logging_middleware(request: Request, call_next):
-    logger.info(f"{request.method} {request.url.path}")
+    logger.debug(f"{request.method} {request.url.path}")
     response = await call_next(request)
     return response
 

@@ -168,23 +168,9 @@ class PerceptionManager:
         self._running = False
         self._thread = None
         
-        # 信息处理模块（延迟导入避免循环依赖）
-        self._info_process_api = None
-        
         self._initialized = True
         logger.info("感知管理器初始化完成 (平台: %s)", PERCEPTION_PLATFORM)
-    
-    async def _get_info_process_api(self):
-        """获取数据处理API"""
-        if self._info_process_api is None:
-            try:
-                from infra.data_process.core.image_analyzer import ImageAnalyzer
-                self._info_process_api = ImageAnalyzer()
-                await self._info_process_api.initialize()
-            except Exception as e:
-                logger.warning(f"数据处理API初始化失败: {e}")
-        return self._info_process_api
-    
+
     # ========== 文件感知 ==========
     
     def take_snapshot(self) -> None:
@@ -206,18 +192,7 @@ class PerceptionManager:
         return self.dialog_perception.check_changes(old_messages, new_messages)
     
     # ========== 屏幕感知（跨平台）==========
-    
-    async def analyze_screen_with_api(self, image_data: bytes) -> Dict[str, Any]:
-        """使用数据处理API分析屏幕"""
-        api = await self._get_info_process_api()
-        if api:
-            try:
-                result = await api.analyze(image_data, "描述屏幕内容，包含所有重要元素")
-                return result
-            except Exception as e:
-                logger.error(f"屏幕分析失败: {e}")
-        return {}
-    
+
     def check_screen_changes(self) -> List[ChangeEvent]:
         """检查屏幕变化"""
         return self.screen_perception.check_changes()

@@ -2,6 +2,7 @@
 价值观系统
 AI 的灵魂核心，可读写、可自我修改
 """
+import os
 import re
 import time
 from pathlib import Path
@@ -74,10 +75,21 @@ class ValueSystem:
             return ""
 
     def save(self, content: str):
-        """保存价值观"""
-        with open(self.values_file, "w", encoding="utf-8") as f:
-            f.write(content)
-        logger.info("价值观已保存")
+        """保存价值观（原子写入：临时文件 + fsync + rename）"""
+        import tempfile
+        fd, tmp_path = tempfile.mkstemp(
+            dir=str(self.values_file.parent), suffix=".tmp"
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(content)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(str(tmp_path), str(self.values_file))
+            logger.info("价值观已保存")
+        except Exception:
+            os.unlink(tmp_path)
+            raise
 
     def get_values_dict(self) -> Dict[str, List[str]]:
         """解析价值观为字典"""

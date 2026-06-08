@@ -10,7 +10,7 @@
         import asyncio
         
         # 设置asyncio异常处理器（在有事件循环时调用）
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         error_bus.setup_asyncio_handler(loop)
         
         # 然后启动你的应用

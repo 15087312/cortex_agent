@@ -1,7 +1,6 @@
 """
 思维小工具
 """
-from modules.thinking.utils.thought_splitter import ThoughtSplitter
 from modules.thinking.utils.value_rule_matcher import ValueRuleMatcher, value_rule_matcher
 from modules.thinking.utils.value_constraint_builder import (
     ValueConstraintBuilder,
@@ -9,7 +8,6 @@ from modules.thinking.utils.value_constraint_builder import (
 )
 
 __all__ = [
-    "ThoughtSplitter",
     "ValueRuleMatcher",
     "value_rule_matcher",
     "ValueConstraintBuilder",

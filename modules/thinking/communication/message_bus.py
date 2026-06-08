@@ -262,7 +262,7 @@ class ModelMessageBus:
         message.correlation_id = correlation_id
 
         # 创建等待 Future
-        future = asyncio.get_event_loop().create_future()
+        future = asyncio.get_running_loop().create_future()
         async with self.lock:
             self._pending_responses[correlation_id] = future
 

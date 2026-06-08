@@ -36,40 +36,55 @@ class VersionManager:
     @classmethod
     def increment_major(cls) -> bool:
         """主版本号 +1（x+1.0.0）"""
-        current = cls.get_current()
-        x, y, z, suffix = cls._parse_version(current)
+        parsed = cls._parse_version(cls.get_current())
+        if parsed is None:
+            print(f"❌ 无法解析当前版本: {cls.get_current()}")
+            return False
+        x, y, z, suffix = parsed
         new_version = f"{x + 1}.0.0"
         return cls.set_version(new_version)
 
     @classmethod
     def increment_minor(cls) -> bool:
         """次版本号 +1（x.y+1.0）"""
-        current = cls.get_current()
-        x, y, z, suffix = cls._parse_version(current)
+        parsed = cls._parse_version(cls.get_current())
+        if parsed is None:
+            print(f"❌ 无法解析当前版本: {cls.get_current()}")
+            return False
+        x, y, z, suffix = parsed
         new_version = f"{x}.{y + 1}.0"
         return cls.set_version(new_version)
 
     @classmethod
     def increment_patch(cls) -> bool:
         """修订版本号 +1（x.y.z+1）"""
-        current = cls.get_current()
-        x, y, z, suffix = cls._parse_version(current)
+        parsed = cls._parse_version(cls.get_current())
+        if parsed is None:
+            print(f"❌ 无法解析当前版本: {cls.get_current()}")
+            return False
+        x, y, z, suffix = parsed
         new_version = f"{x}.{y}.{z + 1}"
         return cls.set_version(new_version)
 
     @classmethod
     def set_suffix(cls, suffix: str) -> bool:
         """设置版本后缀（-control, -beta, -alpha 等）"""
-        current = cls.get_current()
-        x, y, z, _ = cls._parse_version(current)
+        parsed = cls._parse_version(cls.get_current())
+        if parsed is None:
+            print(f"❌ 无法解析当前版本: {cls.get_current()}")
+            return False
+        x, y, z, _ = parsed
         new_version = f"{x}.{y}.{z}-{suffix}"
         return cls.set_version(new_version)
 
     @classmethod
     def remove_suffix(cls) -> bool:
         """移除版本后缀"""
-        current = cls.get_current()
-        x, y, z, _ = cls._parse_version(current)
+        parsed = cls._parse_version(cls.get_current())
+        if parsed is None:
+            print(f"❌ 无法解析当前版本: {cls.get_current()}")
+            return False
+        x, y, z, _ = parsed
         new_version = f"{x}.{y}.{z}"
         return cls.set_version(new_version)
 
@@ -77,7 +92,11 @@ class VersionManager:
     def show_info(cls) -> None:
         """显示版本信息"""
         current = cls.get_current()
-        x, y, z, suffix = cls._parse_version(current)
+        parsed = cls._parse_version(current)
+        if parsed is None:
+            print(f"\n❌ 无法解析版本: {current}")
+            return
+        x, y, z, suffix = parsed
 
         print("\n📋 版本信息")
         print("─" * 50)
@@ -91,13 +110,13 @@ class VersionManager:
         print("─" * 50)
 
     @staticmethod
-    def _parse_version(version: str) -> Tuple[int, int, int, Optional[str]]:
-        """解析版本号"""
+    def _parse_version(version: str) -> Optional[Tuple[int, int, int, Optional[str]]]:
+        """解析版本号，失败返回 None"""
         match = re.match(r"(\d+)\.(\d+)\.(\d+)(?:-(.+))?", version)
         if match:
             x, y, z, suffix = match.groups()
             return int(x), int(y), int(z), suffix
-        return 0, 0, 0, None
+        return None
 
     @staticmethod
     def _validate_version(version: str) -> bool:

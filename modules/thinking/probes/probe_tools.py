@@ -245,7 +245,7 @@ def probe_start(
                 },
             )
             try:
-                asyncio.get_event_loop().create_task(bus.send(msg))
+                asyncio.get_running_loop().create_task(bus.send(msg))
             except RuntimeError:
                 pass
         except Exception as e:
@@ -347,7 +347,7 @@ def probe_stop(probe_id: str, **kwargs) -> Dict[str, Any]:
                 },
             )
             try:
-                asyncio.get_event_loop().create_task(bus.send(msg))
+                asyncio.get_running_loop().create_task(bus.send(msg))
             except RuntimeError:
                 pass
         except Exception as e:
@@ -483,7 +483,7 @@ def memory_write(
                 },
             )
             try:
-                asyncio.get_event_loop().create_task(bus.send(msg))
+                asyncio.get_running_loop().create_task(bus.send(msg))
             except RuntimeError:
                 pass
         except Exception as e:
@@ -572,7 +572,7 @@ def persona_inject(
                 },
             )
             try:
-                asyncio.get_event_loop().create_task(bus.send(msg))
+                asyncio.get_running_loop().create_task(bus.send(msg))
             except RuntimeError:
                 pass
         except Exception as e:
@@ -687,7 +687,7 @@ def request_intermediate_response(
                 metadata={"event": "preliminary_response"},
             )
             try:
-                asyncio.get_event_loop().create_task(bus.send(msg))
+                asyncio.get_running_loop().create_task(bus.send(msg))
             except RuntimeError:
                 pass
         except Exception as e:

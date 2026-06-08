@@ -635,20 +635,21 @@ def _fetch_page_content(url: str) -> Optional[str]:
         return None
 
     # 1. crawl4ai（能处理 JS 重定向）
+    text = None
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            # 已有事件循环（如 aiohttp 环境），用线程池隔离
-            from concurrent.futures import ThreadPoolExecutor
-            with ThreadPoolExecutor(1) as pool:
-                future = pool.submit(asyncio.run, _crawl_url(url))
-                text = future.result(timeout=30)
-        else:
-            text = loop.run_until_complete(_crawl_url(url))
-        if text:
-            return text
+        loop = asyncio.get_running_loop()
+        # 已有事件循环（如 aiohttp 环境），用线程池隔离
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(1) as pool:
+            future = pool.submit(asyncio.run, _crawl_url(url))
+            text = future.result(timeout=30)
+    except RuntimeError:
+        # 无运行中的事件循环，直接创建
+        text = asyncio.run(_crawl_url(url))
     except Exception as e:
         logger.debug(f"crawl4ai 失败，fallback requests: {e}")
+    if text:
+        return text
 
     # 2. fallback: requests 直接抓取 + 去标签
     try:

@@ -186,7 +186,7 @@ class ImageAnalyzer:
                 "description": output_text.strip(),
                 "objects": await self._detect_objects(image_data),
                 "scene": await self._classify_scene(image_data),
-                "colors": self._extract_colors(image),
+                "colors": [],
                 "format": "qwen_vl"
             }
         finally:
@@ -292,30 +292,6 @@ class ImageAnalyzer:
         except Exception:
             return "unknown"
 
-    def _extract_colors(self, image: Image.Image) -> List[str]:
-        """提取主色调"""
-        try:
-            if image.mode != "RGB":
-                image = image.convert("RGB")
-            
-            pixels = list(image.getdata())
-            r_avg = sum(p[0] for p in pixels) // len(pixels)
-            g_avg = sum(p[1] for p in pixels) // len(pixels)
-            b_avg = sum(p[2] for p in pixels) // len(pixels)
-            
-            if r_avg > 200:
-                color = "red" if r_avg > g_avg and r_avg > b_avg else "white"
-            elif b_avg > r_avg and b_avg > g_avg:
-                color = "blue"
-            elif g_avg > r_avg and g_avg > b_avg:
-                color = "green"
-            else:
-                color = "gray"
-            
-            return [color]
-        except Exception:
-            return []
-
     async def analyze_base64(
         self,
         image_b64: str,
@@ -324,17 +300,6 @@ class ImageAnalyzer:
         """分析Base64编码的图像"""
         image_data = base64.b64decode(image_b64)
         return await self.analyze(image_data, prompt)
-
-    async def analyze_url(
-        self,
-        image_url: str,
-        prompt: str = "详细描述这张图片"
-    ) -> Dict[str, Any]:
-        """分析网络图片"""
-        import requests
-        response = requests.get(image_url)
-        response.raise_for_status()
-        return await self.analyze(response.content, prompt)
 
     async def close(self):
         """关闭模型"""

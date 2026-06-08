@@ -176,10 +176,9 @@ class ModelManager:
         try:
             # 尝试获取当前事件循环
             try:
-                loop = asyncio.get_event_loop()
-                has_running_loop = loop.is_running()
+                loop = asyncio.get_running_loop()
+                has_running_loop = True
             except RuntimeError:
-                # 没有事件循环（例如在线程池中）
                 loop = None
                 has_running_loop = False
             

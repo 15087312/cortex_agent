@@ -49,40 +49,25 @@
 
 - **修复**：统一到 `SecurityPolicy`（`centralized_policy.py`）。`file_manager.py` 和 `file_extra.py` 的本地实现全部改为委托 `get_security_policy()`。补齐 `file_exists`、`get_file_info`、`append_file` 的路径检查。修复 fail-open 为 fail-closed。修复 macOS symlink（`/etc → /private/etc`）导致的路径匹配失败。
 
-### 10. Value System 非原子写入
+### 10. ~~Value System 非原子写入~~ ✅ 已修复
 
-- **问题**：`ValueSystem.save()` 直接写入文件，无 write-then-rename 原子操作
-- **影响**：写入过程中崩溃可能损坏 `core_values.txt`
-- **位置**：`modules/thinking/evolution/value_system.py`
-- **修复**：写入临时文件后 `os.rename` 替换
+- **修复**：`save()` 改为 `tempfile.mkstemp` → `fsync` → `os.replace` 原子替换，崩溃时自动清理临时文件。
 
-### 11. _extract_colors 全像素遍历
+### 11. ~~_extract_colors 全像素遍历~~ ✅ 已删除
 
-- **问题**：`ImageAnalyzer._extract_colors()` 使用 `list(image.getdata())` 遍历所有像素
-- **影响**：大图片（如 4K 截图）极慢且内存占用高
-- **位置**：`infra/data_process/core/image_analyzer.py`
-- **修复**：使用 `image.resize((1, 1))` 或 `collections.Counter` 采样
+- **修复**：`_extract_colors()` 方法已删除（死代码，仅 REST API 端点调用，无已知客户端）。`_analyze_qwen_vl()` 中的调用替换为 `"colors": []`。
 
-### 12. analyze_url 同步阻塞
+### 12. ~~analyze_url 同步阻塞~~ ✅ 已删除
 
-- **问题**：`ImageAnalyzer.analyze_url()` 内部使用同步 `requests.get()`
-- **影响**：阻塞 asyncio 事件循环，影响并发请求处理
-- **位置**：`infra/data_process/core/image_analyzer.py`
-- **修复**：使用 `aiohttp` 或 `asyncio.to_thread(requests.get, ...)`
+- **修复**：`analyze_url()` 方法已删除（死代码，仅 REST API 端点调用，无已知客户端）。对应的 `/image/analyze-url` REST 端点一并删除。感知系统中的 `analyze_screen_with_api()` 及其依赖 `_get_info_process_api()` 也一并清理。
 
-### 13. 使用已废弃的 asyncio.get_event_loop()
+### 13. ~~使用已废弃的 asyncio.get_event_loop()~~ ✅ 已修复
 
-- **问题**：多处使用 `asyncio.get_event_loop().create_task()`，Python 3.10+ 已废弃
-- **影响**：可能返回已关闭的事件循环，抛出 RuntimeError
-- **位置**：`modules/thinking/probes/probe_tools.py`、部分 expert 文件
-- **修复**：使用 `asyncio.get_running_loop()` + try/except fallback
+- **修复**：全部 11 处生产代码替换为 `asyncio.get_running_loop()`。sync 上下文中用 `try: get_running_loop() / except RuntimeError:` 结构。docstring 示例同步更新。
 
-### 14. _parse_version 静默失败
+### 14. ~~_parse_version 静默失败~~ ✅ 已修复
 
-- **问题**：`VersionManager._parse_version()` 解析失败时返回 `(0, 0, 0, None)` 而非抛异常
-- **影响**：损坏的 VERSION 文件会导致 `increment_patch()` 写入 `0.0.1`
-- **位置**：`cortex/version_manager.py`
-- **修复**：解析失败时抛出 `ValueError` 或返回 `None`
+- **修复**：`_parse_version()` 返回 `None` 而非零值。6 个调用方全部加 `if parsed is None: return False` 守卫。
 
 ### 15. ~~IPv6 Rate-Limit Key 解析 Bug~~ ✅ 已修复
 
@@ -92,23 +77,17 @@
 
 ## P2 — 低优先级（代码整洁）
 
-### 16. 死代码
+### 16. ~~死代码~~ ✅ 已删除
 
-- **问题**：`thought_splitter.py` 的 `split()` 直接返回 `[thought]`；`systems/__init__.py` 是废弃存根
-- **位置**：`modules/thinking/utils/thought_splitter.py`、`modules/thinking/systems/__init__.py`
-- **修复**：删除文件
+- **修复**：删除 `thought_splitter.py`（空 stub）、`systems/__init__.py`（废弃存根）。清理 `utils/__init__.py` 的 re-export。
 
-### 17. 未使用的导入
+### 17. ~~未使用的导入~~ ✅ 已修复
 
-- **问题**：`api/main.py` 导入 `defaultdict` 但未使用
-- **位置**：`api/main.py`
-- **修复**：删除导入
+- **修复**：`api/main.py` 中删除未使用的 `import hashlib`。
 
-### 18. 日志级别过高
+### 18. ~~日志级别过高~~ ✅ 已修复
 
-- **问题**：`logging_middleware` 每个请求都以 INFO 级别记录，生产环境日志量大
-- **位置**：`api/main.py`
-- **修复**：改为 DEBUG 级别或添加采样
+- **修复**：`logging_middleware` 从 `logger.info` 改为 `logger.debug`。
 
 ### 19. 单例模式不统一
 
@@ -117,21 +96,15 @@
 - **位置**：全局
 - **修复**：提取统一的 `@singleton` 装饰器或基类
 
-### 20. __build_date__ 硬编码
+### 20. ~~__build_date__ 硬编码~~ ✅ 已修复
 
-- **问题**：`version.py` 中 `__build_date__` 硬编码为 `"2026-06-07"`
-- **影响**：发布时显示错误的构建日期
-- **位置**：`cortex/version.py`
-- **修复**：从文件修改时间或构建系统动态获取
+- **修复**：改为 `datetime.date.today().isoformat()` 动态生成。
 
-### 21. Security Monitor 正则可绕过
+### 21. ~~Security Monitor 正则可绕过~~ ✅ 已修复
 
-- **问题**：`_check_forbidden_commands` 的 `\brm\s+-rf\b` 正则无法匹配 `rm -r -f` 或 `rm -r --force`
-- **影响**：可被简单变体绕过
-- **位置**：`modules/thinking/experts/security_monitor.py`
-- **修复**：使用更全面的模式或 AST 级别检测
+- **修复**：`rm -rf` 正则改为匹配 `-rf`/`-fr`/分开写/长参数/混合写法。`chmod 777` 同时匹配 `0777`。
 
-### 22. 路径匹配未规范化
+### 22. ~~路径匹配未规范化~~ ✅ 已修复
 
 - **问题**：`SecurityPolicy` 使用 `startswith()` 匹配路径，未做规范化
 - **影响**：`/etc/passwd-` 会匹配 `/etc/passwd` 前缀
@@ -159,7 +132,18 @@
 | P0-5 | exec_command 极端命令无硬阻断 | `_EXTREME_DANGER_PATTERNS` 硬拦截 + 快照兜底 | 2026-06-08 |
 | P1-8 | AppError stack trace 无消息 | 添加 `super().__init__(message)` | 2026-06-08 |
 | P1-9 | 路径安全检查三处重复 | 统一到 SecurityPolicy + 补齐覆盖 + fail-closed | 2026-06-08 |
+| P1-10 | Value System 非原子写入 | tempfile + fsync + os.replace 原子写入 | 2026-06-08 |
+| P1-11 | _extract_colors 全像素遍历 | 已删除（死代码） | 2026-06-08 |
+| P1-12 | analyze_url 同步阻塞 | 已删除（死代码） | 2026-06-08 |
+| P1-13 | asyncio.get_event_loop() 废弃 | 全部替换为 get_running_loop() | 2026-06-08 |
+| P1-14 | _parse_version 静默失败 | 返回 None + 调用方守卫 | 2026-06-08 |
 | P1-15 | IPv6 rate-limit key 解析 bug | key 分隔符从 `:` 改为 `\|` | 2026-06-08 |
+| P2-16 | 死代码 | 删除 thought_splitter.py + systems/__init__.py | 2026-06-08 |
+| P2-17 | 未使用的导入 | 删除 `import hashlib` | 2026-06-08 |
+| P2-18 | 日志级别过高 | logger.info → logger.debug | 2026-06-08 |
+| P2-20 | __build_date__ 硬编码 | datetime.date.today().isoformat() | 2026-06-08 |
+| P2-21 | SecurityMonitor 正则可绕过 | 扩展 rm/chmod 正则模式 | 2026-06-08 |
+| P2-22 | 路径匹配未规范化 | P1#9 一并修复 | 2026-06-08 |
 
 ---
 

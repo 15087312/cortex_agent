@@ -151,20 +151,6 @@ async def analyze_image(
         )
 
 
-@router.post("/image/analyze-url")
-async def analyze_image_url(
-    image_url: str = Form(...),
-    prompt: str = Form("详细描述这张图片")
-):
-    """分析网络图片URL"""
-    try:
-        analyzer = await get_default_analyzer()
-        result = await analyzer.analyze_url(image_url, prompt)
-        return {"success": True, "data": result}
-    except Exception as e:
-        raise AppError(ErrorCode.INTERNAL_ERROR, "服务暂时不可用，请稍后重试")
-
-
 @router.post("/image/analyze-base64")
 async def analyze_image_base64(
     image: str = Form(...),
