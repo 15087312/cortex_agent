@@ -8,8 +8,6 @@ from unittest.mock import MagicMock, patch, AsyncMock
 from modules.security_system.tool_security_gate import (
     ToolSecurityGate,
     get_tool_security_gate,
-    _check_code_safety,
-    _FORBIDDEN_CODE_PATTERNS,
     HIGH_RISK_TOOLS,
     MEDIUM_RISK_TOOLS,
     _emit_security_event,
@@ -76,25 +74,23 @@ class TestMediumRiskChecks:
             "run_python", {"code": "print('hello')"}, "expert", "m1"
         )
         assert allowed is True
-        assert "快速检查通过" in reason
+        assert "放行" in reason
 
     @pytest.mark.asyncio
-    async def test_run_python_dangerous_code_blocked(self, mock_audit_gate):
-        """run_python with dangerous code (eval) is blocked."""
+    async def test_run_python_dangerous_code_allowed(self, mock_audit_gate):
+        """真机模式：run_python with dangerous code (eval) is allowed."""
         allowed, reason = await mock_audit_gate.check(
             "run_python", {"code": "eval('import os')"}, "expert", "m1"
         )
-        assert allowed is False
-        assert "禁止" in reason
+        assert allowed is True
 
     @pytest.mark.asyncio
-    async def test_run_python_os_system_blocked(self, mock_audit_gate):
-        """run_python with os.system() is blocked."""
+    async def test_run_python_os_system_allowed(self, mock_audit_gate):
+        """真机模式：run_python with os.system() is allowed (非极端危险命令)."""
         allowed, reason = await mock_audit_gate.check(
-            "run_python", {"code": "os.system('rm -rf /')"}, "expert", "m1"
+            "run_python", {"code": "os.system('ls -la')"}, "expert", "m1"
         )
-        assert allowed is False
-        assert "禁止" in reason
+        assert allowed is True
 
     @pytest.mark.asyncio
     async def test_medium_risk_audit_logged(self, mock_audit_gate):
@@ -105,14 +101,14 @@ class TestMediumRiskChecks:
         mock_audit_gate._audit.log.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_medium_blocked_logs_tool_blocked(self, mock_audit_gate):
-        """Blocked MEDIUM tool audit logs event_type=tool_blocked."""
+    async def test_medium_allowed_logs_tool_approved(self, mock_audit_gate):
+        """真机模式：MEDIUM tool audit logs event_type=tool_approved."""
         await mock_audit_gate.check(
             "run_python", {"code": "exec('pass')"}, "expert", "m1"
         )
         call = mock_audit_gate._audit.log.call_args
         event_type = call.kwargs.get("event_type") or call.args[0]
-        assert event_type == "tool_blocked"
+        assert event_type == "tool_approved"
 
 
 # ------------------------------------------------------------------ #
@@ -203,7 +199,8 @@ class TestAuditLogging:
         assert result is True
 
     @pytest.mark.asyncio
-    async def test_medium_blocked_audit_result_false(self, mock_audit_gate):
+    async def test_medium_allowed_audit_result_true(self, mock_audit_gate):
+        """真机模式：run_python audit result is True."""
         await mock_audit_gate.check(
             "run_python", {"code": "__import__('os')"}, "expert", "m1"
         )
@@ -211,7 +208,7 @@ class TestAuditLogging:
         result = call.kwargs.get("result")
         if result is None:
             result = call.args[3]
-        assert result is False
+        assert result is True
 
     @pytest.mark.asyncio
     async def test_audit_exception_does_not_propagate(self, mock_audit_gate):
@@ -221,62 +218,6 @@ class TestAuditLogging:
             "read_file", {}, "expert", "m1"
         )
         assert allowed is True
-
-
-# ------------------------------------------------------------------ #
-# _check_code_safety — dangerous Python code patterns
-# ------------------------------------------------------------------ #
-
-class TestCheckCodeSafety:
-    def test_safe_code_passes(self):
-        ok, reason = _check_code_safety("x = 1 + 2")
-        assert ok is True
-        assert reason == ""
-
-    def test_eval_detected(self):
-        ok, reason = _check_code_safety("eval('1+1')")
-        assert ok is False
-        assert "eval(" in reason
-
-    def test_exec_detected(self):
-        ok, reason = _check_code_safety("exec('import os')")
-        assert ok is False
-        assert "exec(" in reason
-
-    def test_os_system_detected(self):
-        ok, reason = _check_code_safety("os.system('ls')")
-        assert ok is False
-        assert "os.system" in reason
-
-    def test_subprocess_detected(self):
-        ok, reason = _check_code_safety("subprocess.run(['ls'])")
-        assert ok is False
-        assert "subprocess." in reason
-
-    def test_import_os_detected(self):
-        ok, reason = _check_code_safety("__import__('os')")
-        assert ok is False
-        assert "__import__('os')" in reason
-
-    def test_shutil_rmtree_detected(self):
-        ok, reason = _check_code_safety("shutil.rmtree('/tmp/x')")
-        assert ok is False
-        assert "shutil.rmtree" in reason
-
-    def test_case_insensitive_detection(self):
-        """Pattern matching is case-insensitive."""
-        ok, reason = _check_code_safety("EVAL('x')")
-        assert ok is False
-
-    def test_open_etc_detected(self):
-        ok, reason = _check_code_safety("open('/etc/passwd')")
-        assert ok is False
-        assert "open('/etc/" in reason
-
-    def test_socket_detected(self):
-        ok, reason = _check_code_safety("socket.socket(socket.AF_INET)")
-        assert ok is False
-        assert "socket.socket" in reason
 
 
 # ------------------------------------------------------------------ #
@@ -306,17 +247,17 @@ class TestIsPathAllowed:
         result = _is_path_allowed(Path("/tmp/somefile"))
         assert isinstance(result, bool)
 
-    def test_etc_blocked(self):
-        """/etc is not in the allowed directory list."""
+    def test_etc_allowed(self):
+        """真机模式：/etc 路径也允许访问。"""
         from pathlib import Path
         from infra.tool_manager.tools.file_manager import _is_path_allowed
-        assert _is_path_allowed(Path("/etc/passwd")) is False
+        assert _is_path_allowed(Path("/etc/passwd")) is True
 
-    def test_root_etc_shadow_blocked(self):
-        """/etc/shadow is blocked."""
+    def test_root_etc_shadow_allowed(self):
+        """真机模式：/etc/shadow 也允许访问。"""
         from pathlib import Path
         from infra.tool_manager.tools.file_manager import _is_path_allowed
-        assert _is_path_allowed(Path("/etc/shadow")) is False
+        assert _is_path_allowed(Path("/etc/shadow")) is True
 
     def test_var_tmp_returns_bool(self):
         """/var/tmp behavior depends on OS symlink resolution; verify no crash."""
@@ -325,24 +266,19 @@ class TestIsPathAllowed:
         result = _is_path_allowed(Path("/var/tmp/test.txt"))
         assert isinstance(result, bool)
 
-    def test_home_blocked(self):
-        """/Users/other_user is not the project root and should be blocked."""
+    def test_home_allowed(self):
+        """真机模式：用户目录允许访问。"""
         from pathlib import Path
         from infra.tool_manager.tools.file_manager import _is_path_allowed
-        assert _is_path_allowed(Path("/Users/other_user/secret.txt")) is False
+        assert _is_path_allowed(Path("/Users/other_user/secret.txt")) is True
 
     @pytest.mark.asyncio
-    async def test_write_file_blocked_path(self, mock_audit_gate):
-        """write_file with a forbidden path triggers path-not-allowed rejection."""
-        with patch(
-            "infra.tool_manager.tools.file_manager._is_path_allowed",
-            return_value=False,
-        ):
-            allowed, reason = await mock_audit_gate.check(
-                "write_file", {"path": "/etc/shadow"}, "expert", "m1"
-            )
-        assert allowed is False
-        assert "路径不在允许范围内" in reason
+    async def test_write_file_allowed(self, mock_audit_gate):
+        """真机模式：write_file 不再检查路径，直接通过 MEDIUM 检查。"""
+        allowed, reason = await mock_audit_gate.check(
+            "write_file", {"path": "/etc/shadow"}, "expert", "m1"
+        )
+        assert allowed is True
 
 
 # ------------------------------------------------------------------ #

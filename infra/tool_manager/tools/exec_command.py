@@ -14,7 +14,6 @@ import signal
 import time
 import sys
 import tempfile
-import ast
 import shlex
 import json
 import shutil
@@ -80,13 +79,6 @@ _EXTREME_DANGER_PATTERNS_RAW = [
 _EXTREME_DANGER_RE = [_re.compile(p, _re.IGNORECASE) for p in _EXTREME_DANGER_PATTERNS_RAW]
 
 
-def _check_command_whitelist(command: str) -> bool:
-    """检查命令是否在白名单中"""
-    cmd = command.strip().split()[0] if command.strip() else ""
-    base = os.path.basename(cmd)
-    return base in COMMAND_WHITELIST
-
-
 def _detect_dangerous_command(command: str) -> List[str]:
     """检测命令中的危险模式，返回匹配的警告列表"""
     warnings = []
@@ -113,49 +105,6 @@ def _check_extreme_danger(command: str) -> Optional[str]:
     for pattern in _EXTREME_DANGER_RE:
         if pattern.search(command):
             return f"极端危险命令被拦截: 匹配模式 '{pattern.pattern}'"
-    return None
-
-
-def _validate_python_ast(code: str) -> Optional[str]:
-    """AST 验证 Python 代码安全性，返回错误信息或 None"""
-    try:
-        tree = ast.parse(code)
-    except SyntaxError as e:
-        return f"语法错误: {e}"
-
-    # 禁止的 AST 节点类型
-    FORBIDDEN_IMPORTS = {
-        "subprocess", "shutil", "socket", "http", "urllib",
-        "ftplib", "smtplib", "ctypes", "importlib",
-    }
-
-    for node in ast.walk(tree):
-        # import subprocess/shutil/socket 等
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                root_module = alias.name.split(".")[0]
-                if root_module in FORBIDDEN_IMPORTS:
-                    return f"禁止导入模块: '{alias.name}'"
-        # from subprocess import ...
-        if isinstance(node, ast.ImportFrom):
-            if node.module:
-                root_module = node.module.split(".")[0]
-                if root_module in FORBIDDEN_IMPORTS:
-                    return f"禁止从 '{node.module}' 导入"
-        # exec()/eval() 调用
-        if isinstance(node, ast.Call):
-            func_name = None
-            if isinstance(node.func, ast.Name):
-                func_name = node.func.id
-            elif isinstance(node.func, ast.Attribute):
-                func_name = node.func.attr
-            if func_name in ("exec", "eval", "compile", "__import__", "getattr"):
-                return f"禁止调用: '{func_name}()'"
-        # os.system / os.popen 等属性调用
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-            if isinstance(node.func.value, ast.Name):
-                if node.func.value.id in ("os", "sys") and node.func.attr in ("system", "popen", "exec"):
-                    return f"禁止调用: '{node.func.value.id}.{node.func.attr}()'"
     return None
 
 
@@ -449,88 +398,74 @@ def exec_command(command: str, timeout: Optional[int] = None, workdir: Optional[
     category="admin",
 )
 def run_command(command: str, timeout: Optional[int] = None, workdir: Optional[str] = None) -> Dict[str, Any]:
-    """执行白名单管控的命令"""
+    """执行命令 — 真机模式：无白名单限制"""
     if not command or not command.strip():
         return {"error": "命令不能为空", "exit_code": -1}
-    if not _check_command_whitelist(command):
-        base = command.strip().split()[0]
-        return {
-            "error": f"命令 '{base}' 不在白名单中。允许的命令: {', '.join(sorted(COMMAND_WHITELIST)[:15])}...",
-            "exit_code": -1,
-        }
     return exec_command(command, timeout, workdir)
 
 
 @ToolRegistry.register(
-    "run_python",
+    "run_script",
     description=(
-        "执行 Python 代码片段（沙箱模式）。"
-        "在临时目录中执行，禁止导入危险模块（subprocess/shutil/socket 等）和调用 exec/eval。"
-        "使用 AST 静态分析 + 资源限制。返回 stdout/stderr/exit_code。"
+        "执行任意语言脚本（真机模式）。支持 python/bash/node/ruby/perl/sh 等。"
+        "脚本在临时目录中直接执行，无沙箱限制。"
+        "返回 stdout/stderr/exit_code。"
     ),
     params={
-        "code": "要执行的 Python 代码",
+        "code": "要执行的脚本代码",
+        "language": "脚本语言: python(默认), bash, node, ruby, perl, sh",
         "timeout": "可选，超时秒数（默认30）",
     },
-    risk_level="MEDIUM",
+    risk_level="HIGH",
     category="admin",
     core=True,
 )
-def run_python(code: str, timeout: Optional[int] = 30) -> Dict[str, Any]:
-    """在沙箱中执行 Python 代码 — AST 验证 + 资源限制"""
+def run_script(code: str, language: str = "python", timeout: Optional[int] = 30) -> Dict[str, Any]:
+    """执行任意语言脚本 — 真机模式，无沙箱"""
     if not code or not code.strip():
-        return {"error": "Python 代码不能为空"}
+        return {"error": "脚本代码不能为空"}
 
     try:
         timeout = int(timeout) if timeout is not None else 30
     except (ValueError, TypeError):
         timeout = 30
-    timeout = max(5, min(timeout, 120))
+    timeout = max(5, min(timeout, 300))
 
-    # AST 静态分析 — 比字符串匹配更可靠
-    ast_error = _validate_python_ast(code)
-    if ast_error:
-        return {"error": f"安全检查失败: {ast_error}"}
+    # 语言 → 解释器映射
+    interpreters = {
+        "python": [sys.executable],
+        "python3": [sys.executable],
+        "bash": ["/bin/bash"],
+        "sh": ["/bin/sh"],
+        "node": ["node"],
+        "ruby": ["ruby"],
+        "perl": ["perl"],
+    }
+    lang = language.lower().strip()
+    interp = interpreters.get(lang)
+    if not interp:
+        return {"error": f"不支持的语言: {language}。支持: {', '.join(interpreters.keys())}"}
 
-    # 在临时目录中用隔离的子进程执行
-    sandbox_dir = tempfile.mkdtemp(prefix="pysandbox_")
-    script_path = os.path.join(sandbox_dir, "_script.py")
+    # 脚本文件扩展名
+    ext_map = {
+        "python": ".py", "python3": ".py", "bash": ".sh",
+        "sh": ".sh", "node": ".js", "ruby": ".rb", "perl": ".pl",
+    }
+    ext = ext_map.get(lang, ".txt")
 
-    # 生成沙箱包装脚本 — 添加资源限制
-    wrapper_code = f"""\
-import resource
-import sys
-
-# 资源限制：内存 256MB，CPU 时间 {timeout}s
-try:
-    resource.setrlimit(resource.RLIMIT_AS, (256 * 1024 * 1024, 256 * 1024 * 1024))
-    resource.setrlimit(resource.RLIMIT_CPU, ({timeout}, {timeout}))
-except (ValueError, OSError):
-    pass  # 某些系统不支持
-
-# 禁止的内建函数
-_builtins = __builtins__ if isinstance(__builtins__, dict) else __builtins__.__dict__
-_builtins['__import__'] = lambda name, *a, **kw: (_ for _ in ()).throw(
-    ImportError(f"沙箱禁止导入: {{name}}")
-) if name.split('.')[0] in {{'subprocess','shutil','socket','http','urllib','ftplib','smtplib','ctypes','importlib'}} else __import__(name, *a, **kw)
-
-# 执行用户代码
-exec(open("{script_path}").read())
-"""
-
-    wrapper_path = os.path.join(sandbox_dir, "_wrapper.py")
+    # 写入临时脚本文件并直接执行
+    script_dir = tempfile.mkdtemp(prefix="runscript_")
+    script_path = os.path.join(script_dir, f"_script{ext}")
     try:
         with open(script_path, "w", encoding="utf-8") as f:
             f.write(code)
-        with open(wrapper_path, "w", encoding="utf-8") as f:
-            f.write(wrapper_code)
+        os.chmod(script_path, 0o755)
 
         start = time.time()
+        cmd = interp + [script_path]
         result = subprocess.run(
-            [sys.executable, wrapper_path],
-            capture_output=True, text=True, timeout=timeout + 2,
-            cwd=sandbox_dir,
-            env={"PATH": "/usr/bin:/bin", "HOME": sandbox_dir},
+            cmd, capture_output=True, text=True,
+            timeout=timeout + 2, cwd=script_dir,
         )
         elapsed = time.time() - start
 
@@ -546,10 +481,26 @@ exec(open("{script_path}").read())
         return {"error": f"执行失败: {e}", "exit_code": -1}
     finally:
         try:
-            import shutil
-            shutil.rmtree(sandbox_dir, ignore_errors=True)
-        except Exception as e:
-            logger.debug(f"沙箱目录清理失败 (非致命): {e}")
+            shutil.rmtree(script_dir, ignore_errors=True)
+        except Exception:
+            pass
+
+
+# 向后兼容：run_python 映射到 run_script
+@ToolRegistry.register(
+    "run_python",
+    description="向后兼容 — 等同于 run_script(language='python')",
+    params={
+        "code": "要执行的 Python 代码",
+        "timeout": "可选，超时秒数（默认30）",
+    },
+    risk_level="HIGH",
+    category="admin",
+    core=True,
+)
+def run_python(code: str, timeout: Optional[int] = 30) -> Dict[str, Any]:
+    """向后兼容 — 调用 run_script(language='python')"""
+    return run_script(code, language="python", timeout=timeout)
 
 
 @ToolRegistry.register(

@@ -2,7 +2,7 @@
 大模型调用客户端 - 封装 API、异步优先
 """
 from .base_model import BaseModelClient, ChatMessage, ChatResponse, ToolCall
-from typing import AsyncGenerator, Dict, Any, List, Optional
+from typing import AsyncGenerator, Callable, Dict, Any, List, Optional
 import aiohttp
 import asyncio
 import json
@@ -361,6 +361,327 @@ class LargeModelClient(BaseModelClient):
             source="model_api",
         )
         raise final_error
+
+    # ------------------------------------------------------------------
+    # 流式对话生成
+    # ------------------------------------------------------------------
+
+    async def chat_stream(
+        self,
+        messages: List[ChatMessage],
+        tools: Optional[List[Dict]] = None,
+        on_token: Optional[Callable[[str], None]] = None,
+        **kwargs,
+    ) -> ChatResponse:
+        """流式对话生成 — 每收到一个文本 token 调用 on_token 回调
+
+        支持 OpenAI / Anthropic / DashScope 三种流式格式。
+        工具调用通过 SSE delta 累积，最终返回完整 ChatResponse。
+        """
+        # ── 构建 headers ──
+        if self._api_format == "anthropic":
+            headers = {
+                "x-api-key": self.api_key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            }
+        else:
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            }
+
+        api_messages = self._messages_to_api(messages)
+        model = kwargs.get("model", self.model_name)
+        max_tokens = kwargs.get("max_tokens", self.max_tokens)
+        temperature = kwargs.get("temperature", self.temperature)
+        tool_choice = kwargs.get("tool_choice")
+
+        # ── 构建 payload（与 chat() 相同，加 stream: True）──
+        if self._api_format == "anthropic":
+            system_text = ""
+            user_messages = []
+            for m in api_messages:
+                if m.get("role") == "system":
+                    system_text = m.get("content", "")
+                else:
+                    user_messages.append(m)
+            payload: Dict[str, Any] = {
+                "model": model,
+                "max_tokens": max_tokens,
+                "messages": user_messages,
+                "stream": True,
+            }
+            if system_text:
+                payload["system"] = system_text
+            if tools:
+                anthropic_tools = []
+                for t in tools:
+                    func = t.get("function", t)
+                    anthropic_tools.append({
+                        "name": func.get("name", ""),
+                        "description": func.get("description", ""),
+                        "input_schema": func.get("parameters", func.get("input_schema", {})),
+                    })
+                payload["tools"] = anthropic_tools
+            if tool_choice:
+                if isinstance(tool_choice, dict) and "function" in tool_choice:
+                    payload["tool_choice"] = {"type": "tool", "name": tool_choice["function"].get("name", "")}
+                elif tool_choice == "required":
+                    payload["tool_choice"] = {"type": "any"}
+                elif tool_choice == "auto":
+                    payload["tool_choice"] = {"type": "auto"}
+        elif self._api_format == "openai":
+            payload = {
+                "model": model,
+                "messages": api_messages,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+                "stream": True,
+            }
+            if tools:
+                payload["tools"] = tools
+            if tool_choice:
+                payload["tool_choice"] = tool_choice
+        else:  # dashscope
+            payload = {
+                "model": model,
+                "input": {"messages": api_messages},
+                "parameters": {"max_tokens": max_tokens, "temperature": temperature},
+                "stream": True,
+            }
+            if tools:
+                payload["tools"] = tools
+                if tool_choice:
+                    if isinstance(tool_choice, dict) and "function" in tool_choice:
+                        func_name = tool_choice["function"].get("name")
+                        if func_name:
+                            payload["parameters"]["tool_choice"] = {"type": "function", "function": {"name": func_name}}
+                    else:
+                        payload["parameters"]["tool_choice"] = tool_choice
+
+        # ── 发起流式请求并解析 SSE ──
+        max_retries = kwargs.get("max_retries", 2)
+        last_error = None
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                session = await self._get_session()
+                async with session.post(
+                    self.api_url, headers=headers, json=payload,
+                ) as response:
+                    if response.status != 200:
+                        error_data = await response.text()
+                        raise Exception(f"Stream API error {response.status}: {error_data[:200]}")
+
+                    # 按 API 格式解析 SSE 流
+                    if self._api_format == "anthropic":
+                        return await self._parse_anthropic_stream(response, on_token)
+                    elif self._api_format == "dashscope":
+                        return await self._parse_dashscope_stream(response, on_token)
+                    else:
+                        return await self._parse_openai_stream(response, on_token)
+
+            except Exception as e:
+                last_error = e
+                if attempt < max_retries:
+                    await asyncio.sleep(2 ** attempt)
+                    continue
+                break
+
+        raise last_error or Exception("Stream chat failed after all retries")
+
+    async def _parse_openai_stream(
+        self, response: aiohttp.ClientResponse, on_token: Optional[Callable],
+    ) -> ChatResponse:
+        """解析 OpenAI SSE 流"""
+        text_parts: List[str] = []
+        # tool_calls 累积: index -> {id, name, arguments_parts}
+        tc_accum: Dict[int, Dict] = {}
+        finish_reason = "stop"
+
+        async for raw_line in response.content:
+            line = raw_line.decode("utf-8", errors="replace").strip()
+            if not line or line.startswith(":"):
+                continue
+            if line.startswith("data:"):
+                data_str = line[5:].strip()
+                if data_str == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(data_str)
+                except json.JSONDecodeError:
+                    continue
+
+                choices = chunk.get("choices", [])
+                if not choices:
+                    continue
+                delta = choices[0].get("delta", {})
+                fr = choices[0].get("finish_reason")
+                if fr:
+                    finish_reason = "tool_calls" if fr == "tool_calls" else ("length" if fr == "length" else "stop")
+
+                # 文本 token
+                content = delta.get("content")
+                if content:
+                    text_parts.append(content)
+                    if on_token:
+                        on_token(content)
+
+                # 工具调用 delta
+                for tc_delta in delta.get("tool_calls", []):
+                    idx = tc_delta.get("index", 0)
+                    if idx not in tc_accum:
+                        tc_accum[idx] = {"id": "", "name": "", "arguments_parts": []}
+                    if tc_delta.get("id"):
+                        tc_accum[idx]["id"] = tc_delta["id"]
+                    func = tc_delta.get("function", {})
+                    if func.get("name"):
+                        tc_accum[idx]["name"] = func["name"]
+                    if func.get("arguments"):
+                        tc_accum[idx]["arguments_parts"].append(func["arguments"])
+
+        # 构建最终 ChatResponse
+        tool_calls = None
+        if tc_accum:
+            tool_calls = []
+            for idx in sorted(tc_accum.keys()):
+                tc = tc_accum[idx]
+                tool_calls.append(ToolCall(
+                    id=tc["id"],
+                    name=tc["name"],
+                    arguments="".join(tc["arguments_parts"]),
+                ))
+
+        full_text = "".join(text_parts) if text_parts else None
+        return ChatResponse(
+            message=ChatMessage(role="assistant", content=full_text, tool_calls=tool_calls),
+            finish_reason=finish_reason,
+        )
+
+    async def _parse_anthropic_stream(
+        self, response: aiohttp.ClientResponse, on_token: Optional[Callable],
+    ) -> ChatResponse:
+        """解析 Anthropic SSE 流"""
+        text_parts: List[str] = []
+        tool_calls_list: List[ToolCall] = []
+        current_tool: Optional[Dict] = None
+        finish_reason = "stop"
+
+        async for raw_line in response.content:
+            line = raw_line.decode("utf-8", errors="replace").strip()
+            if not line or line.startswith(":"):
+                continue
+            if line.startswith("event:"):
+                event_type = line[6:].strip()
+                continue
+            if line.startswith("data:"):
+                data_str = line[5:].strip()
+                try:
+                    data = json.loads(data_str)
+                except json.JSONDecodeError:
+                    continue
+
+                event_type = data.get("type", "")
+
+                if event_type == "content_block_start":
+                    block = data.get("content_block", {})
+                    if block.get("type") == "tool_use":
+                        current_tool = {"id": block.get("id", ""), "name": block.get("name", ""), "input_parts": []}
+                elif event_type == "content_block_delta":
+                    delta = data.get("delta", {})
+                    if delta.get("type") == "text_delta":
+                        text = delta.get("text", "")
+                        if text:
+                            text_parts.append(text)
+                            if on_token:
+                                on_token(text)
+                    elif delta.get("type") == "input_json_delta":
+                        if current_tool is not None:
+                            current_tool["input_parts"].append(delta.get("partial_json", ""))
+                elif event_type == "content_block_stop":
+                    if current_tool is not None:
+                        full_input = "".join(current_tool["input_parts"])
+                        try:
+                            parsed = json.loads(full_input) if full_input else {}
+                        except json.JSONDecodeError:
+                            parsed = {}
+                        tool_calls_list.append(ToolCall(
+                            id=current_tool["id"],
+                            name=current_tool["name"],
+                            arguments=json.dumps(parsed, ensure_ascii=False),
+                        ))
+                        current_tool = None
+                elif event_type == "message_delta":
+                    stop = data.get("delta", {}).get("stop_reason", "")
+                    if stop == "tool_use":
+                        finish_reason = "tool_calls"
+                    elif stop == "max_tokens":
+                        finish_reason = "length"
+
+        full_text = "".join(text_parts) if text_parts else None
+        return ChatResponse(
+            message=ChatMessage(
+                role="assistant", content=full_text,
+                tool_calls=tool_calls_list if tool_calls_list else None,
+            ),
+            finish_reason=finish_reason,
+        )
+
+    async def _parse_dashscope_stream(
+        self, response: aiohttp.ClientResponse, on_token: Optional[Callable],
+    ) -> ChatResponse:
+        """解析 DashScope SSE 流"""
+        text_parts: List[str] = []
+
+        async for raw_line in response.content:
+            line = raw_line.decode("utf-8", errors="replace").strip()
+            if not line or line.startswith(":"):
+                continue
+            if line.startswith("data:"):
+                data_str = line[5:].strip()
+                if not data_str:
+                    continue
+                try:
+                    data = json.loads(data_str)
+                except json.JSONDecodeError:
+                    continue
+
+                output = data.get("output", {})
+                text = output.get("text", "")
+                if text:
+                    # DashScope 每次发送累积文本，取增量
+                    if len(text) > len("".join(text_parts)):
+                        delta = text[len("".join(text_parts)):]
+                        text_parts.append(delta)
+                        if on_token and delta:
+                            on_token(delta)
+
+                # 检查是否有工具调用
+                choices = output.get("choices", [])
+                if choices:
+                    msg = choices[0].get("message", {})
+                    if msg.get("tool_calls"):
+                        # DashScope 非流式格式的工具调用（罕见于流式模式）
+                        full_text = "".join(text_parts) if text_parts else None
+                        tc_list = []
+                        for tc in msg["tool_calls"]:
+                            func = tc.get("function", {})
+                            tc_list.append(ToolCall(
+                                id=tc.get("id", ""),
+                                name=func.get("name", ""),
+                                arguments=func.get("arguments", "{}"),
+                            ))
+                        return ChatResponse(
+                            message=ChatMessage(role="assistant", content=full_text, tool_calls=tc_list),
+                            finish_reason="tool_calls",
+                        )
+
+        full_text = "".join(text_parts) if text_parts else None
+        return ChatResponse(
+            message=ChatMessage(role="assistant", content=full_text),
+            finish_reason="stop",
+        )
 
     # ------------------------------------------------------------------
     # 消息格式转换

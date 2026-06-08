@@ -21,7 +21,6 @@ from api.errors import AppError, ErrorCode
 from sse_starlette.sse import EventSourceResponse
 
 from modules.thinking.multi_model_orchestrator import MultiModelOrchestrator
-from modules.thinking.probes import get_probe_registry
 from utils.logger import setup_logger
 
 router = APIRouter(prefix="/stream", tags=["流式思考"])
@@ -117,7 +116,7 @@ class StreamThinkingSystem:
         self.sessions: Dict[str, Dict[str, Any]] = {}
         self._running = False
         self._lock = asyncio.Lock()
-        self._orchestrator = MultiModelOrchestrator(probe_registry=get_probe_registry())
+        self._orchestrator = MultiModelOrchestrator()
 
     async def create_session(self) -> str:
         session_id = str(uuid.uuid4())
@@ -173,6 +172,10 @@ class StreamThinkingSystem:
             if session_id:
                 if session_id in self.sessions:
                     self.sessions[session_id]["running"] = False
+                    # 取消正在运行的调度任务
+                    task = self.sessions[session_id].get("scheduler_task")
+                    if task and not task.done():
+                        task.cancel()
             else:
                 self._running = False
 
@@ -214,7 +217,7 @@ class StreamThinkingSystem:
             return bool(session and session.get("processing"))
 
     def _format_scheduler_event(self, event: Dict[str, Any]) -> Dict[str, Any]:
-        event_type = event.get("type", "event")
+        event_type = event.get("type") or event.get("event_type", "event")
         action = event.get("action", "")
         target = event.get("target", "")
         source = event.get("source", "")
@@ -276,6 +279,7 @@ class StreamThinkingSystem:
         elif event_type == "module":
             content = f"模块 {target} {action} {'成功' if success else '失败'}"
         elif event_type == "security":
+            payload = event.get("payload", {})
             detail = payload.get("detail", "")
             duration = payload.get("duration_ms", 0)
             duration_str = f" ({duration}ms)" if duration else ""
@@ -283,6 +287,8 @@ class StreamThinkingSystem:
                 content = f"[安全审查] {target} {action}{duration_str} — {detail}"
             else:
                 content = f"[安全审查] {target} {action}{duration_str}"
+            if "等待用户审批" in action:
+                logger.info(f"[API] 安全审批事件格式化: target={target}, request_id={payload.get('request_id', '')}")
         elif event_type == "scheduler":
             content = f"调度 {action}"
         else:
@@ -385,6 +391,8 @@ class StreamThinkingSystem:
                     session_id,
                 )
             )
+            # 存储任务引用以便 stop() 可以取消
+            self.sessions[session_id]["scheduler_task"] = scheduler_task
 
             last_progress_emit = 0.0
             while True:
@@ -462,7 +470,44 @@ class StreamThinkingSystem:
                 except asyncio.TimeoutError:
                     continue
 
-            result = await scheduler_task
+            try:
+                result = await scheduler_task
+            except asyncio.CancelledError:
+                # 用户通过 stop 取消了任务 — 读取已保存的部分输出
+                partial_response = ""
+                try:
+                    from modules.thinking.core.model_runner import _runner_managers, _runner_managers_lock
+                    with _runner_managers_lock:
+                        rm = _runner_managers.get(session_id)
+                    if rm and rm.blackboard:
+                        partial_response = rm.blackboard.final_response or ""
+                except Exception:
+                    pass
+
+                if partial_response:
+                    await self._emit(
+                        session_id,
+                        _build_event(
+                            session_id=session_id,
+                            msg_type="message",
+                            event="assistant_message",
+                            content=partial_response,
+                            role="large",
+                        ),
+                        callback,
+                    )
+                await self._emit(
+                    session_id,
+                    _build_event(
+                        session_id=session_id,
+                        msg_type="done",
+                        event="stopped",
+                        content="思考已停止（已保存部分输出）",
+                        role="system",
+                    ),
+                    callback,
+                )
+                return "stopped"
 
             module_results = result.get("module_results", [])
             emitted_thinking = streamed_stage_count > 0
@@ -781,7 +826,7 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
                         role="system",
                     ),
                 )
-                break
+                # 不 break — 保持 WebSocket 连接，允许后续发送新消息
 
             elif msg_type == "ping":
                 await connection_manager.send_json(
@@ -805,6 +850,25 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
                         ToolSecurityGate.resolve_review(request_id, approved, reason)
                     except Exception as e:
                         logger.warning(f"[安全审查] 响应处理失败: {e}")
+
+            elif msg_type == "interactive_response":
+                request_id = msg_data.get("request_id", "")
+                if request_id:
+                    try:
+                        from modules.thinking.core.model_runner import _runner_managers, _runner_managers_lock
+                        resolved = False
+                        with _runner_managers_lock:
+                            managers = list(_runner_managers.values())
+                        for mgr in managers:
+                            response_data = {k: v for k, v in msg_data.items() if k != "type"}
+                            if mgr.resolve_user_response(request_id, response_data):
+                                resolved = True
+                                logger.info(f"[交互响应] request_id={request_id} 已路由")
+                                break
+                        if not resolved:
+                            logger.warning(f"[交互响应] 未找到等待中的 request_id={request_id}")
+                    except Exception as e:
+                        logger.warning(f"[交互响应] 处理失败: {e}", exc_info=True)
             else:
                 await connection_manager.send_json(
                     session_id,

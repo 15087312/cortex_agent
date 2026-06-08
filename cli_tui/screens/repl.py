@@ -100,6 +100,16 @@ class REPL(Screen):
         border: heavy $warning;
         background: $warning 10%;
     }
+
+    #approval-select {
+        display: none;
+        dock: bottom;
+        margin: 0 1;
+    }
+
+    #approval-select.visible {
+        display: block;
+    }
     """
 
     BINDINGS = [
@@ -141,6 +151,21 @@ class REPL(Screen):
 
         with Vertical(id="status-container"):
             yield StatusLine(self.state)
+
+        # 审批选择器 — 默认隐藏，安全事件到达时显示
+        self._approval_widget = ApprovalSelect(
+            tool_name="",
+            tool_detail="",
+            options=[
+                {"label": "Yes, approve", "value": "yes"},
+                {"label": "No, reject", "value": "no"},
+                {"label": "Custom reason (Tab)", "value": "custom"},
+            ],
+            on_confirm=self._on_approval_confirm,
+            on_cancel=self._on_approval_cancel,
+            id="approval-select",
+        )
+        yield self._approval_widget
 
         with Vertical(id="input-area"):
             suggestions = CommandSuggestions()
@@ -236,8 +261,12 @@ class REPL(Screen):
         parsed = self.ws.parse_event(event)
         if parsed and ml:
             if parsed["kind"] == "dialog":
-                self.state.add_dialog_entry(parsed)
-                ml.add_dialog_entry(parsed)
+                # 流式增量：直接追加到消息列表（不走去重）
+                if parsed.get("entry_type") == "streaming_delta":
+                    ml.write(parsed.get("content", ""))
+                else:
+                    self.state.add_dialog_entry(parsed)
+                    ml.add_dialog_entry(parsed)
             elif parsed["kind"] == "tool":
                 self.state.add_tool_call(parsed)
             elif parsed["kind"] == "reflection":
@@ -247,40 +276,28 @@ class REPL(Screen):
                 tool = parsed.get('tool', '?')
                 caller = parsed.get('caller', '?')
                 detail = parsed.get('detail', '')
+                request_id = parsed.get('request_id', '')
                 self.state.thinking_hint = "🔒 等待安全审批"
+                logger.info(f"[TUI] 安全审批事件: tool={tool}, request_id={request_id}")
 
-                # 移除已有的审批组件（如果有）
-                for existing in self.query("ApprovalSelect"):
-                    existing.remove()
-
-                # 创建审批选择器
-                def on_confirm(value: str, custom_text: str):
-                    self._resolve_security_review(
-                        approved=(value == "yes"),
-                        reason=custom_text if value == "custom" else ("用户拒绝" if value == "no" else "")
-                    )
-
-                def on_cancel():
-                    self._resolve_security_review(approved=False, reason="用户取消")
-
-                approval = ApprovalSelect(
-                    tool_name=tool,
-                    tool_detail=f"调用者: {caller} | {detail[:100]}",
-                    options=[
-                        {"label": "Yes, approve", "value": "yes"},
-                        {"label": "No, reject", "value": "no"},
-                        {"label": "Custom reason (Tab)", "value": "custom"},
-                    ],
-                    on_confirm=on_confirm,
-                    on_cancel=on_cancel,
-                )
-                # 插入到 input-area 上方
+                # 重建审批组件为标准安全审批选项
                 try:
-                    input_area = self.query_one("#input-area")
-                    input_area.mount(approval, before=0)
-                    approval.focus()
-                except Exception:
-                    pass
+                    self._approval_widget.rebuild_options(
+                        new_options=[
+                            {"label": "Yes, approve", "value": "yes"},
+                            {"label": "No, reject", "value": "no"},
+                            {"label": "Custom reason (Tab)", "value": "custom"},
+                        ],
+                        new_title=f"安全审批 — {tool}",
+                        new_detail=f"调用者: {caller} | {detail[:100]}",
+                    )
+                    self._approval_widget._on_confirm = self._on_approval_confirm
+                    self._approval_widget._on_cancel = self._on_approval_cancel
+                    self._approval_widget.add_class("visible")
+                    self._approval_widget.focus_index = 0
+                    self._approval_widget.focus()
+                except Exception as e:
+                    logger.error(f"[TUI] 安全审批组件显示失败: {e}", exc_info=True)
                 return
             elif parsed["kind"] == "security":
                 action = parsed.get("action", "")
@@ -291,6 +308,63 @@ class REPL(Screen):
                 success = parsed.get("success", True)
                 icon = "✅" if success else "❌"
                 ml.write(f"  {icon} [dim]安全审查: {tool} {action}{duration_str} — {detail}[/dim]")
+
+            elif parsed["kind"] == "mode_change_request":
+                # 大模型请求切换执行模式
+                request_id = parsed["request_id"]
+                reason = parsed.get("reason", "")
+                suggested = parsed.get("suggested_mode", "edit")
+                _MODE_LABELS = {"plan": "📋 Plan", "edit": "✏️ Edit", "yolo": "🚀 YOLO", "control": "🎛️ Control"}
+                ml.write(
+                    f"\n[bold cyan]🔄 模式切换请求[/bold cyan]\n"
+                    f"  原因: {reason}\n"
+                    f"  建议: {_MODE_LABELS.get(suggested, suggested)}"
+                )
+                # 重建审批选择器选项
+                try:
+                    self._approval_widget.rebuild_options(
+                        new_options=[
+                            {"label": f"Yes, switch to {suggested}", "value": f"approve:{suggested}"},
+                            {"label": "Switch to edit", "value": "approve:edit"},
+                            {"label": "Switch to yolo", "value": "approve:yolo"},
+                            {"label": "No, stay in current mode", "value": "reject"},
+                        ],
+                        new_title="模式切换",
+                        new_detail=f"建议切换到 {suggested} 模式: {reason[:80]}",
+                    )
+                    self._approval_widget._on_confirm = lambda v, t: self._respond_mode_change(request_id, v, t)
+                    self._approval_widget._on_cancel = lambda: self._respond_mode_change(request_id, "reject", "")
+                    self._approval_widget.add_class("visible")
+                    self._approval_widget.focus_index = 0
+                    self._approval_widget.focus()
+                except Exception as e:
+                    logger.error(f"[TUI] 模式切换组件显示失败: {e}", exc_info=True)
+
+            elif parsed["kind"] == "user_intent_request":
+                # 大模型询问用户意图
+                request_id = parsed["request_id"]
+                question = parsed.get("question", "")
+                options = parsed.get("options", [])
+                context = parsed.get("context", "")
+                if context:
+                    ml.write(f"[dim]{context}[/dim]")
+                ml.write(f"\n[bold cyan]❓ {question}[/bold cyan]")
+                # 重建审批选择器选项
+                try:
+                    self._approval_widget.rebuild_options(
+                        new_options=[
+                            {"label": opt, "value": opt} for opt in options[:5]
+                        ] + [{"label": "Custom answer (Tab)", "value": "custom"}],
+                        new_title="用户意图",
+                        new_detail=question[:100],
+                    )
+                    self._approval_widget._on_confirm = lambda v, t: self._respond_user_intent(request_id, v, t)
+                    self._approval_widget._on_cancel = lambda: self._respond_user_intent(request_id, "", "用户取消")
+                    self._approval_widget.add_class("visible")
+                    self._approval_widget.focus_index = 0
+                    self._approval_widget.focus()
+                except Exception as e:
+                    logger.error(f"[TUI] 用户意图组件显示失败: {e}", exc_info=True)
 
         if msg_type == "message" and event_name == "assistant_message":
             if content:
@@ -401,9 +475,8 @@ class REPL(Screen):
         self.state.pending_security_review = None
         self.state.thinking_hint = ""
 
-        # 移除审批组件
-        for w in self.query("ApprovalSelect"):
-            w.remove()
+        # 隐藏审批组件
+        self._approval_widget.remove_class("visible")
 
         # 恢复输入框焦点
         try:
@@ -432,6 +505,55 @@ class REPL(Screen):
     def action_reject_security(self):
         """Ctrl+D：拒绝当前待审批的安全请求"""
         self._resolve_security_review(approved=False, reason="用户快捷键拒绝")
+
+    def _on_approval_confirm(self, value: str, custom_text: str):
+        """ApprovalSelect 确认回调"""
+        self._resolve_security_review(
+            approved=(value == "yes"),
+            reason=custom_text if value == "custom" else ("用户拒绝" if value == "no" else "")
+        )
+
+    def _on_approval_cancel(self):
+        """ApprovalSelect 取消回调"""
+        self._resolve_security_review(approved=False, reason="用户取消")
+
+    def _respond_mode_change(self, request_id: str, value: str, custom_text: str):
+        """响应模式切换请求"""
+        self._approval_widget.remove_class("visible")
+        ml = self._ml
+        if value.startswith("approve:"):
+            mode = value.split(":", 1)[1]
+            if ml:
+                ml.write(f"[bold green]✅ 同意切换到 {mode} 模式[/bold green]")
+            self._set_execution_mode(mode)
+            self._send_interactive_response(request_id, {"approved": True, "mode": mode})
+        else:
+            reason = custom_text or "用户拒绝"
+            if ml:
+                ml.write(f"[bold red]❌ 拒绝切换模式: {reason}[/bold red]")
+            self._send_interactive_response(request_id, {"approved": False, "reason": reason})
+        try:
+            self.query_one(PromptInput).focus()
+        except Exception:
+            pass
+
+    def _respond_user_intent(self, request_id: str, value: str, custom_text: str):
+        """响应用户意图询问"""
+        self._approval_widget.remove_class("visible")
+        answer = custom_text if value == "custom" else value
+        ml = self._ml
+        if ml:
+            ml.write(f"[bold green]💬 用户回答: {answer}[/bold green]")
+        self._send_interactive_response(request_id, {"answer": answer})
+        try:
+            self.query_one(PromptInput).focus()
+        except Exception:
+            pass
+
+    def _send_interactive_response(self, request_id: str, response: dict):
+        """发送交互式工具响应到后端"""
+        if self.ws:
+            self.run_worker(self.ws.send_interactive_response(request_id, response))
 
     def action_cancel_and_reset(self):
         """Ctrl+X：立即取消当前处理，重置连接，提示用户重新输入"""
@@ -468,7 +590,39 @@ class REPL(Screen):
     # ── 输入处理 ──
 
     def on_key(self, event):
-        """拦截键盘事件 — 建议框可见时优先处理导航"""
+        """拦截键盘事件 — 审批组件和建议框可见时优先处理"""
+        # 审批组件优先级最高
+        if self._approval_widget and "visible" in self._approval_widget.classes:
+            if event.key == "up":
+                self._approval_widget.action_previous()
+                event.prevent_default()
+                return
+            elif event.key == "down":
+                self._approval_widget.action_next()
+                event.prevent_default()
+                return
+            elif event.key == "enter":
+                self._approval_widget.action_confirm()
+                event.prevent_default()
+                return
+            elif event.key == "escape":
+                self._approval_widget.action_cancel()
+                event.prevent_default()
+                return
+            elif event.key == "tab":
+                self._approval_widget.action_toggle_input()
+                event.prevent_default()
+                return
+            elif event.key in ("1", "2", "3", "4", "5"):
+                idx = int(event.key) - 1
+                if 0 <= idx < len(self._approval_widget.options):
+                    self._approval_widget.focus_index = idx
+                    value = self._approval_widget.options[idx]["value"]
+                    if self._approval_widget._on_confirm:
+                        self._approval_widget._on_confirm(value, "")
+                event.prevent_default()
+                return
+
         if not self._suggestions or self._suggestions.styles.display == "none":
             return
         if event.key == "up":
@@ -502,6 +656,14 @@ class REPL(Screen):
     def on_input_submitted(self, event: Input.Submitted):
         text = event.value.strip()
         if not text:
+            return
+
+        # 审批组件可见时，文本输入作为自定义回答路由到审批组件
+        if self._approval_widget and "visible" in self._approval_widget.classes:
+            input_widget = self.query_one(PromptInput)
+            input_widget.value = ""
+            if self._approval_widget._on_confirm:
+                self._approval_widget._on_confirm("custom", text)
             return
 
         # 关闭命令建议
@@ -695,12 +857,12 @@ class REPL(Screen):
         elif cmd.action == "context":
             self._show_context()
         elif cmd.action == "stop":
-            self._stop_thinking()
+            self._pause_thinking()
         elif cmd.action == "mode":
             # 支持 /mode on/off (陪伴模式) 或 /mode plan/edit/yolo (执行模式)
             parts = text.split(" ", 1)
             toggle_value = parts[1].strip().lower() if len(parts) > 1 else None
-            if toggle_value in ("plan", "edit", "yolo"):
+            if toggle_value in ("plan", "edit", "yolo", "control"):
                 self._set_execution_mode(toggle_value)
             else:
                 self._toggle_companion_mode(toggle_value)
@@ -917,7 +1079,8 @@ class REPL(Screen):
         }
 
         self.notify("正在暂停思考...", timeout=1)
-        success = await self.api.stop_thinking(session_id=self.state.session_id)
+        # 通过 WebSocket 发送 stop 信号（HTTP /stream/stop 不存在）
+        success = await self.ws.send_stop()
         if success:
             self.state.processing = False
             self.state.thinking_hint = ""
@@ -967,14 +1130,12 @@ class REPL(Screen):
 
     def _sync_execution_mode(self):
         """从后端同步执行模式到本地状态"""
-        # 先用本地 settings 初始化（TUI 和后端在同一进程时直接可用）
         try:
             from config.settings import settings
             self.state.execution_mode = settings.effective_execution_mode
             self.state.companion_mode = settings.COMPANION_MODE
         except Exception:
             pass
-        # 异步从后端获取最新值
         self._fetch_execution_mode()
 
     @work
@@ -986,7 +1147,6 @@ class REPL(Screen):
                 self.state.execution_mode = config["EXECUTION_MODE"]
             if "COMPANION_MODE" in config:
                 self.state.companion_mode = config["COMPANION_MODE"]
-            # 陪伴模式下强制 plan
             if self.state.companion_mode:
                 self.state.execution_mode = "plan"
 
@@ -996,23 +1156,23 @@ class REPL(Screen):
             self.notify("陪伴模式下执行模式固定为 plan，无法切换", severity="warning", timeout=3)
             return
 
-        _MODE_CYCLE = ["plan", "edit", "yolo"]
+        _MODE_CYCLE = ["plan", "edit", "yolo", "control"]
         if mode not in _MODE_CYCLE:
-            self.notify(f"未知模式: {mode}，可选: plan/edit/yolo", severity="warning", timeout=3)
+            self.notify(f"未知模式: {mode}，可选: plan/edit/yolo/control", severity="warning", timeout=3)
             return
 
         self.state.execution_mode = mode
         self.api.update_config("EXECUTION_MODE", mode)
-        _LABELS = {"plan": "📋 Plan (只读)", "edit": "✏️ Edit (确认)", "yolo": "🚀 YOLO (宽松)"}
+        _LABELS = {"plan": "📋 Plan (只读)", "edit": "✏️ Edit (确认)", "yolo": "🚀 YOLO (宽松)", "control": "🎛️ Control (审批)"}
         self.notify(f"✓ 执行模式: {_LABELS[mode]}", severity="information", timeout=2)
 
     def action_cycle_execution_mode(self):
-        """Shift+Tab 循环切换执行模式: plan → edit → yolo → plan"""
+        """Shift+Tab 循环切换执行模式: plan → edit → yolo → control → plan"""
         if self.state.companion_mode:
             self.notify("陪伴模式下执行模式固定为 plan", severity="warning", timeout=2)
             return
 
-        _MODE_CYCLE = ["plan", "edit", "yolo"]
+        _MODE_CYCLE = ["plan", "edit", "yolo", "control"]
         current = self.state.execution_mode
         idx = _MODE_CYCLE.index(current) if current in _MODE_CYCLE else 1
         next_mode = _MODE_CYCLE[(idx + 1) % len(_MODE_CYCLE)]

@@ -186,6 +186,68 @@ QUERY_TOOL_DETAILS_TOOL = {
 }
 
 
+REQUEST_MODE_CHANGE_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "request_mode_change",
+        "description": (
+            "请求用户切换执行模式。当你在 plan 模式下完成了分析和规划，"
+            "需要实际执行操作（写文件、运行命令等）时，调用此工具请求用户解除 plan 模式。"
+            "用户可以选择同意并指定目标模式（edit/yolo/control），或拒绝并给出理由。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "reason": {
+                    "type": "string",
+                    "description": "请求切换模式的原因，例如「已完成架构设计，需要 edit 模式来实现代码」",
+                },
+                "suggested_mode": {
+                    "type": "string",
+                    "description": "建议的目标模式",
+                    "enum": ["edit", "yolo", "control"],
+                },
+            },
+            "required": ["reason", "suggested_mode"],
+        },
+    },
+}
+
+
+ASK_USER_INTENT_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "ask_user_intent",
+        "description": (
+            "向用户提问并获取选择。当你不确定用户的具体意图、偏好或选择时使用。"
+            "提供你猜测的几个选项让用户选择，用户也可以输入自定义答案。"
+            "例如：「你想让我重构哪个模块？」附带选项 [认证模块, 数据库层, API路由]"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "question": {
+                    "type": "string",
+                    "description": "要问用户的问题",
+                },
+                "options": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "猜测的选项列表（2-5个），用户可以选择其中一个或输入自定义答案",
+                    "minItems": 2,
+                    "maxItems": 5,
+                },
+                "context": {
+                    "type": "string",
+                    "description": "可选。为什么需要问这个问题的背景说明",
+                },
+            },
+            "required": ["question", "options"],
+        },
+    },
+}
+
+
 @dataclass
 class ThinkingTaskContext:
     """一次连续思考循环的任务契约。"""

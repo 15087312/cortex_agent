@@ -83,6 +83,10 @@ class ApprovalSelect(Widget):
         ("enter", "confirm", "确认"),
         ("escape", "cancel", "取消"),
         ("tab", "toggle_input", "自定义"),
+        # 透传 Screen 级快捷键 — 避免焦点抢占
+        ("ctrl+a", "approve", "批准"),
+        ("ctrl+d", "reject", "拒绝"),
+        ("shift+tab", "cycle_mode", "切换模式"),
     ]
 
     focus_index: reactive[int] = reactive(0)
@@ -107,26 +111,67 @@ class ApprovalSelect(Widget):
         self._on_confirm = on_confirm
         self._on_cancel = on_cancel
         self._option_widgets: List[ApprovalOption] = []
+        self._title_widget: Optional[Static] = None
+        self._detail_widget: Optional[Static] = None
+        self._hint_widget: Optional[Static] = None
 
     def compose(self) -> ComposeResult:
-        yield Static(
+        self._title_widget = Static(
             f"🔒 [bold]安全审批[/bold] — [red]{self.tool_name}[/red]",
             classes="approval-title",
         )
-        if self.tool_detail:
-            yield Static(f"  {self.tool_detail}", classes="approval-detail")
+        yield self._title_widget
+        self._detail_widget = Static(
+            f"  {self.tool_detail}" if self.tool_detail else "",
+            classes="approval-detail",
+        )
+        yield self._detail_widget
 
         for i, opt in enumerate(self.options):
             w = ApprovalOption(opt["label"], opt["value"], i, classes="approval-option")
             self._option_widgets.append(w)
             yield w
 
-        yield Static(
+        self._hint_widget = Static(
             "  ↑↓ 选择 · Enter 确认 · Tab 自定义 · Esc 取消",
             classes="approval-hint",
         )
+        yield self._hint_widget
 
     def on_mount(self):
+        self._update_focus()
+
+    def rebuild_options(self, new_options: List[dict], new_title: str = "", new_detail: str = ""):
+        """动态重建选项列表（安全审批 → 模式切换 → 用户意图 复用同一组件）"""
+        self.options = new_options
+        self.focus_index = 0
+        self.input_mode = False
+
+        # 更新标题和详情
+        if new_title:
+            self.tool_name = new_title
+        if new_detail:
+            self.tool_detail = new_detail
+
+        # 移除已有选项 widget 和自定义输入
+        for w in list(self._option_widgets):
+            w.remove()
+        self._option_widgets.clear()
+        for w in self.query(".approval-input"):
+            w.remove()
+
+        # 创建新选项 widget 并挂载到 hint 之前
+        for i, opt in enumerate(new_options):
+            w = ApprovalOption(opt["label"], opt["value"], i, classes="approval-option")
+            self._option_widgets.append(w)
+            self.mount(w, before=self._hint_widget)
+
+        # 更新标题和详情文本
+        if self._title_widget:
+            self._title_widget.update(f"🔒 [bold]{self.tool_name}[/bold]")
+        if self._detail_widget:
+            self._detail_widget.update(f"  {self.tool_detail}" if self.tool_detail else "")
+
         self._update_focus()
 
     def watch_focus_index(self, old: int, new: int):

@@ -1,0 +1,87 @@
+body {
+    margin: 0;
+    padding: 0;
+    font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.container {
+    max-width: 680px;
+    width: 90%;
+    margin: 40px auto;
+    padding: 40px;
+    background: #ffffff;
+    border-radius: 20px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
+}
+
+h1 {
+    color: #333;
+    font-size: 2rem;
+    margin-top: 0;
+    margin-bottom: 8px;
+    text-align: center;
+}
+
+.subtitle {
+    text-align: center;
+    color: #888;
+    font-size: 0.95rem;
+    margin-bottom: 28px;
+}
+
+h2 {
+    color: #555;
+    font-size: 1.3rem;
+    border-left: 4px solid #667eea;
+    padding-left: 12px;
+    margin-top: 28px;
+}
+
+p {
+    color: #555;
+    line-height: 1.8;
+    margin: 12px 0;
+}
+
+ul {
+    padding-left: 24px;
+}
+
+ul li {
+    color: #555;
+    line-height: 1.8;
+    margin-bottom: 6px;
+}
+
+ul li::marker {
+    color: #667eea;
+}
+
+.highlight {
+    background: #f0f4ff;
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin: 20px 0;
+    border-left: 4px solid #764ba2;
+}
+
+.highlight code {
+    background: #e8ecf4;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.9rem;
+}
+
+footer {
+    text-align: center;
+    margin-top: 32px;
+    padding-top: 20px;
+    border-top: 1px solid #eee;
+    color: #aaa;
+    font-size: 0.85rem;
+}

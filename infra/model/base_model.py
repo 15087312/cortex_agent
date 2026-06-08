@@ -3,7 +3,7 @@
 """
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, AsyncGenerator, List
+from typing import Any, Dict, Optional, AsyncGenerator, List, Callable
 import asyncio
 import aiohttp
 import json
@@ -106,6 +106,32 @@ class BaseModelClient(ABC):
         return ChatResponse(
             message=ChatMessage(role="assistant", content=text),
         )
+
+    async def chat_stream(
+        self,
+        messages: List[ChatMessage],
+        tools: Optional[List[Dict]] = None,
+        on_token: Optional[Callable[[str], None]] = None,
+        **kwargs,
+    ) -> ChatResponse:
+        """流式对话生成 — 每收到一个 token 调用 on_token 回调
+
+        默认实现回退到非流式 chat()，收到完整结果后一次性调用 on_token。
+        子类应覆盖此方法以支持真正的 token 级流式输出。
+
+        Args:
+            messages: 消息列表
+            tools: API 工具描述列表
+            on_token: 每个文本 token 到达时的回调 (chunk: str) -> None
+            **kwargs: 额外参数
+
+        Returns:
+            ChatResponse — 完整响应（含 tool_calls）
+        """
+        response = await self.chat(messages, tools=tools, **kwargs)
+        if on_token and response.message.content:
+            on_token(response.message.content)
+        return response
 
     @abstractmethod
     async def health_check(self) -> bool:

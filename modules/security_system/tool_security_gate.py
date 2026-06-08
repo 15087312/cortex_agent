@@ -40,23 +40,27 @@ def _emit_security_event(
     detail: str = "",
     duration_ms: int = 0,
     request_id: str = "",
+    extra_fields: Optional[Dict[str, Any]] = None,
 ):
     """推送安全事件到 stream"""
     if not _security_event_callback:
         return
     try:
+        payload = {
+            "caller": caller_model_id,
+            "detail": detail,
+            "duration_ms": duration_ms,
+            "request_id": request_id,
+        }
+        if extra_fields:
+            payload.update(extra_fields)
         _security_event_callback({
             "event_type": "security",
             "source": "tool_security_gate",
             "target": tool_name,
             "action": event_type,
             "success": success,
-            "payload": {
-                "caller": caller_model_id,
-                "detail": detail,
-                "duration_ms": duration_ms,
-                "request_id": request_id,
-            },
+            "payload": payload,
         })
     except Exception as e:
         logger.debug(f"安全事件回调失败 (非致命): {e}")
@@ -64,7 +68,7 @@ def _emit_security_event(
 
 # HIGH 风险工具 — 需要审批
 HIGH_RISK_TOOLS = {
-    "exec_command", "kill_process", "git_push",
+    "exec_command", "run_script", "kill_process", "git_push",
     "external_api_call", "write_runtime_config",
     "delete_file",
 }
@@ -77,44 +81,60 @@ MEDIUM_RISK_TOOLS = {
     "install_dependency", "debug_code",
     "run_pytest",
     "create_plugin", "uninstall_plugin",
+    "open_app",  # 打开应用程序（可能启动恶意软件，但受限于系统权限）
 }
 
 # 写操作工具 — plan 模式禁止，edit 模式需用户确认
 _MUTATION_TOOLS = {
     "write_file", "file_edit", "append_file", "delete_file",
-    "exec_command", "run_command", "run_python",
+    "exec_command", "run_command", "run_python", "run_script",
     "git_add", "git_commit", "git_push",
     "install_dependency", "create_plugin", "uninstall_plugin",
     "kill_process", "write_runtime_config", "external_api_call",
+    "open_app",  # 修改系统状态（启动应用）
 }
-
-# 代码安全检查 — 禁止的危险模式
-_FORBIDDEN_CODE_PATTERNS = (
-    "__import__('os')", "__import__('subprocess')",
-    "os.system(", "os.popen(", "subprocess.",
-    "shutil.rmtree(", "shutil.rmtree (",
-    "shutil.move(", "shutil.copytree(",
-    "eval(", "exec(",
-    "open('/etc/", "open('/proc/",
-    "socket.socket(", "urllib.request.urlopen(",
-    "os.remove(", "os.unlink(",
-    "os.rmdir(", "os.rename(",
-    "pathlib.Path(",
-    ".unlink(", ".rmdir(",
-    "ctypes.", "importlib.import_module(",
-)
 
 # 用户审查超时（秒）
 USER_REVIEW_TIMEOUT = 120
 
+# ── 绝对危害性检测 — 无论何种模式都硬阻断 ──
+import re as _re
+_EXTREME_DANGER_PATTERNS_RAW = [
+    r'rm\s+-[rRf]*[rR][rRf]*f\s+/',              # rm -rf / (any target under /)
+    r'rm\s+-[rRf]*[rR][rRf]*f\s+~',              # rm -rf ~
+    r'rm\s+-[rRf]*[rR][rRf]*f\s+\.\s*$',         # rm -rf .
+    r':\(\)\s*\{.*\|.*\}',                         # fork bomb :(){ :|:& };:
+    r'\bmkfs\.',                                   # mkfs
+    r'\bdd\s+if=/dev/',                            # dd if=/dev/zero etc
+    r'>\s*/dev/sd',                                # overwrite disk
+    r'nc\s+-l',                                    # reverse shell listener
+    r'ncat\s+-l',                                  # reverse shell listener
+]
+_EXTREME_DANGER_RE = [_re.compile(p, _re.IGNORECASE) for p in _EXTREME_DANGER_PATTERNS_RAW]
 
-def _check_code_safety(code: str) -> Tuple[bool, str]:
-    """快速代码安全检查（不依赖 LLM）"""
-    code_lower = code.lower()
-    for pattern in _FORBIDDEN_CODE_PATTERNS:
-        if pattern.lower() in code_lower:
-            return False, f"代码包含禁止的危险模式: {pattern}"
-    return True, ""
+
+def _check_extreme_danger(tool_name: str, tool_params: Dict[str, Any]) -> Optional[str]:
+    """绝对危害性检测 — 匹配则硬阻断，无论执行模式
+
+    检查 exec_command/run_command 的 command 参数，
+    以及 run_script/run_python 的 code 参数。
+    """
+    # 提取要检查的文本
+    texts = []
+    if tool_name in ("exec_command", "run_command"):
+        cmd = tool_params.get("command", "")
+        if cmd:
+            texts.append(cmd)
+    elif tool_name in ("run_script", "run_python"):
+        code = tool_params.get("code", "")
+        if code:
+            texts.append(code)
+
+    for text in texts:
+        for pattern in _EXTREME_DANGER_RE:
+            if pattern.search(text):
+                return f"极端危险操作被拦截: 匹配模式 '{pattern.pattern}'"
+    return None
 
 
 class ToolSecurityGate:
@@ -169,6 +189,20 @@ class ToolSecurityGate:
             (allowed, reason): 是否允许执行 + 原因
         """
         exec_mode = self._execution_mode
+
+        # ── 绝对危害性硬阻断 — 无论何种模式都拦截 ──
+        extreme_reason = _check_extreme_danger(tool_name, tool_params)
+        if extreme_reason:
+            _emit_security_event("极端危险拦截", tool_name, caller_model_id, False, extreme_reason)
+            try:
+                self._audit.log(
+                    event_type="tool_blocked", level="CRITICAL",
+                    content=tool_name, result=False,
+                    metadata={"caller_model_id": caller_model_id, "reason": extreme_reason},
+                )
+            except Exception:
+                pass
+            return False, extreme_reason
 
         # ── 安全最高指示：Blackboard 有安全拦截信号时，拒绝所有写操作 ──
         if tool_name in _MUTATION_TOOLS:
@@ -279,15 +313,32 @@ class ToolSecurityGate:
                 logger.warning(f"审计日志记录失败 (非致命): {e}")
             return allowed, reason
         elif tool_name in MEDIUM_RISK_TOOLS:
-            allowed, reason = self._check_medium_risk(tool_name, tool_params)
-            if not allowed:
-                _emit_security_event("拦截", tool_name, caller_model_id, False, reason)
-            else:
-                # edit 模式：写操作需用户确认
-                if exec_mode == "edit" and tool_name in _MUTATION_TOOLS:
-                    allowed, reason = await self._check_user_review(
-                        tool_name, tool_params, caller_tier, caller_model_id
+            # MEDIUM 工具：edit/yolo 模式写操作需 LLM 审查
+            if exec_mode in ("edit", "yolo") and tool_name in _MUTATION_TOOLS:
+                if self._model_available:
+                    llm_ok, llm_reason = await self._check_llm_review(
+                        tool_name, tool_params, caller_tier, caller_model_id, dialog_context
                     )
+                    if not llm_ok:
+                        allowed, reason = False, llm_reason
+                    elif exec_mode == "edit":
+                        # edit 模式：LLM 通过后再用户确认
+                        allowed, reason = await self._check_user_review(
+                            tool_name, tool_params, caller_tier, caller_model_id
+                        )
+                    else:
+                        # yolo 模式：LLM 通过即可
+                        allowed, reason = True, llm_reason
+                else:
+                    # LLM 不可用：edit 降级为用户确认，yolo 放行
+                    if exec_mode == "edit":
+                        allowed, reason = await self._check_user_review(
+                            tool_name, tool_params, caller_tier, caller_model_id
+                        )
+                    else:
+                        allowed, reason = True, "MEDIUM 风险工具，LLM 不可用，yolo 放行"
+            else:
+                allowed, reason = True, "MEDIUM 风险工具，直接放行"
             try:
                 self._audit.log(
                     event_type="tool_approved" if allowed else "tool_blocked",
@@ -444,31 +495,6 @@ class ToolSecurityGate:
         if future and not future.done():
             future.set_result({"approved": approved, "reason": reason or ("用户批准" if approved else "用户拒绝")})
 
-    def _check_medium_risk(
-        self, tool_name: str, tool_params: Dict[str, Any]
-    ) -> Tuple[bool, str]:
-        """MEDIUM 风险工具 — 快速路径检查（不依赖 LLM）"""
-        if tool_name in ("write_file", "file_edit", "append_file"):
-            path = tool_params.get("path", "")
-            if path:
-                from pathlib import Path
-                from infra.tool_manager.tools.file_manager import _is_path_allowed
-                if not _is_path_allowed(Path(path).expanduser()):
-                    return False, f"路径不在允许范围内: {path}"
-        elif tool_name == "run_command":
-            command = tool_params.get("command", "")
-            if command:
-                from infra.tool_manager.tools.exec_command import _check_command_whitelist
-                if not _check_command_whitelist(command):
-                    return False, f"命令不在白名单中: {command}"
-        elif tool_name == "run_python":
-            code = tool_params.get("code", "")
-            if code:
-                ok, reason = _check_code_safety(code)
-                if not ok:
-                    return False, reason
-        return True, "MEDIUM 风险工具，快速检查通过"
-
     @staticmethod
     def _build_review_prompt(
         tool_name: str,
@@ -497,7 +523,8 @@ class ToolSecurityGate:
             "- 是否有越权或滥用风险？\n"
             "- 命令/代码是否包含危险模式？\n\n"
             "严格返回JSON格式（不要额外文字）：\n"
-            '{"approved": true/false, "reason": "简短的中文原因"}'
+            '{"approved": true/false, "reason": "简短的中文原因", '
+            '"guidance": "如果拒绝，告诉调用者应该怎么调整（用什么工具、改什么参数）"}'
         )
 
     @staticmethod
@@ -523,13 +550,17 @@ class ToolSecurityGate:
 
         approved = parsed.get("approved", False)
         reason = parsed.get("reason", "无原因")
+        guidance = parsed.get("guidance", "")
 
         if approved:
             logger.info(f"[安全门控] {tool_name} 审批通过: {reason}")
             return True, reason
         else:
-            logger.warning(f"[安全门控] {tool_name} 审批拒绝: {reason}")
-            return False, f"安全专家拒绝 {tool_name}: {reason}"
+            msg = f"安全专家拒绝 {tool_name}: {reason}"
+            if guidance:
+                msg += f"\n建议: {guidance}"
+            logger.warning(f"[安全门控] {msg}")
+            return False, msg
 
 
 # 全局单例

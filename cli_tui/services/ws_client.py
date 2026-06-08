@@ -291,18 +291,44 @@ class WSClient:
         if event_type == "security":
             action = stage_event.get("action", data.get("action", ""))
             tool_name = stage_event.get("target", data.get("target", ""))
-            detail = payload.get("detail", "")
-            request_id = payload.get("request_id", "")
-            caller = payload.get("caller", "")
+            # payload 可能在 stage_event.payload 或 data.payload（格式化后）
+            sec_payload = stage_event.get("payload", {}) if stage_event else {}
+            if not sec_payload:
+                sec_payload = data.get("payload", {}) if isinstance(data, dict) else {}
+            detail = sec_payload.get("detail", "")
+            request_id = sec_payload.get("request_id", "")
+            caller = sec_payload.get("caller", "")
 
             # 需要用户审批的事件
             if "等待用户审批" in action and request_id:
+                logger.info(f"[WS] 安全审批事件解析成功: tool={tool_name}, request_id={request_id}")
                 return {
                     "kind": "security_review",
                     "request_id": request_id,
                     "tool": tool_name,
                     "caller": caller,
                     "detail": detail,
+                    "timestamp": time.time(),
+                }
+
+            # 模式切换请求
+            if action == "mode_change_request" and request_id:
+                return {
+                    "kind": "mode_change_request",
+                    "request_id": request_id,
+                    "reason": sec_payload.get("reason", detail),
+                    "suggested_mode": sec_payload.get("suggested_mode", "edit"),
+                    "timestamp": time.time(),
+                }
+
+            # 用户意图询问
+            if action == "user_intent_request" and request_id:
+                return {
+                    "kind": "user_intent_request",
+                    "request_id": request_id,
+                    "question": sec_payload.get("question", detail),
+                    "options": sec_payload.get("options", []),
+                    "context": sec_payload.get("context", ""),
                     "timestamp": time.time(),
                 }
 
@@ -389,6 +415,19 @@ class WSClient:
             })
         except Exception as e:
             logger.error(f"发送安全审查响应失败: {e}")
+
+    async def send_interactive_response(self, request_id: str, response: dict):
+        """发送交互式工具响应到后端（模式切换、用户意图等）"""
+        if not self._ws:
+            return
+        try:
+            await self._ws.send_json({
+                "type": "interactive_response",
+                "request_id": request_id,
+                **response,
+            })
+        except Exception as e:
+            logger.error(f"发送交互式响应失败: {e}")
 
     # ── 一轮完整的处理 ──
 
@@ -526,19 +565,33 @@ class WSClient:
                 parsed = self.parse_event(event)
                 if parsed:
                     if parsed["kind"] == "dialog":
-                        # 去重
-                        prefix = parsed.get("content", "")[:40]
-                        is_dup = False
-                        for existing in reversed(self.dialog_entries[-5:]):
-                            if (existing.get("tier") == parsed.get("tier")
-                                    and existing.get("round_num") == parsed.get("round_num")
-                                    and existing.get("content", "")[:40] == prefix):
-                                is_dup = True
-                                break
-                        if not is_dup:
-                            self.dialog_entries.append(parsed)
-                            if len(self.dialog_entries) > self._max_entries:
-                                self.dialog_entries = self.dialog_entries[-self._max_entries:]
+                        # 流式更新：替换同 tier+round 的旧条目
+                        if parsed.get("entry_type") == "streaming":
+                            replaced = False
+                            for i in range(len(self.dialog_entries) - 1, max(-1, len(self.dialog_entries) - 6), -1):
+                                existing = self.dialog_entries[i]
+                                if (existing.get("tier") == parsed.get("tier")
+                                        and existing.get("round_num") == parsed.get("round_num")
+                                        and existing.get("entry_type") == "streaming"):
+                                    self.dialog_entries[i] = parsed
+                                    replaced = True
+                                    break
+                            if not replaced:
+                                self.dialog_entries.append(parsed)
+                        else:
+                            # 普通去重
+                            prefix = parsed.get("content", "")[:40]
+                            is_dup = False
+                            for existing in reversed(self.dialog_entries[-5:]):
+                                if (existing.get("tier") == parsed.get("tier")
+                                        and existing.get("round_num") == parsed.get("round_num")
+                                        and existing.get("content", "")[:40] == prefix):
+                                    is_dup = True
+                                    break
+                            if not is_dup:
+                                self.dialog_entries.append(parsed)
+                        if len(self.dialog_entries) > self._max_entries:
+                            self.dialog_entries = self.dialog_entries[-self._max_entries:]
 
                     elif parsed["kind"] == "tool":
                         self.tool_calls.append(parsed)

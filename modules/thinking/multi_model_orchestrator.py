@@ -35,7 +35,6 @@ class MultiModelOrchestrator:
     def __init__(
         self,
         gcm_pool=None,
-        probe_registry=None,
         activity_notifier: Optional[ActivityNotifierPort] = None,
         security: Optional[SecurityPort] = None,
         context_service: Optional[ContextPort] = None,
@@ -43,7 +42,6 @@ class MultiModelOrchestrator:
         output_reviewer: Optional[OutputReviewPort] = None,
     ):
         self._gcm_pool = gcm_pool
-        self._probe_registry = probe_registry
         self._activity_notifier = activity_notifier
         self._security = security
         self._context_service = context_service
@@ -573,6 +571,33 @@ class MultiModelOrchestrator:
                     logger.warning(f"[编排器] runner_manager 或 blackboard 不可用，跳过直接激活")
             except Exception as e:
                 logger.warning(f"[编排器] 直接激活大模型失败 (非致命): {e}")
+
+            # ---- 启动 SecurityMonitor（持久运行时专家）----
+            try:
+                if runner_manager:
+                    from modules.thinking.communication.message_bus import Message, MessageType, get_message_bus
+                    bus = get_message_bus()
+                    sm_msg = Message(
+                        msg_type=MessageType.SYSTEM,
+                        sender="orchestrator",
+                        recipient=f"model_runner_manager_{str(session_id)[:8]}",
+                        content={
+                            "action": "probe_started",
+                            "probe_id": "probe_security_monitor",
+                            "target_tier": "expert",
+                            "identity_key": "expert_security_monitor",
+                            "task_description": "安全监察常驻任务：实时审查 CognitiveBlackboard 上下文",
+                            "return_to_model_id": "",
+                            "return_to_session_id": session_id or "",
+                            "priority": 10,
+                            "ttl_seconds": 3600,
+                            "caller_tier": "system",
+                        },
+                    )
+                    await bus.send(sm_msg)
+                    logger.info(f"[编排器] SecurityMonitor 已启动: session={str(session_id)[:8]}")
+            except Exception as e:
+                logger.warning(f"[编排器] SecurityMonitor 启动失败 (非致命): {e}")
 
             # 4. 用户输入（触发 probe_start → 大模型激活）
             turn_start_ts = time.time()

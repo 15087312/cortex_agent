@@ -126,102 +126,24 @@ class SecurityPolicy:
     # ── 文件安全检查 ──
 
     def is_path_allowed(self, path: str) -> bool:
-        """白名单检查：路径是否在允许的目录内
-
-        允许的目录：
-        - /tmp, /var/tmp
-        - 项目根目录及其子目录
-        """
-        try:
-            p = Path(path).expanduser().resolve()
-        except Exception:
-            return False  # fail-closed
-
-        # 检查项目根目录
-        project_root = self._get_project_root()
-        try:
-            p.relative_to(project_root)
-            return True
-        except ValueError:
-            pass
-
-        # 检查白名单目录
-        for allowed in self._allowed_dirs:
-            try:
-                p.relative_to(allowed)
-                return True
-            except ValueError:
-                continue
-
-        return False
+        """路径检查 — 真机模式：允许所有路径"""
+        return True
 
     def is_sensitive_file(self, path: str) -> bool:
-        """检查文件是否包含敏感信息"""
-        try:
-            p = Path(path).expanduser().resolve()
-        except Exception:
-            return True  # fail-closed：解析失败视为敏感
-
-        name_lower = p.name.lower()
-        path_lower = str(p).lower()
-
-        # 检查文件后缀
-        for ext in self.config.sensitive_file_extensions:
-            if name_lower.endswith(ext):
-                return True
-
-        # 检查文件名中的敏感关键字
-        for pattern in self.config.sensitive_file_patterns:
-            if pattern in name_lower:
-                return True
-
-        # 检查路径中的 .ssh 目录
-        if ".ssh" in p.parts or ".netrc" in p.parts:
-            return True
-
+        """敏感文件检查 — 真机模式：不拦截"""
         return False
 
     def is_forbidden_write_path(self, path: str) -> bool:
-        """检查路径是否禁止写入"""
+        """禁止写入检查 — 真机模式：仅保护根目录和设备目录"""
         try:
             p = Path(path).expanduser().resolve()
         except Exception:
-            return True  # fail-closed
-
-        path_str = str(p)
-
-        # 检查禁止写入目录（使用预解析的 resolved 路径，目录边界匹配）
-        for forbidden_dir in self._forbidden_write_dirs:
-            forbidden_str = str(forbidden_dir)
-            if path_str == forbidden_str or path_str.startswith(forbidden_str + "/"):
-                return True
-
-        # 禁止修改 .git 目录
-        if ".git" in p.parts:
             return True
-
-        return False
+        protected = {"/", "/dev", "/System"}
+        return str(p) in protected or str(p).startswith("/dev/")
 
     def is_forbidden_read_path(self, path: str) -> bool:
-        """检查路径是否禁止读取"""
-        try:
-            p = Path(path).expanduser().resolve()
-        except Exception:
-            return True  # fail-closed
-
-        path_str = str(p)
-
-        # 检查禁止读取目录（使用预解析的 resolved 路径，目录边界匹配）
-        for prefix, is_glob in self._forbidden_read_resolved:
-            if is_glob:
-                # 通配符模式：前缀匹配即可（如 /home/*/.ssh → /home/alice/.ssh）
-                if path_str.startswith(prefix):
-                    return True
-            else:
-                # 精确模式：路径等于或在目录下
-                if path_str == prefix or path_str.startswith(prefix + "/"):
-                    return True
-
+        """禁止读取检查 — 真机模式：不拦截"""
         return False
 
     def is_safe_file_path(self, path: str) -> Tuple[bool, Optional[str]]:

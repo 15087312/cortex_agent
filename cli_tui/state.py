@@ -100,14 +100,25 @@ class AppState:
         self.cancel_requested = False
 
     def add_dialog_entry(self, entry: Dict[str, Any]):
-        """添加对话框条目（带去重）"""
-        prefix = entry.get("content", "")[:40]
-        for existing in reversed(self.dialog_entries[-5:]):
-            if (existing.get("tier") == entry.get("tier")
-                    and existing.get("round_num") == entry.get("round_num")
-                    and existing.get("content", "")[:40] == prefix):
-                return  # 重复，跳过
-        self.dialog_entries.append(entry)
+        """添加对话框条目（流式替换 + 普通去重）"""
+        # 流式更新：替换同 tier+round 的旧条目
+        if entry.get("entry_type") == "streaming":
+            for i in range(len(self.dialog_entries) - 1, max(-1, len(self.dialog_entries) - 6), -1):
+                existing = self.dialog_entries[i]
+                if (existing.get("tier") == entry.get("tier")
+                        and existing.get("round_num") == entry.get("round_num")
+                        and existing.get("entry_type") == "streaming"):
+                    self.dialog_entries[i] = entry
+                    return
+            self.dialog_entries.append(entry)
+        else:
+            prefix = entry.get("content", "")[:40]
+            for existing in reversed(self.dialog_entries[-5:]):
+                if (existing.get("tier") == entry.get("tier")
+                        and existing.get("round_num") == entry.get("round_num")
+                        and existing.get("content", "")[:40] == prefix):
+                    return  # 重复，跳过
+            self.dialog_entries.append(entry)
         if len(self.dialog_entries) > self.max_entries:
             self.dialog_entries = self.dialog_entries[-self.max_entries:]
 

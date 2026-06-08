@@ -30,6 +30,8 @@ from modules.thinking.core.control_tools import (
     REQUEST_SKILL_TOOL,
     LIST_SKILLS_TOOL,
     QUERY_TOOL_DETAILS_TOOL,
+    REQUEST_MODE_CHANGE_TOOL,
+    ASK_USER_INTENT_TOOL,
     ThinkingTaskContext,
 )
 
@@ -463,6 +465,8 @@ class ModelRunner:
                 if self._thinker:
                     self._thinker._running = False
                 logger.info(f"[ModelRunner] {self.model_id} 思考循环被取消")
+                # 保存已有的部分输出
+                await self._save_partial_result()
                 return
             except Exception as e:
                 logger.error(f"[ModelRunner] {self.model_id} 思考循环异常: {e}")
@@ -512,6 +516,91 @@ class ModelRunner:
 
         # 通知 orchestrator 思考已完成
         await self._notify_thinking_complete()
+
+    def _emit_streaming_content(self, delta: str, turn: int):
+        """将流式生成的增量内容推送到 TUI（通过 MessageBus）"""
+        try:
+            from modules.thinking.communication.message_bus import (
+                Message, MessageType, get_message_bus,
+            )
+            msg = Message(
+                msg_type=MessageType.BROADCAST,
+                sender=self.model_id,
+                recipient="broadcast",
+                content={
+                    "content": delta,
+                    "entry_type": "streaming_delta",
+                    "model_id": self.model_id,
+                    "tier": self.tier,
+                    "round": turn,
+                },
+                metadata={
+                    "dialog_id": f"stream_{self.model_id}_{turn}",
+                    "tier": self.tier,
+                    "streaming": True,
+                },
+            )
+            bus = get_message_bus()
+            if bus:
+                try:
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(bus.broadcast(msg))
+                except RuntimeError:
+                    pass
+        except Exception as e:
+            logger.debug(f"[ModelRunner] 流式推送失败 (非致命): {e}")
+
+    async def _save_partial_result(self):
+        """取消时保存已有的部分思考输出"""
+        try:
+            if not self._thinker:
+                return
+            history = getattr(self._thinker, 'history_thoughts', [])
+            streaming = getattr(self, '_current_streaming_content', '')
+
+            # 拼接所有已完成轮次的输出
+            parts = []
+            for i, t in enumerate(history):
+                if t:
+                    parts.append(f"[轮次 {i+1}] {t}")
+            # 加上当前正在流式生成但未完成的内容
+            if streaming and streaming.strip():
+                parts.append(f"[轮次 {len(history)+1} — 未完成]\n{streaming}")
+
+            if not parts:
+                return
+
+            partial_text = "\n\n".join(parts)
+            completed = len(history)
+            total_len = len(partial_text)
+            prefix = f"[思考被中断 — 已完成 {completed} 轮"
+            if streaming and streaming.strip():
+                prefix += f"，第 {completed+1} 轮未完成"
+            prefix += "]\n\n"
+            final_text = prefix + partial_text
+
+            # 写入黑板
+            if self.blackboard:
+                self.blackboard.set_final_response(final_text)
+                self.blackboard.add_observation(
+                    "system", f"思考被用户中断，已保存部分输出 ({completed} 轮, {total_len} 字符)"
+                )
+
+            # 保存到记忆
+            await self._save_private_memory(final_text)
+
+            # 通知 orchestrator
+            await self._notify_thinking_complete()
+
+            # 清理
+            self._current_streaming_content = ""
+
+            logger.info(
+                f"[ModelRunner] {self.model_id} 已保存部分输出 "
+                f"({completed} 轮, {total_len} 字符)"
+            )
+        except Exception as e:
+            logger.warning(f"[ModelRunner] 保存部分输出失败: {e}")
 
     async def _write_final_result(self) -> None:
         """写入最终结果到 CognitiveBlackboard（新架构）"""
@@ -789,6 +878,95 @@ class ModelRunner:
                 f"[ModelRunner] thinking_complete 发送失败 ({self.model_id}): {e}",
                 exc_info=True
             )
+
+    # ── 交互式工具处理 ──
+
+    async def _wait_for_user_response(self, event_type: str, event_data: Dict[str, Any], timeout: float = 300) -> Dict[str, Any]:
+        """发送交互事件到 TUI 并等待用户响应"""
+        future = asyncio.get_running_loop().create_future()
+        request_id = f"{event_type}_{uuid.uuid4().hex[:8]}"
+        event_data["request_id"] = request_id
+
+        # 存储 Future 以便响应时 resolve
+        if not hasattr(self, '_pending_user_responses'):
+            self._pending_user_responses = {}
+        self._pending_user_responses[request_id] = future
+
+        # 通过安全事件回调直接推送到 TUI（与 security_review 同一通道）
+        try:
+            from modules.security_system.tool_security_gate import _emit_security_event
+            # 提取交互式工具的额外字段，通过 extra_fields 传入 payload
+            extra = {k: v for k, v in event_data.items()
+                     if k not in ("action", "request_id") and v is not None}
+            _emit_security_event(
+                event_type=event_type,
+                tool_name=event_type,
+                caller_model_id=self.model_id,
+                success=True,
+                detail=event_data.get("reason", "") or event_data.get("question", ""),
+                request_id=request_id,
+                extra_fields=extra,
+            )
+            # 额外数据已通过 extra_fields 传入安全事件 payload
+            # 同时通过 MessageBus 广播供其他订阅者使用
+            from modules.thinking.communication.message_bus import (
+                Message, MessageType, get_message_bus,
+            )
+            msg = Message(
+                msg_type=MessageType.BROADCAST,
+                sender=self.model_id,
+                recipient="broadcast",
+                content={"action": event_type, "request_id": request_id, **event_data},
+                metadata={"event": event_type, "session_id": self.session_id, "request_id": request_id},
+            )
+            await get_message_bus().broadcast(msg)
+        except Exception as e:
+            logger.warning(f"[ModelRunner] 交互事件发送失败: {e}")
+            return {"response": "事件发送失败", "error": str(e)}
+
+        try:
+            return await asyncio.wait_for(future, timeout=timeout)
+        except asyncio.TimeoutError:
+            return {"response": "用户未响应（超时）", "timeout": True}
+        finally:
+            self._pending_user_responses.pop(request_id, None)
+
+    def resolve_user_response(self, request_id: str, response: Dict[str, Any]):
+        """TUI 调用此方法 resolve 等待中的 Future"""
+        if hasattr(self, '_pending_user_responses'):
+            future = self._pending_user_responses.get(request_id)
+            if future and not future.done():
+                future.set_result(response)
+
+    async def _handle_mode_change_request(self, reason: str, suggested_mode: str) -> str:
+        """处理 request_mode_change 工具调用"""
+        result = await self._wait_for_user_response("mode_change_request", {
+            "action": "mode_change_request",
+            "reason": reason,
+            "suggested_mode": suggested_mode,
+        })
+        if result.get("timeout"):
+            return f"【模式切换】用户未响应，当前模式不变。原因：{reason}"
+        approved = result.get("approved", False)
+        if approved:
+            target_mode = result.get("mode", suggested_mode)
+            return f"【模式切换】用户同意切换到 {target_mode} 模式。请继续执行任务。"
+        else:
+            user_reason = result.get("reason", "用户拒绝")
+            return f"【模式切换】用户拒绝切换模式。原因：{user_reason}。请在当前模式下继续。"
+
+    async def _handle_ask_user_intent(self, question: str, options: list, context: str) -> str:
+        """处理 ask_user_intent 工具调用"""
+        result = await self._wait_for_user_response("user_intent_request", {
+            "action": "user_intent_request",
+            "question": question,
+            "options": options,
+            "context": context,
+        })
+        if result.get("timeout"):
+            return f"【用户意图】用户未响应（超时）。问题：{question}"
+        answer = result.get("answer", "")
+        return f"【用户意图】用户的回答：{answer}"
 
     async def _build_runner_prompt(self, round_num: int) -> str:
         """构建每轮 prompt（作为 ContinuousThinker 的外部 prompt builder）。
@@ -1225,6 +1403,8 @@ class ModelRunner:
             control_tools.append(RESPOND_TO_USER_TOOL)
             control_tools.append(REQUEST_SKILL_TOOL)
             control_tools.append(LIST_SKILLS_TOOL)
+            control_tools.append(REQUEST_MODE_CHANGE_TOOL)
+            control_tools.append(ASK_USER_INTENT_TOOL)
         tools_with_control = list(tools) + control_tools
 
         messages = [
@@ -1264,7 +1444,31 @@ class ModelRunner:
                         # this tool_choice）。
                         pass
 
-                    response = await client.chat(**kwargs)
+                    # ── 流式调用：实时输出 token 到黑板 ──
+                    partial_content_parts: list = []
+                    last_emit_len = 0
+                    last_emitted_text = ""
+
+                    def _on_token(chunk: str):
+                        nonlocal last_emit_len, last_emitted_text
+                        partial_content_parts.append(chunk)
+                        # 存到实例上，供取消时读取
+                        self._current_streaming_content = "".join(partial_content_parts)
+                        # 每累积 100 字符或遇到换行时推送增量到 TUI
+                        total = len(self._current_streaming_content)
+                        if total - last_emit_len >= 100 or "\n" in chunk:
+                            delta = self._current_streaming_content[len(last_emitted_text):]
+                            if delta:
+                                self._emit_streaming_content(delta, turn)
+                                last_emitted_text = self._current_streaming_content
+                            last_emit_len = total
+
+                    if hasattr(client, 'chat_stream'):
+                        response = await client.chat_stream(
+                            on_token=_on_token, **kwargs
+                        )
+                    else:
+                        response = await client.chat(**kwargs)
                     content = response.message.content or ""
                     tool_calls = response.message.tool_calls
 
@@ -1566,6 +1770,19 @@ class ModelRunner:
                                         skill_feedback = "【可用技能】\n" + "\n".join(lines)
                                     else:
                                         skill_feedback = "【可用技能】暂无可用技能"
+                                elif tc.name == "request_mode_change":
+                                    # 请求模式切换 — 暂停等待用户选择
+                                    reason = args.get("reason", "")
+                                    suggested = args.get("suggested_mode", "edit")
+                                    mode_result = await self._handle_mode_change_request(reason, suggested)
+                                    return mode_result
+                                elif tc.name == "ask_user_intent":
+                                    # 询问用户意图 — 暂停等待用户选择
+                                    question = args.get("question", "")
+                                    options = args.get("options", [])
+                                    context = args.get("context", "")
+                                    intent_result = await self._handle_ask_user_intent(question, options, context)
+                                    return intent_result
                                 else:
                                     c = args.get("continue", True)
                                     if c:
@@ -1582,7 +1799,11 @@ class ModelRunner:
                             return respond_content
                         if skill_feedback:
                             return skill_feedback
+                        # continue_thinking(continue=false): 优先返回模型的实际内容
                         if ctrl_notifications:
+                            # 如果模型有实际内容（非空），返回内容而非控制摘要
+                            if content and content.strip():
+                                return content
                             return "【思考控制】" + "；".join(ctrl_notifications)
                         return content
 
@@ -1613,15 +1834,30 @@ class ModelRunner:
                                     # ── 安全门控：所有工具调用经过安全审查 ──
                                     gate = get_tool_security_gate()
                                     dialog_ctx = self._format_messages_for_context(messages[-10:])
-                                    allowed, reason = await gate.check(
-                                        tool_name=tc.name,
-                                        tool_params=args,
-                                        caller_tier=self.tier,
-                                        caller_model_id=self.model_id,
-                                        dialog_context=dialog_ctx,
-                                    )
+                                    try:
+                                        allowed, reason = await gate.check(
+                                            tool_name=tc.name,
+                                            tool_params=args,
+                                            caller_tier=self.tier,
+                                            caller_model_id=self.model_id,
+                                            dialog_context=dialog_ctx,
+                                        )
+                                    except Exception as gate_err:
+                                        # Gate 异常 → 硬停，报错到 TUI
+                                        error_msg = f"安全门控异常，停止执行: {gate_err}"
+                                        logger.error(f"[ModelRunner] {error_msg}", exc_info=True)
+                                        if self.blackboard:
+                                            self.blackboard.add_observation(
+                                                "system", f"[严重错误] {error_msg}"
+                                            )
+                                        raise RuntimeError(error_msg) from gate_err
+
                                     if not allowed:
-                                        result = f"[安全门控拦截] {reason}"
+                                        result = (
+                                            f"[安全门控拦截] {reason}\n"
+                                            f"请调整你的工具调用参数或选择其他工具来完成任务。"
+                                            f"如果被拒绝的是写操作，请先用只读工具（read_file/search_files）确认目标。"
+                                        )
                                         logger.warning(
                                             f"[ModelRunner] 安全门控拦截: model={self.model_id} "
                                             f"tool={tc.name} reason={reason}"
@@ -2341,6 +2577,25 @@ class ModelRunnerManager:
                 f"[ModelRunnerManager] 孤儿清理完成: {len(orphaned)} 个, "
                 f"当前 runners: {len(self._runners)}"
             )
+
+    # ------------------------------------------------------------------
+    # 交互式响应路由
+    # ------------------------------------------------------------------
+
+    def resolve_user_response(self, request_id: str, response: Dict[str, Any]) -> bool:
+        """在所有 runner 中查找并 resolve 等待中的交互式 Future
+
+        Returns:
+            True 如果找到并 resolve 了对应的 Future，False 否则
+        """
+        with self._lock:
+            runners = list(self._runners.values())
+        for runner in runners:
+            pending = getattr(runner, '_pending_user_responses', None)
+            if pending and request_id in pending:
+                runner.resolve_user_response(request_id, response)
+                return True
+        return False
 
     # ------------------------------------------------------------------
     # 清理
