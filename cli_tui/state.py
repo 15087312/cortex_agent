@@ -2,7 +2,7 @@
 
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 
 @dataclass
@@ -70,6 +70,9 @@ class AppState:
     # 输入历史
     input_history: List[str] = field(default_factory=list)
     max_history: int = 200
+
+    # 安全审批状态
+    pending_security_review: Optional[Dict[str, Any]] = field(default=None)
 
     def reset_for_new_input(self):
         """每次新输入前重置"""

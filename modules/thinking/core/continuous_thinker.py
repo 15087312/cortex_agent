@@ -847,8 +847,21 @@ class ContinuousThinker:
                             extra={"context": context[:100] if context else None, "attempt": attempt}
                         )
                     )
+                    # 持久化超时结果 — 让下一轮模型能看到发生了什么
+                    timeout_thought = "[思考超时]"
+                    self.history_thoughts.append(timeout_thought)
+                    if self._get_dialog and self._model_id:
+                        try:
+                            self._get_dialog.write_thought(
+                                model_id=self._model_id,
+                                tier=self._tier,
+                                content=timeout_thought,
+                                round_num=len(self.history_thoughts),
+                            )
+                        except Exception as e:
+                            self.logger.debug(f"[Blackboard] 超时记录写入失败 (非致命): {e}")
                     return {
-                        "thought": "[思考超时]",
+                        "thought": timeout_thought,
                         "duration_ms": SINGLE_THINK_TIMEOUT * 1000,
                         "error": f"单次思考超时（>{SINGLE_THINK_TIMEOUT}s，已达最大重试次数 {MAX_THINK_RETRIES}）",
                         "is_finished": True,
@@ -875,8 +888,21 @@ class ContinuousThinker:
                         extra={"context": context[:100] if context else None}
                     )
                 )
+                # 持久化异常结果 — 让下一轮模型能看到发生了什么
+                error_thought = f"[思考异常: {str(e)[:200]}]"
+                self.history_thoughts.append(error_thought)
+                if self._get_dialog and self._model_id:
+                    try:
+                        self._get_dialog.write_thought(
+                            model_id=self._model_id,
+                            tier=self._tier,
+                            content=error_thought,
+                            round_num=len(self.history_thoughts),
+                        )
+                    except Exception as write_err:
+                        self.logger.debug(f"[Blackboard] 异常记录写入失败 (非致命): {write_err}")
                 return {
-                    "thought": "",
+                    "thought": error_thought,
                     "duration_ms": 0,
                     "error": f"思考异常: {str(e)}",
                     "is_finished": True,
@@ -1153,6 +1179,7 @@ class ContinuousThinker:
             if task_context is not None:
                 self._task_context = previous_task_context
 
+            self._running = False
             return results
 
         except Exception as e:

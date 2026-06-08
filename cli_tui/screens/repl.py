@@ -94,6 +94,11 @@ class REPL(Screen):
     DebugPanel {
         height: 100%;
     }
+
+    PromptInput.approval-mode {
+        border: heavy $warning;
+        background: $warning 10%;
+    }
     """
 
     BINDINGS = [
@@ -101,6 +106,8 @@ class REPL(Screen):
         Binding("down", "history_forward", "历史前进", show=False),
         Binding("escape", "stop_thinking", "停止思考", show=True, priority=True),
         Binding("ctrl+y", "retry_last", "重试", show=True, priority=True),
+        Binding("ctrl+a", "approve_security", "批准", show=True, priority=True),
+        Binding("ctrl+d", "reject_security", "拒绝", show=True, priority=True),
         Binding("ctrl+c", "app_quit", "退出", show=True, priority=True),
         Binding("ctrl+x", "cancel_and_reset", "取消", show=True, priority=True),
         Binding("shift+tab", "cycle_execution_mode", "切换模式", show=True),
@@ -112,7 +119,6 @@ class REPL(Screen):
         self.ws = ws_client
         self.api = api_client
         self._ml = None
-        self._pending_security_review = None
         self._suggestions: Optional[CommandSuggestions] = None
         self._paused_state = None  # ESC 暂停时保存的状态
 
@@ -236,15 +242,27 @@ class REPL(Screen):
             elif parsed["kind"] == "reflection":
                 ml.add_reflection_event(parsed)
             elif parsed["kind"] == "security_review":
-                self._pending_security_review = parsed
+                self.state.pending_security_review = parsed
+                tool = parsed.get('tool', '?')
+                caller = parsed.get('caller', '?')
+                detail = parsed.get('detail', '')
                 ml.write(
                     f"\n[bold yellow]🔒 安全审查[/bold yellow] "
-                    f"[bold red]{parsed['tool']}[/bold red] 需要你的审批\n"
-                    f"  调用者: {parsed.get('caller', '?')}\n"
-                    f"  详情: {parsed.get('detail', '')}\n"
-                    f"  [bold green]输入 y 批准 / n 拒绝[/bold green]"
+                    f"[bold red]{tool}[/bold red] 需要你的审批\n"
+                    f"  调用者: {caller}\n"
+                    f"  详情: {detail}\n"
+                    f"  [bold green]Ctrl+A 批准[/bold green]  "
+                    f"[bold red]Ctrl+D 拒绝[/bold red]  "
+                    f"[dim]或输入自定义理由后回车[/dim]"
                 )
-                self.state.thinking_hint = "等待安全审批 (y/n)..."
+                self.state.thinking_hint = "🔒 等待安全审批 (Ctrl+A/D 或输入理由)"
+                # 更新输入框状态
+                try:
+                    input_w = self.query_one(PromptInput)
+                    input_w.set_approval_mode(True)
+                    input_w.focus()
+                except Exception:
+                    pass
                 return
             elif parsed["kind"] == "security":
                 action = parsed.get("action", "")
@@ -355,6 +373,44 @@ class REPL(Screen):
         # 触发提交
         self.on_input_submitted(Input.Submitted(inp, self.state.last_user_input))
 
+    def _resolve_security_review(self, approved: bool, reason: str = ""):
+        """统一处理安全审批响应"""
+        if not self.state.pending_security_review:
+            self.notify("当前没有待审批的安全请求", severity="warning", timeout=2)
+            return
+
+        review = self.state.pending_security_review
+        self.state.pending_security_review = None
+        self.state.thinking_hint = ""
+
+        # 恢复输入框普通模式
+        try:
+            self.query_one(PromptInput).set_approval_mode(False)
+        except Exception:
+            pass
+
+        ml = self._ml
+        if ml:
+            if approved:
+                ml.write(f"[bold green]✅ 用户批准: {review['tool']}[/bold green]")
+            else:
+                ml.write(f"[bold red]❌ 用户拒绝: {review['tool']}[/bold red]" + (f" — {reason}" if reason else ""))
+
+        if self.ws:
+            self.run_worker(
+                self.ws.send_security_response(
+                    review["request_id"], approved, reason
+                )
+            )
+
+    def action_approve_security(self):
+        """Ctrl+A：批准当前待审批的安全请求"""
+        self._resolve_security_review(approved=True)
+
+    def action_reject_security(self):
+        """Ctrl+D：拒绝当前待审批的安全请求"""
+        self._resolve_security_review(approved=False, reason="用户快捷键拒绝")
+
     def action_cancel_and_reset(self):
         """Ctrl+X：立即取消当前处理，重置连接，提示用户重新输入"""
         if not self.state.processing:
@@ -435,21 +491,29 @@ class REPL(Screen):
         input_widget.reset_history()
 
         # 安全审查响应拦截
-        if self._pending_security_review:
-            review = self._pending_security_review
-            self._pending_security_review = None
+        if self.state.pending_security_review:
+            review = self.state.pending_security_review
+            self.state.pending_security_review = None
             self.state.thinking_hint = ""
-            approved = text.lower() in ("y", "yes", "是", "批准", "允许")
+            # 输入框恢复普通模式
+            try:
+                self.query_one(PromptInput).set_approval_mode(False)
+            except Exception:
+                pass
+            # 用户输入的文本作为自定义理由（拒绝）
+            approved = text.lower() in ("y", "yes", "是", "批准", "允许", "approve")
             ml = self._ml
             if ml:
                 if approved:
                     ml.write(f"[bold green]✅ 用户批准: {review['tool']}[/bold green]")
                 else:
-                    ml.write(f"[bold red]❌ 用户拒绝: {review['tool']}[/bold red]")
+                    reason = text if text.lower() not in ("n", "no", "否", "拒绝", "deny") else ""
+                    ml.write(f"[bold red]❌ 用户拒绝: {review['tool']}[/bold red]" + (f" — {reason}" if reason else ""))
             if self.ws:
+                reason = "" if approved else (text if text.lower() not in ("n", "no", "否", "拒绝", "deny") else "用户拒绝")
                 self.run_worker(
                     self.ws.send_security_response(
-                        review["request_id"], approved, text if not approved else ""
+                        review["request_id"], approved, reason
                     )
                 )
             return

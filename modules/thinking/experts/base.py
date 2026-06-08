@@ -451,6 +451,11 @@ class RuntimeExpert(ABC):
                     self.logger.error(
                         f"[{self.identity.name}] 第{self._round}轮异常: {e}"
                     )
+                    # 异常记录到 Blackboard — 让其他模型能看到发生了什么
+                    try:
+                        self.write_thought(f"[专家异常: {str(e)[:200]}]", round_num=self._round)
+                    except Exception:
+                        pass
                     # 异常时用兜底 sleep 代替 event wait
                     await asyncio.sleep(think_interval)
 
@@ -533,6 +538,7 @@ class RuntimeExpert(ABC):
                     self.logger.warning(
                         f"[{self.identity.name}] 总体超时（{elapsed_total:.1f}s > {timeout}s）"
                     )
+                    self.write_thought(f"[专家总体超时: {elapsed_total:.1f}s]", round_num=iteration)
                     return {
                         'success': False,
                         'error': f'Timeout after {timeout}s',
@@ -562,6 +568,7 @@ class RuntimeExpert(ABC):
                         self.logger.warning(
                             f"[{self.identity.name}] 本轮超时（{round_elapsed:.1f}s > {round_timeout}s）"
                         )
+                        self.write_thought(f"[专家轮次超时: {round_elapsed:.1f}s]", round_num=iteration)
                         return {
                             'success': False,
                             'error': f'Round timeout after {round_timeout}s in iteration {iteration}',
@@ -579,6 +586,7 @@ class RuntimeExpert(ABC):
                         timeout=max(5, remaining_time),  # 确保至少给5s
                     )
                 except asyncio.TimeoutError:
+                    self.write_thought(f"[专家模型生成超时]", round_num=iteration)
                     return {
                         'success': False,
                         'error': f'Model generation timeout in iteration {iteration}',

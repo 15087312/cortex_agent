@@ -1,4 +1,4 @@
-"""输入框 — 用户输入 + 历史 + 命令检测"""
+"""输入框 — 用户输入 + 历史 + 命令检测 + 安全审批模式"""
 
 from typing import Optional
 
@@ -8,15 +8,29 @@ from ..state import AppState
 
 
 class PromptInput(Input):
-    """带历史记录和命令检测的输入框"""
+    """带历史记录、命令检测和安全审批模式的输入框"""
 
     def __init__(self, state: AppState):
         super().__init__(placeholder="输入消息… (/) 命令, Ctrl+C 退出")
         self._state = state
         self._history_index = -1
+        self._approval_mode = False
+        self._original_placeholder = "输入消息… (/) 命令, Ctrl+C 退出"
 
     def on_mount(self):
         self.border_title = "输入"
+
+    def set_approval_mode(self, enabled: bool):
+        """切换安全审批模式 — 改变输入框视觉状态"""
+        self._approval_mode = enabled
+        if enabled:
+            self.placeholder = "输入 y 批准 / n 拒绝 / 自定义理由，或 Ctrl+A/D"
+            self.border_title = "🔒 安全审批"
+            self.add_class("approval-mode")
+        else:
+            self.placeholder = self._original_placeholder
+            self.border_title = "输入"
+            self.remove_class("approval-mode")
 
     def history_back(self) -> Optional[str]:
         """回退到上一条历史，返回历史文本或 None"""

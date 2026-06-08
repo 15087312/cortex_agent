@@ -1429,11 +1429,17 @@ class ModelRunner:
                                             f"[ModelRunner] plan 模式拦截写操作委派: "
                                             f"model={self.model_id} role={role} keywords={matched}"
                                         )
-                                        return (
-                                            f"[安全门控拦截] 当前为 plan 模式（只读），检测到写操作关键词: {', '.join(matched)}。"
-                                            f"禁止委派写操作任务给「{role}」。\n"
-                                            "如需执行写操作，请切换到 edit 或 yolo 模式：输入 /mode edit 或 /mode yolo"
-                                        )
+                                    # 记录 plan 模式拦截的委托
+                                    if self._thinker:
+                                        from modules.thinking.core.delegation_port import DelegationResult
+                                        self._thinker.record_delegation(role, task, DelegationResult(
+                                            success=False, error="plan 模式拦截"
+                                        ))
+                                    return (
+                                        f"[安全门控拦截] 当前为 plan 模式（只读），检测到写操作关键词: {', '.join(matched)}。"
+                                        f"禁止委派写操作任务给「{role}」。\n"
+                                        "如需执行写操作，请切换到 edit 或 yolo 模式：输入 /mode edit 或 /mode yolo"
+                                    )
 
                                 from modules.thinking.core.delegation_port import (
                                     ProbeDelegationAdapter, DelegationRequest,
@@ -1450,9 +1456,11 @@ class ModelRunner:
                                 )
                                 dlg_result = ProbeDelegationAdapter().delegate(request)
                                 if not dlg_result.success:
-                                    # 委托失败 → 不记录到 thinker，直接返回错误给模型
+                                    # 委托失败 → 记录到 thinker 以便跟踪状态
                                     error_msg = dlg_result.error or f"未找到匹配的角色 '{role}'"
                                     logger.warning(f"[ModelRunner] 直通委托失败: role={role}, error={error_msg}")
+                                    if self._thinker:
+                                        self._thinker.record_delegation(role, task, dlg_result)
                                     # 获取可用角色列表
                                     try:
                                         from modules.thinking.identity import get_identities
@@ -1638,6 +1646,18 @@ class ModelRunner:
                                     expert_errors.append(f"{tc.name}: {e}")
 
                             logger.info(f"[ModelRunner] {self.model_id} 第{turn}轮 {tc.name} → {result[:400]}")
+                            # 写入 Blackboard — 让 TUI 实时显示专家的工具调用过程
+                            if self.blackboard and tc.name not in ("continue_thinking", "respond_to_user", "delegate_task", "create_supervisor", "request_skill", "list_skills"):
+                                try:
+                                    tool_summary = result if len(result) <= 500 else result[:500] + "..."
+                                    self.blackboard.write_thought(
+                                        model_id=self.model_id,
+                                        tier=self.tier,
+                                        content=f"[{tc.name}] {tool_summary}",
+                                        round_num=turn,
+                                    )
+                                except Exception as e:
+                                    logger.debug(f"[Blackboard] 工具结果写入失败 (非致命): {e}")
                             # Web 工具返回结果需用不可信块包裹（防 prompt 注入）
                             WEB_TOOLS = {"web_search", "web_fetch"}
                             if tc.name in WEB_TOOLS:

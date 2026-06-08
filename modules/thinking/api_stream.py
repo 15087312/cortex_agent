@@ -251,9 +251,9 @@ class StreamThinkingSystem:
                 tier_icons = {"large": "🧠", "supervisor": "📊", "expert": "🔧", "user": "👤"}
                 label = tier_labels.get(dialog_tier, f"[{dialog_tier}]")
                 icon = tier_icons.get(dialog_tier, "")
-                # 专家输出截断：用户不需要看完整工具结果，保留摘要即可
-                if dialog_tier == "expert" and len(dialog_text) > 400:
-                    dialog_text = dialog_text[:400] + "…"
+                # 专家输出截断：保留足够上下文供 TUI 展示
+                if dialog_tier == "expert" and len(dialog_text) > 2000:
+                    dialog_text = dialog_text[:2000] + "…"
                 type_tag = {"thought": f"R{round_num}", "response": "回复"}.get(entry_type, "")
                 if type_tag:
                     content = f"{icon} {label} [{type_tag}] {dialog_text}"
