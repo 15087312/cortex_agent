@@ -9,6 +9,7 @@
 """
 import asyncio
 import json
+import threading
 import time
 import uuid
 from typing import Any, Awaitable, Callable, Dict, List, Optional
@@ -703,12 +704,15 @@ class StreamThinkingSystem:
 
 
 _thinking_system: Optional[StreamThinkingSystem] = None
+_thinking_system_lock = threading.Lock()
 
 
 def get_thinking_system() -> StreamThinkingSystem:
     global _thinking_system
     if _thinking_system is None:
-        _thinking_system = StreamThinkingSystem()
+        with _thinking_system_lock:
+            if _thinking_system is None:
+                _thinking_system = StreamThinkingSystem()
     return _thinking_system
 
 

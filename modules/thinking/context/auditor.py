@@ -36,26 +36,13 @@ class Auditor:
     定期扫描池状态，发出健康警告，供管理 API 查询。
     """
 
-    _instance: Optional["Auditor"] = None
-    _instance_lock = threading.Lock()
-
-    def __new__(cls) -> "Auditor":
-        if cls._instance is None:
-            with cls._instance_lock:
-                if cls._instance is None:
-                    cls._instance = super().__new__(cls)
-                    cls._instance._initialized = False
-        return cls._instance
-
     def __init__(self):
-        if self._initialized:
-            return
-        self._compressor = CompressionEngine()
+        from modules.thinking.context.compression import get_compression_engine
+        self._compressor = get_compression_engine()
         self._last_check_time: float = 0.0
         self._check_interval: float = DEFAULT_CHECK_INTERVAL_SECONDS
         self._warnings: List[Dict[str, Any]] = []
         self._max_warnings = DEFAULT_MAX_WARNINGS
-        self._initialized = True
 
     # ========================================================================
     # 冗余检测
@@ -314,5 +301,21 @@ class Auditor:
         logger.warning("审计警告: %s — %s", warn_type, detail.get("recommendation", str(detail)))
 
 
-# 模块级便捷访问
-auditor = Auditor()
+# 模块级工厂函数 + 向后兼容
+import threading as _threading
+
+_instance = None
+_init_lock = _threading.Lock()
+
+
+def get_auditor() -> Auditor:
+    global _instance
+    if _instance is None:
+        with _init_lock:
+            if _instance is None:
+                _instance = Auditor()
+    return _instance
+
+
+# 向后兼容
+auditor = get_auditor()

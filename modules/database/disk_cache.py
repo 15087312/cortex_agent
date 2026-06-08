@@ -29,18 +29,7 @@ class DiskCache:
     - 性能接近 Redis
     """
     
-    _instance = None
-    
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._initialized = False
-        return cls._instance
-    
     def __init__(self):
-        if self._initialized:
-            return
-        
         self._cache = None
         self._memory_store: Dict[str, Dict] = {}
         self._memory_max_items = 5000  # 内存后备模式条目上限
@@ -55,9 +44,7 @@ class DiskCache:
         except Exception as e:
             logger.error(f"diskcache 初始化失败: {e}")
             self._cache = None
-        
-        self._initialized = True
-    
+
     def _key(self, prefix: str, key: str) -> str:
         """生成带前缀的键"""
         return f"{prefix}:{key}"
@@ -325,4 +312,21 @@ class DiskCache:
             self._cache.close()
 
 
-disk_cache = DiskCache()
+import threading as _threading
+
+_disk_cache = None
+_disk_cache_lock = _threading.Lock()
+
+
+def get_disk_cache() -> "DiskCache":
+    """获取磁盘缓存单例"""
+    global _disk_cache
+    if _disk_cache is None:
+        with _disk_cache_lock:
+            if _disk_cache is None:
+                _disk_cache = DiskCache()
+    return _disk_cache
+
+
+# 向后兼容
+disk_cache = get_disk_cache()

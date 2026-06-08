@@ -234,7 +234,7 @@ class SecurityMonitor(RuntimeExpert):
     def _check_forbidden_commands(self, content: str, model_id: str, tier: str) -> Optional[SecurityVerdict]:
         """检查危险系统命令"""
         patterns = [
-            (r'\brm\s+(?:-[rRf]*[rR][rRf]*f|-[rRf]*f[rRf]*[rR]|--recursive\s+--force|--force\s+--recursive|--recursive\s+-[fF]|-[rR]\s+--force)', "critical", "系统破坏命令"),
+            (r'\brm\s+(?:-[rRf]*[rR][rRf]*f|-[rRf]*f[rRf]*[rR]|--recursive\s+--force|--force\s+--recursive|--recursive\s+-[fF]|--force\s+-[rR]|-[rR]\s+--force)', "critical", "系统破坏命令"),
             (r'\bshutdown\b', "high", "系统关闭命令"),
             (r'\bformat\s+[CF]:', "critical", "磁盘格式化"),
             (r'\bcurl.*\|.*(?:ba)?sh\b', "critical", "管道执行远程脚本"),

@@ -18,6 +18,7 @@
 - Phase 3: 任务上下文感知 (智能) — 根据对话历史推荐工具
 """
 
+import threading
 from typing import List, Dict, Tuple, Optional
 from dataclasses import dataclass
 from .tool_registry import ToolRegistry, ToolInfo
@@ -196,11 +197,14 @@ class ToolDiscoveryEngine:
 
 # 全局单例
 _discovery_engine = None
+_discovery_engine_lock = threading.Lock()
 
 
 def get_tool_discovery_engine() -> ToolDiscoveryEngine:
     """获取全局工具发现引擎"""
     global _discovery_engine
     if _discovery_engine is None:
-        _discovery_engine = ToolDiscoveryEngine()
+        with _discovery_engine_lock:
+            if _discovery_engine is None:
+                _discovery_engine = ToolDiscoveryEngine()
     return _discovery_engine

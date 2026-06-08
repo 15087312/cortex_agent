@@ -79,23 +79,9 @@ class Message:
 
 
 class ModelMessageBus:
-    """模型消息总线 — 全局单例"""
-
-    _instance: Optional["ModelMessageBus"] = None
-    _instance_lock = threading.Lock()
-
-    def __new__(cls) -> "ModelMessageBus":
-        if cls._instance is None:
-            with cls._instance_lock:
-                if cls._instance is None:
-                    cls._instance = super().__new__(cls)
-                    cls._instance._initialized = False
-        return cls._instance
+    """模型消息总线"""
 
     def __init__(self):
-        if self._initialized:
-            return
-
         # 消息队列: recipient_id → deque[Message]
         self._queues: Dict[str, deque] = defaultdict(lambda: deque(maxlen=MAX_QUEUE_SIZE))
         # 响应等待: correlation_id → asyncio.Future
@@ -110,9 +96,11 @@ class ModelMessageBus:
         self._event_emitters: Dict[str, Optional[Callable[[Dict[str, Any]], None]]] = {}
 
         # 异步锁（事件循环变化时自动重建）
+        try:
+            self.__lock_loop_id = id(asyncio.get_running_loop())
+        except RuntimeError:
+            self.__lock_loop_id = None
         self.__lock = asyncio.Lock()
-        self.__lock_loop_id = id(asyncio.get_running_loop())
-        self._initialized = True
         logger.info("[消息总线] 初始化完成")
 
     @property
@@ -435,9 +423,19 @@ class ModelMessageBus:
 
 
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # 全局单例
 # ---------------------------------------------------------------------------
 
+_message_bus = None
+_message_bus_lock = threading.Lock()
+
+
 def get_message_bus() -> ModelMessageBus:
-    """获取全局消息总线"""
-    return ModelMessageBus()
+    """获取全局消息总线单例"""
+    global _message_bus
+    if _message_bus is None:
+        with _message_bus_lock:
+            if _message_bus is None:
+                _message_bus = ModelMessageBus()
+    return _message_bus

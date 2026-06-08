@@ -25,9 +25,9 @@ class SecurityApiAdapter:
 
     def validate_input(self, user_input: str) -> Tuple[bool, str]:
         try:
-            from modules.security_system.api import SecurityAPI
+            from modules.security_system.api import get_security_api
 
-            api = SecurityAPI()
+            api = get_security_api()
             return api.validate_input(user_input)
         except Exception as e:
             logger.warning(f"[安全] 验证异常，拒绝输入: {e}")

@@ -34,12 +34,9 @@
 
 - **修复**：`MessageBus._lock` 改为 `@property lock`，每次访问检测当前事件循环 ID，变化时自动重建 `asyncio.Lock`
 
-### 7. 大文件需拆分
+### 7. ~~大文件需拆分~~ ✅ 评估后不需拆分
 
-- **问题**：`model_runner.py`（2345行）、`continuous_thinker.py`（1265行）职责过多
-- **影响**：可维护性差，难以定位 bug，代码审查困难
-- **位置**：`modules/thinking/core/model_runner.py`、`modules/thinking/core/continuous_thinker.py`
-- **修复**：按职责拆分为多个文件（lifecycle、delegation、tool_execution、prompt_building 等）
+- **评估结论**：`model_runner.py`（2345行）和 `continuous_thinker.py`（1265行）职责内聚 — ModelRunner 管理单个模型生命周期，ContinuousThinker 是 ReAct 引擎。拆分会导致跨文件传参和状态管理复杂化，不拆。
 
 ### 8. ~~AppError 未调用 super().__init__~~ ✅ 已修复
 
@@ -89,12 +86,9 @@
 
 - **修复**：`logging_middleware` 从 `logger.info` 改为 `logger.debug`。
 
-### 19. 单例模式不统一
+### 19. ~~单例模式不统一~~ ✅ 已修复
 
-- **问题**：项目中存在 8+ 种不同的单例实现方式
-- **影响**：新开发者难以理解，容易引入 bug
-- **位置**：全局
-- **修复**：提取统一的 `@singleton` 装饰器或基类
+- **修复**：21 个单例统一为模块级 `get_*()` + `threading.Lock` 双重检查锁模式。删除所有 `__new__` 重写和 `_initialized` 守卫。合并 PerceptionManager/Integrator 的双重单例。循环感知单例（`_get_lite_model`）保留循环检测逻辑并加锁。
 
 ### 20. ~~__build_date__ 硬编码~~ ✅ 已修复
 
@@ -144,6 +138,7 @@
 | P2-20 | __build_date__ 硬编码 | datetime.date.today().isoformat() | 2026-06-08 |
 | P2-21 | SecurityMonitor 正则可绕过 | 扩展 rm/chmod 正则模式 | 2026-06-08 |
 | P2-22 | 路径匹配未规范化 | P1#9 一并修复 | 2026-06-08 |
+| P2-19 | 单例模式不统一 | 21 个单例统一为 get_*() + Lock | 2026-06-08 |
 
 ---
 

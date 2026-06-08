@@ -3,6 +3,7 @@
 """
 import json
 import re
+import threading as _threading
 from typing import Dict, List, Any, Optional
 from modules.utils.logger import setup_logger
 from modules.management.core.error_bus import error_bus, ErrorContext
@@ -284,13 +285,16 @@ class MemoryExtractor:
 
 
 _memory_extractor = None
+_memory_extractor_lock = _threading.Lock()
 
 
 def get_memory_extractor(memory_manager=None):
     """获取记忆提取器单例"""
     global _memory_extractor
     if _memory_extractor is None:
-        _memory_extractor = MemoryExtractor(memory_manager)
+        with _memory_extractor_lock:
+            if _memory_extractor is None:
+                _memory_extractor = MemoryExtractor(memory_manager)
     elif memory_manager and _memory_extractor.memory_manager is None:
         _memory_extractor.memory_manager = memory_manager
     return _memory_extractor

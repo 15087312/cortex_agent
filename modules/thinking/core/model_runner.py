@@ -1233,8 +1233,8 @@ class ModelRunner:
 
         # 追踪完整上下文大小（system prompt + tools + user prompt）
         try:
-            from modules.thinking.context.compression import CompressionEngine
-            engine = CompressionEngine()
+            from modules.thinking.context.compression import get_compression_engine
+            engine = get_compression_engine()
             full_context = system_prompt + "\n\n" + user_prompt
             for t in tools_with_control:
                 full_context += "\n" + str(t.get("function", {}).get("description", ""))

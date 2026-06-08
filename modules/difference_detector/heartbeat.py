@@ -17,17 +17,7 @@ logger = setup_logger("existential_heartbeat")
 class ExistentialHeartbeat:
     """存在心跳 — 持续感知的时钟源"""
 
-    _instance: Optional["ExistentialHeartbeat"] = None
-
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._initialized = False
-        return cls._instance
-
     def __init__(self):
-        if self._initialized:
-            return
 
         self._running = False
         self._thread: Optional[threading.Thread] = None
@@ -35,8 +25,6 @@ class ExistentialHeartbeat:
         self._interval: float = 1.0  # 1Hz
         self._beat_count: int = 0
         self._started_at: float = 0.0
-
-        self._initialized = True
 
     def start(self, detector=None) -> None:
         """启动心跳
@@ -48,8 +36,8 @@ class ExistentialHeartbeat:
             return
 
         if detector is None:
-            from modules.difference_detector.detector import DifferenceDetector
-            detector = DifferenceDetector()
+            from modules.difference_detector.detector import get_detector
+            detector = get_detector()
 
         self._detector = detector
         self._running = True
@@ -109,3 +97,17 @@ class ExistentialHeartbeat:
             "uptime_seconds": round(self.uptime, 1),
             "interval": self._interval,
         }
+
+
+# Thread-safe lazy factory (consolidated from __init__.py)
+_heartbeat_instance = None
+_heartbeat_lock = threading.Lock()
+
+def get_heartbeat() -> ExistentialHeartbeat:
+    """Get or create ExistentialHeartbeat instance (lazy factory, thread-safe)"""
+    global _heartbeat_instance
+    if _heartbeat_instance is None:
+        with _heartbeat_lock:
+            if _heartbeat_instance is None:
+                _heartbeat_instance = ExistentialHeartbeat()
+    return _heartbeat_instance

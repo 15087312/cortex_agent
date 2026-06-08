@@ -32,26 +32,16 @@ def _get_value_constraint_builder():
 
 
 class PromptManager:
-    """提示词管理器 - 单例模式"""
-
-    _instance = None
-    _initialized = False
-
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-        return cls._instance
+    """提示词管理器"""
 
     def __init__(self):
-        if not PromptManager._initialized:
-            self._registry = prompt_registry
-            self._base_prompts: Dict[str, str] = {}
-            self._memory_context: List[str] = []
-            self._constraints: List[str] = []
-            self._role_overrides: Dict[str, str] = {}
-            self._anti_repetition = AntiRepetitionConstraints()
-            PromptManager._initialized = True
-            self._load_templates()
+        self._registry = prompt_registry
+        self._base_prompts: Dict[str, str] = {}
+        self._memory_context: List[str] = []
+        self._constraints: List[str] = []
+        self._role_overrides: Dict[str, str] = {}
+        self._anti_repetition = AntiRepetitionConstraints()
+        self._load_templates()
 
     def _load_templates(self):
         """从文件加载模板"""
@@ -212,4 +202,21 @@ class PromptManager:
 【输出】（只许输出JSON）"""
 
 
-prompt_manager = PromptManager()
+import threading as _threading
+
+_prompt_manager = None
+_prompt_manager_lock = _threading.Lock()
+
+
+def get_prompt_manager() -> PromptManager:
+    """获取提示词管理器单例"""
+    global _prompt_manager
+    if _prompt_manager is None:
+        with _prompt_manager_lock:
+            if _prompt_manager is None:
+                _prompt_manager = PromptManager()
+    return _prompt_manager
+
+
+# 向后兼容
+prompt_manager = get_prompt_manager()

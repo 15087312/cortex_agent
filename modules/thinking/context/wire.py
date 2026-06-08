@@ -79,7 +79,8 @@ def probes_write_to_gcm(
     probe_name: str = "signal_probe"
 ) -> None:
     """将探针信号写入 GCM"""
-    sync = Synchronizer()
+    from modules.thinking.context.synchronizer import get_synchronizer
+    sync = get_synchronizer()
     for signal in probe_signals:
         signal_type = signal.get("type", "unknown")
         data = signal.get("data", signal)
@@ -101,7 +102,8 @@ def sync_model_call(
     importance: float = 0.5
 ) -> EventRecord:
     """模型调用后同步输出到 GCM"""
-    sync = Synchronizer()
+    from modules.thinking.context.synchronizer import get_synchronizer
+    sync = get_synchronizer()
     return sync.sync_model_output(pool, source_role, content, metadata, importance)
 
 
@@ -111,8 +113,10 @@ def sync_model_call(
 
 def gcm_status_for_api() -> Dict[str, Any]:
     """获取 GCM 状态供管理 API 使用"""
-    auditor = Auditor()
-    pool = GlobalContextPool()
+    from modules.thinking.context.auditor import get_auditor
+    from modules.thinking.context.global_context_pool import get_global_context_pool
+    auditor = get_auditor()
+    pool = get_global_context_pool()
 
     stats = auditor.get_stats(pool)
 
@@ -141,8 +145,10 @@ def gcm_status_for_api() -> Dict[str, Any]:
 
 def gcm_health_check() -> Dict[str, Any]:
     """快速健康检查"""
-    pool = GlobalContextPool()
-    auditor = Auditor()
+    from modules.thinking.context.global_context_pool import get_global_context_pool
+    from modules.thinking.context.auditor import get_auditor
+    pool = get_global_context_pool()
+    auditor = get_auditor()
 
     memory = auditor.check_memory(pool)
     pool_stats = pool.get_stats()

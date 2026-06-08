@@ -11,23 +11,13 @@ logger = logging.getLogger(__name__)
 
 
 class PromptRegistry:
-    """提示词注册表 - 单例模式"""
-
-    _instance = None
-
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._initialized = False
-        return cls._instance
+    """提示词注册表"""
 
     def __init__(self):
-        if not self._initialized:
-            self._templates: Dict[str, str] = {}
-            self._template_hashes: Dict[str, str] = {}
-            self._file_paths: Dict[str, str] = {}
-            self._dynamic_generators: Dict[str, Callable] = {}
-            self._initialized = True
+        self._templates: Dict[str, str] = {}
+        self._template_hashes: Dict[str, str] = {}
+        self._file_paths: Dict[str, str] = {}
+        self._dynamic_generators: Dict[str, Callable] = {}
 
     def register(self, key: str, template: str, file_path: Optional[str] = None):
         """
@@ -151,4 +141,21 @@ class PromptRegistry:
         self._file_paths.clear()
 
 
-prompt_registry = PromptRegistry()
+import threading as _threading
+
+_prompt_registry = None
+_prompt_registry_lock = _threading.Lock()
+
+
+def get_prompt_registry() -> PromptRegistry:
+    """获取提示词注册表单例"""
+    global _prompt_registry
+    if _prompt_registry is None:
+        with _prompt_registry_lock:
+            if _prompt_registry is None:
+                _prompt_registry = PromptRegistry()
+    return _prompt_registry
+
+
+# 向后兼容
+prompt_registry = get_prompt_registry()

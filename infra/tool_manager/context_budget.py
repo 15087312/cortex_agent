@@ -15,6 +15,7 @@
 - 历史记录长: 自动减少工具描述详细程度
 """
 
+import threading
 from dataclasses import dataclass
 from typing import Dict, Any, List, Optional
 
@@ -179,11 +180,14 @@ class ContextBudgetManager:
 
 # 全局实例
 _budget_manager = None
+_budget_manager_lock = threading.Lock()
 
 
 def get_context_budget_manager() -> ContextBudgetManager:
     """获取全局上下文预算管理器实例"""
     global _budget_manager
     if _budget_manager is None:
-        _budget_manager = ContextBudgetManager()
+        with _budget_manager_lock:
+            if _budget_manager is None:
+                _budget_manager = ContextBudgetManager()
     return _budget_manager

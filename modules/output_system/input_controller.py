@@ -6,6 +6,7 @@
 - 委托给基础设施层的硬件控制器执行
 - 不包含具体实现，仅作为模块间调用的桥梁
 """
+import threading as _threading
 from typing import Dict, Any, Optional, Tuple
 from dataclasses import dataclass
 from utils.logger import setup_logger
@@ -166,12 +167,15 @@ class InputController:
 # CONC-7: Use lazy factory instead of module-level singleton
 # Avoid initializing hardware at import time (breaks CI/headless environments)
 _input_controller_instance = None
+_input_controller_lock = _threading.Lock()
 
 def get_input_controller() -> InputController:
     """Get or create input controller instance (lazy factory)"""
     global _input_controller_instance
     if _input_controller_instance is None:
-        _input_controller_instance = InputController()
+        with _input_controller_lock:
+            if _input_controller_instance is None:
+                _input_controller_instance = InputController()
     return _input_controller_instance
 
 # Backwards compatibility: module-level access via property

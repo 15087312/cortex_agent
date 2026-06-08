@@ -19,27 +19,16 @@ router = APIRouter(prefix="/security", tags=["安全系统"])
 
 
 class SecurityAPI:
-    _instance = None
-
-    def __new__(cls, *args, **kwargs):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-        return cls._instance
-
     def __init__(self):
-        if hasattr(self, '_initialized'):
-            return
-        
         self.switch_manager = SecuritySwitchManager()
         self.audit_logger = SecurityAuditLogger()
-        
+
         self.core_validator = CoreValidator()
         self.content_validator = ContentValidator()
         self.module_validator = ModuleValidator()
         self.evolve_validator = EvolveValidator()
         self.output_validator = OutputValidator()
-        
-        self._initialized = True
+
         logger.info("安全系统API初始化完成")
 
     def validate_input(self, user_input: str) -> Tuple[bool, str]:
@@ -127,7 +116,7 @@ class SecurityAPI:
 @router.get("/status")
 async def get_security_status():
     """获取安全系统状态"""
-    api = SecurityAPI()
+    api = get_security_api()
     return {"success": True, "data": {
         "state": api.get_security_state(),
         "audit_enabled": True
@@ -137,7 +126,7 @@ async def get_security_status():
 @router.get("/audit")
 async def get_audit_logs(limit: int = 50):
     """获取审计日志"""
-    api = SecurityAPI()
+    api = get_security_api()
     logs = api.get_audit_logs(limit)
     return {"success": True, "data": {"logs": logs, "count": len(logs)}}
 
@@ -148,7 +137,7 @@ async def set_security_switch(
     enable: bool
 ):
     """设置安全开关"""
-    api = SecurityAPI()
+    api = get_security_api()
     try:
         sec_level = SecurityLevel(level)
         result = api.set_security_switch(sec_level, enable)
@@ -160,7 +149,7 @@ async def set_security_switch(
 @router.post("/validate/input")
 async def validate_input(content: str = Body(..., description="要校验的输入内容")):
     """校验输入 - SEC-13: Use request body instead of query parameters"""
-    api = SecurityAPI()
+    api = get_security_api()
     passed, result = api.validate_input(content)
     return {"success": True, "data": {"passed": passed, "result": result}}
 
@@ -168,7 +157,7 @@ async def validate_input(content: str = Body(..., description="要校验的输�
 @router.post("/validate/output")
 async def validate_output(content: str = Body(..., description="要校验的输出内容")):
     """校验输出 - SEC-13: Use request body instead of query parameters"""
-    api = SecurityAPI()
+    api = get_security_api()
     passed, result = api.validate_output(content)
     return {"success": True, "data": {"passed": passed, "result": result}}
 
@@ -179,6 +168,22 @@ async def validate_module_call(
     target: str = Body(..., description="目标模块")
 ):
     """校验模块调用 - SEC-13: Use request body instead of query parameters"""
-    api = SecurityAPI()
+    api = get_security_api()
     passed, result = api.validate_module_call(caller, target)
     return {"success": True, "data": {"passed": passed, "result": result}}
+
+
+import threading as _threading
+
+_security_api = None
+_security_api_lock = _threading.Lock()
+
+
+def get_security_api() -> SecurityAPI:
+    """获取安全系统 API 单例"""
+    global _security_api
+    if _security_api is None:
+        with _security_api_lock:
+            if _security_api is None:
+                _security_api = SecurityAPI()
+    return _security_api

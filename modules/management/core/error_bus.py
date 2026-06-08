@@ -69,19 +69,9 @@ class ErrorContext:
 
 
 class GlobalErrorBus:
-    """全局错误总线，单例模式"""
-    _instance = None
-    
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._initialized = False
-        return cls._instance
-    
+    """全局错误总线"""
+
     def __init__(self):
-        if self._initialized:
-            return
-        self._initialized = True
         self.logger = _setup_global_logger()
         self._init_hooks()
     
@@ -189,8 +179,24 @@ class GlobalErrorBus:
             self.logger.error(f"Asyncio error without exception: {context}")
 
 
-# 创建全局单例实例
-error_bus = GlobalErrorBus()
+import threading as _threading
+
+_error_bus = None
+_error_bus_lock = _threading.Lock()
+
+
+def get_error_bus() -> GlobalErrorBus:
+    """获取全局错误总线单例"""
+    global _error_bus
+    if _error_bus is None:
+        with _error_bus_lock:
+            if _error_bus is None:
+                _error_bus = GlobalErrorBus()
+    return _error_bus
+
+
+# 向后兼容
+error_bus = get_error_bus()
 
 # 导出公共接口
-__all__ = ["error_bus", "ErrorContext"]
+__all__ = ["error_bus", "get_error_bus", "ErrorContext"]

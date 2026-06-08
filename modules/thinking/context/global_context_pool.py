@@ -39,21 +39,7 @@ class GlobalContextPool:
     - 记忆索引引用（不复制，仅引用）
     """
 
-    _instance: Optional["GlobalContextPool"] = None
-    _instance_lock = threading.Lock()
-
-    def __new__(cls) -> "GlobalContextPool":
-        if cls._instance is None:
-            with cls._instance_lock:
-                if cls._instance is None:
-                    cls._instance = super().__new__(cls)
-                    cls._instance._initialized = False
-        return cls._instance
-
     def __init__(self):
-        if self._initialized:
-            return
-
         self._lock = threading.RLock()
 
         # 项目元数据
@@ -76,7 +62,6 @@ class GlobalContextPool:
         # 会话上下文
         self._session_contexts: Dict[str, Dict[str, Any]] = {}
 
-        self._initialized = True
         logger.info("GlobalContextPool 初始化完成")
 
     # ========================================================================
@@ -284,5 +269,21 @@ class GlobalContextPool:
             logger.warning("GlobalContextPool 已清空")
 
 
-# 模块级便捷访问
-gcm_pool = GlobalContextPool()
+# 模块级工厂函数 + 向后兼容
+import threading as _threading
+
+_instance = None
+_init_lock = _threading.Lock()
+
+
+def get_global_context_pool() -> GlobalContextPool:
+    global _instance
+    if _instance is None:
+        with _init_lock:
+            if _instance is None:
+                _instance = GlobalContextPool()
+    return _instance
+
+
+# 向后兼容
+gcm_pool = get_global_context_pool()

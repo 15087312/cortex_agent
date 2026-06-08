@@ -16,9 +16,8 @@ class SecurityApiAdapter:
     """Adapter around the concrete SecurityAPI facade."""
 
     def __init__(self):
-        from modules.security_system.api import SecurityAPI
-
-        self._api = SecurityAPI()
+        from modules.security_system.api import get_security_api
+        self._api = get_security_api()
 
     def validate_input(self, user_input: str) -> Tuple[bool, str]:
         return self._api.validate_input(user_input)

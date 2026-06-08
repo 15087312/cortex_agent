@@ -64,14 +64,20 @@ _DANGEROUS_PATTERNS = [
 ]
 
 # 极端危险模式 — 硬阻断，绝不执行
-_EXTREME_DANGER_PATTERNS = [
-    "rm -rf /", "rm -rf /*",
-    ":(){ :|:& };:",  # fork bomb
-    "mkfs.",
-    "dd if=",
-    "> /dev/sd",
-    "nc -l", "ncat -l",  # reverse shell listener
+import re as _re
+_EXTREME_DANGER_PATTERNS_RAW = [
+    r'rm\s+-[rRf]*[rR][rRf]*f\s+/\s*$',       # rm -rf / (exactly root)
+    r'rm\s+-[rRf]*[rR][rRf]*f\s+/\*',          # rm -rf /*
+    r'rm\s+-[rRf]*[rR][rRf]*f\s+~',            # rm -rf ~
+    r'rm\s+-[rRf]*[rR][rRf]*f\s+\.\s*$',       # rm -rf .
+    r':\(\)\{.*\|.*\&\}.*:',                    # fork bomb
+    r'\bmkfs\.',                                 # mkfs
+    r'\bdd\s+if=',                               # dd
+    r'>\s*/dev/sd',                              # overwrite disk
+    r'nc\s+-l',                                  # reverse shell listener
+    r'ncat\s+-l',                                # reverse shell listener
 ]
+_EXTREME_DANGER_RE = [_re.compile(p, _re.IGNORECASE) for p in _EXTREME_DANGER_PATTERNS_RAW]
 
 
 def _check_command_whitelist(command: str) -> bool:
@@ -104,10 +110,9 @@ def _detect_dangerous_command(command: str) -> List[str]:
 
 def _check_extreme_danger(command: str) -> Optional[str]:
     """检查极端危险命令，返回拒绝原因或 None"""
-    cmd_lower = command.lower().strip()
-    for pattern in _EXTREME_DANGER_PATTERNS:
-        if pattern.lower() in cmd_lower:
-            return f"极端危险命令被拦截: 匹配模式 '{pattern}'"
+    for pattern in _EXTREME_DANGER_RE:
+        if pattern.search(command):
+            return f"极端危险命令被拦截: 匹配模式 '{pattern.pattern}'"
     return None
 
 
@@ -357,7 +362,16 @@ def _prune_old_snapshots():
     core=True,
 )
 def exec_command(command: str, timeout: Optional[int] = None, workdir: Optional[str] = None) -> Dict[str, Any]:
-    """执行任意 shell 命令（高权限）— 带危险模式检测 + 执行前快照"""
+    """执行任意 shell 命令（高权限）— 带危险模式检测 + 执行前快照
+
+    安全防护层级（调用链从外到内）：
+    1. ToolSecurityGate.check() — 外层安全门控，HIGH 风险工具需 LLM 审查或用户确认
+       （LLM 不可用时直接拒绝，见 tool_security_gate.py _check_high_risk）
+    2. _visible_tool_whitelist() — expert tier 无法看到此工具（HIGH 风险自动过滤）
+    3. ModelPermissions.can_use_tool_category("admin") — 非 large 角色权限拒绝
+    4. _check_extreme_danger() — 本函数内部，极端危险模式硬阻断（rm -rf /、fork bomb 等）
+    5. _detect_dangerous_command() + _create_snapshot() — 危险模式警告 + 执行前快照兜底
+    """
     if not command or not command.strip():
         return {"error": "命令不能为空", "exit_code": -1}
 
@@ -588,6 +602,9 @@ def rollback_snapshot(snapshot_id: str, dry_run: bool = False) -> Dict[str, Any]
     """回滚到指定快照 — 恢复备份的文件"""
     if not snapshot_id or not snapshot_id.strip():
         return {"error": "snapshot_id 不能为空", "success": False}
+
+    if not _re.match(r'^[a-zA-Z0-9_-]+$', snapshot_id):
+        return {"error": "无效的 snapshot_id 格式", "success": False}
 
     snapshot_path = _SNAPSHOT_DIR / snapshot_id
     meta_path = snapshot_path / "snapshot.json"

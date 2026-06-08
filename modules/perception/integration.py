@@ -6,6 +6,7 @@
 2. 感知上下文注入到对话
 3. 对话流程集成
 """
+import threading
 from typing import List, Dict, Any, Optional
 from utils.logger import setup_logger
 
@@ -19,17 +20,7 @@ class PerceptionIntegrator:
     将感知系统无缝集成到AI对话流程
     """
     
-    _instance = None
-    
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._initialized = False
-        return cls._instance
-    
     def __init__(self):
-        if self._initialized:
-            return
         
         from modules.perception import perception_manager
         self.perception = perception_manager
@@ -37,7 +28,6 @@ class PerceptionIntegrator:
         self._auto_monitoring = True
         self._context_injection_enabled = True
         
-        self._initialized = True
         logger.info("感知集成器初始化完成")
     
     def start(self) -> None:
@@ -165,12 +155,15 @@ class PerceptionIntegrator:
 # CONC-7: Use lazy factory instead of module-level singleton
 # Avoid initializing hardware at import time (breaks CI/headless environments)
 _perception_integrator_instance = None
+_perception_integrator_lock = threading.Lock()
 
 def get_perception_integrator() -> PerceptionIntegrator:
-    """Get or create perception integrator instance (lazy factory)"""
+    """Get or create perception integrator instance (lazy factory, thread-safe)"""
     global _perception_integrator_instance
     if _perception_integrator_instance is None:
-        _perception_integrator_instance = PerceptionIntegrator()
+        with _perception_integrator_lock:
+            if _perception_integrator_instance is None:
+                _perception_integrator_instance = PerceptionIntegrator()
     return _perception_integrator_instance
 
 # Backwards compatibility: module-level access via property

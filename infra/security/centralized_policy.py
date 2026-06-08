@@ -97,8 +97,10 @@ class SecurityPolicy:
         # 预解析禁止读取目录
         self._forbidden_read_resolved = []
         for d in self.config.forbidden_read_dirs:
-            if d.endswith("/*"):
-                self._forbidden_read_resolved.append((str(Path(d[:-2]).resolve()), True))
+            if "*" in d:
+                # 通配符模式：拆分为前缀（* 之前的部分）和后缀
+                prefix = d.split("*")[0]
+                self._forbidden_read_resolved.append((str(Path(prefix).resolve()), True))
             else:
                 self._forbidden_read_resolved.append((str(Path(d).resolve()), False))
         # 项目根目录（延迟初始化）
@@ -188,9 +190,10 @@ class SecurityPolicy:
 
         path_str = str(p)
 
-        # 检查禁止写入目录（使用预解析的 resolved 路径）
+        # 检查禁止写入目录（使用预解析的 resolved 路径，目录边界匹配）
         for forbidden_dir in self._forbidden_write_dirs:
-            if path_str.startswith(str(forbidden_dir)):
+            forbidden_str = str(forbidden_dir)
+            if path_str == forbidden_str or path_str.startswith(forbidden_str + "/"):
                 return True
 
         # 禁止修改 .git 目录
@@ -208,10 +211,16 @@ class SecurityPolicy:
 
         path_str = str(p)
 
-        # 检查禁止读取目录（使用预解析的 resolved 路径）
+        # 检查禁止读取目录（使用预解析的 resolved 路径，目录边界匹配）
         for prefix, is_glob in self._forbidden_read_resolved:
-            if path_str.startswith(prefix):
-                return True
+            if is_glob:
+                # 通配符模式：前缀匹配即可（如 /home/*/.ssh → /home/alice/.ssh）
+                if path_str.startswith(prefix):
+                    return True
+            else:
+                # 精确模式：路径等于或在目录下
+                if path_str == prefix or path_str.startswith(prefix + "/"):
+                    return True
 
         return False
 

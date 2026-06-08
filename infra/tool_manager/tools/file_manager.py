@@ -17,8 +17,16 @@ logger = setup_logger("file_manager")
 
 
 def _is_path_allowed(target_path: Path) -> bool:
-    """统一路径安全检查 — 委托 SecurityPolicy"""
-    return get_security_policy().is_path_allowed(str(target_path))
+    """统一路径安全检查 — 委托 SecurityPolicy（白名单 + 禁止目录 + 敏感文件）"""
+    policy = get_security_policy()
+    path_str = str(target_path)
+    if not policy.is_path_allowed(path_str):
+        return False
+    if policy.is_forbidden_write_path(path_str):
+        return False
+    if policy.is_sensitive_file(path_str):
+        return False
+    return True
 
 
 @ToolRegistry.register(

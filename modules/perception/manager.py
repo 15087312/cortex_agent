@@ -133,21 +133,11 @@ class PerceptionManager:
     - 自动集成到主流程
     """
     
-    _instance = None
-    
-    def __new__(cls, *args, **kwargs):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._initialized = False
-        return cls._instance
-    
     def __init__(
         self,
         watch_paths: List[str] = None,
         check_interval: float = 2.0
     ):
-        if self._initialized:
-            return
         
         self.watch_paths = watch_paths or ["./", "data/"]
         self.check_interval = check_interval
@@ -168,7 +158,6 @@ class PerceptionManager:
         self._running = False
         self._thread = None
         
-        self._initialized = True
         logger.info("感知管理器初始化完成 (平台: %s)", PERCEPTION_PLATFORM)
 
     # ========== 文件感知 ==========
@@ -672,12 +661,15 @@ class ScreenPerception:
 # CONC-7: Use lazy factory instead of module-level singleton
 # Avoid initializing hardware at import time (breaks CI/headless environments)
 _perception_manager_instance = None
+_perception_manager_lock = threading.Lock()
 
 def get_perception_manager() -> PerceptionManager:
-    """Get or create perception manager instance (lazy factory)"""
+    """Get or create perception manager instance (lazy factory, thread-safe)"""
     global _perception_manager_instance
     if _perception_manager_instance is None:
-        _perception_manager_instance = PerceptionManager()
+        with _perception_manager_lock:
+            if _perception_manager_instance is None:
+                _perception_manager_instance = PerceptionManager()
     return _perception_manager_instance
 
 # Backwards compatibility: module-level access via property

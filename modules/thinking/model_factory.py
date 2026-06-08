@@ -5,6 +5,7 @@
 不再使用全局单例模式，每个模型都是独立个体。
 """
 import asyncio
+import threading as _threading
 from typing import Dict, Optional, Any
 from dataclasses import dataclass, field
 
@@ -286,11 +287,14 @@ class ModelInstanceFactory:
 # ---------------------------------------------------------------------------
 
 _factory: Optional[ModelInstanceFactory] = None
+_factory_lock = _threading.Lock()
 
 
 def get_model_factory() -> ModelInstanceFactory:
     """获取全局模型实例工厂"""
     global _factory
     if _factory is None:
-        _factory = ModelInstanceFactory()
+        with _factory_lock:
+            if _factory is None:
+                _factory = ModelInstanceFactory()
     return _factory

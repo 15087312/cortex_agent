@@ -41,16 +41,11 @@ config = DatabaseConfig()
 class DatabaseManager:
     """数据库管理器"""
 
-    _instance = None
-    _engine = None
-    _session_factory = None
-    _tables_created = False
-    
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-        return cls._instance
-    
+    def __init__(self):
+        self._engine = None
+        self._session_factory = None
+        self._tables_created = False
+
     def initialize(self):
         """初始化数据库"""
         if self._engine is not None:
@@ -158,4 +153,21 @@ class DatabaseManager:
             logger.info("数据库连接已关闭")
 
 
-db_manager = DatabaseManager()
+import threading as _threading
+
+_db_manager = None
+_db_manager_lock = _threading.Lock()
+
+
+def get_db_manager() -> DatabaseManager:
+    """获取数据库管理器单例"""
+    global _db_manager
+    if _db_manager is None:
+        with _db_manager_lock:
+            if _db_manager is None:
+                _db_manager = DatabaseManager()
+    return _db_manager
+
+
+# 向后兼容
+db_manager = get_db_manager()

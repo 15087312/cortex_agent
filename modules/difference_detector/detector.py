@@ -1,7 +1,7 @@
 """
 差异检测器 — 聚合、分配强度、持久化
 
-单例模式 (__new__ + _initialized)
+单例通过模块级工厂 get_detector() + threading.Lock 管理
 两种输入模式:
   1. 推送模式: 感知系统通过 ingest() 主动推送事件
   2. 拉取模式: scan() 遍历已注册源调用 detect()（兼容）
@@ -41,17 +41,7 @@ HIGH_INTENSITY_THRESHOLD = 50.0
 class DifferenceDetector:
     """差异检测器 — 聚合所有维度检测"""
 
-    _instance: Optional["DifferenceDetector"] = None
-
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._initialized = False
-        return cls._instance
-
     def __init__(self):
-        if self._initialized:
-            return
 
         self.registry = DifferenceSourceRegistry()
         self.intensity_assigner = IntensityAssigner()
@@ -67,7 +57,6 @@ class DifferenceDetector:
         # 注册默认源
         self._register_default_sources()
 
-        self._initialized = True
         logger.info("差异检测器初始化完成 (Stage 1: continuous perception)")
 
     def _register_default_sources(self) -> None:
@@ -177,7 +166,7 @@ class DifferenceDetector:
     def get_status(self) -> dict:
         stats = self.repository.get_stats()
         return {
-            "initialized": self._initialized,
+            "initialized": True,
             "scan_count": self._scan_count,
             "last_scan": self._last_scan,
             "total_differences_detected": self._total_differences,
@@ -296,3 +285,17 @@ class DifferenceDetector:
                 cb(high_intensity)
             except Exception as e:
                 logger.error(f"高强度差异回调异常: {e}")
+
+
+# Thread-safe lazy factory (consolidated from __init__.py)
+_detector_instance = None
+_detector_lock = threading.Lock()
+
+def get_detector() -> DifferenceDetector:
+    """Get or create DifferenceDetector instance (lazy factory, thread-safe)"""
+    global _detector_instance
+    if _detector_instance is None:
+        with _detector_lock:
+            if _detector_instance is None:
+                _detector_instance = DifferenceDetector()
+    return _detector_instance

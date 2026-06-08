@@ -37,20 +37,7 @@ class Synchronizer:
     负责将外部变化同步到 GlobalContextPool，确保池始终是"最新真相"。
     """
 
-    _instance: Optional["Synchronizer"] = None
-    _instance_lock = threading.Lock()
-
-    def __new__(cls) -> "Synchronizer":
-        if cls._instance is None:
-            with cls._instance_lock:
-                if cls._instance is None:
-                    cls._instance = super().__new__(cls)
-                    cls._instance._initialized = False
-        return cls._instance
-
     def __init__(self):
-        if self._initialized:
-            return
         self._pool: Optional[GlobalContextPool] = None
         self._watcher_thread: Optional[threading.Thread] = None
         self._watching = False
@@ -58,7 +45,6 @@ class Synchronizer:
         self._watch_interval = DEFAULT_WATCH_INTERVAL
         self._file_mtimes: Dict[str, float] = {}
         self._on_change_callbacks: List[Callable] = []
-        self._initialized = True
 
     # ========================================================================
     # 文件监听
@@ -432,5 +418,21 @@ class Synchronizer:
             return self.resolve_conflict(pool, filepath, incoming, "latest")
 
 
-# 模块级便捷访问
-synchronizer = Synchronizer()
+# 模块级工厂函数 + 向后兼容
+import threading as _threading
+
+_instance = None
+_init_lock = _threading.Lock()
+
+
+def get_synchronizer() -> Synchronizer:
+    global _instance
+    if _instance is None:
+        with _init_lock:
+            if _instance is None:
+                _instance = Synchronizer()
+    return _instance
+
+
+# 向后兼容
+synchronizer = get_synchronizer()

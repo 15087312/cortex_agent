@@ -13,6 +13,7 @@
 """
 import asyncio
 import json
+import threading
 import re
 from typing import Dict, Any
 from utils.logger import setup_logger
@@ -31,15 +32,11 @@ def _is_lite_model_available() -> bool:
 
 _lite_model_instance = None
 _lite_model_loop_id = None
+_lite_model_lock = threading.Lock()
 
 
 def _get_lite_model():
-     """获取 LiteModelClient，事件循环变化时重建（清旧 session）
-
-     始终创建新实例，避免复用 model_manager.lite_model 中可能绑定到
-     已关闭事件循环的 aiohttp session（"Event loop is closed" 根因）。
-     同时清除 LiteModelClient 类级单例，确保 from_config() 不返回旧实例。
-     """
+     """获取 LiteModelClient，事件循环变化时重建（清旧 session）"""
      global _lite_model_instance, _lite_model_loop_id
      import asyncio
      try:
@@ -50,24 +47,27 @@ def _get_lite_model():
      if _lite_model_instance is not None and _lite_model_loop_id == current_loop_id:
          return _lite_model_instance
 
-     # 事件循环变化或首次创建：旧实例的 aiohttp session 已失效，必须新建
-     if _lite_model_instance is not None:
-         try:
-             _lite_model_instance._session = None
-         except Exception as e:
-             logger.debug(f"[LiteModel] 清理旧 session 失败 (非致命): {e}")
-         _lite_model_instance = None
+     with _lite_model_lock:
+         if _lite_model_instance is not None and _lite_model_loop_id == current_loop_id:
+             return _lite_model_instance
 
-     try:
-         from infra.model.lite_model_client import LiteModelClient
-         # 清除类级单例，避免 from_config() 返回绑定到旧事件循环的实例
-         LiteModelClient._instance = None
-         _lite_model_instance = LiteModelClient.from_config()
-     except Exception as e:
-         logger.warning(f"LiteModelClient 初始化失败: {e}")
-         return None
-     _lite_model_loop_id = current_loop_id
-     return _lite_model_instance
+         # 事件循环变化或首次创建：旧实例的 aiohttp session 已失效，必须新建
+         if _lite_model_instance is not None:
+             try:
+                 _lite_model_instance._session = None
+             except Exception as e:
+                 logger.debug(f"[LiteModel] 清理旧 session 失败 (非致命): {e}")
+             _lite_model_instance = None
+
+         try:
+             from infra.model.lite_model_client import LiteModelClient
+             LiteModelClient._instance = None
+             _lite_model_instance = LiteModelClient.from_config()
+         except Exception as e:
+             logger.warning(f"LiteModelClient 初始化失败: {e}")
+             return None
+         _lite_model_loop_id = current_loop_id
+         return _lite_model_instance
 
 
 def _parse_json_from_output(text: str) -> Dict[str, Any]:

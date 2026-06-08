@@ -655,7 +655,8 @@ def request_intermediate_response(
                 cleaned = re.sub(r'<tool_use>.*?</tool_use>', '', cleaned, flags=re.DOTALL)
                 paragraphs = [p.strip() for p in cleaned.split('\n\n') if len(p.strip()) > 20]
 
-                engine = CompressionEngine()
+                from modules.thinking.context.compression import get_compression_engine
+                engine = get_compression_engine()
                 max_tokens = max(max_length // 4, 50)
 
                 if paragraphs:

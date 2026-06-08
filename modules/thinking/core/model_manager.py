@@ -21,26 +21,16 @@ from utils.logger import setup_logger
 class ModelManager:
     """模型调度中心 - 单例模式（兼容旧接口）+ 工厂模式（新架构）"""
 
-    _instance = None
-
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._initialized = False
-        return cls._instance
-
     def __init__(self):
-        if not self._initialized:
-            self.big_model: Optional[LargeModelClient] = None
-            self.middle_model: Optional[MediumModelClient] = None
-            self.small_model: Optional[SmallModelClient] = None
-            self.lite_model: Optional[LiteModelClient] = None  # 轻量专家模型
-            self.logger = setup_logger("model_manager")
-            self.gcm_pool = None  # 全局上下文池（可选注入）
-            # v2: 身份映射 — model_id → ModelIdentity
-            self._identities: Dict[str, Any] = {}
-            self._factory = None  # 延迟创建 ModelInstanceFactory
-            self._initialized = True
+        self.big_model: Optional[LargeModelClient] = None
+        self.middle_model: Optional[MediumModelClient] = None
+        self.small_model: Optional[SmallModelClient] = None
+        self.lite_model: Optional[LiteModelClient] = None  # 轻量专家模型
+        self.logger = setup_logger("model_manager")
+        self.gcm_pool = None  # 全局上下文池（可选注入）
+        # v2: 身份映射 — model_id → ModelIdentity
+        self._identities: Dict[str, Any] = {}
+        self._factory = None  # 延迟创建 ModelInstanceFactory
 
     # ------------------------------------------------------------------
     # v2: 工厂集成
@@ -222,5 +212,21 @@ class ModelManager:
         self.logger.info("ModelManager 已关闭")
 
 
-# 全局单例
-model_manager = ModelManager()
+# 模块级工厂函数 + 向后兼容
+import threading as _threading
+
+_instance = None
+_init_lock = _threading.Lock()
+
+
+def get_model_manager() -> ModelManager:
+    global _instance
+    if _instance is None:
+        with _init_lock:
+            if _instance is None:
+                _instance = ModelManager()
+    return _instance
+
+
+# 向后兼容
+model_manager = get_model_manager()

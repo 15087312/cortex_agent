@@ -29,16 +29,6 @@ class CompressionEngine:
     自动选择压缩级别并压缩内容到目标 token 数。
     """
 
-    _instance: Optional["CompressionEngine"] = None
-    _instance_lock = threading.Lock()
-
-    def __new__(cls) -> "CompressionEngine":
-        if cls._instance is None:
-            with cls._instance_lock:
-                if cls._instance is None:
-                    cls._instance = super().__new__(cls)
-        return cls._instance
-
     # 粗略 token 估算比例
     # 注意：实际比例取决于具体 tokenizer，以下为保守估计（偏低以避免超出窗口）
     # Claude/GPT tokenizer 中文通常 1-2 字符/token，英文约 4 字符/token
@@ -413,3 +403,19 @@ class CompressionEngine:
             return None
 
         return "新增内容:\n" + '\n'.join(list(added)[:10])
+
+
+# 模块级工厂函数
+import threading as _threading
+
+_instance = None
+_init_lock = _threading.Lock()
+
+
+def get_compression_engine() -> CompressionEngine:
+    global _instance
+    if _instance is None:
+        with _init_lock:
+            if _instance is None:
+                _instance = CompressionEngine()
+    return _instance

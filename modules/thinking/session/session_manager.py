@@ -13,6 +13,7 @@
 - Tool Expert: 写入所在会话
 """
 import time
+import threading as _threading
 import uuid
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any, Set
@@ -419,11 +420,14 @@ class SessionManager:
 # ---------------------------------------------------------------------------
 
 _session_manager: Optional[SessionManager] = None
+_session_manager_lock = _threading.Lock()
 
 
 def get_session_manager() -> SessionManager:
     """获取全局 SessionManager 单例"""
     global _session_manager
     if _session_manager is None:
-        _session_manager = SessionManager()
+        with _session_manager_lock:
+            if _session_manager is None:
+                _session_manager = SessionManager()
     return _session_manager

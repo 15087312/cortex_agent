@@ -3,6 +3,7 @@
 这是唯一允许 import 所有感知子模块的地方。
 从 config.settings 读取配置，选择性启动各子系统。
 """
+import threading
 from typing import Optional, Tuple
 
 from utils.logger import setup_logger
@@ -218,10 +219,13 @@ class PerceptionSystem:
 
 
 _system: Optional[PerceptionSystem] = None
+_system_lock = threading.Lock()
 
 
 def get_perception_system() -> PerceptionSystem:
     global _system
     if _system is None:
-        _system = PerceptionSystem()
+        with _system_lock:
+            if _system is None:
+                _system = PerceptionSystem()
     return _system

@@ -295,6 +295,7 @@ class MultiModelOrchestrator:
         thinking_history = thinking_result.get("thinking_history", [])
         thinking_turns = thinking_result.get("thinking_turns", 0)
         probe_signals = thinking_result.get("probe_signals", [])
+        blackboard = thinking_result.get("blackboard")
 
         # ---- 5. 输出审查 (专家系统) ----
         final_response = await self._review_output(raw_response, user_input, expert_guidance, blackboard)
@@ -695,6 +696,7 @@ class MultiModelOrchestrator:
                 "thinking_history": [],
                 "thinking_turns": 0,
                 "probe_signals": [],
+                "blackboard": blackboard,
             }
 
         except Exception as e:
@@ -704,6 +706,7 @@ class MultiModelOrchestrator:
                 "thinking_history": [],
                 "thinking_turns": 0,
                 "probe_signals": [],
+                "blackboard": None,
             }
         finally:
             try:

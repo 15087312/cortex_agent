@@ -2,13 +2,14 @@
 Tests for CompressionEngine — context window compression.
 """
 import pytest
-from modules.thinking.context.compression import CompressionEngine, CompressionLevel
+from modules.thinking.context.compression import CompressionEngine, CompressionLevel, get_compression_engine
 
 
 @pytest.fixture
 def engine():
-    CompressionEngine._instance = None
-    return CompressionEngine()
+    import modules.thinking.context.compression as mod
+    mod._instance = None
+    return get_compression_engine()
 
 
 class TestEstimateTokens:

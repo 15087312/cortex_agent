@@ -13,6 +13,7 @@
   ✅ 生成违反事件
   ❌ 不触发回调或快速思考
 """
+import threading
 import time
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
@@ -210,11 +211,14 @@ class RuleCompliancePerception:
 
 # 单例实例
 _compliance_perception: Optional[RuleCompliancePerception] = None
+_compliance_perception_lock = threading.Lock()
 
 
 def get_rule_compliance_perception() -> RuleCompliancePerception:
     """获取规范违反检测器单例"""
     global _compliance_perception
     if _compliance_perception is None:
-        _compliance_perception = RuleCompliancePerception()
+        with _compliance_perception_lock:
+            if _compliance_perception is None:
+                _compliance_perception = RuleCompliancePerception()
     return _compliance_perception

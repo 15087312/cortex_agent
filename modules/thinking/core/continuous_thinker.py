@@ -677,7 +677,8 @@ class ContinuousThinker:
         self._context_window_size = window_size
 
         try:
-            engine = CompressionEngine()
+            from modules.thinking.context.compression import get_compression_engine
+            engine = get_compression_engine()
             estimated_tokens = engine.estimate_tokens(prompt)
             self._context_tokens = estimated_tokens
 
@@ -1212,7 +1213,8 @@ class ContinuousThinker:
         if not self.history_thoughts:
             return ""
 
-        engine = CompressionEngine()
+        from modules.thinking.context.compression import get_compression_engine
+        engine = get_compression_engine()
         max_tokens = max(max_length // 4, 50)
 
         # 从最新到最旧找有实质内容的思考
