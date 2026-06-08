@@ -12,6 +12,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Input, Footer, Static
+from cli_tui.widgets.approval_select import ApprovalSelect
 
 from ..commands import find_command, is_command, get_all, Command
 from ..services.api_client import APIClient
@@ -246,21 +247,38 @@ class REPL(Screen):
                 tool = parsed.get('tool', '?')
                 caller = parsed.get('caller', '?')
                 detail = parsed.get('detail', '')
-                ml.write(
-                    f"\n[bold yellow]🔒 安全审查[/bold yellow] "
-                    f"[bold red]{tool}[/bold red] 需要你的审批\n"
-                    f"  调用者: {caller}\n"
-                    f"  详情: {detail}\n"
-                    f"  [bold green]Ctrl+A 批准[/bold green]  "
-                    f"[bold red]Ctrl+D 拒绝[/bold red]  "
-                    f"[dim]或输入自定义理由后回车[/dim]"
+                self.state.thinking_hint = "🔒 等待安全审批"
+
+                # 移除已有的审批组件（如果有）
+                for existing in self.query("ApprovalSelect"):
+                    existing.remove()
+
+                # 创建审批选择器
+                def on_confirm(value: str, custom_text: str):
+                    self._resolve_security_review(
+                        approved=(value == "yes"),
+                        reason=custom_text if value == "custom" else ("用户拒绝" if value == "no" else "")
+                    )
+
+                def on_cancel():
+                    self._resolve_security_review(approved=False, reason="用户取消")
+
+                approval = ApprovalSelect(
+                    tool_name=tool,
+                    tool_detail=f"调用者: {caller} | {detail[:100]}",
+                    options=[
+                        {"label": "Yes, approve", "value": "yes"},
+                        {"label": "No, reject", "value": "no"},
+                        {"label": "Custom reason (Tab)", "value": "custom"},
+                    ],
+                    on_confirm=on_confirm,
+                    on_cancel=on_cancel,
                 )
-                self.state.thinking_hint = "🔒 等待安全审批 (Ctrl+A/D 或输入理由)"
-                # 更新输入框状态
+                # 插入到 input-area 上方
                 try:
-                    input_w = self.query_one(PromptInput)
-                    input_w.set_approval_mode(True)
-                    input_w.focus()
+                    input_area = self.query_one("#input-area")
+                    input_area.mount(approval, before=0)
+                    approval.focus()
                 except Exception:
                     pass
                 return
@@ -383,9 +401,13 @@ class REPL(Screen):
         self.state.pending_security_review = None
         self.state.thinking_hint = ""
 
-        # 恢复输入框普通模式
+        # 移除审批组件
+        for w in self.query("ApprovalSelect"):
+            w.remove()
+
+        # 恢复输入框焦点
         try:
-            self.query_one(PromptInput).set_approval_mode(False)
+            self.query_one(PromptInput).focus()
         except Exception:
             pass
 
@@ -490,17 +512,14 @@ class REPL(Screen):
         input_widget.value = ""
         input_widget.reset_history()
 
-        # 安全审查响应拦截
+        # 安全审查响应拦截（文本输入兜底 — ApprovalSelect 优先）
         if self.state.pending_security_review:
             review = self.state.pending_security_review
             self.state.pending_security_review = None
             self.state.thinking_hint = ""
-            # 输入框恢复普通模式
-            try:
-                self.query_one(PromptInput).set_approval_mode(False)
-            except Exception:
-                pass
-            # 用户输入的文本作为自定义理由（拒绝）
+            # 移除审批组件
+            for w in self.query("ApprovalSelect"):
+                w.remove()
             approved = text.lower() in ("y", "yes", "是", "批准", "允许", "approve")
             ml = self._ml
             if ml:

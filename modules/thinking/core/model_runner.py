@@ -17,6 +17,7 @@ import time
 import uuid
 import threading
 import json
+from pathlib import Path
 from typing import Dict, Any, List, Optional, Callable, Awaitable
 
 from utils.logger import setup_logger
@@ -851,7 +852,7 @@ class ModelRunner:
     GENERATE_RETRIES = 2         # 模型调用最大重试次数
     GENERATE_RETRY_DELAY = 1.0   # 重试间隔基础值 (指数退避)
 
-    MAX_CHAT_TOOL_TURNS = 5  # 原生工具调用最大轮次
+    MAX_CHAT_TOOL_TURNS = 25  # 原生工具调用最大轮次
 
     async def _generate(self, prompt: str) -> str:
         """调用底层模型 client 生成文本（含重试、超时保护，支持原生工具调用）
@@ -1646,14 +1647,46 @@ class ModelRunner:
                                     expert_errors.append(f"{tc.name}: {e}")
 
                             logger.info(f"[ModelRunner] {self.model_id} 第{turn}轮 {tc.name} → {result[:400]}")
-                            # 写入 Blackboard — 让 TUI 实时显示专家的工具调用过程
+                            # 写入 Blackboard — 简洁的一行摘要，让 TUI 直观显示
                             if self.blackboard and tc.name not in ("continue_thinking", "respond_to_user", "delegate_task", "create_supervisor", "request_skill", "list_skills"):
                                 try:
-                                    tool_summary = result if len(result) <= 500 else result[:500] + "..."
+                                    # 生成简洁摘要
+                                    if tc.name == "read_file":
+                                        path = args.get("path", "")
+                                        size = len(result) if result else 0
+                                        summary = f"read_file: {Path(path).name} ({size} chars)"
+                                    elif tc.name == "write_file" or tc.name == "file_edit":
+                                        path = args.get("path", "")
+                                        summary = f"{tc.name}: {Path(path).name}"
+                                    elif tc.name == "list_files":
+                                        count = result.count("'name':") if result else 0
+                                        summary = f"list_files: {count} items"
+                                    elif tc.name == "search_files":
+                                        count = result.count("'name':") if result else 0
+                                        summary = f"search_files: {count} matches"
+                                    elif tc.name == "web_search":
+                                        count = result.count("'title':") if result else 0
+                                        summary = f"web_search: {count} results"
+                                    elif tc.name == "exec_command" or tc.name == "run_command":
+                                        cmd = args.get("command", "")[:60]
+                                        exit_code = "?"
+                                        try:
+                                            import json as _json
+                                            r = _json.loads(result) if result.startswith("{") else {}
+                                            exit_code = r.get("exit_code", "?")
+                                        except Exception:
+                                            pass
+                                        summary = f"{tc.name}: {cmd} → exit={exit_code}"
+                                    elif tc.name == "git_status":
+                                        summary = "git_status: ok"
+                                    elif result and len(result) <= 80:
+                                        summary = f"{tc.name}: {result}"
+                                    else:
+                                        summary = f"{tc.name}: done ({len(result)} chars)"
                                     self.blackboard.write_thought(
                                         model_id=self.model_id,
                                         tier=self.tier,
-                                        content=f"[{tc.name}] {tool_summary}",
+                                        content=summary,
                                         round_num=turn,
                                     )
                                 except Exception as e:

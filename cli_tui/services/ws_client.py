@@ -39,6 +39,7 @@ class WSClient:
         self._cancel_flag: bool = False
         self._event_callbacks: List[EventCallback] = []
         self._bg_listener_task: Optional[asyncio.Task] = None
+        self._receive_lock = asyncio.Lock()  # 防止并发 receive()
 
         # 数据收集
         self.dialog_entries: List[Dict[str, Any]] = []
@@ -187,7 +188,8 @@ class WSClient:
         if not self._ws or self._ws.closed:
             return {"type": "error", "content": "WebSocket 未连接"}
         try:
-            msg = await self._ws.receive(timeout=timeout)
+            async with self._receive_lock:
+                msg = await self._ws.receive(timeout=timeout)
         except asyncio.TimeoutError:
             raise                          # 让 process_input 统一处理
         except asyncio.CancelledError:
