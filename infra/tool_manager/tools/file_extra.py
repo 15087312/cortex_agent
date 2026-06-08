@@ -6,53 +6,25 @@ from pathlib import Path
 from typing import Dict, Any
 
 from infra.tool_manager.tool_registry import ToolRegistry
+from infra.security.centralized_policy import get_security_policy
 from utils.logger import setup_logger
 
 logger = setup_logger("file_extra")
 
-# 禁止读取的敏感文件模式
-SENSITIVE_PATTERNS = [
-    ".env", ".env.*", ".ssh/", "**/secret*", "**/credentials*",
-    "**/id_rsa", "**/id_ed25519", "**/.netrc", "**/config.json",
-]
-# 禁止写入的系统目录
-FORBIDDEN_WRITE_DIRS = [
-    "/etc", "/usr", "/bin", "/sbin", "/var", "/sys", "/proc", "/dev",
-    "/System", "/Library", "/Applications",
-]
+
+def _is_path_allowed(path: str) -> bool:
+    """统一路径安全检查 — 委托 SecurityPolicy"""
+    return get_security_policy().is_path_allowed(path)
 
 
 def _is_sensitive_path(path: str) -> bool:
-    """检查路径是否涉及敏感文件"""
-    p = Path(path).resolve()
-    name = p.name.lower()
-    parent_str = str(p).lower()
-    # 检查 .env 类
-    if name in (".env", ".netrc") or name.startswith(".env."):
-        return True
-    # 检查 .ssh
-    if ".ssh" in p.parts:
-        return True
-    # 检查敏感文件名
-    for pat in ["secret", "credential", "id_rsa", "id_ed25519", "config.json"]:
-        if pat in name:
-            return True
-    return False
+    """敏感文件检查 — 委托 SecurityPolicy"""
+    return get_security_policy().is_sensitive_file(path)
 
 
 def _is_forbidden_write_path(path: str) -> bool:
-    """检查路径是否禁止写入"""
-    p = Path(path).resolve()
-    for d in FORBIDDEN_WRITE_DIRS:
-        try:
-            p.relative_to(d)
-            return True
-        except ValueError:
-            continue
-    # 禁止写入 .git 目录
-    if ".git" in p.parts:
-        return True
-    return False
+    """禁止写入检查 — 委托 SecurityPolicy"""
+    return get_security_policy().is_forbidden_write_path(path)
 
 
 @ToolRegistry.register(
@@ -81,6 +53,12 @@ def append_file(path: str, content: str) -> Dict[str, Any]:
 
     if _is_forbidden_write_path(str(p)):
         return {"error": f"禁止写入系统目录或 .git 目录: {path}"}
+
+    if not _is_path_allowed(str(p)):
+        return {"error": f"路径不在允许范围内: {path}"}
+
+    if _is_sensitive_path(str(p)):
+        return {"error": f"拒绝写入敏感文件: {path}"}
 
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -111,6 +89,9 @@ def file_exists(path: str) -> Dict[str, Any]:
         return {"error": "路径不能为空"}
 
     p = Path(path).expanduser()
+
+    if not _is_path_allowed(str(p)):
+        return {"error": f"路径不在允许范围内: {path}"}
 
     try:
         exists = p.exists()

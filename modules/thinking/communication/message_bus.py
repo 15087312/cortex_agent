@@ -109,10 +109,27 @@ class ModelMessageBus:
         # S6: 事件发射器 (per-session，供 WebSocket 流使用) - session_id → emitter
         self._event_emitters: Dict[str, Optional[Callable[[Dict[str, Any]], None]]] = {}
 
-        # 异步锁（所有操作统一使用）
-        self._lock = asyncio.Lock()
+        # 异步锁（事件循环变化时自动重建）
+        self.__lock = asyncio.Lock()
+        self.__lock_loop_id = id(asyncio.get_running_loop())
         self._initialized = True
         logger.info("[消息总线] 初始化完成")
+
+    @property
+    def lock(self) -> asyncio.Lock:
+        """获取当前事件循环的锁 — 跨循环时自动重建"""
+        try:
+            current_loop = asyncio.get_running_loop()
+            current_id = id(current_loop)
+        except RuntimeError:
+            # 无运行中的事件循环，返回已有的锁
+            return self.__lock
+
+        if current_id != self.__lock_loop_id:
+            logger.warning("[消息总线] 检测到事件循环变化，重建 async lock")
+            self.__lock = asyncio.Lock()
+            self.__lock_loop_id = current_id
+        return self.__lock
 
     # ------------------------------------------------------------------
     # 事件发射器 (将消息总线事件桥接到 WebSocket 流)
@@ -193,7 +210,7 @@ class ModelMessageBus:
         Returns:
             msg_id
         """
-        async with self._lock:
+        async with self.lock:
             self._queues[message.recipient].append(message)
             self._stats["sent"] += 1
 
@@ -208,7 +225,7 @@ class ModelMessageBus:
     async def broadcast(self, message: Message) -> str:
         """广播消息到所有已知接收者"""
         message.msg_type = MessageType.BROADCAST
-        async with self._lock:
+        async with self.lock:
             # 发送给所有有队列的接收者
             known_recipients = list(self._queues.keys())
             for recipient in known_recipients:
@@ -246,7 +263,7 @@ class ModelMessageBus:
 
         # 创建等待 Future
         future = asyncio.get_event_loop().create_future()
-        async with self._lock:
+        async with self.lock:
             self._pending_responses[correlation_id] = future
 
         # 发送请求
@@ -257,7 +274,7 @@ class ModelMessageBus:
             return response
         except asyncio.TimeoutError:
             logger.warning(f"[消息总线] 请求超时: {correlation_id} ({timeout}s)")
-            with self._lock:
+            async with self.lock:
                 self._pending_responses.pop(correlation_id, None)
             return None
 
@@ -272,7 +289,7 @@ class ModelMessageBus:
         )
 
         # 检查是否有等待的 Future
-        async with self._lock:
+        async with self.lock:
             future = self._pending_responses.pop(request_msg.correlation_id, None)
 
         if future and not future.done():
@@ -291,7 +308,7 @@ class ModelMessageBus:
 
     async def receive(self, recipient_id: str, limit: int = 10) -> List[Message]:
         """接收消息（推荐用于 async 上下文）"""
-        async with self._lock:
+        async with self.lock:
             queue = self._queues.get(recipient_id, deque())
             messages = []
             for _ in range(min(limit, len(queue))):
@@ -310,7 +327,7 @@ class ModelMessageBus:
 
     async def peek(self, recipient_id: str, limit: int = 50) -> List[Message]:
         """查看消息但不消费（非破坏性读取）"""
-        async with self._lock:
+        async with self.lock:
             queue = self._queues.get(recipient_id, deque())
             messages = []
             for msg in list(queue)[:limit]:
@@ -320,7 +337,7 @@ class ModelMessageBus:
 
     async def peek_all(self) -> Dict[str, List[Message]]:
         """查看所有队列的消息（非破坏性）"""
-        async with self._lock:
+        async with self.lock:
             result = {}
             for rid, queue in self._queues.items():
                 msgs = [msg for msg in list(queue) if not msg.expired]
@@ -330,7 +347,7 @@ class ModelMessageBus:
 
     async def list_recipients(self) -> List[str]:
         """列出所有已知的接收者ID"""
-        async with self._lock:
+        async with self.lock:
             return list(self._queues.keys())
 
     # ------------------------------------------------------------------
@@ -339,13 +356,13 @@ class ModelMessageBus:
 
     async def subscribe(self, recipient_id: str, callback: Callable[[Message], None]) -> None:
         """订阅消息 — 当有新消息时回调"""
-        async with self._lock:
+        async with self.lock:
             self._subscriptions[recipient_id].append(callback)
         logger.debug(f"[消息总线] 订阅: {recipient_id} (回调数: {len(self._subscriptions[recipient_id])})")
 
     async def unsubscribe(self, recipient_id: str, callback: Callable = None) -> None:
         """取消订阅"""
-        async with self._lock:
+        async with self.lock:
             if callback is None:
                 self._subscriptions.pop(recipient_id, None)
             elif recipient_id in self._subscriptions:
@@ -355,7 +372,7 @@ class ModelMessageBus:
 
     async def notify_subscribers(self, recipient_id: str) -> None:
         """通知订阅者有新消息"""
-        async with self._lock:
+        async with self.lock:
             callbacks = self._subscriptions.get(recipient_id, [])
         for cb in callbacks:
             try:
@@ -373,7 +390,7 @@ class ModelMessageBus:
     async def cleanup(self) -> int:
         """清理过期消息和悬挂的 Future"""
         removed = 0
-        async with self._lock:
+        async with self.lock:
             for queue in self._queues.values():
                 while queue and queue[0].expired:
                     queue.popleft()
@@ -399,13 +416,13 @@ class ModelMessageBus:
 
     async def get_queue_size(self, recipient_id: str = None) -> int:
         if recipient_id:
-            async with self._lock:
+            async with self.lock:
                 return len(self._queues.get(recipient_id, deque()))
-        async with self._lock:
+        async with self.lock:
             return sum(len(q) for q in self._queues.values())
 
     async def get_stats(self) -> dict:
-        async with self._lock:
+        async with self.lock:
             stats = dict(self._stats)
         stats["queue_count"] = len(self._queues)
         stats["pending_responses"] = len(self._pending_responses)

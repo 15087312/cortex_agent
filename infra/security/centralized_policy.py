@@ -26,6 +26,8 @@ logger = logging.getLogger(__name__)
 @dataclass
 class SecurityConfig:
     """安全配置"""
+    # 允许访问的基础目录（白名单）
+    allowed_base_dirs: List[str] = None
     # 禁止读取的路径
     forbidden_read_dirs: Set[str] = None
     # 禁止写入的路径
@@ -40,6 +42,11 @@ class SecurityConfig:
     allowed_command_prefixes: Set[str] = None
 
     def __post_init__(self):
+        if self.allowed_base_dirs is None:
+            self.allowed_base_dirs = [
+                "/tmp",
+                "/var/tmp",
+            ]
         if self.forbidden_read_dirs is None:
             self.forbidden_read_dirs = {
                 "/etc/shadow",
@@ -54,6 +61,12 @@ class SecurityConfig:
                 "/proc",
                 "/dev",
                 "/boot",
+                "/usr",
+                "/bin",
+                "/sbin",
+                "/System",
+                "/Library",
+                "/Applications",
             }
         if self.sensitive_file_patterns is None:
             self.sensitive_file_patterns = {
@@ -77,22 +90,75 @@ class SecurityPolicy:
 
     def __init__(self, config: Optional[SecurityConfig] = None):
         self.config = config or SecurityConfig()
+        # 预解析白名单目录
+        self._allowed_dirs = [Path(d).resolve() for d in self.config.allowed_base_dirs]
+        # 预解析禁止写入目录（处理 macOS /etc → /private/etc 等 symlink）
+        self._forbidden_write_dirs = [Path(d).resolve() for d in self.config.forbidden_write_dirs]
+        # 预解析禁止读取目录
+        self._forbidden_read_resolved = []
+        for d in self.config.forbidden_read_dirs:
+            if d.endswith("/*"):
+                self._forbidden_read_resolved.append((str(Path(d[:-2]).resolve()), True))
+            else:
+                self._forbidden_read_resolved.append((str(Path(d).resolve()), False))
+        # 项目根目录（延迟初始化）
+        self._project_root = None
+
+    def set_project_root(self, root: str) -> None:
+        """设置项目根目录（由启动代码调用）"""
+        self._project_root = Path(root).resolve()
+
+    def _get_project_root(self) -> Path:
+        if self._project_root is None:
+            # 自动检测：从当前文件向上找 pyproject.toml
+            p = Path(__file__).resolve()
+            for _ in range(5):
+                if (p / "pyproject.toml").exists():
+                    self._project_root = p
+                    break
+                p = p.parent
+            else:
+                self._project_root = Path(__file__).resolve().parents[3]
+        return self._project_root
 
     # ── 文件安全检查 ──
 
-    def is_sensitive_file(self, path: str) -> bool:
-        """检查文件是否包含敏感信息
+    def is_path_allowed(self, path: str) -> bool:
+        """白名单检查：路径是否在允许的目录内
 
-        敏感文件包括:
-        - .env, .env.local, .env.*.local
-        - .ssh, .netrc, config.json (用于 SSH)
-        - 包含 secret/credential/password/token/key 等关键字的文件
+        允许的目录：
+        - /tmp, /var/tmp
+        - 项目根目录及其子目录
         """
         try:
-            p = Path(path).resolve()
-        except Exception as e:
-            logger.warning(f"路径解析失败: {e}")
-            return False
+            p = Path(path).expanduser().resolve()
+        except Exception:
+            return False  # fail-closed
+
+        # 检查项目根目录
+        project_root = self._get_project_root()
+        try:
+            p.relative_to(project_root)
+            return True
+        except ValueError:
+            pass
+
+        # 检查白名单目录
+        for allowed in self._allowed_dirs:
+            try:
+                p.relative_to(allowed)
+                return True
+            except ValueError:
+                continue
+
+        return False
+
+    def is_sensitive_file(self, path: str) -> bool:
+        """检查文件是否包含敏感信息"""
+        try:
+            p = Path(path).expanduser().resolve()
+        except Exception:
+            return True  # fail-closed：解析失败视为敏感
 
         name_lower = p.name.lower()
         path_lower = str(p).lower()
@@ -114,23 +180,17 @@ class SecurityPolicy:
         return False
 
     def is_forbidden_write_path(self, path: str) -> bool:
-        """检查路径是否禁止写入
-
-        禁止写入:
-        - 系统目录: /etc, /sys, /proc, /dev, /boot
-        - git 元数据: .git 目录及内容
-        """
+        """检查路径是否禁止写入"""
         try:
-            p = Path(path).resolve()
-        except Exception as e:
-            logger.warning(f"写入路径解析失败: {e}")
-            return False
+            p = Path(path).expanduser().resolve()
+        except Exception:
+            return True  # fail-closed
 
         path_str = str(p)
 
-        # 检查禁止写入目录
-        for forbidden_dir in self.config.forbidden_write_dirs:
-            if path_str.startswith(forbidden_dir):
+        # 检查禁止写入目录（使用预解析的 resolved 路径）
+        for forbidden_dir in self._forbidden_write_dirs:
+            if path_str.startswith(str(forbidden_dir)):
                 return True
 
         # 禁止修改 .git 目录
@@ -140,28 +200,17 @@ class SecurityPolicy:
         return False
 
     def is_forbidden_read_path(self, path: str) -> bool:
-        """检查路径是否禁止读取
-
-        禁止读取:
-        - 系统敏感文件: /etc/shadow, /etc/passwd
-        - SSH 私钥: ~/.ssh/*, /root/.ssh/*
-        """
+        """检查路径是否禁止读取"""
         try:
-            p = Path(path).resolve()
-        except Exception as e:
-            logger.warning(f"读取路径解析失败: {e}")
-            return False
+            p = Path(path).expanduser().resolve()
+        except Exception:
+            return True  # fail-closed
 
         path_str = str(p)
 
-        # 检查禁止读取目录
-        for forbidden_dir in self.config.forbidden_read_dirs:
-            # 支持简单的通配符 (* 在末尾)
-            if forbidden_dir.endswith("/*"):
-                prefix = forbidden_dir[:-2]
-                if path_str.startswith(prefix):
-                    return True
-            elif path_str.startswith(forbidden_dir):
+        # 检查禁止读取目录（使用预解析的 resolved 路径）
+        for prefix, is_glob in self._forbidden_read_resolved:
+            if path_str.startswith(prefix):
                 return True
 
         return False

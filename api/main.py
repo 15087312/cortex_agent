@@ -18,6 +18,7 @@ from api.errors import (
     ErrorCode, ErrorResponse, ErrorDetail, error_response, AppError,
 )
 from modules.management import report_exception
+from cortex.version import __version__ as _CORTEX_VERSION
 from infra.data_process.api import router as data_process_router
 from infra.tool_manager.api import router as tool_router
 from modules.memory.api import router as memory_router
@@ -199,7 +200,7 @@ _MODIFIABLE_CONFIG_KEYS = {
 app = FastAPI(
     title="Humanoid AGI",
     description="类人智能架构系统 API",
-    version="1.0.0",
+    version=_CORTEX_VERSION,
     lifespan=lifespan
 )
 
@@ -275,22 +276,21 @@ async def logging_middleware(request: Request, call_next):
     return response
 
 
-# 限流中间件
-from collections import defaultdict
-
+# 限流中间件（单进程内存计数，--workers 强制为 1）
 request_counts: dict = {}
 _request_counter_ref: list = [0]
 _rate_limit_lock = asyncio.Lock()
 _TRUSTED_PROXIES = {"127.0.0.1", "::1"}  # Q-7: Whitelist of trusted reverse proxies (IPv4 + IPv6)
 _MAX_RATE_LIMIT_KEYS = 10000  # 防止内存泄漏：最多跟踪的 IP:minute 组合数
 
-# 每处理 500 次请求清理一次过期的分钟 key（key 格式: ip:minute）
+
+# 每处理 500 次请求清理一次过期的分钟 key（key 格式: ip|minute）
 def _cleanup_request_counts() -> None:
     current_minute = int(time.time() / 60)
-    stale = [k for k in request_counts if isinstance(k, str) and ":" in k]
+    stale = [k for k in request_counts if isinstance(k, str) and "|" in k]
     for k in stale:
         try:
-            _ip, minute = k.rsplit(":", 1)
+            _ip, minute = k.split("|", 1)
             if int(minute) < current_minute:
                 del request_counts[k]
         except (ValueError, KeyError):
@@ -318,7 +318,7 @@ async def rate_limit_middleware(request: Request, call_next):
     client_ip = _get_client_ip(request)
     current_minute = int(time.time() / 60)
 
-    key = f"{client_ip}:{current_minute}"
+    key = f"{client_ip}|{current_minute}"
     # Q-7: Use async lock to prevent race condition between check and increment
     async with _rate_limit_lock:
         current_count = request_counts.get(key, 0)
@@ -431,7 +431,7 @@ async def root():
     """根路径"""
     return {"success": True, "data": {
         "name": "Humanoid AGI",
-        "version": "1.0.0",
+        "version": _CORTEX_VERSION,
         "status": "running"
     }}
 
@@ -490,19 +490,38 @@ class PutConfigRequest(BaseModel):
 @app.put("/config/{key}")
 async def update_config(key: str, body: PutConfigRequest):
     """更新运行时配置项（仅限允许列表内的 key）"""
-    if key.upper() not in _MODIFIABLE_CONFIG_KEYS:
+    key_upper = key.upper()
+    if key_upper not in _MODIFIABLE_CONFIG_KEYS:
         return JSONResponse(
             status_code=403,
             content=error_response(ErrorCode.FORBIDDEN, f"配置项 '{key}' 不允许通过 API 修改").model_dump()
         )
 
+    # 检查字段是否存在
+    field_info = settings.model_fields.get(key_upper)
+    if field_info is None:
+        return JSONResponse(
+            status_code=404,
+            content=error_response(ErrorCode.NOT_FOUND, f"配置项 '{key_upper}' 不存在").model_dump()
+        )
+
+    # 通过 Pydantic 校验新值（触发 field_validator）
     try:
-        old_value = getattr(settings, key.upper(), None)
-        setattr(settings, key.upper(), body.value)
-        logger.info(f"配置已更新: {key.upper()} = {body.value} (旧值: {old_value})")
+        from pydantic import TypeAdapter
+        validated = TypeAdapter(field_info.annotation).validate_python(body.value)
+    except Exception as e:
+        return JSONResponse(
+            status_code=422,
+            content=error_response(ErrorCode.VALIDATION_ERROR, f"配置值校验失败: {e}").model_dump()
+        )
+
+    try:
+        old_value = getattr(settings, key_upper, None)
+        object.__setattr__(settings, key_upper, validated)
+        logger.info(f"配置已更新: {key_upper} = {validated} (旧值: {old_value})")
         return {
             "success": True,
-            "data": {"key": key.upper(), "old_value": old_value, "new_value": body.value},
+            "data": {"key": key_upper, "old_value": old_value, "new_value": validated},
         }
     except Exception as e:
         logger.error(f"更新配置失败: {key} -> {e}")

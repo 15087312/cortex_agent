@@ -82,12 +82,17 @@ def parse_args():
                         help="只启动后端，不启动 TUI")
     parser.add_argument("--workers", type=int,
                         default=int(os.environ.get("MAX_WORKERS", "1")),
-                        help="后端 worker 数 (默认: 1)")
+                        help="后端 worker 数 (默认: 1，限流依赖单进程内存计数，强制最大为 1)")
     return parser.parse_args()
 
 
 def start_backend(args) -> subprocess.Popen:
     """启动后端 uvicorn 子进程"""
+    # 限流依赖单进程内存计数，强制 workers=1
+    if args.workers > 1:
+        print(f"⚠ workers={args.workers} 不支持（限流依赖单进程内存计数），已降为 1")
+        args.workers = 1
+
     project_root = _get_project_root()
     env = os.environ.copy()
     env["SERVER_PORT"] = str(args.port)
@@ -104,7 +109,7 @@ def start_backend(args) -> subprocess.Popen:
         "--log-level", "info",
     ]
     return subprocess.Popen(cmd, cwd=str(project_root), env=env,
-                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def launch_tui(args):

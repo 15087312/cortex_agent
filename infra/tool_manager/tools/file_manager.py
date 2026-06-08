@@ -2,7 +2,7 @@
 文件管理工具 - 安全管控示例
 
 所有操作经过：
-1. 安全模块检测（哈希校验 + 风险分级）
+1. SecurityPolicy 集中安全检查（白名单 + 敏感文件 + 禁止目录）
 2. 输出模块统一转发
 """
 import os
@@ -10,35 +10,15 @@ import json
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 from infra.tool_manager.tool_registry import ToolRegistry
+from infra.security.centralized_policy import get_security_policy
 from utils.logger import setup_logger
 
 logger = setup_logger("file_manager")
 
-# SEC-9: Whitelist of allowed base directories for file operations
-# Only these directories and their subdirectories can be accessed
-ALLOWED_BASE_DIRS = [
-    Path("/tmp"),  # Temporary files
-    Path("/var/tmp"),  # Temporary files
-    Path(__file__).resolve().parents[3],  # Project root
-    Path(__file__).resolve().parents[3] / "data",  # Project data directory
-]
-
 
 def _is_path_allowed(target_path: Path) -> bool:
-    """SEC-9: Check if path is within allowed directories (whitelist approach)"""
-    try:
-        resolved_path = target_path.resolve()
-        for allowed_dir in ALLOWED_BASE_DIRS:
-            try:
-                # Check if resolved_path is relative to allowed_dir
-                resolved_path.relative_to(allowed_dir)
-                return True
-            except ValueError:
-                continue
-        return False
-    except Exception as e:
-        logger.warning(f"路径安全检查异常: {e}")
-        return False
+    """统一路径安全检查 — 委托 SecurityPolicy"""
+    return get_security_policy().is_path_allowed(str(target_path))
 
 
 @ToolRegistry.register(
@@ -240,7 +220,10 @@ def get_file_info(path: str) -> Dict[str, Any]:
     """
     try:
         target_path = Path(path).expanduser().resolve()
-        
+
+        if not _is_path_allowed(target_path):
+            return {"error": "禁止访问该文件路径"}
+
         if not target_path.exists():
             return {"error": f"路径不存在: {path}"}
         

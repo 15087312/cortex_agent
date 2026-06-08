@@ -52,6 +52,7 @@ data/search_cache/
 data/probe_cache/
 data/metrics/
 data/logs/
+data/command_snapshots/
 data/security_audit.jsonl
 data/output_history.jsonl
 data/.omc/
