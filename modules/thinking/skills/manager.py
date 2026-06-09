@@ -89,7 +89,11 @@ class SkillManager:
     def match_skill(self, user_input: str) -> Optional[Skill]:
         """根据用户输入自动匹配最合适的技能
 
-        匹配策略：关键词命中数 + 描述相关性
+        匹配策略：
+        - 关键词匹配（权重 3，要求关键词 ≥ 2 字符）
+        - 角色名/技能名匹配（权重 2）
+        - 描述关键词匹配（权重 1，取前 5 个词，要求 ≥ 2 字符）
+        - 激活阈值：至少命中 2 个关键词（score ≥ 6）
         """
         if not self._loaded:
             self.load_skills()
@@ -104,33 +108,35 @@ class SkillManager:
 
         for skill in self._skills.values():
             score = 0
+            keyword_hits = 0
 
-            # 关键词匹配（权重最高）
+            # 关键词匹配（权重最高，要求 ≥ 2 字符避免单字误触发）
             for kw in skill.keywords:
-                if kw.lower() in user_lower:
+                if len(kw) >= 2 and kw.lower() in user_lower:
                     score += 3
+                    keyword_hits += 1
 
             # 角色名匹配
-            if skill.role and skill.role.lower() in user_lower:
+            if skill.role and len(skill.role) >= 2 and skill.role.lower() in user_lower:
                 score += 2
 
             # 技能名匹配
-            if skill.name and skill.name.lower() in user_lower:
+            if skill.name and len(skill.name) >= 2 and skill.name.lower() in user_lower:
                 score += 2
 
             # 描述关键词匹配（取前5个词）
             if skill.description:
                 desc_words = skill.description[:100].split()
                 for word in desc_words[:5]:
-                    if len(word) > 1 and word.lower() in user_lower:
+                    if len(word) >= 2 and word.lower() in user_lower:
                         score += 1
 
             if score > best_score:
                 best_score = score
                 best_skill = skill
 
-        # 至少命中 1 个关键词才激活
-        if best_score >= 3:
+        # 至少命中 2 个关键词才激活（防止单关键词误触发）
+        if best_score >= 6 and best_skill:
             logger.info(
                 f"[技能] 自动匹配: {best_skill.id} "
                 f"(score={best_score}, input={user_input[:30]}...)"

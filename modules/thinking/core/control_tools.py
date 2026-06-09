@@ -151,6 +151,27 @@ REQUEST_SKILL_TOOL = {
     },
 }
 
+STOP_SKILL_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "stop_skill",
+        "description": (
+            "停用当前激活的技能，恢复默认角色。"
+            "当技能任务已完成、需要切换到其他技能、或不需要特定角色时使用。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "reason": {
+                    "type": "string",
+                    "description": "停用原因，例如「代码审查已完成」",
+                },
+            },
+            "required": [],
+        },
+    },
+}
+
 LIST_SKILLS_TOOL = {
     "type": "function",
     "function": {

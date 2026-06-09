@@ -141,7 +141,15 @@ class ContinuousThinker:
 
     def record_delegation(self, role: str, task: str, result: Optional[Dict[str, Any]] = None) -> None:
         import time
-        sig = f"{role}::{task[:60]}"
+        # 使用 task_id 作为 key（与 _process_delegation_response 的 delegation_id 一致）
+        task_id = ""
+        if isinstance(result, dict):
+            task_id = result.get("task_id", "") or result.get("metadata", {}).get("task_id", "")
+        elif hasattr(result, "metadata") and isinstance(result.metadata, dict):
+            task_id = result.metadata.get("task_id", "")
+        if not task_id:
+            # 兜底：用签名作为 key
+            task_id = f"{role}::{task[:60]}"
         # 判断委托是否真正成功（result 对象可能有 success 字段）
         is_success = True
         error_msg = ""
@@ -152,10 +160,10 @@ class ContinuousThinker:
             is_success = bool(result.success)
             error_msg = getattr(result, "error", "")
         if is_success:
-            if sig not in self._pending_delegations:
-                self._pending_delegations[sig] = {"round": len(self.history_thoughts) + 1, "role": role, "task": task[:120], "status": "pending", "timestamp": time.time()}
+            if task_id not in self._pending_delegations:
+                self._pending_delegations[task_id] = {"round": len(self.history_thoughts) + 1, "role": role, "task": task[:120], "status": "pending", "timestamp": time.time()}
                 self._delegation_results.append({"role": role, "task": task[:120], "success": True})
-                self.logger.info(f"[直通委托] 记录: role={role}, task={task[:60]}")
+                self.logger.info(f"[直通委托] 记录: role={role}, task_id={task_id}")
         else:
             self._delegation_results.append({"role": role, "task": task[:120], "success": False, "error": error_msg or "委托失败：无法找到匹配的专家角色"})
             self.logger.warning(f"[直通委托] 失败: role={role}, task={task[:60]}, error={error_msg}")

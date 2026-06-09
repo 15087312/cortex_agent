@@ -29,6 +29,7 @@ from modules.thinking.core.control_tools import (
     RESPOND_TO_USER_TOOL,
     REQUEST_SKILL_TOOL,
     LIST_SKILLS_TOOL,
+    STOP_SKILL_TOOL,
     QUERY_TOOL_DETAILS_TOOL,
     REQUEST_MODE_CHANGE_TOOL,
     ASK_USER_INTENT_TOOL,
@@ -1403,6 +1404,7 @@ class ModelRunner:
             control_tools.append(RESPOND_TO_USER_TOOL)
             control_tools.append(REQUEST_SKILL_TOOL)
             control_tools.append(LIST_SKILLS_TOOL)
+            control_tools.append(STOP_SKILL_TOOL)
             control_tools.append(REQUEST_MODE_CHANGE_TOOL)
             control_tools.append(ASK_USER_INTENT_TOOL)
         tools_with_control = list(tools) + control_tools
@@ -1596,6 +1598,13 @@ class ModelRunner:
                                         logger.info(f"[ModelRunner] 技能已切换: {skill_id}")
                                     else:
                                         logger.warning(f"[ModelRunner] 未知技能: {skill_id}")
+                            elif tc.name == "stop_skill":
+                                if self._active_skill:
+                                    reason = args.get("reason", "")
+                                    logger.info(f"[ModelRunner] 技能已停用: {self._active_skill.id} ({reason})")
+                                    self._active_skill = None
+                                else:
+                                    logger.debug(f"[ModelRunner] stop_skill 无活跃技能")
                             elif tc.name == "list_skills":
                                 from modules.thinking.skills import skill_manager
                                 skills = skill_manager.list_skills()
@@ -1762,6 +1771,11 @@ class ModelRunner:
                                         skill_feedback = f"【技能已激活】{self._active_skill.name}（{self._active_skill.role}）\n规章: {len(self._active_skill.rules)} 条 | 流程: {len(self._active_skill.workflow)} 步"
                                     else:
                                         skill_feedback = f"【技能未找到】skill_id={skill_id} 不存在。使用 list_skills 查看可用技能。"
+                                elif tc.name == "stop_skill":
+                                    if self._active_skill:
+                                        skill_feedback = f"【技能已停用】{self._active_skill.name}，已恢复默认角色。"
+                                    else:
+                                        skill_feedback = "【无活跃技能】当前没有激活的技能。"
                                 elif tc.name == "list_skills":
                                     from modules.thinking.skills import skill_manager
                                     all_skills = skill_manager.list_skills()

@@ -19,7 +19,6 @@ def orchestrator():
     orch._activity_notifier = None
     orch._expert_pipeline = None
     orch._gcm_pool = None
-    orch._skill_manager = None
     return orch
 
 

@@ -81,7 +81,7 @@ MEDIUM_RISK_TOOLS = {
     "install_dependency", "debug_code",
     "run_pytest",
     "create_plugin", "uninstall_plugin",
-    "open_app",  # 打开应用程序（可能启动恶意软件，但受限于系统权限）
+    "open_app", "close_app",  # 应用生命周期工具
 }
 
 # 写操作工具 — plan 模式禁止，edit 模式需用户确认
@@ -91,7 +91,7 @@ _MUTATION_TOOLS = {
     "git_add", "git_commit", "git_push",
     "install_dependency", "create_plugin", "uninstall_plugin",
     "kill_process", "write_runtime_config", "external_api_call",
-    "open_app",  # 修改系统状态（启动应用）
+    "open_app", "close_app",  # 应用生命周期工具（修改系统状态）
 }
 
 # 用户审查超时（秒）
