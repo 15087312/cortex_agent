@@ -16,6 +16,8 @@ if policy.is_sensitive_file(path):
 """
 
 import logging
+import sys
+import tempfile
 from pathlib import Path
 from typing import List, Set, Optional, Tuple
 from dataclasses import dataclass
@@ -42,32 +44,50 @@ class SecurityConfig:
     allowed_command_prefixes: Set[str] = None
 
     def __post_init__(self):
+        _is_win = sys.platform == "win32"
         if self.allowed_base_dirs is None:
             self.allowed_base_dirs = [
-                "/tmp",
-                "/var/tmp",
+                tempfile.gettempdir(),
             ]
+            if not _is_win:
+                self.allowed_base_dirs.append("/var/tmp")
+
         if self.forbidden_read_dirs is None:
-            self.forbidden_read_dirs = {
-                "/etc/shadow",
-                "/etc/passwd",
-                "/root/.ssh",
-                "/home/*/.ssh",
-            }
+            if _is_win:
+                self.forbidden_read_dirs = {
+                    "C:\\Windows\\System32\\config",
+                    "C:\\Windows\\repair",
+                }
+            else:
+                self.forbidden_read_dirs = {
+                    "/etc/shadow",
+                    "/etc/passwd",
+                    "/root/.ssh",
+                    "/home/*/.ssh",
+                }
+
         if self.forbidden_write_dirs is None:
-            self.forbidden_write_dirs = {
-                "/etc",
-                "/sys",
-                "/proc",
-                "/dev",
-                "/boot",
-                "/usr",
-                "/bin",
-                "/sbin",
-                "/System",
-                "/Library",
-                "/Applications",
-            }
+            if _is_win:
+                self.forbidden_write_dirs = {
+                    "C:\\Windows",
+                    "C:\\Program Files",
+                    "C:\\Program Files (x86)",
+                    "C:\\ProgramData",
+                }
+            else:
+                self.forbidden_write_dirs = {
+                    "/etc",
+                    "/sys",
+                    "/proc",
+                    "/dev",
+                    "/boot",
+                    "/usr",
+                    "/bin",
+                    "/sbin",
+                    "/System",
+                    "/Library",
+                    "/Applications",
+                }
         if self.sensitive_file_patterns is None:
             self.sensitive_file_patterns = {
                 "secret", "credential", "password", "token",
@@ -139,8 +159,22 @@ class SecurityPolicy:
             p = Path(path).expanduser().resolve()
         except Exception:
             return True
-        protected = {"/", "/dev", "/System"}
-        return str(p) in protected or str(p).startswith("/dev/")
+
+        p_str = str(p)
+
+        if sys.platform == "win32":
+            # Windows: 保护盘符根目录、NUL/CON 等设备名
+            drive = p.drive  # e.g. "C:"
+            if drive and len(p_str) <= len(drive) + 1:
+                return True  # C:\ 根目录
+            device_names = {"NUL", "CON", "PRN", "AUX", "COM1", "COM2", "COM3",
+                            "LPT1", "LPT2", "LPT3"}
+            if p.name.upper() in device_names:
+                return True
+            return False
+        else:
+            protected = {"/", "/dev", "/System"}
+            return p_str in protected or p_str.startswith("/dev/")
 
     def is_forbidden_read_path(self, path: str) -> bool:
         """禁止读取检查 — 真机模式：不拦截"""

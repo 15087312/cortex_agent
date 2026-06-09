@@ -431,12 +431,13 @@ def run_script(code: str, language: str = "python", timeout: Optional[int] = 30)
         timeout = 30
     timeout = max(5, min(timeout, 300))
 
-    # 语言 → 解释器映射
+    # 语言 → 解释器映射（跨平台）
+    _is_win = sys.platform == "win32"
     interpreters = {
         "python": [sys.executable],
         "python3": [sys.executable],
-        "bash": ["/bin/bash"],
-        "sh": ["/bin/sh"],
+        "bash": ["bash"] if _is_win else ["/bin/bash"],
+        "sh": ["cmd", "/c"] if _is_win else ["/bin/sh"],
         "node": ["node"],
         "ruby": ["ruby"],
         "perl": ["perl"],
@@ -459,7 +460,8 @@ def run_script(code: str, language: str = "python", timeout: Optional[int] = 30)
     try:
         with open(script_path, "w", encoding="utf-8") as f:
             f.write(code)
-        os.chmod(script_path, 0o755)
+        if sys.platform != "win32":
+            os.chmod(script_path, 0o755)
 
         start = time.time()
         cmd = interp + [script_path]
@@ -517,16 +519,27 @@ def run_python(code: str, timeout: Optional[int] = 30) -> Dict[str, Any]:
     category="admin",
 )
 def kill_process(pid: int, force: bool = False) -> Dict[str, Any]:
-    """杀死进程"""
+    """杀死进程（跨平台）"""
     try:
         pid = int(pid)
-        sig = signal.SIGKILL if force else signal.SIGTERM
-        os.kill(pid, sig)
-        return {
-            "success": True,
-            "pid": pid,
-            "signal": "SIGKILL" if force else "SIGTERM",
-        }
+        if sys.platform == "win32":
+            # Windows: taskkill /F 强制，taskkill 正常
+            cmd = ["taskkill", "/F", "/PID", str(pid)] if force else ["taskkill", "/PID", str(pid)]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            return {
+                "success": result.returncode == 0,
+                "pid": pid,
+                "signal": "taskkill/F" if force else "taskkill",
+                "output": result.stdout.strip() or result.stderr.strip(),
+            }
+        else:
+            sig = signal.SIGKILL if force else signal.SIGTERM
+            os.kill(pid, sig)
+            return {
+                "success": True,
+                "pid": pid,
+                "signal": "SIGKILL" if force else "SIGTERM",
+            }
     except ProcessLookupError:
         return {"error": f"进程 {pid} 不存在"}
     except PermissionError:

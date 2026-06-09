@@ -100,6 +100,7 @@ USER_REVIEW_TIMEOUT = 120
 # ── 绝对危害性检测 — 无论何种模式都硬阻断 ──
 import re as _re
 _EXTREME_DANGER_PATTERNS_RAW = [
+    # Unix destructive
     r'rm\s+-[rRf]*[rR][rRf]*f\s+/',              # rm -rf / (any target under /)
     r'rm\s+-[rRf]*[rR][rRf]*f\s+~',              # rm -rf ~
     r'rm\s+-[rRf]*[rR][rRf]*f\s+\.\s*$',         # rm -rf .
@@ -109,6 +110,15 @@ _EXTREME_DANGER_PATTERNS_RAW = [
     r'>\s*/dev/sd',                                # overwrite disk
     r'nc\s+-l',                                    # reverse shell listener
     r'ncat\s+-l',                                  # reverse shell listener
+    # Windows destructive
+    r'del\s+/[sS]\s+/[qQ]\s+[A-Z]:\\',            # del /s /q C:\
+    r'rd\s+/[sS]\s+/[qQ]\s+[A-Z]:\\',             # rd /s /q C:\
+    r'\bformat\s+[A-Z]:',                          # format C:
+    r'Remove-Item\s+.*-Recurse\s+.*-Force\s+[A-Z]:\\',  # PowerShell rm -rf
+    r'Clear-RecycleBin\s.*-Force',                  # Empty recycle bin
+    r'Invoke-Expression.*IEX.*Net\.WebClient',     # PowerShell download+execute
+    r'New-Object\s+Net\.WebClient.*DownloadString', # PowerShell download
+    r'powershell.*-enc\s+[A-Za-z0-9+/=]{20,}',     # Encoded PowerShell
 ]
 _EXTREME_DANGER_RE = [_re.compile(p, _re.IGNORECASE) for p in _EXTREME_DANGER_PATTERNS_RAW]
 

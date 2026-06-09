@@ -7,8 +7,13 @@ from typing import Tuple, List
 class EvolveValidator:
     def __init__(self):
         self.protected_paths = [
-            "/etc/", "~/.ssh/", "/System/", "C:\\Windows\\",
-            "modules/security_system"
+            # Unix
+            "/etc/", "~/.ssh/", "/System/", "/Library/",
+            # Windows
+            "C:\\Windows\\", "C:\\Program Files\\", "C:\\Program Files (x86)\\",
+            "C:\\ProgramData\\", "C:\\Users\\", "\\System32\\",
+            # 项目安全模块
+            "modules/security_system",
         ]
 
     def validate(self, code: str, target_module: str) -> Tuple[bool, str]:
