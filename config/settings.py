@@ -189,7 +189,7 @@ class Settings(BaseSettings):
     MODEL_TIMEOUT: int = 180  # 模型 HTTP 请求超时（秒），可被各模型配置覆盖
 
     # 感知系统配置
-    PERCEPTION_ENABLED: bool = False                   # 是否启用感知系统（总开关，默认关闭）
+    PERCEPTION_ENABLED: bool = True                    # 是否启用感知系统（文件/屏幕变化检测）
 
     # 感知子系统开关（主系统关闭时不生效，但打开主系统时全部启用）
     PERCEPTION_SCREEN_ENABLED: bool = True             # 屏幕感知（帧差+OCR+UI+窗口）

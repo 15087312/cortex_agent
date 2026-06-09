@@ -82,9 +82,25 @@ async def lifespan(app: FastAPI):
         try:
             from modules.perception import perception_manager
             perception_manager.start_monitoring()
-            logger.info("✓ 感知系统已启动 (文件/对话/屏幕监控)")
+            logger.info("✓ 感知系统已启动 (文件/屏幕监控)")
         except Exception as e:
             logger.error(f"✗ 感知系统启动失败: {e}")
+
+        # 启动新感知系统（屏幕流水线 + 检测器）
+        try:
+            from modules.perception.setup import get_perception_system
+            ps = get_perception_system()
+            ps.setup()
+            ps.start()
+            logger.info("✓ 新感知流水线已启动 (屏幕捕获/帧差/窗口/OCR)")
+
+            # 注册感知差异源到差异检测器
+            if settings.DIFFERENCE_DETECTOR_ENABLED and ps.perception_source:
+                from modules.difference_detector import get_detector
+                get_detector().registry.register(ps.perception_source)
+                logger.info("✓ 感知差异源已注册到差异检测器")
+        except Exception as e:
+            logger.warning(f"新感知流水线启动失败 (非致命): {e}")
 
     # 启动差异检测器心跳 (Stage 1: continuous perception)
     if settings.DIFFERENCE_DETECTOR_ENABLED:
@@ -154,6 +170,14 @@ async def lifespan(app: FastAPI):
 
     # 停止感知系统
     if settings.PERCEPTION_ENABLED:
+        try:
+            from modules.perception.setup import get_perception_system
+            ps = get_perception_system()
+            ps.stop()
+            logger.info("✓ 新感知流水线已停止")
+        except Exception as e:
+            logger.debug(f"新感知流水线停止失败 (非致命): {e}")
+
         try:
             from modules.perception import perception_manager
             perception_manager.stop_monitoring()

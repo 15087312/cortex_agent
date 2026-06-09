@@ -266,6 +266,17 @@ class MultiModelOrchestrator:
             user_input, context, session_id
         )
 
+        # ---- 2.5 感知上下文（外部状态变化）----
+        perception_context = ""
+        try:
+            from modules.perception.integration import get_perception_integrator
+            integrator = get_perception_integrator()
+            perception_context = integrator.get_context_summary()
+            if perception_context:
+                logger.debug(f"[感知] 注入感知上下文: {len(perception_context)} 字符")
+        except Exception as e:
+            logger.debug(f"[感知] 获取感知上下文失败 (非致命): {e}")
+
         # ---- 3. 专家引导 (情绪 + 价值观) ----
         from config.settings import settings as _settings
         if _settings.is_expert_pipeline_enabled:
@@ -287,6 +298,7 @@ class MultiModelOrchestrator:
             memory_manager=mm,
             event_callback=event_callback,
             skill_id=skill_id,
+            perception_context=perception_context,
         )
 
         raw_response = thinking_result.get("response", "")
@@ -403,6 +415,7 @@ class MultiModelOrchestrator:
         memory_manager,
         event_callback,
         skill_id: str = "",
+        perception_context: str = "",
     ) -> Dict:
         """执行多模型思考 — 统一探针驱动流程
 
@@ -539,7 +552,11 @@ class MultiModelOrchestrator:
 
             # 3. 记忆上下文注入 CognitiveBlackboard
             if blackboard:
-                self._get_context_service().inject_to_dialog(blackboard, memory_context_text)
+                # 合并感知上下文到记忆上下文
+                full_context = memory_context_text
+                if perception_context:
+                    full_context += f"\n\n{perception_context}"
+                self._get_context_service().inject_to_dialog(blackboard, full_context)
 
             # ---- 直接激活大模型（替代 SessionMonitor）----
             # 用户输入后立即发送 probe_start，通知 ModelRunnerManager 启动大模型

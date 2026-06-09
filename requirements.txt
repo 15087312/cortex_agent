@@ -40,6 +40,11 @@ opencv-python>=4.8.1.78
 pyautogui>=0.9.54  # 鼠标键盘自动化
 pyserial>=3.5  # 串口通信
 
+# 感知系统
+mss>=10.0.0  # 跨平台屏幕捕获
+rapidocr_onnxruntime>=1.2.0  # 轻量 OCR（ONNX 推理）
+numpy>=1.24.0  # 数值计算（帧差/向量）
+
 # 工具库
 python-dotenv>=1.0.0
 loguru>=0.7.2
