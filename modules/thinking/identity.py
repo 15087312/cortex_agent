@@ -370,7 +370,7 @@ DEFAULT_TOOL_WHITELISTS: Dict[str, List[str]] = {
         # 最常用工具，避免被大量工具定义淹没上下文
         "read_file", "write_file", "file_edit", "search_files",
         "web_search", "web_fetch",
-        "memory_match",
+        "memory_match", "search_memory_by_category", "save_memory_to_category",
         "exec_command", "run_python",
         "calc",
         "todo",

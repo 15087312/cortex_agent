@@ -45,23 +45,34 @@ def rag_index(path: str, recursive: bool = True) -> Dict[str, Any]:
         return {"error": str(e)}
 
 
-@ToolRegistry.register("rag_query", description="从知识库中检索与查询相关的信息。基于语义搜索。", params={
+@ToolRegistry.register("rag_query", description="从知识库中检索与查询相关的信息。基于语义+关键词混合搜索。", params={
     "query": "搜索查询",
     "limit": "可选，返回结果数量（默认5）",
 }, risk_level="LOW", category="query")
 def rag_query(query: str, limit: int = 5) -> Dict[str, Any]:
-    """查询知识库"""
+    """查询知识库 — 使用混合搜索（FAISS 语义 + 关键词降级）"""
     if not query: return {"error": "查询不能为空"}
     limit = max(1, min(limit, 20))
 
     try:
         from modules.memory.core.memory_manager import MemoryManager
         mm = MemoryManager()
-        results = mm.search_long_term("rag", query.split(), limit)
+
+        # 优先使用混合搜索（FAISS 语义 + 关键词兜底）
+        results = []
+        try:
+            results = mm.search_memories_by_category(query, category="rag", limit=limit)
+        except Exception:
+            # 降级为关键词搜索
+            results = mm.search_long_term("rag", query.split(), limit)
 
         items = []
         for r in results:
-            item = {"content": str(r.get("content", ""))[:500], "score": r.get("score", 0)}
+            content = r.get("content", "")
+            if isinstance(content, dict):
+                import json
+                content = json.dumps(content, ensure_ascii=False)
+            item = {"content": str(content)[:500], "score": r.get("search_score", r.get("score", 0))}
             if "metadata" in r:
                 item["source"] = r["metadata"].get("source", "") if isinstance(r["metadata"], dict) else str(r["metadata"])
             items.append(item)

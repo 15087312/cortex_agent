@@ -16,4 +16,10 @@ for _module_info in pkgutil.iter_modules([str(_package_dir)]):
     importlib.import_module(f".{_module_info.name}", package=__name__)
     _imported.append(_module_info.name)
 
+# 加载分类记忆工具（位于 modules/memory/tools/）
+try:
+    importlib.import_module("modules.memory.tools.classified_memory_tool")
+except Exception:
+    pass
+
 __all__ = _imported

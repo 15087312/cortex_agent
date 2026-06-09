@@ -320,12 +320,12 @@ async def search_memories(
     limit: int = Query(default=20)
 ):
     """
-    搜索所有类型的记忆
-    
+    搜索所有类型的记忆（关键词）
+
     参数:
         keywords: 关键词（逗号分隔）
         limit: 返回数量限制
-    
+
     返回:
         匹配的记忆列表
     """
@@ -335,6 +335,34 @@ async def search_memories(
         return {"success": True, "data": memories}
     except Exception as e:
         raise AppError(ErrorCode.INTERNAL_ERROR, "记忆操作失败")
+
+
+@router.get("/search/hybrid")
+async def search_memories_hybrid(
+    query: str = Query(...),
+    category: str = Query(default="general"),
+    time_range: str = Query(default="all"),
+    limit: int = Query(default=10)
+):
+    """
+    混合搜索（FAISS 语义 + 关键词降级）
+
+    参数:
+        query: 搜索查询
+        category: 分类 (knowledge/experience/preferences/skills/communication/general)
+        time_range: 时间范围 (1h/6h/24h/7d/30d/all)
+        limit: 返回数量限制
+
+    返回:
+        匹配的记忆列表（按相关度排序）
+    """
+    try:
+        memories = _memory_manager.search_memories_by_category(
+            query, category=category, time_range=time_range, limit=limit
+        )
+        return {"success": True, "data": memories}
+    except Exception as e:
+        raise AppError(ErrorCode.INTERNAL_ERROR, "记忆搜索失败")
 
 
 @router.get("/status")
