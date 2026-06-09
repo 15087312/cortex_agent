@@ -372,6 +372,7 @@ DEFAULT_TOOL_WHITELISTS: Dict[str, List[str]] = {
         "web_search", "web_fetch",
         "memory_match", "search_memory_by_category", "save_memory_to_category",
         "exec_command", "run_python",
+        "transcribe_audio", "understand_screen",
         "calc",
         "todo",
         # 工具搜索 — 按需查找其他可用工具

@@ -37,8 +37,25 @@ class Settings(BaseSettings):
     # 轻量模型
     EXPERT_MODEL_NAME: str = "qwen2.5-7b-instruct"
 
-    # 图像/视觉模型
+    # 视觉模型配置
+    # VISION_BACKEND: 后端选择 — api / mlx / transformers / mock / auto
+    #   auto:          按优先级自动检测（api > mlx > transformers > mock）
+    #   api:           云端 API（OpenAI / DashScope / 兼容接口）
+    #   mlx:           Apple Silicon 本地 MLX-VLM（4-bit 量化）
+    #   transformers:  本地 transformers + CUDA/MPS/CPU
+    #   mock:          模拟模式
+    VISION_BACKEND: str = "auto"
+    VISION_API_URL: str = ""                       # 视觉 API 地址（留空则复用 OPENAI_API_BASE_URL）
+    VISION_API_KEY: str = ""                       # 视觉 API Key（留空则复用 OPENAI_API_KEY）
+    VISION_API_FORMAT: str = ""                    # API 格式: openai / dashscope / 留空自动检测
+    VISION_API_MODEL: str = ""                     # 云端视觉模型名（如 gpt-4o, qwen-vl-max）
+    VISION_LOCAL_MODEL: str = ""                   # 本地 transformers 模型名（留空用默认）
+    VISION_MLX_MODEL: str = ""                     # MLX 模型名（留空用默认）
+
+    # 默认模型名（不建议修改，优先用上面的 VISION_* 配置）
     IMAGE_MODEL_NAME: str = "gpt-4o"
+    QWEN_VL_MODEL_NAME: str = "Qwen/Qwen2-VL-2B-Instruct"  # 本地视觉模型（transformers 路径）
+    QWEN_VL_MLX_MODEL_NAME: str = "mlx-community/Qwen2-VL-7B-Instruct-4bit"  # Apple Silicon MLX 路径
 
     # Embedding/RAG 配置
     EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"
@@ -148,6 +165,31 @@ class Settings(BaseSettings):
     def is_expert_pipeline_enabled(self) -> bool:
         """专家流水线是否需要运行"""
         return self.COMPANION_MODE
+
+    @property
+    def effective_vision_api_url(self) -> str:
+        """视觉 API 地址（VISION_API_URL → OPENAI_API_BASE_URL）"""
+        return self.VISION_API_URL or self.OPENAI_API_BASE_URL
+
+    @property
+    def effective_vision_api_key(self) -> str:
+        """视觉 API Key（VISION_API_KEY → OPENAI_API_KEY）"""
+        return self.VISION_API_KEY or self.OPENAI_API_KEY
+
+    @property
+    def effective_vision_api_model(self) -> str:
+        """视觉 API 模型名（VISION_API_MODEL → IMAGE_MODEL_NAME）"""
+        return self.VISION_API_MODEL or self.IMAGE_MODEL_NAME
+
+    @property
+    def effective_vision_local_model(self) -> str:
+        """本地 transformers 模型名（VISION_LOCAL_MODEL → QWEN_VL_MODEL_NAME）"""
+        return self.VISION_LOCAL_MODEL or self.QWEN_VL_MODEL_NAME
+
+    @property
+    def effective_vision_mlx_model(self) -> str:
+        """MLX 模型名（VISION_MLX_MODEL → QWEN_VL_MLX_MODEL_NAME）"""
+        return self.VISION_MLX_MODEL or self.QWEN_VL_MLX_MODEL_NAME
 
     @field_validator("SERVER_PORT")
     @classmethod

@@ -80,13 +80,13 @@ class DatabaseManager:
     
     def create_tables(self):
         """创建表（幂等：重复调用自动跳过）"""
-        if DatabaseManager._tables_created:
+        if self._tables_created:
             return
         from . import models
         from . import chat_models  # 会话持久化表
         Base.metadata.create_all(self._engine)
         self._migrate()
-        DatabaseManager._tables_created = True
+        self._tables_created = True
         logger.info("数据库表创建完成")
 
     def _migrate(self):

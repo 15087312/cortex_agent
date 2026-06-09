@@ -1,9 +1,15 @@
 """
 图像分析核心 - 支持本地多模态模型 + 云API
-支持：Qwen-VL / LLaVA / GPT-4V / UI检测 / 模拟模式
+支持：Qwen-VL (MLX/transformers) / LLaVA / GPT-4V / UI检测 / 模拟模式
+
+平台适配:
+  - macOS (Apple Silicon): 优先 mlx-vlm (4-bit量化, ~4GB), 回退 transformers+mps
+  - Windows/Linux (CUDA):   transformers + CUDA
+  - CPU 兜底:              transformers + float32
 """
 import base64
 import io
+import sys
 import tempfile
 import json
 import random
@@ -12,6 +18,9 @@ from PIL import Image, ImageDraw, ImageFont
 from utils.logger import setup_logger
 
 logger = setup_logger("image_analyzer")
+
+# 平台检测
+_IS_APPLE_SILICON = sys.platform == "darwin" and hasattr(__import__("platform"), "machine") and __import__("platform").machine() == "arm64"
 
 
 class ImageAnalyzer:
@@ -42,13 +51,17 @@ class ImageAnalyzer:
         
         if self.model_type == "auto":
             self.model_type = self._detect_available_model()
-        
-        if self.model_type == "qwen_vl":
+
+        if self.model_type == "mlx_vlm":
+            await self._load_mlx_vlm()
+        elif self.model_type == "qwen_vl":
             await self._load_qwen_vl()
         elif self.model_type == "llava":
             await self._load_llava()
         elif self.model_type == "openai":
             await self._init_openai()
+        elif self.model_type == "unavailable":
+            logger.error("视觉后端不可用")
         else:
             logger.info("使用模拟模式")
         
@@ -56,40 +69,166 @@ class ImageAnalyzer:
         logger.info(f"图像分析器初始化完成 (类型: {self.model_type})")
 
     def _detect_available_model(self) -> str:
-        """检测可用模型"""
+        """根据配置和平台自动选择视觉后端（不可用返回 unavailable，不降级 mock）"""
+        from config.settings import settings
+
+        backend = settings.VISION_BACKEND.lower().strip()
+
+        # 用户显式指定后端
+        if backend and backend != "auto":
+            if backend == "api":
+                if settings.effective_vision_api_key:
+                    return "openai"
+                logger.error("VISION_BACKEND=api 但无 API Key")
+                return "unavailable"
+            elif backend == "mlx":
+                return "mlx_vlm"
+            elif backend == "transformers":
+                return "qwen_vl"
+            elif backend == "mock":
+                return "mock"
+            else:
+                logger.error(f"未知 VISION_BACKEND: {backend}")
+                return "unavailable"
+
+        # auto 模式: api > mlx > transformers > unavailable
+        # 1) 云端 API（有 API Key 即可用）
+        if settings.effective_vision_api_key:
+            logger.info("视觉后端: 云端 API")
+            return "openai"
+
+        # 2) Apple Silicon: mlx-vlm
+        if _IS_APPLE_SILICON:
+            try:
+                from mlx_vlm import generate, load
+                logger.info("视觉后端: MLX-VLM (Apple Silicon)")
+                return "mlx_vlm"
+            except ImportError:
+                logger.debug("mlx-vlm 未安装，尝试 transformers")
+
+        # 3) transformers + Qwen2-VL (CUDA/MPS/CPU)
         try:
-            import qwen_vl
+            from transformers import Qwen2VLForConditionalGeneration
+            from qwen_vl_utils import process_vision_info
+            logger.info("视觉后端: transformers (本地模型)")
             return "qwen_vl"
         except ImportError:
             pass
-        
+
         try:
             import llava
             return "llava"
         except ImportError:
             pass
-        
-        return "mock"
+
+        logger.error("无可用视觉后端（未安装 mlx-vlm / transformers / 无 API Key）")
+        return "unavailable"
+
+    async def _load_mlx_vlm(self):
+        """加载 MLX-VLM 模型（Apple Silicon 优化，4-bit 量化）"""
+        try:
+            from mlx_vlm import load, generate
+            from config.settings import settings
+
+            model_name = self.local_model or settings.effective_vision_mlx_model
+
+            logger.info(f"MLX-VLM 加载中: {model_name}")
+            model, processor = load(model_name)
+            self.model = model
+            self.processor = processor
+            self._mlx_generate = generate
+            self._mlx_model_name = model_name
+            logger.info(f"MLX-VLM 模型加载成功: {model_name}")
+        except Exception as e:
+            logger.error(f"MLX-VLM 加载失败: {e}")
+            self.model_type = "unavailable"
+
+    async def _analyze_mlx_vlm(
+        self,
+        image_data: bytes,
+        prompt: str,
+    ) -> Dict[str, Any]:
+        """使用 MLX-VLM 分析图像（Apple Silicon）"""
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as f:
+            f.write(image_data)
+            temp_path = f.name
+
+        try:
+            from mlx_vlm.prompt_utils import apply_chat_template
+            from mlx_vlm.utils import load_config
+
+            config = load_config(self._mlx_model_name)
+
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "image": temp_path},
+                        {"type": "text", "text": prompt},
+                    ],
+                }
+            ]
+            formatted_prompt = apply_chat_template(
+                self.processor, config, prompt, num_images=1
+            )
+
+            output = self._mlx_generate(
+                self.model,
+                self.processor,
+                formatted_prompt,
+                [temp_path],
+                max_tokens=256,
+                verbose=False,
+            )
+
+            output_text = output.text if hasattr(output, "text") else str(output)
+
+            return {
+                "description": output_text.strip(),
+                "objects": await self._detect_objects(image_data),
+                "scene": await self._classify_scene(image_data),
+                "colors": [],
+                "format": "mlx_vlm",
+            }
+        finally:
+            import os
+            os.unlink(temp_path)
 
     async def _load_qwen_vl(self):
         """加载Qwen-VL模型"""
         try:
+            import torch
             from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
             from qwen_vl_utils import process_vision_info
-            
-            self.processor = AutoProcessor.from_pretrained(
-                self.local_model or "Qwen/Qwen2-VL-7B-Instruct"
-            )
+            from config.settings import settings
+
+            model_name = self.local_model or settings.effective_vision_local_model
+
+            # 选择设备
+            if torch.cuda.is_available():
+                device = "cuda"
+            elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+                device = "mps"
+            else:
+                device = "cpu"
+
+            logger.info(f"Qwen-VL 加载中: {model_name} (device={device})")
+
+            self.processor = AutoProcessor.from_pretrained(model_name)
             self.model = Qwen2VLForConditionalGeneration.from_pretrained(
-                self.local_model or "Qwen/Qwen2-VL-7B-Instruct",
-                torch_dtype="auto",
-                device_map="auto"
+                model_name,
+                torch_dtype=torch.float16 if device == "cuda" else torch.float32,
+                device_map=device if device != "mps" else None,
             )
+            if device == "mps":
+                self.model = self.model.to("mps")
+
             self._process_vl = process_vision_info
-            logger.info("Qwen-VL模型加载成功")
-        except ImportError:
-            logger.warning("Qwen-VL相关库未安装，使用模拟模式")
-            self.model_type = "mock"
+            self._device = device
+            logger.info(f"Qwen-VL 模型加载成功 (device={device})")
+        except Exception as e:
+            logger.error(f"Qwen-VL 加载失败: {e}")
+            self.model_type = "unavailable"
 
     async def _load_llava(self):
         """加载LLaVA模型"""
@@ -102,8 +241,16 @@ class ImageAnalyzer:
             self.model_type = "mock"
 
     async def _init_openai(self):
-        """初始化OpenAI API"""
-        pass
+        """初始化云端视觉 API"""
+        from config.settings import settings
+        api_url = settings.effective_vision_api_url
+        api_key = settings.effective_vision_api_key
+        model = settings.effective_vision_api_model
+        if not api_key:
+            logger.error("视觉 API 无 Key，不可用")
+            self.model_type = "unavailable"
+            return
+        logger.info(f"视觉 API 初始化: model={model}, url={api_url}")
 
     async def analyze(
         self,
@@ -123,12 +270,16 @@ class ImageAnalyzer:
         if not self._initialized:
             await self.initialize()
         
-        if self.model_type == "qwen_vl":
+        if self.model_type == "mlx_vlm":
+            return await self._analyze_mlx_vlm(image_data, prompt)
+        elif self.model_type == "qwen_vl":
             return await self._analyze_qwen_vl(image_data, prompt)
         elif self.model_type == "llava":
             return await self._analyze_llava(image_data, prompt)
         elif self.model_type == "openai":
             return await self._analyze_openai(image_data, prompt)
+        elif self.model_type == "unavailable":
+            return {"error": "视觉后端不可用：未安装 mlx-vlm/transformers 且未配置 VISION_API_KEY", "format": "unavailable"}
         else:
             return await self._analyze_mock(image_data, prompt)
 
@@ -168,7 +319,7 @@ class ImageAnalyzer:
                 padding=True,
                 return_tensors="pt"
             )
-            inputs = inputs.to("cuda" if torch.cuda.is_available() else "cpu")
+            inputs = inputs.to(getattr(self, '_device', 'cpu'))
             
             with torch.no_grad():
                 output_ids = self.model.generate(**inputs, max_new_tokens=128)
@@ -219,18 +370,19 @@ class ImageAnalyzer:
         image_data: bytes,
         prompt: str
     ) -> Dict[str, Any]:
-        """使用OpenAI API分析"""
+        """使用云端视觉 API 分析（OpenAI / DashScope / 兼容接口）"""
         from config.settings import settings
         import openai
 
         image_b64 = base64.b64encode(image_data).decode()
 
-        client = openai.OpenAI(
-            api_key=settings.OPENAI_API_KEY,
-            base_url=settings.OPENAI_API_BASE_URL,
-        )
+        api_key = settings.effective_vision_api_key
+        api_url = settings.effective_vision_api_url
+        model = settings.effective_vision_api_model
+
+        client = openai.OpenAI(api_key=api_key, base_url=api_url)
         response = client.chat.completions.create(
-            model=settings.IMAGE_MODEL_NAME,
+            model=model,
             messages=[{
                 "role": "user",
                 "content": [
@@ -239,7 +391,7 @@ class ImageAnalyzer:
                 ]
             }]
         )
-        
+
         return {
             "description": response.choices[0].message.content,
             "objects": [],
@@ -307,6 +459,8 @@ class ImageAnalyzer:
             del self.model
             self.model = None
         self.processor = None
+        if hasattr(self, '_mlx_generate'):
+            self._mlx_generate = None
         self._initialized = False
 
     async def detect_ui_elements(
@@ -344,7 +498,7 @@ class ImageAnalyzer:
         if not self._initialized:
             await self.initialize()
         
-        if self.model_type == "qwen_vl":
+        if self.model_type in ("qwen_vl", "mlx_vlm"):
             return await self._detect_ui_qwen_vl(image_data, element_types)
         elif self.model_type == "openai":
             return await self._detect_ui_openai(image_data, element_types)
