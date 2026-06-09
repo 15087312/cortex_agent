@@ -117,6 +117,16 @@ class StreamThinkingSystem:
         self._running = False
         self._lock = asyncio.Lock()
         self._orchestrator = MultiModelOrchestrator()
+        self._session_repo = None  # 延迟初始化
+
+    def _get_session_repo(self):
+        if self._session_repo is None:
+            try:
+                from modules.database.session_repo import get_session_repo
+                self._session_repo = get_session_repo()
+            except Exception as e:
+                logger.debug(f"[SessionRepo] 初始化失败 (非致命): {e}")
+        return self._session_repo
 
     async def create_session(self) -> str:
         session_id = str(uuid.uuid4())
@@ -132,10 +142,31 @@ class StreamThinkingSystem:
                     "running": True,
                     "processing": False,
                 }
+                # 从 SQLite 恢复历史消息（重连场景）
+                repo = self._get_session_repo()
+                if repo:
+                    try:
+                        recent = repo.get_recent_messages(session_id, limit=50)
+                        if recent:
+                            self.sessions[session_id]["messages"] = [
+                                {"role": m["role"], "content": m["content"], "timestamp": 0}
+                                for m in recent
+                            ]
+                            logger.info(f"[SessionRepo] 恢复 {len(recent)} 条历史消息: session={session_id[:8]}")
+                    except Exception as e:
+                        logger.debug(f"[SessionRepo] 恢复消息失败: {e}")
             else:
                 self.sessions[session_id]["running"] = True
             self.sessions[session_id]["started_at"] = time.time()
         self._running = True
+
+        # 持久化会话到 SQLite
+        repo = self._get_session_repo()
+        if repo:
+            try:
+                repo.create_session(session_id)
+            except Exception as e:
+                logger.debug(f"[SessionRepo] 创建会话记录失败: {e}")
 
         # 确保 session_manager 中有此 session（Blackboard 共享给编排器）
         try:
@@ -191,6 +222,14 @@ class StreamThinkingSystem:
                 }
             )
             self.sessions[session_id]["messages"] = self.sessions[session_id]["messages"][-200:]
+
+        # 持久化到 SQLite
+        repo = self._get_session_repo()
+        if repo:
+            try:
+                repo.save_message(session_id, role, content)
+            except Exception as e:
+                logger.debug(f"[SessionRepo] 保存消息失败: {e}")
 
     async def _emit(
             self,
@@ -968,3 +1007,55 @@ async def get_status():
     """获取系统状态"""
     system = get_thinking_system()
     return {"success": True, "data": system.get_status()}
+
+
+@router.get("/sessions")
+async def get_sessions():
+    """列出所有会话（含历史）"""
+    system = get_thinking_system()
+    repo = system._get_session_repo()
+
+    # 从 DB 获取历史会话
+    db_sessions = []
+    if repo:
+        try:
+            db_sessions = repo.get_all_sessions(limit=50)
+        except Exception as e:
+            logger.debug(f"[SessionRepo] 查询会话失败: {e}")
+
+    # 合并内存中的活跃会话状态
+    async with system._lock:
+        live_ids = set(system.sessions.keys())
+
+    for s in db_sessions:
+        s["is_live"] = s["session_id"] in live_ids
+
+    return {"success": True, "data": db_sessions}
+
+
+@router.get("/sessions/{session_id}/messages")
+async def get_session_messages(session_id: str, limit: int = 100):
+    """获取会话历史消息"""
+    repo = get_thinking_system()._get_session_repo()
+    if not repo:
+        return {"success": True, "data": []}
+    try:
+        messages = repo.get_messages(session_id, limit=limit)
+        return {"success": True, "data": messages}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@router.post("/stop")
+async def stop_thinking(body: dict = None):
+    """停止当前思考（HTTP 入口，内部转发到 WebSocket stop）"""
+    session_id = (body or {}).get("session_id", "")
+    system = get_thinking_system()
+    if session_id:
+        await system.stop(session_id)
+    else:
+        # 停止所有活跃会话
+        async with system._lock:
+            for sid in list(system.sessions.keys()):
+                await system.stop(sid)
+    return {"success": True, "data": {"message": "已发送停止信号"}}

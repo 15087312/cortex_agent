@@ -33,32 +33,10 @@ from utils.logger import setup_logger
 
 logger = setup_logger("management_api")
 
-# SEC-4: Internal API authentication
-from config.settings import settings as _settings
-_INTERNAL_API_TOKEN = _settings.INTERNAL_API_TOKEN
+# 统一认证：使用 X-API-Key
+from api.auth import require_api_key
 
-
-def require_internal_token(authorization: str = Header(None)) -> str:
-    """SEC-4: Verify internal API token for management endpoints"""
-    if not _INTERNAL_API_TOKEN:
-        # If not configured, allow requests (for development/backward compatibility)
-        logger.warning("INTERNAL_API_TOKEN not configured, management API is unprotected")
-        return ""
-
-    if not authorization:
-        raise HTTPException(status_code=403, detail="Missing authorization header")
-
-    if not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=403, detail="Invalid authorization format")
-
-    token = authorization.split(" ", 1)[1] if len(authorization.split(" ", 1)) > 1 else ""
-    if not token or token != _INTERNAL_API_TOKEN:
-        raise HTTPException(status_code=403, detail="Invalid token")
-
-    return token
-
-
-router = APIRouter(prefix="/management", tags=["管理控制台"], dependencies=[Depends(require_internal_token)])
+router = APIRouter(prefix="/management", tags=["管理控制台"], dependencies=[Depends(require_api_key)])
 
 # 全局实例
 _registry = ModuleRegistry()

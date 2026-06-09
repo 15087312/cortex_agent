@@ -486,6 +486,29 @@ class PutConfigRequest(BaseModel):
     value: str | int | float | bool
 
 
+@app.get("/config")
+async def get_config():
+    """读取当前运行时配置（仅返回可修改的配置项）"""
+    config_data = {}
+    for key in _MODIFIABLE_CONFIG_KEYS:
+        val = getattr(settings, key, None)
+        if val is not None:
+            config_data[key] = val
+    return {"data": config_data}
+
+
+@app.post("/config/toggle-companion-mode")
+async def toggle_companion_mode():
+    """切换陪伴模式"""
+    current = settings.COMPANION_MODE
+    new_val = not current
+    object.__setattr__(settings, "COMPANION_MODE", new_val)
+    if new_val:
+        object.__setattr__(settings, "EXECUTION_MODE", "plan")
+    logger.info(f"陪伴模式: {current} → {new_val}")
+    return {"data": {"COMPANION_MODE": new_val, "EXECUTION_MODE": settings.EXECUTION_MODE}}
+
+
 @app.put("/config/{key}")
 async def update_config(key: str, body: PutConfigRequest):
     """更新运行时配置项（仅限允许列表内的 key）"""

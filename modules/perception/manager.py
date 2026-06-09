@@ -136,29 +136,61 @@ class PerceptionManager:
     def __init__(
         self,
         watch_paths: List[str] = None,
-        check_interval: float = 2.0
+        check_interval: float = 2.0,
+        enabled: bool = False,  # 默认关闭主系统
+        subsystems_enabled: Dict[str, bool] = None,  # 子系统启用状态（从配置读取）
     ):
-        
+
         self.watch_paths = watch_paths or ["./", "data/"]
         self.check_interval = check_interval
-        
-        # 三类感知器
-        self.file_perception = FilePerception(self.watch_paths)
-        self.dialog_perception = DialogPerception()
-        self.screen_perception = ScreenPerception()
-        
+        self.enabled = enabled  # 主系统启用状态
+
+        # 从配置读取子系统启用状态
+        if subsystems_enabled is None:
+            subsystems_enabled = self._load_subsystem_config()
+
+        # 三类感知器（子系统始终初始化，内部启用状态由配置决定）
+        self.file_perception = FilePerception(
+            self.watch_paths,
+            enabled=subsystems_enabled.get("file", True)
+        )
+        self.dialog_perception = DialogPerception(
+            enabled=subsystems_enabled.get("dialog", True)
+        )
+        self.screen_perception = ScreenPerception(
+            enabled=subsystems_enabled.get("screen", True)
+        )
+
         # 注意力池
         self.attention_pool: List[AttentionItem] = []
         self.max_attention_items = 50
-        
+
         # 回调
         self.on_change_callbacks: List[Callable] = []
-        
+
         # 后台监控
         self._running = False
         self._thread = None
-        
-        logger.info("感知管理器初始化完成 (平台: %s)", PERCEPTION_PLATFORM)
+
+        # 如果主系统启用，自动启动监控
+        if self.enabled:
+            self.start_monitoring()
+
+        logger.info("感知管理器初始化完成 (平台: %s, 启用: %s)", PERCEPTION_PLATFORM, self.enabled)
+
+    @staticmethod
+    def _load_subsystem_config() -> Dict[str, bool]:
+        """从配置文件读取子系统启用状态"""
+        try:
+            from config.settings import settings
+            return {
+                "file": getattr(settings, "PERCEPTION_FILE_ENABLED", True),
+                "dialog": getattr(settings, "PERCEPTION_DIALOG_ENABLED", True),
+                "screen": getattr(settings, "PERCEPTION_SCREEN_ENABLED", True),
+            }
+        except Exception as e:
+            logger.warning(f"读取子系统配置失败，使用默认值: {e}")
+            return {"file": True, "dialog": True, "screen": True}
 
     # ========== 文件感知 ==========
     
@@ -280,19 +312,33 @@ class PerceptionManager:
         """开始后台监控"""
         if self._running:
             return
-        
+
+        # 启用主系统时，同时启用所有配置中启用的子系统
+        self.enabled = True
+        subsystems_config = self._load_subsystem_config()
+        self.file_perception.enabled = subsystems_config.get("file", True)
+        self.dialog_perception.enabled = subsystems_config.get("dialog", True)
+        self.screen_perception.enabled = subsystems_config.get("screen", True)
+
+        enabled_subsystems = [k for k, v in subsystems_config.items() if v]
         self._running = True
         self._thread = threading.Thread(target=self._monitor_loop, daemon=True)
         self._thread.start()
-        logger.info("开始后台监控")
+        logger.info(f"开始后台监控（启用的子系统: {', '.join(enabled_subsystems)}）")
     
     def stop_monitoring(self) -> None:
         """停止后台监控"""
+        # 关闭主系统时，同时关闭所有子系统
+        self.enabled = False
+        self.file_perception.enabled = False
+        self.dialog_perception.enabled = False
+        self.screen_perception.enabled = False
+
         self._running = False
         if self._thread:
             self._thread.join(timeout=2.0)
         self.file_perception.stop()
-        logger.info("停止后台监控")
+        logger.info("停止后台监控（所有子系统已禁用）")
     
     def _monitor_loop(self) -> None:
         """监控循环"""
@@ -328,21 +374,60 @@ class PerceptionManager:
         
         return min(1.0, base)
 
+    def get_status(self) -> Dict[str, Any]:
+        """获取感知系统状态"""
+        return {
+            "main_system_enabled": self.enabled,
+            "running": self._running,
+            "subsystems": {
+                "file_perception": self.file_perception.enabled,
+                "dialog_perception": self.dialog_perception.enabled,
+                "screen_perception": self.screen_perception.enabled,
+            },
+            "attention_pool_size": len(self.attention_pool),
+        }
+
+    def set_subsystem_enabled(self, subsystem: str, enabled: bool) -> bool:
+        """
+        设置子系统启用状态
+
+        Args:
+            subsystem: "file" / "dialog" / "screen"
+            enabled: 是否启用
+
+        Returns:
+            是否设置成功
+        """
+        if subsystem == "file":
+            self.file_perception.enabled = enabled
+        elif subsystem == "dialog":
+            self.dialog_perception.enabled = enabled
+        elif subsystem == "screen":
+            self.screen_perception.enabled = enabled
+        else:
+            logger.warning(f"未知的子系统: {subsystem}")
+            return False
+
+        logger.info(f"子系统 {subsystem} 已{'启用' if enabled else '禁用'}")
+        return True
+
 
 class FilePerception:
     """
     文件感知器 - 使用 watchdog 事件驱动
     跨平台支持：macOS / Windows / Linux
     """
-    
-    def __init__(self, watch_paths: List[str]):
+
+    def __init__(self, watch_paths: List[str], enabled: bool = True):
         self.watch_paths = watch_paths
         self.snapshot: Dict[str, Dict[str, Any]] = {}
+        self.enabled = enabled  # 子系统启用状态
         self._observer = None
         self._event_queue = []
         self._lock = threading.Lock()
-        
+
         self.take_snapshot()
+        # 子系统初始化时始终启动监控，由主系统控制的_running标志决定是否生效
         self._start_watching()
     
     def _start_watching(self) -> None:
@@ -498,8 +583,9 @@ class FilePerception:
 
 class DialogPerception:
     """对话感知器"""
-    
-    def __init__(self):
+
+    def __init__(self, enabled: bool = True):
+        self.enabled = enabled  # 子系统启用状态
         self.last_snapshot: List[Dict[str, Any]] = []
         self._messages_cache: List[Dict] = []
     
@@ -545,9 +631,10 @@ class ScreenPerception:
     Windows: PIL + MSS
     Linux: scrot
     """
-    
-    def __init__(self, hash_size: int = 8):
+
+    def __init__(self, hash_size: int = 8, enabled: bool = True):
         self.hash_size = hash_size
+        self.enabled = enabled  # 子系统启用状态
         self.last_hash = ""
         self.last_capture_time = 0
         self._platform = PERCEPTION_PLATFORM

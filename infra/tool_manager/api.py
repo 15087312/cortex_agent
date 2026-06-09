@@ -10,9 +10,8 @@ from api.errors import AppError, ErrorCode
 
 logger = __import__("utils.logger", fromlist=["setup_logger"]).setup_logger("tool_api")
 
-# SEC-5: Tool API authentication
-from config.settings import settings as _settings
-_TOOL_API_TOKEN = _settings.TOOL_API_TOKEN
+# 统一认证：使用 X-API-Key
+from api.auth import require_api_key
 
 
 async def _security_gate_check(tool_name: str, params: Dict[str, Any], caller_role: str) -> None:
@@ -30,22 +29,9 @@ async def _security_gate_check(tool_name: str, params: Dict[str, Any], caller_ro
         raise HTTPException(status_code=403, detail=f"安全门控拦截: {reason}")
 
 
-def require_tool_auth(authorization: str = Header(None), caller_role: str = Header(default="expert")) -> tuple:
-    """SEC-5: Verify authentication and extract caller role"""
-    if not _TOOL_API_TOKEN:
-        # If not configured, allow requests (for development/backward compatibility)
-        logger.warning("TOOL_API_TOKEN not configured, tool API is unprotected")
-        return caller_role
-
-    if not authorization:
-        raise HTTPException(status_code=403, detail="Missing authorization header")
-
-    if not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=403, detail="Invalid authorization format")
-
-    token = authorization.split(" ", 1)[1] if len(authorization.split(" ", 1)) > 1 else ""
-    if not token or token != _TOOL_API_TOKEN:
-        raise HTTPException(status_code=403, detail="Invalid token")
+def require_tool_auth(x_api_key: str = Header(None), caller_role: str = Header(default="expert")) -> tuple:
+    """统一认证 + 提取调用者角色"""
+    require_api_key(x_api_key)
 
     # Validate caller_role is from a limited set of allowed roles
     allowed_roles = {"expert", "supervisor", "commander", "system"}

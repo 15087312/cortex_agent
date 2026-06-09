@@ -83,6 +83,7 @@ class DatabaseManager:
         if DatabaseManager._tables_created:
             return
         from . import models
+        from . import chat_models  # 会话持久化表
         Base.metadata.create_all(self._engine)
         self._migrate()
         DatabaseManager._tables_created = True

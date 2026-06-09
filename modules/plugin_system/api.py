@@ -18,25 +18,14 @@ from .tool_governance import FileToolCallSessionStore, ToolCallSessionStore, Too
 
 logger = __import__("utils.logger", fromlist=["setup_logger"]).setup_logger("plugin_api")
 
-_PLUGIN_API_TOKEN = os.environ.get("PLUGIN_API_TOKEN", "")
-
-
-def require_plugin_auth(authorization: str = Header(None)):
-    if not _PLUGIN_API_TOKEN:
-        return
-    if not authorization:
-        raise HTTPException(status_code=403, detail="Missing authorization header")
-    if not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=403, detail="Invalid authorization format")
-    token = authorization.split(" ", 1)[1] if len(authorization.split(" ", 1)) > 1 else ""
-    if not token or token != _PLUGIN_API_TOKEN:
-        raise HTTPException(status_code=403, detail="Invalid token")
+# 统一认证：使用 X-API-Key
+from api.auth import require_api_key
 
 
 router = APIRouter(
     prefix="/plugins",
     tags=["插件"],
-    dependencies=[Depends(require_plugin_auth)],
+    dependencies=[Depends(require_api_key)],
 )
 
 _engine: PluginEngine | None = None
