@@ -61,18 +61,14 @@ function Check-Prerequisites {
 function Clone-Or-Update {
     if (Test-Path "$InstallDir\.git") {
         Write-Info "Found existing installation: $InstallDir"
-        Write-Info "Updating to latest version..."
-        Push-Location $InstallDir
+        Write-Info "Removing old version..."
         try {
-            git fetch origin $Branch 2>&1 | Out-Null
-            git checkout $Branch 2>&1 | Out-Null
-            git reset --hard "origin/$Branch" 2>&1 | Out-Null
-            Write-OK "Updated"
+            Remove-Item -Recurse -Force $InstallDir
+            Write-OK "Removed"
         } catch {
-            Write-Err "Update failed: $_"
+            Write-Err "Failed to remove old installation: $_"
             exit 1
         }
-        return
     }
 
     Write-Info "Cloning repository to $InstallDir ..."
@@ -81,8 +77,6 @@ function Clone-Or-Update {
         Write-OK "Clone completed"
     } catch {
         Write-Err "Clone failed: $_"
-        Write-Err "Check your internet connection or try manually:"
-        Write-Host "  git clone --branch $Branch $RepoUrl $InstallDir"
         exit 1
     }
 
