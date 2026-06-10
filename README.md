@@ -4,29 +4,36 @@
 
 ---
 
-## 快速开始
+# Cortex Agent
 
-### 一键安装（推荐）
+> **类人智能后端系统** — 多模型协作 · 连续思考 · 认知黑板 · 安全审计
 
-**macOS / Linux**：
+---
+
+## 一键安装
+
+### macOS / Linux
 ```bash
 curl -fsSL https://raw.githubusercontent.com/15087312/cortex_agent/main/install.sh | bash
 ```
 
-**Windows（PowerShell）**：
+### Windows（PowerShell）
 ```powershell
 powershell -ExecutionPolicy Bypass -Command "iex (New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/15087312/cortex_agent/main/install.ps1')"
 ```
 
-安装完成后直接运行：
-
+安装完成后运行：
 ```bash
 cortex
 ```
 
-> **提示**：Windows 用户首次运行需要在新的 PowerShell 或 CMD 窗口中执行（以刷新 PATH），或使用 `python -m cortex.main`
+> **Windows 提示**：首次运行需要在新的 PowerShell 窗口中执行以刷新 PATH，或使用 `python -m cortex.main`
 
-### 手动安装
+---
+
+## 手动安装
+
+### macOS
 
 ```bash
 # 1. 克隆
@@ -41,6 +48,28 @@ cp .env.example .env
 # 编辑 .env 填入你的 API Key
 
 # 4. 启动
+cortex
+```
+
+### Windows
+
+```powershell
+# 1. 克隆
+git clone https://github.com/15087312/cortex_agent.git
+cd cortex_agent
+
+# 2. 创建虚拟环境（推荐）
+python -m venv venv
+.\venv\Scripts\Activate.ps1
+
+# 3. 安装
+pip install -e .
+
+# 4. 配置
+Copy-Item .env.example .env
+# 用文本编辑器编辑 .env 填入 API Key
+
+# 5. 启动
 cortex
 ```
 
@@ -389,7 +418,6 @@ docker-compose down
 
 | 文档 | 说明 |
 |------|------|
-| [docs/INSTALLATION.md](docs/INSTALLATION.md) | 详细安装指南（Windows/macOS/Linux/Docker） |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 详细架构设计文档 |
 | [docs/CODE_QUALITY.md](docs/CODE_QUALITY.md) | 代码质量分析报告 |
 | [docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md) | 已知问题清单 |
