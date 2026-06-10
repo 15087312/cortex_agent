@@ -63,16 +63,29 @@ function Clone-Or-Update {
         Write-Info "Found existing installation: $InstallDir"
         Write-Info "Updating to latest version..."
         Push-Location $InstallDir
-        git fetch origin $Branch 2>&1 | Out-Null
-        git checkout $Branch 2>&1 | Out-Null
-        git reset --hard "origin/$Branch" 2>&1 | Out-Null
-        Pop-Location
-        Write-OK "Updated"
-    } else {
-        Write-Info "Cloning repository to $InstallDir ..."
-        git clone --branch $Branch --depth 1 $RepoUrl $InstallDir 2>&1 | Out-Null
-        Write-OK "Clone completed"
+        try {
+            git fetch origin $Branch 2>&1 | Out-Null
+            git checkout $Branch 2>&1 | Out-Null
+            git reset --hard "origin/$Branch" 2>&1 | Out-Null
+            Write-OK "Updated"
+        } catch {
+            Write-Err "Update failed: $_"
+            exit 1
+        }
+        return
     }
+
+    Write-Info "Cloning repository to $InstallDir ..."
+    try {
+        git clone --branch $Branch --depth 1 $RepoUrl $InstallDir
+        Write-OK "Clone completed"
+    } catch {
+        Write-Err "Clone failed: $_"
+        Write-Err "Check your internet connection or try manually:"
+        Write-Host "  git clone --branch $Branch $RepoUrl $InstallDir"
+        exit 1
+    }
+
     Push-Location $InstallDir
 }
 
