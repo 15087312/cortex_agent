@@ -875,7 +875,15 @@ class REPL(Screen):
             else:
                 self._show_config()
         elif cmd.action == "setup":
-            self._show_setup_guide()
+            # /setup [component] — 直接下载或显示状态
+            parts = text.strip().split(maxsplit=1)
+            arg = parts[1].strip() if len(parts) > 1 else ""
+            if arg in ("all", "omniparser", "qwen-vl-2b", "qwen-vl-7b-mlx"):
+                self._run_setup_download(arg)
+            elif arg == "status":
+                self._show_setup_guide()
+            else:
+                self._show_setup_guide()
         else:
             self.notify(f"未知命令: {text}", severity="warning")
 
@@ -1240,19 +1248,87 @@ class REPL(Screen):
             self.notify(f"✗ 更新失败: {key}", severity="error", timeout=2)
 
     def _show_setup_guide(self):
-        """显示模型下载引导"""
+        """显示模型下载引导并提供直接下载选项"""
+        import os
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        script_path = os.path.join(project_root, "scripts", "setup_models.py")
+
+        if not os.path.exists(script_path):
+            self.notify("setup_models.py 未找到", title="错误", severity="error", timeout=5)
+            return
+
+        # 检查组件是否已安装
+        status_lines = []
+        components = {
+            "omniparser": ("OmniParser UI 检测", "OmniParser/weights"),
+            "qwen-vl-2b": ("Qwen2-VL-2B", "models/qwen2-vl-2b"),
+            "qwen-vl-7b-mlx": ("Qwen2-VL-7B MLX", "models/qwen2-vl-7b-mlx"),
+        }
+        for key, (name, target) in components.items():
+            full_path = os.path.join(project_root, target)
+            installed = os.path.exists(full_path) and os.listdir(full_path)
+            icon = "✅" if installed else "⬜"
+            status_lines.append(f"  {icon} {name} {'已安装' if installed else '未安装'}")
+
         guide = (
             "可选模型组件下载\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            "请在另一个终端运行:\n\n"
-            "  python scripts/setup_models.py\n\n"
-            "可选组件:\n"
-            "  • OmniParser   — UI 截图解析（learn_tool 高精度）\n"
-            "  • Qwen-VL 2B   — 本地识图（需 NVIDIA GPU）\n"
-            "  • Qwen-VL 7B   — Apple Silicon 专用（M1/M2/M3/M4）\n\n"
-            "快捷用法:\n"
-            "  python scripts/setup_models.py --all     # 全部下载\n"
-            "  python scripts/setup_models.py omniparser  # 只下载 OmniParser\n"
-            "  python scripts/setup_models.py qwen-vl-7b-mlx  # 只下载 MLX 模型"
+            + "\n".join(status_lines) + "\n\n"
+            "选择操作:\n"
+            "  /setup all          下载全部组件\n"
+            "  /setup omniparser   只下载 OmniParser\n"
+            "  /setup qwen-vl-2b   只下载 Qwen-VL 2B\n"
+            "  /setup qwen-vl-7b-mlx  只下载 MLX 模型\n"
+            "  /setup status       查看安装状态"
         )
-        self.notify(guide, title="模型下载", timeout=10)
+        self.notify(guide, title="模型下载", timeout=15)
+
+    @work
+    async def _run_setup_download(self, component: str):
+        """在后台执行模型下载脚本"""
+        import asyncio
+        import os
+        import sys as _sys
+
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        script_path = os.path.join(project_root, "scripts", "setup_models.py")
+
+        args = [_sys.executable, script_path]
+        if component != "all":
+            args.append(component)
+
+        self.notify(f"开始下载: {component} ...", title="模型下载", timeout=5)
+
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *args,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+                cwd=project_root,
+            )
+
+            output_lines = []
+            async for line in proc.stdout:
+                decoded = line.decode("utf-8", errors="replace").rstrip()
+                output_lines.append(decoded)
+                # 实时显示最后 3 行
+                recent = "\n".join(output_lines[-3:])
+                self.notify(f"下载中...\n{recent}", title="模型下载", timeout=30)
+
+            await proc.wait()
+
+            if proc.returncode == 0:
+                self.notify(
+                    f"✅ {component} 下载完成\n\n" + "\n".join(output_lines[-5:]),
+                    title="模型下载",
+                    timeout=10,
+                )
+            else:
+                self.notify(
+                    f"❌ {component} 下载失败 (exit={proc.returncode})\n\n" + "\n".join(output_lines[-5:]),
+                    title="模型下载",
+                    severity="error",
+                    timeout=10,
+                )
+        except Exception as e:
+            self.notify(f"下载异常: {e}", title="模型下载", severity="error", timeout=10)
