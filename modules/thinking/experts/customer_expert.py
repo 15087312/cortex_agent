@@ -34,10 +34,11 @@ class CustomerExpert(RuntimeExpert):
     # 验收结果阈值
     ACCEPT_CONFIDENCE_THRESHOLD = 0.6  # 满意度 >= 此值视为通过
 
-    def __init__(self, model_instance=None,
+    def __init__(self, model_instance=None, blackboard=None,
                  session_id="", model_id=""):
         super().__init__(
             model_instance=model_instance,
+            blackboard=blackboard,
             session_id=session_id,
             model_id=model_id,
         )

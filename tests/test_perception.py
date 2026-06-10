@@ -299,11 +299,34 @@ class TestROIDispatcher:
 
 class TestOCRDetector:
     def test_not_available_without_engine(self):
-        det = OCRDetector()
-        # 如果没有 PaddleOCR/RapidOCR，应该不可用
-        # 测试环境中通常没有
-        if not det.is_available():
+        """无 OCR 引擎时应该不可用"""
+        with patch.dict("sys.modules", {"rapidocr_onnxruntime": None, "paddleocr": None}):
+            det = OCRDetector()
+            assert det.is_available() is False
             assert det.detect(np.zeros((50, 50, 3), dtype=np.uint8), "test") == []
+
+    def test_available_with_engine(self):
+        """有 OCR 引擎时应该可用并能提取文本"""
+        det = OCRDetector()
+        if not det.is_available():
+            pytest.skip("无 OCR 引擎")
+        # 纯白图应该返回空或极少文字
+        result = det.detect(np.ones((100, 200, 3), dtype=np.uint8) * 255, "test")
+        assert isinstance(result, list)
+
+    def test_detect_returns_events_on_change(self):
+        """OCR 检测到文字变化时应返回事件"""
+        det = OCRDetector()
+        if not det.is_available():
+            pytest.skip("无 OCR 引擎")
+        # 第一次检测
+        img1 = np.zeros((100, 200, 3), dtype=np.uint8)
+        det._extract_text = MagicMock(return_value="hello")
+        events1 = det.detect(img1, "screen")
+        assert len(events1) == 1  # 首次检测应有事件
+        # 相同内容不应重复触发
+        events2 = det.detect(img1, "screen")
+        assert len(events2) == 0
 
     def test_detector_type(self):
         det = OCRDetector()
@@ -325,6 +348,60 @@ class TestOCRDetector:
         new = OCRDetector._diff_text("hello", "hello")
         assert new == []
 
+    def test_paddleocr_v36_dict_format(self):
+        """PaddleOCR 3.6+ 返回 dict 格式而非 list，必须正确处理"""
+        from unittest.mock import MagicMock, patch
+
+        det = OCRDetector()
+        # 模拟 PaddleOCR 3.6 dict 格式
+        det._ocr_type = "paddleocr"
+        det._ocr_engine = MagicMock()
+        det._ocr_engine.ocr.return_value = [{
+            "rec_texts": ["Hello World", "def test():", "print('hi')"],
+            "rec_scores": [0.95, 0.88, 0.92],
+            "rec_polys": [],
+        }]
+
+        img = np.zeros((100, 200, 3), dtype=np.uint8)
+        text = det._extract_text(img)
+        assert "Hello World" in text
+        assert "def test():" in text
+
+    def test_paddleocr_v36_empty_texts(self):
+        """PaddleOCR 3.6 dict 格式，无文字"""
+        from unittest.mock import MagicMock
+
+        det = OCRDetector()
+        det._ocr_type = "paddleocr"
+        det._ocr_engine = MagicMock()
+        det._ocr_engine.ocr.return_value = [{
+            "rec_texts": [],
+            "rec_scores": [],
+            "rec_polys": [],
+        }]
+
+        img = np.zeros((100, 200, 3), dtype=np.uint8)
+        text = det._extract_text(img)
+        assert text == ""
+
+    def test_paddleocr_legacy_list_format(self):
+        """PaddleOCR 旧版 list 格式仍需兼容"""
+        from unittest.mock import MagicMock
+
+        det = OCRDetector()
+        det._ocr_type = "paddleocr"
+        det._ocr_engine = MagicMock()
+        # 旧格式: result = [[[bbox, (text, confidence)], ...]]
+        det._ocr_engine.ocr.return_value = [[
+            [[[0, 0], [100, 0], [100, 20], [0, 20]], ("Hello", 0.95)],
+            [[[0, 30], [100, 30], [100, 50], [0, 50]], ("World", 0.88)],
+        ]]
+
+        img = np.zeros((100, 200, 3), dtype=np.uint8)
+        text = det._extract_text(img)
+        assert "Hello" in text
+        assert "World" in text
+
 
 class TestUIDetector:
     def test_detector_type(self):
@@ -332,16 +409,19 @@ class TestUIDetector:
         assert det.detector_type == "ui"
 
     def test_not_available_without_cv2(self):
-        det = UIDetector()
-        # macOS 可能有 cv2，也可能没有
-        if not det.is_available():
+        """无 cv2 时应该不可用"""
+        with patch("modules.perception.detectors.ui_detector.HAS_CV2", False):
+            det = UIDetector()
+            assert det.is_available() is False
             assert det.detect(np.zeros((50, 50, 3), dtype=np.uint8), "test") == []
 
     def test_no_templates_no_events(self):
+        """无模板时不应产生事件"""
         det = UIDetector()
-        if det.is_available():
-            result = det.detect(np.zeros((100, 100, 3), dtype=np.uint8), "test")
-            assert result == []
+        if not det.is_available():
+            pytest.skip("无 cv2")
+        result = det.detect(np.zeros((100, 100, 3), dtype=np.uint8), "test")
+        assert result == []
 
 
 class TestWindowDetector:

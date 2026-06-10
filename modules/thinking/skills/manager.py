@@ -70,6 +70,19 @@ class SkillManager:
             except Exception as e:
                 logger.warning(f"[技能] 加载失败 {file_path.name}: {e}")
 
+        # 扫描 skills/learned/ 子目录（已学工具自动生成的 Skill）
+        learned_dir = skills_dir / "learned"
+        if learned_dir.exists():
+            for file_path in sorted(learned_dir.glob("*.yaml")):
+                try:
+                    skill = self._load_yaml(file_path)
+                    if skill:
+                        self._skills[skill.id] = skill
+                        count += 1
+                        logger.info(f"[技能] 加载 learned: {skill.id} ({skill.name})")
+                except Exception as e:
+                    logger.warning(f"[技能] 加载失败 {file_path.name}: {e}")
+
         self._loaded = True
         logger.info(f"[技能] 共加载 {count} 个技能")
         return count
@@ -135,8 +148,8 @@ class SkillManager:
                 best_score = score
                 best_skill = skill
 
-        # 至少命中 2 个关键词才激活（防止单关键词误触发）
-        if best_score >= 6 and best_skill:
+        # 单关键词命中即可激活（关键词已要求 ≥ 2 字符，误触发率低）
+        if best_score >= 3 and best_skill:
             logger.info(
                 f"[技能] 自动匹配: {best_skill.id} "
                 f"(score={best_score}, input={user_input[:30]}...)"

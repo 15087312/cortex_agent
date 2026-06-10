@@ -71,6 +71,7 @@ HIGH_RISK_TOOLS = {
     "exec_command", "run_script", "kill_process", "git_push",
     "external_api_call", "write_runtime_config",
     "delete_file",
+    "learn_tool",  # ToolBuilder: 学习工具涉及 UI 操作录制
 }
 
 # MEDIUM 风险工具 — 快速路径检查
@@ -82,6 +83,7 @@ MEDIUM_RISK_TOOLS = {
     "run_pytest",
     "create_plugin", "uninstall_plugin",
     "open_app", "close_app",  # 应用生命周期工具
+    "delete_learned_tool", "execute_tool_recipe",  # ToolBuilder
 }
 
 # 写操作工具 — plan 模式禁止，edit 模式需用户确认
@@ -92,6 +94,7 @@ _MUTATION_TOOLS = {
     "install_dependency", "create_plugin", "uninstall_plugin",
     "kill_process", "write_runtime_config", "external_api_call",
     "open_app", "close_app",  # 应用生命周期工具（修改系统状态）
+    "learn_tool", "delete_learned_tool", "execute_tool_recipe", "create_app_skill",  # ToolBuilder
 }
 
 # 用户审查超时（秒）

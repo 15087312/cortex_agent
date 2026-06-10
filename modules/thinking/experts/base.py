@@ -21,6 +21,7 @@ RuntimeExpert — 常驻型专家统一基类
 ModelRunner 检测到 identity.role 匹配时，自动实例化 RuntimeExpert 子类
 并调用 run_loop()，无需为每个专家类型写单独的 _think_loop_* 方法。
 """
+import inspect
 import time
 from abc import ABC, abstractmethod
 from typing import Dict, Any, List, Optional
@@ -357,7 +358,10 @@ class RuntimeExpert(ABC):
 
                 try:
                     # 1. 检查 MessageBus
-                    messages = check_messages_fn()
+                    if inspect.iscoroutinefunction(check_messages_fn):
+                        messages = await check_messages_fn()
+                    else:
+                        messages = check_messages_fn()
                     has_messages = bool(messages)
 
                     # 2. 读取 Blackboard 对话上下文
@@ -777,6 +781,14 @@ class RuntimeExpert(ABC):
         tool_name = tool_call.get('name', '')
         arguments = tool_call.get('arguments', {})
 
+        # arguments 可能是 JSON 字符串
+        if isinstance(arguments, str):
+            try:
+                import json
+                arguments = json.loads(arguments)
+            except Exception:
+                arguments = {}
+
         if not tool_name:
             return "Error: tool_name is empty"
 
@@ -785,7 +797,13 @@ class RuntimeExpert(ABC):
             func = ToolRegistry.get_func(tool_name)
             if func is None:
                 return f"Error: unknown tool '{tool_name}'"
-            result = func(**arguments)
+
+            import inspect
+            if inspect.iscoroutinefunction(func):
+                import asyncio
+                result = await func(**arguments)
+            else:
+                result = func(**arguments)
             return str(result)
         except Exception as e:
             self.logger.error(f"工具 {tool_name} 执行失败: {e}")

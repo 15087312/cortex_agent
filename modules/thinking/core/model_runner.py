@@ -272,6 +272,9 @@ class ModelRunner:
                 check_messages_fn=self._check_messages,
                 task_description=self._task_description,
             )
+            logger.info(
+                f"[ModelRunner] RuntimeExpert {self.model_id} 常驻循环结束"
+            )
         else:
             # on_demand 专家用 run_cli_mode（任务导向，完成后退出）
             expert_result = await runtime_expert.run_cli_mode(
@@ -344,11 +347,6 @@ class ModelRunner:
                     )
             except Exception as e:
                 logger.error(f"[ModelRunner] 唤醒失败: {e}")
-
-        logger.info(
-            f"[ModelRunner] RuntimeExpert {self.model_id} 完成 "
-            f"(expert_result={expert_result})"
-        )
 
     def _save_private_memory(self, final_thought: str) -> None:
         """保存当前模型私有任务记忆，不写入共享会话窗口。"""
@@ -1245,6 +1243,25 @@ class ModelRunner:
             "3. 如指示要求停止写操作，不得再调用任何写工具或委派写任务\n"
             "4. 违反最高指示将导致会话被安全系统终止\n"
             "用户目标是最高优先级，安全监察专家负责确保团队不偏离用户目标。"
+        )
+
+        # ── 感知工具使用规则 ──
+        base_prompt += (
+            "\n\n【感知工具 — 必须实际调用】\n"
+            "你拥有以下感知工具，当用户要求你看、查看、观察屏幕/桌面/当前界面时，"
+            "你必须直接调用工具，而不是描述工具的功能或猜测屏幕内容。\n\n"
+            "• understand_screen(focus=...) — 截取当前屏幕并智能理解\n"
+            "  - 无参数：截取全屏并总结\n"
+            "  - focus=关注错误信息：重点关注错误提示\n"
+            "  - focus=关注表格数据：重点关注数据内容\n\n"
+            "• learn_tool(tool_name, app_name, task_description, params_hint) — 学习 UI 自动化操作\n"
+            "  - 打开应用 → 截图 → 分析 UI → 规划步骤 → 录制保存\n\n"
+            "• list_learned_tools(app_name) — 列出已学的自动化工具\n\n"
+            "规则：\n"
+            "1. 用户说「看看」「看一下」「看看屏幕」→ 立即调用 understand_screen()\n"
+            "2. 不要在调用前描述工具能做什么，直接调用\n"
+            "3. 调用结果会告诉你屏幕内容，基于结果回答用户\n"
+            "4. 如果工具返回错误，告知用户具体错误原因"
         )
 
         return base_prompt
