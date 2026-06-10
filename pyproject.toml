@@ -58,4 +58,3 @@ exclude = ["tests*", "docs*", "Open-ClaudeCode*"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-ji x
