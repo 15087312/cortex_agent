@@ -1,4 +1,4 @@
-# 🤖 Humanoid AGI — 下一代类人智能后端
+# cortex Humanoid AGI — 下一代类人智能后端
 
 > **开源时代的多模型AI系统** | 工业级架构 · 实时思考 · 原生Tool Calls · 自主学习
 
@@ -173,7 +173,7 @@ Jun 01: bug fix(model-runner) 修复主管超时导致无回复
 
 ## 🎓 技术亮点（给开发者的）
 
-### A. 架构设计 ⭐⭐⭐⭐⭐
+### A. 架构设计
 
 **Ports & Adapters模式 + 事件驱动**
 
@@ -193,7 +193,7 @@ for event in pipeline:  # WebSocket/SSE实时消费
 - 模块换插：换一个存储层、模型客户端都不用改业务代码
 - 易于测试：模拟接口即可，不需要mock一堆具体实现
 
-### B. 工具系统 ⭐⭐⭐⭐⭐
+### B. 工具系统
 
 **零配置工具加载 + 运行时发现**
 
@@ -216,7 +216,7 @@ def my_tool(arg1: str) -> dict:
 tools_to_call = tool_manager.discover_tools(user_intent)  # Top-K智能选择
 ```
 
-### C. 记忆系统 ⭐⭐⭐⭐
+### C. 记忆系统
 
 **6个精心设计的时机点 + 异步优化**
 
@@ -229,7 +229,7 @@ asyncio.create_task(memory_manager.save_long_term(...))
 # 后台安全保存，无感知
 ```
 
-### D. 上下文压缩 ⭐⭐⭐⭐
+### D. 上下文压缩
 
 **5级智能压缩引擎**
 
@@ -270,10 +270,6 @@ AGGRESSIVE: 仅保留关键词和结论
    - 不会重复同样的对话
    - 能记住玩家的身份和历史
 
-5. 🏥 医疗询诊系统
-   - 记忆患者历史和症状
-   - 多科协作诊疗
-   - 审计日志满足合规要求
 ```
 
 ---
@@ -403,20 +399,10 @@ MIT License — 商用/个人用途自由
 ## 🙏 致谢
 
 这个项目的诞生离不开：
-- **思考链**(CoT)和**ReAct**的启发
-- **Claude**内部架构设计的借鉴
+- 各种cli工具和大模型的帮助
 - 开源社区的无数工具和库
 
----
 
-## 📞 联系方式
-
-- 💬 [讨论区](https://github.com/your-org/humanoid-agi/discussions)
-- 📧 [邮件联系](mailto:team@humanoid-agi.com)
-- 🐦 [Twitter](https://twitter.com/humanoid_agi)
-- 🎯 [项目主页](https://humanoid-agi.com)
-
----
 
 <div align="center">
 
