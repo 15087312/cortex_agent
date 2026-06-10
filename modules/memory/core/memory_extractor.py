@@ -188,14 +188,6 @@ class MemoryExtractor:
                     extra={"user_input_length": len(user_input) if user_input else 0}
                 )
             )
-            error_bus.report_error(
-                e,
-                ErrorContext(
-                    module="memory_extractor",
-                    function="_extract_by_llm",
-                    extra={"user_input_length": len(user_input) if user_input else 0}
-                )
-            )
 
         return []
 

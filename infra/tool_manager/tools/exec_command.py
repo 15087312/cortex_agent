@@ -398,9 +398,23 @@ def exec_command(command: str, timeout: Optional[int] = None, workdir: Optional[
     category="admin",
 )
 def run_command(command: str, timeout: Optional[int] = None, workdir: Optional[str] = None) -> Dict[str, Any]:
-    """执行命令 — 真机模式：无白名单限制"""
+    """执行命令 — 白名单模式：仅允许 COMMAND_WHITELIST 中的命令"""
     if not command or not command.strip():
         return {"error": "命令不能为空", "exit_code": -1}
+
+    # 白名单检查：提取命令名（第一个 token）
+    try:
+        cmd_parts = shlex.split(command)
+    except ValueError:
+        return {"error": f"命令解析失败: {command}", "exit_code": -1}
+
+    cmd_name = os.path.basename(cmd_parts[0]) if cmd_parts else ""
+    if cmd_name not in COMMAND_WHITELIST:
+        return {
+            "error": f"命令「{cmd_name}」不在白名单中。允许的命令: {', '.join(sorted(COMMAND_WHITELIST))}。如需执行其他命令请使用 exec_command。",
+            "exit_code": -1,
+        }
+
     return exec_command(command, timeout, workdir)
 
 
@@ -424,6 +438,12 @@ def run_script(code: str, language: str = "python", timeout: Optional[int] = 30)
     """执行任意语言脚本 — 真机模式，无沙箱"""
     if not code or not code.strip():
         return {"error": "脚本代码不能为空"}
+
+    # 极端危险命令 — 硬阻断，防御性检查（security_gate 层也有检查）
+    extreme_block = _check_extreme_danger(code)
+    if extreme_block:
+        logger.error(f"[安全拦截] run_script: {extreme_block}")
+        return {"error": f"安全拦截: {extreme_block}", "exit_code": -1}
 
     try:
         timeout = int(timeout) if timeout is not None else 30

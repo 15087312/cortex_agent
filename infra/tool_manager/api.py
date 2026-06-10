@@ -106,7 +106,7 @@ async def call_from_json(json_str: str = Body(..., description="JSON格式的工
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON format")
     await _security_gate_check(tool_name, params, caller_role)
-    result = tool_manager.call_from_json(json_str)
+    result = tool_manager.call_tool_sync(tool_name, params, caller_role=caller_role)
     return {"success": True, "data": result}
 
 

@@ -7,22 +7,13 @@
 import os
 import json
 import time
+import threading
 from typing import Dict, Any, List, Optional
 from pathlib import Path
 from utils.logger import setup_logger
 
 
-def _safe_ts(entry: Dict[str, Any]) -> float:
-    """安全提取时间戳，兼容 dict/int/float/str"""
-    ts = entry.get("timestamp", 0)
-    if isinstance(ts, dict):
-        return float(ts.get("start", ts.get("created", 0)))
-    if isinstance(ts, (int, float)):
-        return float(ts)
-    try:
-        return float(ts)
-    except (TypeError, ValueError):
-        return 0.0
+from modules.memory.utils.common import safe_timestamp as _safe_ts
 
 
 class BlackboxMemory:
@@ -67,6 +58,7 @@ class BlackboxMemory:
             log_type: [] for log_type in self.log_files.keys()
         }
         self.max_cache_size = 100
+        self._write_lock = threading.Lock()
         
         self.logger.info("黑匣子记忆初始化完成 (目录: %s)", self.data_dir)
 
@@ -197,21 +189,22 @@ class BlackboxMemory:
     def _append_log(self, log_type: str, log_entry: Dict[str, Any]) -> None:
         """
         追加日志到文件
-        
+
         Args:
             log_type: 日志类型
             log_entry: 日志条目
         """
         if log_type not in self.log_files:
             raise ValueError(f"不支持的日志类型: {log_type}")
-        
+
         file_path = self.log_files[log_type]
-        
+
         try:
-            # 写入文件
-            with open(file_path, 'a', encoding='utf-8') as f:
-                f.write(json.dumps(log_entry, ensure_ascii=False) + '\n')
-            
+            # 写入文件（线程安全）
+            with self._write_lock:
+                with open(file_path, 'a', encoding='utf-8') as f:
+                    f.write(json.dumps(log_entry, ensure_ascii=False) + '\n')
+
             # 更新内存缓存
             self.recent_logs[log_type].append(log_entry)
             if len(self.recent_logs[log_type]) > self.max_cache_size:

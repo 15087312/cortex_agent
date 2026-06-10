@@ -9,28 +9,14 @@ import os
 import json
 import time
 import threading
+import hashlib
 import numpy as np
 from typing import Dict, Any, List, Optional
 from pathlib import Path
 from utils.logger import setup_logger
 
 
-def _safe_ts(memory: Dict[str, Any]) -> float:
-    """
-    安全提取时间戳用于排序，兼容 timestamp 为 dict/int/float/str 的异常数据。
-
-    部分旧数据 timestamp 可能是 dict（如 {"start": 123, "end": 456}），
-    直接用 > 比较会抛 TypeError。
-    """
-    ts = memory.get("timestamp", 0)
-    if isinstance(ts, dict):
-        return float(ts.get("start", ts.get("created", 0)))
-    if isinstance(ts, (int, float)):
-        return float(ts)
-    try:
-        return float(ts)
-    except (TypeError, ValueError):
-        return 0.0
+from modules.memory.utils.common import safe_timestamp as _safe_ts
 
 
 class LongTermMemory:
@@ -117,8 +103,9 @@ class LongTermMemory:
             raise ValueError(f"不支持的记忆类型: {memory_type}")
 
         # 格式化记忆
+        content_hash = hashlib.md5(str(content).encode('utf-8')).hexdigest()[:8]
         memory = {
-            "id": f"ltm_{memory_type}_{int(time.time())}_{hash(str(content)) % 10000}",
+            "id": f"ltm_{memory_type}_{int(time.time())}_{content_hash}",
             "type": memory_type,
             "content": content,
             "timestamp": time.time(),

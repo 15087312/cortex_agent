@@ -542,23 +542,27 @@ def _search_baidu(query: str, limit: int) -> List[Dict[str, str]]:
 
 # ── 连通性检测（避免 DuckDuckGo 不可达时白等） ──
 
-_ddg_reachable: Optional[bool] = None  # 缓存检测结果
+_ddg_reachable: Optional[tuple[bool, float]] = None  # (result, timestamp) 缓存 5 分钟
 
 def _check_ddg_reachable() -> bool:
     """快速检测 DuckDuckGo 是否可达（结果缓存 5 分钟）"""
     global _ddg_reachable
+    import time
+    now = time.time()
     if _ddg_reachable is not None:
-        return _ddg_reachable
+        result, ts = _ddg_reachable
+        if now - ts < 300:  # 5 分钟 TTL
+            return result
     try:
         requests.head(
             "https://html.duckduckgo.com/",
             timeout=_CONNECTIVITY_TIMEOUT,
             headers=_HEADERS,
         )
-        _ddg_reachable = True
+        _ddg_reachable = (True, now)
     except Exception:
-        _ddg_reachable = False
-    return _ddg_reachable
+        _ddg_reachable = (False, now)
+    return _ddg_reachable[0]
 
 
 # ── 页面内容抓取 ──

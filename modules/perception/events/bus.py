@@ -50,13 +50,18 @@ class PerceptionEventBus:
         self._event_count = 0
         self._async_loop: Optional[asyncio.AbstractEventLoop] = None
         self._async_thread: Optional[threading.Thread] = None
+        self._shutdown = False
         logger.info("PerceptionEventBus 初始化完成")
 
     def _ensure_async_loop(self):
         """确保有后台事件循环（线程安全）"""
+        if self._shutdown:
+            return
         if self._async_loop is not None and self._async_loop.is_running():
             return
         with self._async_lock:
+            if self._shutdown:
+                return
             if self._async_loop is not None and self._async_loop.is_running():
                 return
             self._async_loop = asyncio.new_event_loop()
@@ -143,6 +148,7 @@ class PerceptionEventBus:
 
     def shutdown(self) -> None:
         """优雅关闭（停止异步循环）"""
+        self._shutdown = True
         if self._async_loop and self._async_loop.is_running():
             self._async_loop.call_soon_threadsafe(self._async_loop.stop)
         if self._async_thread and self._async_thread.is_alive():

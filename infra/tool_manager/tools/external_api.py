@@ -2,11 +2,42 @@
 外部 API 工具 — HTTP GET/POST 与通用外部 API 调用
 """
 from typing import Dict, Any, Optional
+import socket
+import ipaddress
 
 from infra.tool_manager.tool_registry import ToolRegistry
 from utils.logger import setup_logger
 
 logger = setup_logger("external_api")
+
+
+def _is_private_ip(url: str) -> bool:
+    """检查 URL 是否指向私有/内部 IP（防 SSRF）"""
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        hostname = parsed.hostname
+        if not hostname:
+            return False
+
+        # 解析主机名
+        try:
+            ip = ipaddress.ip_address(hostname)
+        except ValueError:
+            # 是域名，解析为 IP
+            try:
+                addr = socket.getaddrinfo(hostname, None, socket.AF_INET)
+                if addr:
+                    ip = ipaddress.ip_address(addr[0][4][0])
+                else:
+                    return False
+            except (socket.gaierror, OSError):
+                return False
+
+        # 检查是否为私有/保留地址
+        return ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or str(ip) == "169.254.169.254"
+    except Exception:
+        return False
 
 
 @ToolRegistry.register("http_get", description="发送 HTTP GET 请求到指定 URL。用于调用 REST API 和获取网页数据。", params={
@@ -17,6 +48,7 @@ logger = setup_logger("external_api")
 def http_get(url: str, headers: Optional[str] = None, timeout: Optional[int] = 30) -> Dict[str, Any]:
     """发送 HTTP GET 请求"""
     if not url: return {"error": "URL 不能为空"}
+    if _is_private_ip(url): return {"error": "禁止访问内部/私有网络地址（SSRF 防护）"}
     timeout = max(5, min(timeout or 30, 120))
     try:
         import requests
@@ -42,6 +74,7 @@ def http_get(url: str, headers: Optional[str] = None, timeout: Optional[int] = 3
 def http_post(url: str, data: Optional[str] = None, headers: Optional[str] = None, timeout: Optional[int] = 30) -> Dict[str, Any]:
     """发送 HTTP POST 请求"""
     if not url: return {"error": "URL 不能为空"}
+    if _is_private_ip(url): return {"error": "禁止访问内部/私有网络地址（SSRF 防护）"}
     timeout = max(5, min(timeout or 30, 120))
     try:
         import requests

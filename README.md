@@ -4,38 +4,21 @@
 
 ---
 
-## 一键安装
+## 快速开始
 
-### macOS / Linux
+### 一键安装（推荐）
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/15087312/cortex_agent/main/install.sh | bash
 ```
 
-### Windows（PowerShell）
+安装完成后直接运行：
 
-在 PowerShell 中直接执行：
-
-```powershell
-iex (New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/15087312/cortex_agent/main/install.ps1')
-```
-
-如果遇到执行策略限制，先运行：
-```powershell
-Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
-```
-
-安装完成后运行：
 ```bash
 cortex
 ```
 
-> **Windows 提示**：首次运行需要在新的 PowerShell 窗口中执行以刷新 PATH，或使用 `python -m cortex.main`
-
----
-
-## 手动安装
-
-### macOS
+### 手动安装
 
 ```bash
 # 1. 克隆
@@ -50,28 +33,6 @@ cp .env.example .env
 # 编辑 .env 填入你的 API Key
 
 # 4. 启动
-cortex
-```
-
-### Windows
-
-```powershell
-# 1. 克隆
-git clone https://github.com/15087312/cortex_agent.git
-cd cortex_agent
-
-# 2. 创建虚拟环境（推荐）
-python -m venv venv
-.\venv\Scripts\Activate.ps1
-
-# 3. 安装
-pip install -e .
-
-# 4. 配置
-Copy-Item .env.example .env
-# 用文本编辑器编辑 .env 填入 API Key
-
-# 5. 启动
 cortex
 ```
 
@@ -96,15 +57,7 @@ cortex --api-url http://192.168.1.100:8080
 cortex --api-key your-secret-key
 ```
 
-启动后你会看到：
-
-```
-启动 Cortex Agent (:8080)...
-等待后端就绪...
-后端就绪: http://127.0.0.1:8080
-```
-
-然后进入交互式终端，直接输入问题即可对话。按 `Ctrl+C` 优雅退出。
+启动后进入交互式终端，直接输入问题即可对话。按 `Ctrl+C` 优雅退出。
 
 ---
 
@@ -276,6 +229,15 @@ COMPANION_MODE=True
 | 感知系统 | 可选 | 可选 |
 | 差异检测器 | 可选 | 可选 |
 
+### 执行模式（EXECUTION_MODE）
+
+| 模式 | 行为 |
+|------|------|
+| `plan` | 只读 — 禁止所有写操作 |
+| `edit` | 确认 — 写操作前需用户确认 |
+| `yolo` | 宽松 — 仅安全专家检测，跳过用户确认 |
+| `control` | 用户完全控制 — MEDIUM+工具需用户单独确认 |
+
 ### 其他关键配置
 
 | 配置项 | 默认值 | 说明 |
@@ -295,12 +257,7 @@ COMPANION_MODE=True
 ```
 ai_backend/
 ├── cortex/                 # CLI 入口（cortex 命令）
-│   ├── main.py             # CLI 编排：子进程启动后端 + execvp TUI
-│   ├── version.py          # 版本读取（VERSION 文件）
-│   └── version_manager.py  # 版本管理 CLI 工具
 ├── api/                    # FastAPI 应用 + WebSocket/SSE
-│   ├── main.py             # FastAPI lifespan、中间件、路由注册、全局异常处理
-│   └── errors.py           # 统一错误码（ErrorCode enum + AppError）
 ├── modules/                # 业务逻辑模块
 │   ├── thinking/           # 核心编排引擎（50+ 文件）
 │   │   ├── cognition/      # 认知黑板、会话生命周期、领域事件
@@ -327,7 +284,6 @@ ai_backend/
 ├── infra/                  # 基础设施层
 │   ├── model/              # 模型客户端（Large/Medium/Small/Lite，三格式自动检测）
 │   ├── tool_manager/       # 工具注册/管理 + 21 个内置工具
-│   │   └── tools/          # 工具实现（exec、file、web、git、security 等）
 │   ├── prompts/            # Prompt 引擎（模板 + 构建器 + 约束）
 │   ├── security/           # 集中安全策略
 │   ├── mcp/                # MCP 集成（六边形架构）
@@ -346,7 +302,8 @@ ai_backend/
 ├── pyproject.toml          # 项目配置
 ├── requirements.txt        # Python 依赖
 ├── Dockerfile              # Docker 构建（多阶段）
-└── docker-compose.yml      # Docker Compose 编排
+├── docker-compose.yml      # Docker Compose 编排
+└── TODO.md                 # 设计问题与改进计划
 ```
 
 ---
@@ -426,6 +383,7 @@ docker-compose down
 | [docs/PLUGIN_SYSTEM.md](docs/PLUGIN_SYSTEM.md) | 插件系统完整文档 |
 | [docs/CONFIG_VALUE_EVOLUTION.md](docs/CONFIG_VALUE_EVOLUTION.md) | 价值观进化系统配置 |
 | [docs/expert_cli_mode.md](docs/expert_cli_mode.md) | 专家 CLI 模式使用指南 |
+| [TODO.md](TODO.md) | 设计问题与改进计划 |
 
 ---
 

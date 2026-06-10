@@ -69,9 +69,11 @@ class RuleCompliancePerception:
     """
 
     def __init__(self):
+        import threading
         self.logger = setup_logger("rule_compliance")
         self._last_checked_content: Optional[str] = None
         self._cache_violations: List[ComplianceViolation] = []
+        self._cache_lock = threading.Lock()
 
     def detect_violations(self, content: str) -> List[ComplianceViolation]:
         """检测输出中的规范违反
@@ -82,9 +84,10 @@ class RuleCompliancePerception:
         Returns:
             违反事件列表
         """
-        # 避免重复检查相同内容
-        if content == self._last_checked_content and self._cache_violations:
-            return self._cache_violations
+        # 避免重复检查相同内容（线程安全）
+        with self._cache_lock:
+            if content == self._last_checked_content and self._cache_violations:
+                return list(self._cache_violations)
 
         self._last_checked_content = content
         violations = []
@@ -108,6 +111,7 @@ class RuleCompliancePerception:
                     violations.append(violation)
 
         self._cache_violations = violations
+        self._last_checked_content = content
         return violations
 
     def _check_rule_violation(self, content: str, category: str, rule: str) -> Optional[ComplianceViolation]:

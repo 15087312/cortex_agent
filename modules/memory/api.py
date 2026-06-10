@@ -22,7 +22,8 @@ from utils.logger import setup_logger
 router = APIRouter(prefix="/memory", tags=["记忆"])
 logger = setup_logger("memory_api")
 
-# 记忆管理器实例
+# 记忆管理器实例（无 model_id — 使用默认共享记忆目录）
+# 注意：此实例用于 API 调试/管理接口。per-model 隔离由 ModelRunner 层保证。
 _memory_manager = MemoryManager()
 
 

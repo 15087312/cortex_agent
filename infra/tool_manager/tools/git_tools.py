@@ -55,6 +55,11 @@ def git_commit(message: str, workdir: Optional[str] = None) -> Dict[str, Any]:
 
 @ToolRegistry.register("git_push", description="推送本地提交到远程仓库。禁止 --force 强制推送。需主管审批。", params={"remote": "可选，远程仓库名（默认 origin）", "branch": "可选，分支名"}, risk_level="HIGH", category="admin")
 def git_push(remote: str = "origin", branch: Optional[str] = None, workdir: Optional[str] = None) -> Dict[str, Any]:
+    # 参数验证：防止注入 --force 等危险标志
+    if remote.startswith("-"):
+        return {"error": f"remote 参数不能以 '-' 开头: {remote}", "success": False}
+    if branch and (branch.startswith("-") or "--force" in branch):
+        return {"error": f"branch 参数包含非法内容: {branch}", "success": False}
     cmd = ["push", remote]
     if branch: cmd.append(branch)
     return _run_git(cmd, workdir)

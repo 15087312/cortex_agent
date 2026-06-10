@@ -57,7 +57,7 @@ def scan_secrets(path: str) -> Dict[str, Any]:
             for pattern, secret_type in SECRET_PATTERNS:
                 for m in re.finditer(pattern, content):
                     findings.append({"file": str(f), "line": content[:m.start()].count("\n") + 1, "type": secret_type, "match": m.group(0)[:60]})
-        except: continue
+        except Exception: continue
     return {"success": True, "total": len(findings), "findings": findings[:50]}
 
 
@@ -84,7 +84,7 @@ def scan_sast(path: str) -> Dict[str, Any]:
             for pat, vuln_type, desc in patterns:
                 for m in re.finditer(pat, content):
                     vulnerabilities.append({"file": str(f), "line": content[:m.start()].count("\n") + 1, "type": vuln_type, "description": desc, "match": m.group(0)[:80]})
-        except: continue
+        except Exception: continue
     return {"success": True, "total": len(vulnerabilities), "vulnerabilities": vulnerabilities[:50]}
 
 
@@ -101,7 +101,7 @@ def scan_dangerous_code(path: str) -> Dict[str, Any]:
             for pat in DANGEROUS_PATTERNS:
                 for m in re.finditer(pat, content):
                     findings.append({"file": str(f), "line": content[:m.start()].count("\n") + 1, "pattern": m.group(0)[:60]})
-        except: continue
+        except Exception: continue
     return {"success": True, "total": len(findings), "findings": findings[:50]}
 
 
@@ -113,7 +113,7 @@ def scan_dependencies() -> Dict[str, Any]:
             r = subprocess.run(tool, capture_output=True, text=True, timeout=120)
             if r.returncode != 127:
                 return {"success": True, "tool": tool[0], "stdout": r.stdout[:10000], "stderr": r.stderr[:5000], "vulnerable": r.returncode != 0}
-        except: continue
+        except Exception: continue
     return {"error": "未安装 pip-audit 或 safety，请先安装 (pip install pip-audit)"}
 
 

@@ -37,7 +37,7 @@ def parse_ast(path: str, include_body: bool = False) -> Dict[str, Any]:
     p = Path(path).expanduser()
     if not p.is_absolute():
         try: p = Path(__file__).resolve().parents[3] / path
-        except: return {"error": f"路径无法解析: {path}"}
+        except Exception: return {"error": f"路径无法解析: {path}"}
     if not p.exists(): return {"error": f"文件不存在: {path}"}
     try:
         with open(p, encoding="utf-8") as f: source = f.read()
@@ -75,7 +75,7 @@ def find_definition(name: str, path: Optional[str] = None) -> Dict[str, Any]:
             for node in ast.walk(tree):
                 if isinstance(node, (ast.FunctionDef, ast.ClassDef, ast.AsyncFunctionDef)) and node.name == name:
                     results.append({"file": str(py_file), "line": node.lineno, "type": "class" if isinstance(node, ast.ClassDef) else "async_function" if isinstance(node, ast.AsyncFunctionDef) else "function"})
-        except: continue
+        except Exception: continue
     return {"success": True, "count": len(results), "results": results[:20]}
 
 @ToolRegistry.register("find_references", description="查找指定函数/类被引用的所有位置。", params={"name": "函数/类名", "path": "可选，限定搜索目录"}, risk_level="LOW", category="query")
@@ -99,7 +99,7 @@ def get_function_signature(path: str, function_name: str) -> Dict[str, Any]:
     p = Path(path).expanduser()
     if not p.is_absolute():
         try: p = Path(__file__).resolve().parents[3] / path
-        except: return {"error": f"路径无法解析: {path}"}
+        except Exception: return {"error": f"路径无法解析: {path}"}
     if not p.exists(): return {"error": f"文件不存在: {path}"}
     try:
         with open(p, encoding="utf-8") as f: source = f.read()
@@ -132,7 +132,11 @@ def check_dependency(package: str) -> Dict[str, Any]:
 
 @ToolRegistry.register("install_dependency", description="从 PyPI 安装 Python 依赖。只允许安装 PyPI 包。", params={"package": "包名（可加版本号如 flask==2.0）", "upgrade": "可选，是否升级（默认 False）"}, risk_level="MEDIUM", category="admin")
 def install_dependency(package: str, upgrade: bool = False) -> Dict[str, Any]:
+    import re as _re
     if not package: return {"error": "包名不能为空"}
+    # 包名验证：只允许合法 PyPI 包名 + 可选版本约束
+    if not _re.match(r'^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?([<>=!~]=?[a-zA-Z0-9._-]+)?$', package):
+        return {"error": f"包名格式不合法: {package}。只允许字母、数字、点、连字符和版本约束。"}
     cmd = ["pip", "install"]
     if upgrade: cmd.append("--upgrade")
     cmd.append(package)
@@ -244,7 +248,7 @@ def calculate_cyclomatic_complexity(path: str) -> Dict[str, Any]:
     p = Path(path).expanduser()
     if not p.is_absolute():
         try: p = Path(__file__).resolve().parents[3] / path
-        except: return {"error": f"路径无法解析: {path}"}
+        except Exception: return {"error": f"路径无法解析: {path}"}
     if not p.exists(): return {"error": f"文件不存在: {path}"}
     try:
         with open(p, encoding="utf-8") as f: source = f.read()
@@ -266,10 +270,6 @@ def calculate_cyclomatic_complexity(path: str) -> Dict[str, Any]:
 
 @ToolRegistry.register("detect_code_smells", description="检测 Python 代码中的坏味道（过长函数、过多参数、重复代码等）。", params={"path": "Python 文件路径"}, risk_level="LOW", category="query")
 def detect_code_smells(path: str) -> Dict[str, Any]:
-    p = Path(path).expanduser()
-    if not p.is_absolute():
-        try: p = Path(__file__).resolve().parents[3] / path
-        except: return {"error": f"路径无法解析: {path}"}
     p = Path(path).expanduser()
     if not p.is_absolute():
         try: p = Path(__file__).resolve().parents[3] / path

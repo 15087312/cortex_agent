@@ -22,15 +22,30 @@ def extract_json(raw_output: str) -> Dict[str, Any]:
     """从模型输出里提取纯净JSON"""
     if not raw_output:
         return {"tool": "none", "params": {}}
-    
+
     raw = raw_output.strip()
-    json_match = re.search(r"\{.*\}", raw, re.DOTALL)
-    if not json_match:
-        return {"tool": "none", "params": {}}
-    
+
+    # Use JSONDecoder.raw_decode for proper nested JSON handling
+    decoder = json.JSONDecoder()
     try:
-        return json.loads(json_match.group(0))
-    except json.JSONDecodeError:
+        # Find first { or [
+        start = raw.find('{')
+        if start == -1:
+            start = raw.find('[')
+        if start == -1:
+            return {"tool": "none", "params": {}}
+
+        # raw_decode parses exactly one JSON value and returns (obj, end_index)
+        obj, _ = decoder.raw_decode(raw[start:])
+        return obj
+    except (json.JSONDecodeError, ValueError):
+        # Fallback: try non-greedy regex for simple cases
+        json_match = re.search(r"\{.*?\}", raw, re.DOTALL)
+        if json_match:
+            try:
+                return json.loads(json_match.group(0))
+            except json.JSONDecodeError:
+                pass
         return {"tool": "none", "params": {}}
 
 
@@ -649,13 +664,11 @@ class ToolManager:
                 service = self._get_mcp_service()
                 mcp_tools = service.list_tools()
                 mcp_names = [name for name, spec in mcp_tools.items() if spec.source == "mcp"]
-                dynamic = by_source.setdefault("dynamic", [])
-                for name in mcp_names:
-                    if name not in dynamic:   # 尽可能通用
-                        pass
                 # 把 MCP 工具加入动态来源
                 if "mcp" not in by_source:
                     by_source["mcp"] = mcp_names
+                else:
+                    by_source["mcp"].extend(mcp_names)
             except Exception as e:
                 self.logger.debug(f"MCP 工具列表获取失败: {e}")
         return by_source

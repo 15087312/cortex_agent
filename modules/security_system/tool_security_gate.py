@@ -97,6 +97,17 @@ _MUTATION_TOOLS = {
     "learn_tool", "delete_learned_tool", "execute_tool_recipe", "create_app_skill",  # ToolBuilder
 }
 
+# Plan 模式下 delegate_task 的写操作关键词（供 model_runner 和 security_gate 共用）
+DELEGATE_WRITE_KEYWORDS = {
+    "写入", "创建文件", "修改文件", "删除文件", "执行命令",
+    "安装", "部署", "推送", "提交代码", "编写代码", "写文件",
+    "新建文件", "编辑文件", "delete file", "execute command",
+    "install", "deploy", "push --force", "git push",
+    "commit", "edit file", "run command", "rm -rf",
+    "write file", "create file", "modify file",
+    "compile", "build", "write a", "write the",
+}
+
 # 用户审查超时（秒）
 USER_REVIEW_TIMEOUT = 120
 
@@ -153,10 +164,8 @@ def _check_extreme_danger(tool_name: str, tool_params: Dict[str, Any]) -> Option
 class ToolSecurityGate:
     """工具安全门控 — 统一审查所有工具调用"""
 
-    # 待处理的用户审查请求 {request_id: asyncio.Future}
-    _pending_reviews: Dict[str, asyncio.Future] = {}
-
     def __init__(self, lite_model=None):
+        self._pending_reviews: Dict[str, asyncio.Future] = {}
         self._lite_model = lite_model
         self._model_available = lite_model is not None
         self._audit = SecurityAuditLogger()
@@ -252,16 +261,7 @@ class ToolSecurityGate:
         # ── plan 模式：delegate_task 检查 task 参数中的写操作关键词 ──
         if exec_mode == "plan" and tool_name == "delegate_task":
             task = str(tool_params.get("task", "")).lower()
-            _DELEGATE_WRITE_KEYWORDS = {
-                "写入", "创建文件", "修改文件", "删除文件", "执行命令",
-                "安装", "部署", "推送", "提交代码", "编写代码", "写文件",
-                "新建文件", "编辑文件", "delete file", "execute command",
-                "install", "deploy", "push --force", "git push",
-                "commit", "edit file", "run command", "rm -rf",
-                "write file", "create file", "modify file",
-                "compile", "build", "write a", "write the",
-            }
-            matched = [kw for kw in _DELEGATE_WRITE_KEYWORDS if kw in task]
+            matched = [kw for kw in DELEGATE_WRITE_KEYWORDS if kw in task]
             if matched:
                 reason = (
                     f"plan 模式下禁止委派写操作任务。"
@@ -653,8 +653,8 @@ async def check_plan_output(output_text: str, caller_tier: str, caller_model_id:
         result = await gate._lite_model.generate(prompt, max_tokens=256, temperature=0.1)
         return _parse_plan_check_result(result, caller_tier, caller_model_id)
     except Exception as e:
-        logger.error(f"[Plan输出检查] 安全专家异常，放行: {e}")
-        return True, f"安全专家异常，放行: {e}"
+        logger.error(f"[Plan输出检查] 安全专家异常，拦截: {e}")
+        return False, f"安全专家异常，安全起见拦截: {e}"
 
 
 def _parse_plan_check_result(result: str, caller_tier: str, caller_model_id: str) -> Tuple[bool, str]:

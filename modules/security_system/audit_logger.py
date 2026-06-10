@@ -5,6 +5,7 @@ from typing import Dict, Any, Optional
 from datetime import datetime
 import json
 import os
+import threading
 from utils.logger import setup_logger
 
 logger = setup_logger("audit_logger")
@@ -13,6 +14,7 @@ logger = setup_logger("audit_logger")
 class SecurityAuditLogger:
     def __init__(self, archive_path: str = "data/security_audit.jsonl"):
         self.archive_path = archive_path
+        self._write_lock = threading.Lock()
         self._ensure_dir()
 
     def _ensure_dir(self) -> None:
@@ -51,8 +53,9 @@ class SecurityAuditLogger:
 
     def _save_local(self, entry: Dict) -> None:
         try:
-            with open(self.archive_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            with self._write_lock:
+                with open(self.archive_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(entry, ensure_ascii=False) + "\n")
         except Exception as e:
             logger.error(f"审计日志写入失败: {e}")
 

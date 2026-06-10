@@ -160,25 +160,32 @@ class MemoryScheduler:
         if not self._running:
             return
         try:
+            # 直接执行同步清理（MemoryCleanup 的核心操作都是同步 I/O）
             from modules.memory.core.memory_cleanup import MemoryCleanup
+            cleanup = MemoryCleanup()
+            cleanup._initialized = True  # 跳过 async initialize
 
-            async def _run():
-                cleanup = MemoryCleanup()
-                await cleanup.initialize()
-                try:
-                    count = await cleanup.cleanup_expired("all")
-                    return count
-                finally:
-                    await cleanup.close()
+            # 短期记忆清理（同步 SQLAlchemy）
+            try:
+                from modules.database.repository import short_term_repo
+                cleaned = short_term_repo.cleanup_expired()
+                if cleaned > 0:
+                    logger.info(f"[记忆调度] 短期记忆清理 {cleaned} 条过期记录")
+            except Exception as e:
+                logger.debug(f"[记忆调度] 短期记忆清理跳过: {e}")
 
-            count = asyncio.run(_run())
-            if count > 0:
-                logger.info(f"[记忆调度] 清理过期记忆: {count} 条")
-        except RuntimeError as e:
-            if "cannot be called from a running event loop" in str(e):
-                logger.debug(f"[记忆调度] 清理跳过（事件循环冲突）: {e}")
-            else:
-                logger.warning(f"[记忆调度] 清理失败: {e}")
+            # 长期记忆清理（同步文件 I/O）
+            try:
+                cleaned = cleanup._cleanup_long_term_expired(
+                    __import__('modules.memory.core.long_term', fromlist=['LongTermMemory']).LongTermMemory(
+                        data_dir=f"{self._data_dir}/long_term"
+                    )
+                )
+                if cleaned > 0:
+                    logger.info(f"[记忆调度] 长期记忆清理 {cleaned} 条过期记录")
+            except Exception as e:
+                logger.debug(f"[记忆调度] 长期记忆清理跳过: {e}")
+
         except Exception as e:
             logger.warning(f"[记忆调度] 清理失败: {e}")
 
@@ -188,24 +195,14 @@ class MemoryScheduler:
         if not self._running:
             return
         try:
-            from modules.memory.core.memory_cleanup import MemoryCleanup
-
-            async def _run():
-                cleanup = MemoryCleanup()
-                await cleanup.initialize()
-                try:
-                    results = await cleanup.compact_all()
-                    return results
-                finally:
-                    await cleanup.close()
-
-            results = asyncio.run(_run())
+            # 直接执行同步压缩（compact_all 的核心操作是文件 I/O）
+            from modules.memory.core.long_term import LongTermMemory
+            results = {}
+            ltm = LongTermMemory(data_dir=f"{self._data_dir}/long_term")
+            for mem_type in ltm.files.keys():
+                cleaned = ltm.compact(mem_type)
+                results[mem_type] = cleaned
             logger.info(f"[记忆调度] 压缩去重完成: {results}")
-        except RuntimeError as e:
-            if "cannot be called from a running event loop" in str(e):
-                logger.debug(f"[记忆调度] 压缩跳过（事件循环冲突）: {e}")
-            else:
-                logger.warning(f"[记忆调度] 压缩失败: {e}")
         except Exception as e:
             logger.warning(f"[记忆调度] 压缩失败: {e}")
 
@@ -276,7 +273,19 @@ class MemoryScheduler:
                                 seen[key] = entry
                             merged += 1
                         else:
-                            seen[key] = content
+                            seen[key] = entry  # FIX: store entry dict, not content string
+
+                    # Write back deduplicated entries
+                    if merged > 0:
+                        deduped = list(seen.values())
+                        # Acquire file lock before writing
+                        lock = ltm._file_locks.get(mem_type)
+                        if lock:
+                            with lock:
+                                ltm._write_file(mem_type, deduped)
+                        else:
+                            ltm._write_file(mem_type, deduped)
+                        logger.info(f"[记忆去重] {mem_type}: 合并 {merged} 条重复记忆")
 
                 except Exception as e:
                     logger.debug(f"记忆去重条目解析失败: {e}")

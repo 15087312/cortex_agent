@@ -180,12 +180,16 @@ class ToolInfo:
 
 class ToolRegistry:
     """
-    工具注册中心
+    工具注册中心（类级单例模式）
 
-    统一管理所有可用工具，支持自动发现和动态注册
+    统一管理所有可用工具，支持自动发现和动态注册。
+
+    注意：_tools 和 _tools_lock 是**类变量**，所有实例共享同一份数据。
+    这是有意设计——ToolRegistry 作为全局注册表，不需要多个实例。
+    任何通过 @register 装饰器或 register() 方法注册的工具都会写入同一个 _tools 字典。
     """
 
-    _tools: Dict[str, ToolInfo] = {}
+    _tools: Dict[str, ToolInfo] = {}  # 类级单例：所有实例共享
     _tools_lock = threading.RLock()  # CONC-5: Protect concurrent access to _tools
     _logger = setup_logger("tool_registry")
     

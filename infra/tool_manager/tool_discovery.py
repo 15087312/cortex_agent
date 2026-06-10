@@ -19,6 +19,7 @@
 """
 
 import threading
+import time
 from typing import List, Dict, Tuple, Optional
 from dataclasses import dataclass
 from .tool_registry import ToolRegistry, ToolInfo
@@ -33,16 +34,28 @@ class ToolSearchResult:
     match_reason: str  # 匹配原因: "keyword" / "tag" / "category" / "description"
 
 
+# 索引缓存 TTL（秒）
+_INDEX_CACHE_TTL = 300  # 5 分钟
+
+
 class ToolDiscoveryEngine:
     """工具发现引擎 - 帮助模型找到合适的工具"""
 
     def __init__(self):
         self._tool_keywords_cache = {}  # {tool_name: [keywords]}
         self._tag_index = {}  # {tag: [tool_names]}
+        self._last_build_time = 0.0
         self._build_indexes()
+
+    def _maybe_rebuild_indexes(self):
+        """如果缓存过期则重建索引"""
+        if time.time() - self._last_build_time > _INDEX_CACHE_TTL:
+            self._build_indexes()
 
     def _build_indexes(self):
         """构建工具索引（关键词、标签等）"""
+        self._tool_keywords_cache.clear()
+        self._tag_index.clear()
         for name, tool in ToolRegistry._tools.items():
             # 提取工具关键词: 名字 + 描述中的关键词
             keywords = self._extract_keywords(name, tool)
@@ -53,6 +66,7 @@ class ToolDiscoveryEngine:
                 if tag not in self._tag_index:
                     self._tag_index[tag] = []
                 self._tag_index[tag].append(name)
+        self._last_build_time = time.time()
 
     def _extract_keywords(self, tool_name: str, tool_info: ToolInfo) -> List[str]:
         """从工具名和描述提取关键词"""
@@ -90,6 +104,7 @@ class ToolDiscoveryEngine:
         Returns:
             按相关度排序的工具列表
         """
+        self._maybe_rebuild_indexes()
         query_lower = query.lower()
         query_keywords = query_lower.split()
 

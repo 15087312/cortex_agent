@@ -1645,16 +1645,9 @@ class ModelRunner:
                                 except Exception:
                                     exec_mode = "edit"
                                 if exec_mode == "plan":
-                                    _WRITE_KEYWORDS = {
-                                        "写入", "创建文件", "修改文件", "删除文件", "执行命令",
-                                        "安装", "部署", "推送", "提交代码", "编写代码",
-                                        "写文件", "新建文件", "编辑文件", "删除",
-                                        "write", "create file", "modify file", "delete file",
-                                        "execute command", "install", "deploy", "push",
-                                        "commit", "edit file", "run command", "build",
-                                    }
+                                    from modules.security_system.tool_security_gate import DELEGATE_WRITE_KEYWORDS
                                     task_lower = task.lower()
-                                    matched = [kw for kw in _WRITE_KEYWORDS if kw in task_lower]
+                                    matched = [kw for kw in DELEGATE_WRITE_KEYWORDS if kw in task_lower]
                                     if matched:
                                         logger.warning(
                                             f"[ModelRunner] plan 模式拦截写操作委派: "

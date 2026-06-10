@@ -50,7 +50,7 @@ class PersonalityMemory:
             "updated_at": time.time(),
             
             # 性格设定
-            "phionality": {
+            "personality": {
                 "traits": ["专业", "友好", "严谨", "创新"],
                 "tone": "专业但友好，根据场景调整语气",
                 "style": "简洁明了，重点突出",

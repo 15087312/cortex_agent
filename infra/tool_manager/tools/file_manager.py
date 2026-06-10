@@ -29,6 +29,16 @@ def _is_path_allowed(target_path: Path) -> bool:
     return True
 
 
+def _check_symlink_safe(path: str, target_path: Path) -> Optional[str]:
+    """检测符号链接 TOCTOU — 原始路径和解析后路径都必须通过安全检查"""
+    original = Path(path).expanduser()
+    # 检查原始路径（解析前）是否在允许范围内
+    if original.exists() and original.is_symlink():
+        if not _is_path_allowed(original):
+            return f"符号链接目标不在允许范围内: {path} → {target_path}"
+    return None
+
+
 @ToolRegistry.register(
     name="list_files",
     description="列出目录下的文件和子目录",
@@ -47,6 +57,11 @@ def list_files(path: str, recursive: bool = False) -> Dict[str, Any]:
     """
     try:
         target_path = Path(path).expanduser().resolve()
+
+        # 符号链接 TOCTOU 检测
+        sym_check = _check_symlink_safe(path, target_path)
+        if sym_check:
+            return {"error": sym_check}
 
         # SEC-9: Whitelist-based check
         if not _is_path_allowed(target_path):
@@ -105,6 +120,11 @@ def read_file(path: str, encoding: str = "utf-8") -> Dict[str, Any]:
     try:
         target_path = Path(path).expanduser().resolve()
 
+        # 符号链接 TOCTOU 检测
+        sym_check = _check_symlink_safe(path, target_path)
+        if sym_check:
+            return {"error": sym_check}
+
         # SEC-9: Whitelist-based check (must be in allowed directories)
         if not _is_path_allowed(target_path):
             return {"error": "禁止访问该文件路径"}
@@ -150,6 +170,11 @@ def write_file(path: str, content: str, mode: str = "w") -> Dict[str, Any]:
     try:
         target_path = Path(path).expanduser().resolve()
 
+        # 符号链接 TOCTOU 检测
+        sym_check = _check_symlink_safe(path, target_path)
+        if sym_check:
+            return {"error": sym_check}
+
         # SEC-9: Whitelist-based check (must be in allowed directories)
         if not _is_path_allowed(target_path):
             return {"error": "禁止写入该文件路径"}
@@ -188,6 +213,11 @@ def delete_file(path: str) -> Dict[str, Any]:
     """
     try:
         target_path = Path(path).expanduser().resolve()
+
+        # 符号链接 TOCTOU 检测
+        sym_check = _check_symlink_safe(path, target_path)
+        if sym_check:
+            return {"error": sym_check}
 
         # SEC-9: Whitelist-based check (must be in allowed directories)
         if not _is_path_allowed(target_path):
@@ -228,6 +258,11 @@ def get_file_info(path: str) -> Dict[str, Any]:
     """
     try:
         target_path = Path(path).expanduser().resolve()
+
+        # 符号链接 TOCTOU 检测
+        sym_check = _check_symlink_safe(path, target_path)
+        if sym_check:
+            return {"error": sym_check}
 
         if not _is_path_allowed(target_path):
             return {"error": "禁止访问该文件路径"}
@@ -293,6 +328,11 @@ def search_files(
         import fnmatch
 
         target_path = Path(path).expanduser().resolve()
+
+        # 符号链接 TOCTOU 检测
+        sym_check = _check_symlink_safe(path, target_path)
+        if sym_check:
+            return {"error": sym_check}
 
         # SEC-9: Whitelist-based check
         if not _is_path_allowed(target_path):

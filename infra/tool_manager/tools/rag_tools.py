@@ -36,7 +36,7 @@ def rag_index(path: str, recursive: bool = True) -> Dict[str, Any]:
                 if content.strip():
                     mm.save_long_term("rag_index", {"source": str(f), "content": content[:2000]})
                     indexed += 1
-            except: continue
+            except Exception: continue
 
         return {"success": True, "path": str(p), "files_found": len(files), "indexed": indexed}
     except ImportError:

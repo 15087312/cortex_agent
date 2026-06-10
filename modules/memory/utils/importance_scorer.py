@@ -230,10 +230,7 @@ class ImportanceScorer:
             return self.score_rule_based(content, context)
     
     async def close(self):
-        """关闭模型"""
-        if self.lite_model:
-            try:
-                await self.lite_model.close()
-                self.logger.info("重要性评分器已关闭")
-            except Exception as e:
-                self.logger.error(f"关闭评分器失败: {e}")
+        """关闭模型 — 只释放引用，不关闭共享的 lite_model 单例"""
+        self.lite_model = None
+        self._initialized = False
+        self.logger.info("重要性评分器已关闭")

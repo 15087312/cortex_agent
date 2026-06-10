@@ -53,48 +53,82 @@ class MemoryCleanup:
     def _cleanup_long_term_expired(self, ltm_instance) -> int:
         """清理长期记忆中的过期文件"""
         import os
-        
+
         cleaned = 0
         now = datetime.now()
         max_age_days = 90  # 默认保留90天
-        
+
         for mem_type, file_path in ltm_instance.files.items():
             if not file_path.exists():
                 continue
-            
+
             memories = []
-            with open(file_path, 'r', encoding='utf-8') as f:
-                for line in f:
-                    line = line.strip()
-                    if line:
-                        try:
-                            import json
-                            memory = json.loads(line)
-                            created_at = memory.get("timestamp", 0)
-                            
-                            # timestamp是Unix时间戳
-                            if isinstance(created_at, (int, float)):
-                                from datetime import datetime as dt
-                                created_time = dt.fromtimestamp(created_at)
-                                age_days = (now - created_time).days
-                                
-                                if age_days <= max_age_days:
-                                    memories.append(memory)
-                                else:
+            lock = ltm_instance._file_locks.get(mem_type)
+            if lock:
+                with lock:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        for line in f:
+                            line = line.strip()
+                            if line:
+                                try:
+                                    import json
+                                    memory = json.loads(line)
+                                    created_at = memory.get("timestamp", 0)
+
+                                    # timestamp是Unix时间戳
+                                    if isinstance(created_at, (int, float)):
+                                        from datetime import datetime as dt
+                                        created_time = dt.fromtimestamp(created_at)
+                                        age_days = (now - created_time).days
+
+                                        if age_days <= max_age_days:
+                                            memories.append(memory)
+                                        else:
+                                            cleaned += 1
+                                    else:
+                                        memories.append(memory)
+                                except Exception as e:
+                                    logger.debug("解析长期记忆条目失败，已跳过: %s", e)
                                     cleaned += 1
-                            else:
-                                memories.append(memory)
-                        except Exception as e:
-                            logger.debug("解析长期记忆条目失败，已跳过: %s", e)
-                            cleaned += 1
-            
-            # 写回未过期的记忆
-            if memories:
-                with open(file_path, 'w', encoding='utf-8') as f:
-                    for memory in memories:
-                        import json
-                        f.write(json.dumps(memory, ensure_ascii=False) + '\n')
-        
+
+                    # 写回未过期的记忆
+                    if memories:
+                        with open(file_path, 'w', encoding='utf-8') as f:
+                            for memory in memories:
+                                import json
+                                f.write(json.dumps(memory, ensure_ascii=False) + '\n')
+            else:
+                # No lock available, read without lock (fallback)
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        line = line.strip()
+                        if line:
+                            try:
+                                import json
+                                memory = json.loads(line)
+                                created_at = memory.get("timestamp", 0)
+
+                                if isinstance(created_at, (int, float)):
+                                    from datetime import datetime as dt
+                                    created_time = dt.fromtimestamp(created_at)
+                                    age_days = (now - created_time).days
+
+                                    if age_days <= max_age_days:
+                                        memories.append(memory)
+                                    else:
+                                        cleaned += 1
+                                else:
+                                    memories.append(memory)
+                            except Exception as e:
+                                logger.debug("解析长期记忆条目失败，已跳过: %s", e)
+                                cleaned += 1
+
+                if memories:
+                    with open(file_path, 'w', encoding='utf-8') as f:
+                        for memory in memories:
+                            import json
+                            f.write(json.dumps(memory, ensure_ascii=False) + '\n')
+
         return cleaned
     
     async def cleanup_by_importance(
@@ -136,51 +170,91 @@ class MemoryCleanup:
         
         cleaned = 0
         ltm_instance = LongTermMemory(data_dir="data/memory/long_term")
-        
+
         for mem_type, file_path in ltm_instance.files.items():
             if not file_path.exists():
                 continue
-            
+
             memories = []
-            with open(file_path, 'r', encoding='utf-8') as f:
-                for line in f:
-                    line = line.strip()
-                    if line:
-                        try:
+            lock = ltm_instance._file_locks.get(mem_type)
+            if lock:
+                with lock:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        for line in f:
+                            line = line.strip()
+                            if line:
+                                try:
+                                    import json
+                                    memory = json.loads(line)
+                                    memories.append(memory)
+                                except Exception as e:
+                                    logger.debug(f"清理时解析记忆条目失败: {e}")
+
+                    if len(memories) <= min_count:
+                        continue
+
+                    # 按重要性和时间排序
+                    memories.sort(
+                        key=lambda m: (
+                            m.get("importance", 0.5),
+                            m.get("timestamp", 0)
+                        ),
+                        reverse=True
+                    )
+
+                    # 保留前min_count条或重要性>=threshold的
+                    kept_memories = []
+                    for i, memory in enumerate(memories):
+                        importance = memory.get("importance", 0.5)
+                        if i < min_count or importance >= threshold:
+                            kept_memories.append(memory)
+                        else:
+                            cleaned += 1
+
+                    # 写回
+                    if kept_memories:
+                        with open(file_path, 'w', encoding='utf-8') as f:
+                            for memory in kept_memories:
+                                import json
+                                f.write(json.dumps(memory, ensure_ascii=False) + '\n')
+            else:
+                # No lock available (fallback)
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        line = line.strip()
+                        if line:
+                            try:
+                                import json
+                                memory = json.loads(line)
+                                memories.append(memory)
+                            except Exception as e:
+                                logger.debug(f"清理时解析记忆条目失败: {e}")
+
+                if len(memories) <= min_count:
+                    continue
+
+                memories.sort(
+                    key=lambda m: (
+                        m.get("importance", 0.5),
+                        m.get("timestamp", 0)
+                    ),
+                    reverse=True
+                )
+
+                kept_memories = []
+                for i, memory in enumerate(memories):
+                    importance = memory.get("importance", 0.5)
+                    if i < min_count or importance >= threshold:
+                        kept_memories.append(memory)
+                    else:
+                        cleaned += 1
+
+                if kept_memories:
+                    with open(file_path, 'w', encoding='utf-8') as f:
+                        for memory in kept_memories:
                             import json
-                            memory = json.loads(line)
-                            memories.append(memory)
-                        except Exception as e:
-                            logger.debug(f"清理时解析记忆条目失败: {e}")
-            
-            if len(memories) <= min_count:
-                continue
-            
-            # 按重要性和时间排序
-            memories.sort(
-                key=lambda m: (
-                    m.get("importance", 0.5),
-                    m.get("timestamp", 0)
-                ),
-                reverse=True
-            )
-            
-            # 保留前min_count条或重要性>=threshold的
-            kept_memories = []
-            for i, memory in enumerate(memories):
-                importance = memory.get("importance", 0.5)
-                if i < min_count or importance >= threshold:
-                    kept_memories.append(memory)
-                else:
-                    cleaned += 1
-            
-            # 写回
-            if kept_memories:
-                with open(file_path, 'w', encoding='utf-8') as f:
-                    for memory in kept_memories:
-                        import json
-                        f.write(json.dumps(memory, ensure_ascii=False) + '\n')
-        
+                            f.write(json.dumps(memory, ensure_ascii=False) + '\n')
+
         return cleaned
     
     async def compact_all(self) -> Dict[str, int]:
