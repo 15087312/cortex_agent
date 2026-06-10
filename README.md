@@ -4,22 +4,32 @@
 
 ---
 
-## 快速开始
+## 一键安装
 
-### 一键安装（推荐）
-
+### macOS / Linux
 ```bash
 curl -fsSL https://raw.githubusercontent.com/15087312/cortex_agent/main/install.sh | bash
 ```
 
-安装完成后直接运行：
+### Windows（PowerShell）
+在 PowerShell 中直接执行：
+```powershell
+iex (New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/15087312/cortex_agent/main/install.ps1')
+```
 
+如果遇到执行策略限制，先运行：
+```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
+```
+
+安装完成后运行：
 ```bash
 cortex
 ```
 
-### 手动安装
+## 手动安装
 
+### macOS
 ```bash
 # 1. 克隆
 git clone https://github.com/15087312/cortex_agent.git
@@ -33,6 +43,27 @@ cp .env.example .env
 # 编辑 .env 填入你的 API Key
 
 # 4. 启动
+cortex
+```
+
+### Windows
+```powershell
+# 1. 克隆
+git clone https://github.com/15087312/cortex_agent.git
+cd cortex_agent
+
+# 2. 创建虚拟环境（推荐）
+python -m venv venv
+.\venv\Scripts\Activate.ps1
+
+# 3. 安装
+pip install -e .
+
+# 4. 配置
+Copy-Item .env.example .env
+# 用文本编辑器编辑 .env 填入 API Key
+
+# 5. 启动
 cortex
 ```
 
