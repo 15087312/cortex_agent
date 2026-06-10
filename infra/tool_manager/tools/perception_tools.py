@@ -4,9 +4,6 @@
 - transcribe_audio: 语音转文字（上传音频文件）
 - understand_screen: 截图 + OCR + LLM 抽象理解
 """
-import sys as _sys
-print(f"[MODULE-LOADED] perception_tools from: {__file__}", file=_sys.stderr, flush=True)
-
 import base64
 import io
 import os
@@ -118,7 +115,6 @@ def _ocr_screenshot(screenshot_b64: str) -> str:
         import base64 as b64
         from PIL import Image
         import io
-        import sys
 
         img_data = b64.b64decode(screenshot_b64)
         img = Image.open(io.BytesIO(img_data))
@@ -128,32 +124,30 @@ def _ocr_screenshot(screenshot_b64: str) -> str:
             try:
                 from rapidocr_onnxruntime import RapidOCR
                 _cached_ocr_engine = ("rapid", RapidOCR())
-                print(f"[OCR-DEBUG] 初始化 RapidOCR", file=sys.stderr)
+                logger.debug("OCR 引擎初始化: RapidOCR")
             except ImportError:
                 try:
                     from paddleocr import PaddleOCR
                     _cached_ocr_engine = ("paddle", PaddleOCR(lang="ch"))
-                    print(f"[OCR-DEBUG] 初始化 PaddleOCR", file=sys.stderr)
+                    logger.debug("OCR 引擎初始化: PaddleOCR")
                 except ImportError:
                     _cached_ocr_engine = ("none", None)
 
         engine_type, engine = _cached_ocr_engine
-        print(f"[OCR-DEBUG] 引擎: {engine_type}, engine={engine is not None}", file=sys.stderr)
         if engine is None:
             return "(OCR 引擎不可用)"
 
         import numpy as np
         img_np = np.array(img)
-        print(f"[OCR-DEBUG] img shape={img_np.shape}, dtype={img_np.dtype}, size={img_np.size}", file=sys.stderr)
+        logger.debug("OCR 输入: shape=%s dtype=%s", img_np.shape, img_np.dtype)
 
         # RGBA → RGB（PaddleOCR 不支持 alpha 通道）
         if img_np.ndim == 3 and img_np.shape[2] == 4:
             img_np = img_np[:, :, :3]
-            print(f"[OCR-DEBUG] RGBA→RGB, new shape={img_np.shape}", file=sys.stderr)
 
         if engine_type == "rapid":
             result, _ = engine(img_np)
-            print(f"[OCR-DEBUG] RapidOCR result type={type(result)}, value={str(result)[:200]}", file=sys.stderr)
+            logger.debug("RapidOCR result type=%s", type(result))
             if result:
                 return "\n".join(item[1] for item in result if len(item) > 1)
         elif engine_type == "paddle":
@@ -161,10 +155,10 @@ def _ocr_screenshot(screenshot_b64: str) -> str:
             try:
                 result = engine.ocr(img_np)
             except Exception as ocr_err:
-                print(f"[OCR-DEBUG] PaddleOCR.ocr() 内部异常: {type(ocr_err).__name__}: {ocr_err}", file=sys.stderr)
-                traceback.print_exc(file=sys.stderr)
+                logger.error("PaddleOCR.ocr() 内部异常: %s: %s", type(ocr_err).__name__, ocr_err)
+                logger.debug("PaddleOCR traceback:\n%s", traceback.format_exc())
                 return f"(PaddleOCR 内部错误: {ocr_err})"
-            print(f"[OCR-DEBUG] PaddleOCR result type={type(result)}, result[0] type={type(result[0]) if result and result[0] else 'N/A'}", file=sys.stderr)
+            logger.debug("PaddleOCR result type=%s", type(result))
             if result and result[0]:
                 # PaddleOCR 3.6+ 返回 dict 格式
                 if isinstance(result[0], dict):
@@ -180,8 +174,7 @@ def _ocr_screenshot(screenshot_b64: str) -> str:
 
         return "(OCR 未识别到文字)"
     except Exception as e:
-        import sys
-        print(f"[OCR-DEBUG] 异常: {type(e).__name__}: {e}", file=sys.stderr)
+        logger.error("OCR 异常: %s: %s", type(e).__name__, e)
         return f"(OCR 失败: {e})"
 
 
