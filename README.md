@@ -12,8 +12,16 @@ curl -fsSL https://raw.githubusercontent.com/15087312/cortex_agent/main/install.
 ```
 
 ### Windows（PowerShell）
+
+在 PowerShell 中直接执行：
+
 ```powershell
-powershell -ExecutionPolicy Bypass -Command "iex (New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/15087312/cortex_agent/main/install.ps1')"
+iex (New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/15087312/cortex_agent/main/install.ps1')
+```
+
+如果遇到执行策略限制，先运行：
+```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
 ```
 
 安装完成后运行：
