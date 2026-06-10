@@ -75,6 +75,9 @@ models/
 *.bin
 *.onnx
 
+# OmniParser（用户自行下载权重）
+OmniParser/weights/
+
 # Database
 *.db
 *.sqlite

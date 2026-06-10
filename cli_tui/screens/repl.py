@@ -874,6 +874,8 @@ class REPL(Screen):
                 self._manage_config(config_args)
             else:
                 self._show_config()
+        elif cmd.action == "setup":
+            self._show_setup_guide()
         else:
             self.notify(f"未知命令: {text}", severity="warning")
 
@@ -1236,3 +1238,21 @@ class REPL(Screen):
             self.notify(f"✓ 配置已更新: {key} = {value}", severity="information", timeout=2)
         else:
             self.notify(f"✗ 更新失败: {key}", severity="error", timeout=2)
+
+    def _show_setup_guide(self):
+        """显示模型下载引导"""
+        guide = (
+            "可选模型组件下载\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "请在另一个终端运行:\n\n"
+            "  python scripts/setup_models.py\n\n"
+            "可选组件:\n"
+            "  • OmniParser   — UI 截图解析（learn_tool 高精度）\n"
+            "  • Qwen-VL 2B   — 本地识图（需 NVIDIA GPU）\n"
+            "  • Qwen-VL 7B   — Apple Silicon 专用（M1/M2/M3/M4）\n\n"
+            "快捷用法:\n"
+            "  python scripts/setup_models.py --all     # 全部下载\n"
+            "  python scripts/setup_models.py omniparser  # 只下载 OmniParser\n"
+            "  python scripts/setup_models.py qwen-vl-7b-mlx  # 只下载 MLX 模型"
+        )
+        self.notify(guide, title="模型下载", timeout=10)

@@ -57,6 +57,7 @@ register("/context", ["/ctx"], "加载并显示当前上下文", "context")
 register("/stop", ["/pause"], "停止当前思考处理", "stop")
 register("/mode", ["/m"], "切换陪伴模式 (用法: /mode on/off) 或执行模式 (/mode plan/edit/yolo)", "mode")
 register("/config", ["/cfg"], "查看或修改配置 (用法: /config 或 /config KEY VALUE)", "config")
+register("/setup", ["/install"], "下载可选模型组件（OmniParser/Qwen-VL 等）", "setup")
 
 
 def find_command(text: str) -> Optional[Command]:
