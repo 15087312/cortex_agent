@@ -130,7 +130,7 @@ def check_dependency(package: str) -> Dict[str, Any]:
     except importlib.metadata.PackageNotFoundError:
         return {"installed": False, "package": package}
 
-@ToolRegistry.register("install_dependency", description="从 PyPI 安装 Python 依赖。只允许安装 PyPI 包。", params={"package": "包名（可加版本号如 flask==2.0）", "upgrade": "可选，是否升级（默认 False）"}, risk_level="MEDIUM", category="admin")
+@ToolRegistry.register("install_dependency", description="从 PyPI 安装 Python 依赖。只允许安装 PyPI 包。", params={"package": "包名（可加版本号如 flask==2.0）", "upgrade": "可选，是否升级（默认 False）"}, risk_level="MEDIUM", category="admin", tags=["mutation"])
 def install_dependency(package: str, upgrade: bool = False) -> Dict[str, Any]:
     import re as _re
     if not package: return {"error": "包名不能为空"}

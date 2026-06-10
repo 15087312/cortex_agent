@@ -106,6 +106,7 @@ def _get_caller_tier(kwargs: dict = None) -> str:
     },
     risk_level="MEDIUM",
     category="admin",
+    tags=["internal"],
 )
 def probe_start(
     target_tier: str,

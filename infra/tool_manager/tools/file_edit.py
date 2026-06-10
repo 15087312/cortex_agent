@@ -26,6 +26,7 @@ logger = setup_logger("file_edit")
     },
     risk_level="MEDIUM",
     category="admin",
+    tags=["mutation"],
     core=True,
 )
 def file_edit(path: str, old_string: str, new_string: str) -> Dict[str, Any]:

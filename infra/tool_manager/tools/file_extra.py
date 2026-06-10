@@ -36,6 +36,7 @@ def _is_forbidden_write_path(path: str) -> bool:
     },
     risk_level="MEDIUM",
     category="admin",
+    tags=["mutation"],
 )
 def append_file(path: str, content: str) -> Dict[str, Any]:
     """追加内容到文件"""

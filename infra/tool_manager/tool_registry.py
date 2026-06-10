@@ -332,7 +332,27 @@ class ToolRegistry:
         """获取工具函数"""
         tool = cls._tools.get(name)
         return tool.func if tool else None
-    
+
+    # ── 批量查询方法（供安全门控、权限过滤等使用） ──
+
+    @classmethod
+    def get_tools_by_risk(cls, level: str) -> set:
+        """返回指定风险等级的工具名集合（如 'HIGH'、'CRITICAL'）"""
+        with cls._tools_lock:
+            return {name for name, info in cls._tools.items() if info.risk_level == level}
+
+    @classmethod
+    def get_mutation_tools(cls) -> set:
+        """返回所有写操作工具（category 为 mutation 或 admin）"""
+        with cls._tools_lock:
+            return {name for name, info in cls._tools.items() if info.category in ("mutation", "admin")}
+
+    @classmethod
+    def get_tools_by_tag(cls, tag: str) -> set:
+        """返回包含指定 tag 的工具名集合"""
+        with cls._tools_lock:
+            return {name for name, info in cls._tools.items() if tag in info.tags}
+
     @classmethod
     def list_tools(cls, source: str = None) -> Dict[str, Dict[str, Any]]:
         """列出所有已注册工具"""

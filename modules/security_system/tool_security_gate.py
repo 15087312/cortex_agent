@@ -66,36 +66,22 @@ def _emit_security_event(
         logger.debug(f"安全事件回调失败 (非致命): {e}")
 
 
-# HIGH 风险工具 — 需要审批
-HIGH_RISK_TOOLS = {
-    "exec_command", "run_script", "kill_process", "git_push",
-    "external_api_call", "write_runtime_config",
-    "delete_file",
-    "learn_tool",  # ToolBuilder: 学习工具涉及 UI 操作录制
-}
+# ── 从 ToolRegistry 动态读取风险等级和写操作工具（消除硬编码集合） ──
 
-# MEDIUM 风险工具 — 快速路径检查
-MEDIUM_RISK_TOOLS = {
-    "write_file", "file_edit", "append_file",
-    "run_command", "run_python",
-    "git_add", "git_commit",
-    "install_dependency", "debug_code",
-    "run_pytest",
-    "create_plugin", "uninstall_plugin",
-    "open_app", "close_app",  # 应用生命周期工具
-    "delete_learned_tool", "execute_tool_recipe",  # ToolBuilder
-}
+def _get_high_risk_tools() -> set:
+    """HIGH + CRITICAL 风险工具（需要审批）"""
+    from infra.tool_manager.tool_registry import ToolRegistry
+    return ToolRegistry.get_tools_by_risk("HIGH") | ToolRegistry.get_tools_by_risk("CRITICAL")
 
-# 写操作工具 — plan 模式禁止，edit 模式需用户确认
-_MUTATION_TOOLS = {
-    "write_file", "file_edit", "append_file", "delete_file",
-    "exec_command", "run_command", "run_python", "run_script",
-    "git_add", "git_commit", "git_push",
-    "install_dependency", "create_plugin", "uninstall_plugin",
-    "kill_process", "write_runtime_config", "external_api_call",
-    "open_app", "close_app",  # 应用生命周期工具（修改系统状态）
-    "learn_tool", "delete_learned_tool", "execute_tool_recipe", "create_app_skill",  # ToolBuilder
-}
+def _get_medium_risk_tools() -> set:
+    """MEDIUM 风险工具（快速路径检查）"""
+    from infra.tool_manager.tool_registry import ToolRegistry
+    return ToolRegistry.get_tools_by_risk("MEDIUM")
+
+def _get_mutation_tools() -> set:
+    """写操作工具（category 为 mutation 或 admin 的工具）"""
+    from infra.tool_manager.tool_registry import ToolRegistry
+    return ToolRegistry.get_mutation_tools()
 
 # Plan 模式下 delegate_task 的写操作关键词（供 model_runner 和 security_gate 共用）
 DELEGATE_WRITE_KEYWORDS = {
@@ -227,7 +213,7 @@ class ToolSecurityGate:
             return False, extreme_reason
 
         # ── 安全最高指示：Blackboard 有安全拦截信号时，拒绝所有写操作 ──
-        if tool_name in _MUTATION_TOOLS:
+        if tool_name in _get_mutation_tools():
             try:
                 from modules.thinking.cognition.blackboard import CognitiveBlackboard
                 # 检查当前活跃的 Blackboard 是否有安全拦截
@@ -245,7 +231,7 @@ class ToolSecurityGate:
                 pass
 
         # ── plan 模式：所有写操作直接拒绝 ──
-        if exec_mode == "plan" and tool_name in _MUTATION_TOOLS:
+        if exec_mode == "plan" and tool_name in _get_mutation_tools():
             reason = f"当前为 plan 模式（只读），禁止执行 {tool_name}"
             _emit_security_event("plan拦截", tool_name, caller_model_id, False, reason)
             try:
@@ -273,7 +259,7 @@ class ToolSecurityGate:
 
         # ── control 模式：所有非 LOW 工具需用户确认 ──
         if exec_mode == "control":
-            if tool_name in HIGH_RISK_TOOLS or tool_name in MEDIUM_RISK_TOOLS:
+            if tool_name in _get_high_risk_tools() or tool_name in _get_medium_risk_tools():
                 _emit_security_event("等待用户审批", tool_name, caller_model_id, True, "control 模式，需用户确认")
                 allowed, reason = await self._check_user_review(
                     tool_name, tool_params, caller_tier, caller_model_id
@@ -281,7 +267,7 @@ class ToolSecurityGate:
                 try:
                     self._audit.log(
                         event_type="tool_approved" if allowed else "tool_blocked",
-                        level="HIGH" if tool_name in HIGH_RISK_TOOLS else "MEDIUM",
+                        level="HIGH" if tool_name in _get_high_risk_tools() else "MEDIUM",
                         content=tool_name,
                         result=allowed,
                         metadata={"caller_model_id": caller_model_id, "caller_tier": caller_tier,
@@ -303,7 +289,7 @@ class ToolSecurityGate:
                     pass
                 return True, "LOW 风险工具，control 模式直接放行"
 
-        if tool_name in HIGH_RISK_TOOLS:
+        if tool_name in _get_high_risk_tools():
             _emit_security_event("审查中", tool_name, caller_model_id, True, "HIGH 风险，评估中...")
             start = time.time()
             allowed, reason = await self._check_high_risk(
@@ -325,9 +311,9 @@ class ToolSecurityGate:
             except Exception as e:
                 logger.warning(f"审计日志记录失败 (非致命): {e}")
             return allowed, reason
-        elif tool_name in MEDIUM_RISK_TOOLS:
+        elif tool_name in _get_medium_risk_tools():
             # MEDIUM 工具：edit/yolo 模式写操作需 LLM 审查
-            if exec_mode in ("edit", "yolo") and tool_name in _MUTATION_TOOLS:
+            if exec_mode in ("edit", "yolo") and tool_name in _get_mutation_tools():
                 if self._model_available:
                     llm_ok, llm_reason = await self._check_llm_review(
                         tool_name, tool_params, caller_tier, caller_model_id, dialog_context
@@ -447,7 +433,7 @@ class ToolSecurityGate:
             params_summary = params_summary[:300] + "..."
 
         # 确定风险等级和提示样式
-        is_high_risk = tool_name in HIGH_RISK_TOOLS
+        is_high_risk = tool_name in _get_high_risk_tools()
         risk_icon = "🔴" if is_high_risk else "🟠"
         risk_level = "HIGH" if is_high_risk else "MEDIUM"
 

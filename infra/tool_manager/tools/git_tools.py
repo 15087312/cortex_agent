@@ -43,17 +43,17 @@ def git_status(workdir: Optional[str] = None) -> Dict[str, Any]:
     modified = [l[3:] for l in lines if l[1] == "M" or (l[0] == " " and l[1] == "M")]
     return {"success": True, "staged": staged, "unstaged": unstaged, "untracked": untracked, "modified": modified, "total": len(lines)}
 
-@ToolRegistry.register("git_add", description="将文件添加到 Git 暂存区。仅开发 Agent 可用。", params={"path": "要添加的文件路径（或 '.' 添加所有）"}, risk_level="MEDIUM", category="admin")
+@ToolRegistry.register("git_add", description="将文件添加到 Git 暂存区。仅开发 Agent 可用。", params={"path": "要添加的文件路径（或 '.' 添加所有）"}, risk_level="MEDIUM", category="admin", tags=["mutation"])
 def git_add(path: str, workdir: Optional[str] = None) -> Dict[str, Any]:
     if not path: return {"error": "路径不能为空", "success": False}
     return _run_git(["add", path], workdir)
 
-@ToolRegistry.register("git_commit", description="提交暂存区的变更到本地仓库。强制要求提交信息。", params={"message": "提交信息"}, risk_level="MEDIUM", category="admin")
+@ToolRegistry.register("git_commit", description="提交暂存区的变更到本地仓库。强制要求提交信息。", params={"message": "提交信息"}, risk_level="MEDIUM", category="admin", tags=["mutation"])
 def git_commit(message: str, workdir: Optional[str] = None) -> Dict[str, Any]:
     if not message or not message.strip(): return {"error": "提交信息不能为空", "success": False}
     return _run_git(["commit", "-m", message.strip()], workdir)
 
-@ToolRegistry.register("git_push", description="推送本地提交到远程仓库。禁止 --force 强制推送。需主管审批。", params={"remote": "可选，远程仓库名（默认 origin）", "branch": "可选，分支名"}, risk_level="HIGH", category="admin")
+@ToolRegistry.register("git_push", description="推送本地提交到远程仓库。禁止 --force 强制推送。需主管审批。", params={"remote": "可选，远程仓库名（默认 origin）", "branch": "可选，分支名"}, risk_level="HIGH", category="admin", tags=["mutation"])
 def git_push(remote: str = "origin", branch: Optional[str] = None, workdir: Optional[str] = None) -> Dict[str, Any]:
     # 参数验证：防止注入 --force 等危险标志
     if remote.startswith("-"):

@@ -153,6 +153,8 @@ def read_file(path: str, encoding: str = "utf-8") -> Dict[str, Any]:
     name="write_file",
     description="写入文件内容",
     params={"path": "文件路径", "content": "文件内容", "mode": "写入模式（w/a）"},
+    risk_level="MEDIUM",
+    category="mutation",
     core=True,
 )
 def write_file(path: str, content: str, mode: str = "w") -> Dict[str, Any]:
@@ -199,7 +201,9 @@ def write_file(path: str, content: str, mode: str = "w") -> Dict[str, Any]:
 @ToolRegistry.register(
     name="delete_file",
     description="删除文件",
-    params={"path": "文件路径"}
+    params={"path": "文件路径"},
+    risk_level="HIGH",
+    category="mutation",
 )
 def delete_file(path: str) -> Dict[str, Any]:
     """

@@ -308,6 +308,7 @@ def _prune_old_snapshots():
     },
     risk_level="HIGH",
     category="admin",
+    tags=["mutation"],
     core=True,
 )
 def exec_command(command: str, timeout: Optional[int] = None, workdir: Optional[str] = None) -> Dict[str, Any]:
@@ -396,6 +397,7 @@ def exec_command(command: str, timeout: Optional[int] = None, workdir: Optional[
     },
     risk_level="MEDIUM",
     category="admin",
+    tags=["mutation"],
 )
 def run_command(command: str, timeout: Optional[int] = None, workdir: Optional[str] = None) -> Dict[str, Any]:
     """执行命令 — 白名单模式：仅允许 COMMAND_WHITELIST 中的命令"""
@@ -432,6 +434,7 @@ def run_command(command: str, timeout: Optional[int] = None, workdir: Optional[s
     },
     risk_level="HIGH",
     category="admin",
+    tags=["mutation"],
     core=True,
 )
 def run_script(code: str, language: str = "python", timeout: Optional[int] = 30) -> Dict[str, Any]:
@@ -518,6 +521,7 @@ def run_script(code: str, language: str = "python", timeout: Optional[int] = 30)
     },
     risk_level="HIGH",
     category="admin",
+    tags=["mutation"],
     core=True,
 )
 def run_python(code: str, timeout: Optional[int] = 30) -> Dict[str, Any]:
@@ -537,6 +541,7 @@ def run_python(code: str, timeout: Optional[int] = 30) -> Dict[str, Any]:
     },
     risk_level="HIGH",
     category="admin",
+    tags=["mutation"],
 )
 def kill_process(pid: int, force: bool = False) -> Dict[str, Any]:
     """杀死进程（跨平台）"""
