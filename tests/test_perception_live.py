@@ -74,7 +74,7 @@ def test_file_perception():
     info(f"临时目录: {temp_dir}")
 
     try:
-        from modules.perception.manager import FilePerception
+        from modules.perception.file_perception import FilePerception
 
         fp = FilePerception(watch_paths=[temp_dir], enabled=True)
 

@@ -25,6 +25,10 @@ class PerceptionSystem:
         self.perception_source = None
         self.voice_detector = None
         self.think_trigger = None
+        self.file_perception = None
+        self.dialog_perception = None
+        self._file_monitor_thread = None
+        self._file_monitor_running = False
         self._started = False
 
     def setup(self, **overrides) -> None:
@@ -49,6 +53,8 @@ class PerceptionSystem:
         # 读取配置（可被 overrides 覆盖）
         cfg = {
             "screen_enabled": getattr(settings, "PERCEPTION_SCREEN_ENABLED", True),
+            "file_enabled": getattr(settings, "PERCEPTION_FILE_ENABLED", True),
+            "dialog_enabled": getattr(settings, "PERCEPTION_DIALOG_ENABLED", True),
             "voice_enabled": getattr(settings, "PERCEPTION_VOICE_ENABLED", False),
             "trigger_enabled": getattr(settings, "PERCEPTION_TRIGGER_THINK", True),
             "trigger_min_intensity": getattr(settings, "PERCEPTION_TRIGGER_MIN_INTENSITY", 50.0),
@@ -71,7 +77,19 @@ class PerceptionSystem:
         else:
             logger.info("屏幕感知已禁用")
 
-        # 3. 语音检测器（根据配置）
+        # 3. 文件监控（从旧 PerceptionManager 合并）
+        if cfg["file_enabled"]:
+            self._setup_file_monitoring(cfg)
+        else:
+            logger.info("文件感知已禁用")
+
+        # 4. 对话监控（从旧 PerceptionManager 合并）
+        if cfg["dialog_enabled"]:
+            self._setup_dialog_monitoring()
+        else:
+            logger.info("对话感知已禁用")
+
+        # 5. 语音检测器（根据配置）
         if cfg["voice_enabled"]:
             self._setup_voice_detector(cfg)
         else:
@@ -156,6 +174,21 @@ class PerceptionSystem:
             fps=cfg["fps"],
         )
 
+    def _setup_file_monitoring(self, cfg: dict):
+        """组装文件监控（从旧 PerceptionManager 合并）"""
+        from modules.perception.file_perception import FilePerception
+        from config.settings import settings
+
+        watch_paths = ["./", "data/"]
+        self.file_perception = FilePerception(watch_paths, enabled=True)
+        logger.info("文件监控已初始化 (watchdog)")
+
+    def _setup_dialog_monitoring(self):
+        """组装对话监控（从旧 PerceptionManager 合并）"""
+        from modules.perception.dialog_perception import DialogPerception
+        self.dialog_perception = DialogPerception(enabled=True)
+        logger.info("对话监控已初始化")
+
     def _setup_voice_detector(self, cfg: dict):
         """组装语音检测器"""
         from modules.perception.detectors.voice_detector import VoiceDetector
@@ -186,8 +219,33 @@ class PerceptionSystem:
             self.pipeline.start()
         if self.perception_source:
             self.perception_source.start()
+        # 文件监控后台线程
+        if self.file_perception:
+            self._file_monitor_running = True
+            self._file_monitor_thread = threading.Thread(
+                target=self._file_monitor_loop, daemon=True, name="file-perception"
+            )
+            self._file_monitor_thread.start()
         self._started = True
         logger.info("感知系统已启动")
+
+    def _file_monitor_loop(self):
+        """文件监控后台循环"""
+        import time
+        while self._file_monitor_running:
+            try:
+                changes = self.file_perception.check_changes()
+                if changes and self.event_bus:
+                    from modules.perception.events.types import PerceptionEvent, PerceptionEventType
+                    for change in changes:
+                        event = PerceptionEvent(
+                            event_type=PerceptionEventType.FILE_CHANGE,
+                            data={"change": change.to_prompt(), "path": change.target},
+                        )
+                        self.event_bus.publish(event)
+            except Exception as e:
+                logger.debug(f"文件监控循环异常: {e}")
+            time.sleep(2.0)
 
     def stop(self) -> None:
         if not self._started:
@@ -202,6 +260,10 @@ class PerceptionSystem:
             self.perception_source.stop()
         if self.think_trigger and self.event_bus:
             self.think_trigger.stop(self.event_bus)
+        # 停止文件监控
+        self._file_monitor_running = False
+        if self.file_perception:
+            self.file_perception.stop()
         self._started = False
         logger.info("感知系统已停止")
 

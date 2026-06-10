@@ -32,7 +32,7 @@ class PerceptionManagerAdapter:
 
 def create_perception_port() -> PerceptionPort:
     """Create the default perception port with delayed concrete import."""
-    from modules.perception.manager import perception_manager
+    from modules.perception import perception_manager
 
     return PerceptionManagerAdapter(perception_manager)
 

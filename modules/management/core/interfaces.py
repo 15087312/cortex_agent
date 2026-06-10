@@ -12,19 +12,21 @@ class ModuleStatusPort(Protocol):
 
 class PerceptionStatusAdapter:
     def get_status(self) -> Dict[str, Any]:
+        import platform
         from modules.perception.interface import get_perception_port
-        from modules.perception.manager import PERCEPTION_PLATFORM, perception_manager
+        from modules.perception import get_perception_system
 
-        context = perception_manager.get_full_context()
+        ps = get_perception_system()
         perception = get_perception_port()
         return {
             "status": "healthy",
-            "platform": PERCEPTION_PLATFORM,
-            "watch_paths": perception_manager.watch_paths,
-            "stats": context.get("stats", {}),
-            "recent_changes_count": len(context.get("recent_changes", [])),
-            "attention_pool_size": len(perception_manager.attention_pool),
-            "monitoring": perception.is_running,
+            "platform": platform.system(),
+            "started": ps._started,
+            "pipeline": ps.pipeline.get_stats() if ps.pipeline else None,
+            "voice_available": ps.voice_detector is not None,
+            "file_perception": ps.file_perception is not None,
+            "dialog_perception": ps.dialog_perception is not None,
+            "monitoring": ps._started,
         }
 
 
