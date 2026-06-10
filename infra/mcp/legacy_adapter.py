@@ -98,16 +98,20 @@ class LegacyToolExecutorAdapter(ToolExecutorPort):
         start = time.time()
         try:
             if inspect.iscoroutinefunction(tool.func):
-                error = "同步 MCP 兼容执行器不支持 async legacy 工具"
-                return ToolCallResult(
-                    success=False,
-                    result=None,
-                    error=error,
-                    tool_name=request.tool_name,
-                    source=request.source,
-                    latency_ms=(time.time() - start) * 1000,
-                )
-            result = tool.func(**(request.params or {}))
+                import asyncio
+                try:
+                    loop = asyncio.get_running_loop()
+                    # 在事件循环线程内，直接 await 不可行（sync 函数）
+                    # 用 nest_asyncio 或 run_coroutine_threadsafe 会死锁
+                    # 最佳方案：用 asyncio.ensure_future + 等待
+                    import concurrent.futures
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                        future = pool.submit(asyncio.run, tool.func(**(request.params or {})))
+                        result = future.result(timeout=120)
+                except RuntimeError:
+                    result = asyncio.run(tool.func(**(request.params or {})))
+            else:
+                result = tool.func(**(request.params or {}))
             return ToolCallResult(
                 success=True,
                 result=result,

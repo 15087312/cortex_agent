@@ -4,11 +4,13 @@
 - transcribe_audio: 语音转文字（上传音频文件）
 - understand_screen: 截图 + OCR + LLM 抽象理解
 """
+import sys as _sys
+print(f"[MODULE-LOADED] perception_tools from: {__file__}", file=_sys.stderr, flush=True)
+
 import base64
 import io
-import tempfile
 import os
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 
 from infra.tool_manager.tool_registry import ToolRegistry
 from utils.logger import setup_logger
@@ -77,13 +79,14 @@ async def transcribe_audio(
 async def understand_screen(focus: str = "") -> Dict[str, Any]:
     """截图 + 视觉理解（Qwen-VL）+ OCR 兜底"""
     try:
-        # Step 1: 截图
-        screenshot_b64 = _capture_screen()
+        # Step 1: 截图（在线程池中执行，避免阻塞事件循环）
+        import asyncio
+        screenshot_b64 = await asyncio.to_thread(_capture_screen)
         if not screenshot_b64:
             return {"error": "截图失败：无可用的屏幕捕获方式"}
 
         # Step 2: 获取窗口信息
-        window_info = _get_active_window()
+        window_info = await asyncio.to_thread(_get_active_window)
 
         # Step 3: 视觉理解（优先 Qwen-VL，降级到 OCR + 文本 LLM）
         vision_result = await _vision_understand(screenshot_b64, window_info, focus)
@@ -101,79 +104,84 @@ async def understand_screen(focus: str = "") -> Dict[str, Any]:
 
 def _capture_screen() -> str:
     """截取屏幕，返回 base64 编码的 PNG"""
-    try:
-        import mss
-        with mss.mss() as sct:
-            monitor = sct.monitors[1]  # 主显示器
-            screenshot = sct.grab(monitor)
-            from PIL import Image
-            img = Image.frombytes("RGB", screenshot.size, screenshot.bgra, "raw", "BGRX")
-            # 缩小到 1280 宽度以减少 token
-            w, h = img.size
-            if w > 1280:
-                ratio = 1280 / w
-                img = img.resize((1280, int(h * ratio)))
-            buf = io.BytesIO()
-            img.save(buf, format="PNG", optimize=True)
-            return base64.b64encode(buf.getvalue()).decode()
-    except ImportError:
-        pass
+    from utils.screen_capture import capture_screen
+    return capture_screen() or ""
 
-    # PIL.ImageGrab fallback (Windows / macOS)
-    try:
-        from PIL import ImageGrab
-        img = ImageGrab.grab()
-        w, h = img.size
-        if w > 1280:
-            ratio = 1280 / w
-            img = img.resize((1280, int(h * ratio)))
-        buf = io.BytesIO()
-        img.save(buf, format="PNG", optimize=True)
-        return base64.b64encode(buf.getvalue()).decode()
-    except Exception:
-        pass
 
-    # macOS screencapture fallback
-    try:
-        import subprocess
-        import tempfile
-        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
-            tmp_path = f.name
-        subprocess.run(["screencapture", "-x", tmp_path], timeout=5, check=True)
-        with open(tmp_path, "rb") as f:
-            data = base64.b64encode(f.read()).decode()
-        os.unlink(tmp_path)
-        return data
-    except Exception:
-        return ""
+_cached_ocr_engine = None
 
 
 def _ocr_screenshot(screenshot_b64: str) -> str:
-    """对截图做 OCR，返回识别文字"""
+    """对截图做 OCR，返回识别文字（OCR 引擎缓存复用）"""
+    global _cached_ocr_engine
     try:
         import base64 as b64
         from PIL import Image
         import io
+        import sys
 
         img_data = b64.b64decode(screenshot_b64)
         img = Image.open(io.BytesIO(img_data))
 
-        # 优先用 RapidOCR
-        try:
-            from rapidocr_onnxruntime import RapidOCR
-            ocr = RapidOCR()
-            import numpy as np
-            img_np = np.array(img)
-            result, _ = ocr(img_np)
-            if result:
-                lines = [item[1] for item in result if len(item) > 1]
-                return "\n".join(lines)
-        except ImportError:
-            pass
+        # 懒初始化 OCR 引擎（只创建一次）
+        if _cached_ocr_engine is None:
+            try:
+                from rapidocr_onnxruntime import RapidOCR
+                _cached_ocr_engine = ("rapid", RapidOCR())
+                print(f"[OCR-DEBUG] 初始化 RapidOCR", file=sys.stderr)
+            except ImportError:
+                try:
+                    from paddleocr import PaddleOCR
+                    _cached_ocr_engine = ("paddle", PaddleOCR(lang="ch"))
+                    print(f"[OCR-DEBUG] 初始化 PaddleOCR", file=sys.stderr)
+                except ImportError:
+                    _cached_ocr_engine = ("none", None)
 
-        # 降级：返回空
-        return "(OCR 引擎不可用)"
+        engine_type, engine = _cached_ocr_engine
+        print(f"[OCR-DEBUG] 引擎: {engine_type}, engine={engine is not None}", file=sys.stderr)
+        if engine is None:
+            return "(OCR 引擎不可用)"
+
+        import numpy as np
+        img_np = np.array(img)
+        print(f"[OCR-DEBUG] img shape={img_np.shape}, dtype={img_np.dtype}, size={img_np.size}", file=sys.stderr)
+
+        # RGBA → RGB（PaddleOCR 不支持 alpha 通道）
+        if img_np.ndim == 3 and img_np.shape[2] == 4:
+            img_np = img_np[:, :, :3]
+            print(f"[OCR-DEBUG] RGBA→RGB, new shape={img_np.shape}", file=sys.stderr)
+
+        if engine_type == "rapid":
+            result, _ = engine(img_np)
+            print(f"[OCR-DEBUG] RapidOCR result type={type(result)}, value={str(result)[:200]}", file=sys.stderr)
+            if result:
+                return "\n".join(item[1] for item in result if len(item) > 1)
+        elif engine_type == "paddle":
+            import traceback
+            try:
+                result = engine.ocr(img_np)
+            except Exception as ocr_err:
+                print(f"[OCR-DEBUG] PaddleOCR.ocr() 内部异常: {type(ocr_err).__name__}: {ocr_err}", file=sys.stderr)
+                traceback.print_exc(file=sys.stderr)
+                return f"(PaddleOCR 内部错误: {ocr_err})"
+            print(f"[OCR-DEBUG] PaddleOCR result type={type(result)}, result[0] type={type(result[0]) if result and result[0] else 'N/A'}", file=sys.stderr)
+            if result and result[0]:
+                # PaddleOCR 3.6+ 返回 dict 格式
+                if isinstance(result[0], dict):
+                    texts = result[0].get("rec_texts", [])
+                    return "\n".join(t for t in texts if t)
+                # PaddleOCR 旧版返回 list 格式
+                lines = []
+                for line in result[0]:
+                    if line and len(line) >= 2:
+                        text = line[1][0] if isinstance(line[1], (list, tuple)) else str(line[1])
+                        lines.append(text)
+                return "\n".join(lines)
+
+        return "(OCR 未识别到文字)"
     except Exception as e:
+        import sys
+        print(f"[OCR-DEBUG] 异常: {type(e).__name__}: {e}", file=sys.stderr)
         return f"(OCR 失败: {e})"
 
 
@@ -254,7 +262,8 @@ async def _vision_understand(
         logger.debug(f"Qwen-VL 视觉理解失败，降级: {e}")
 
     # ── 降级：OCR + 文本 LLM ──
-    ocr_text = _ocr_screenshot(screenshot_b64)
+    import asyncio
+    ocr_text = await asyncio.to_thread(_ocr_screenshot, screenshot_b64)
     try:
         from modules.thinking.experts.pre_gen_experts import _get_lite_model
         model = _get_lite_model()

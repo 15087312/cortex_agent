@@ -224,6 +224,7 @@ class LiteModelClient(BaseModelClient):
 
     async def close(self):
         """关闭客户端（清理单例）"""
+        await super().close()
         LiteModelClient._instance = None
 
     async def health_check(self) -> bool:

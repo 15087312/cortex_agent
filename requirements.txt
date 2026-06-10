@@ -47,6 +47,13 @@ rapidocr_onnxruntime>=1.2.0  # 轻量 OCR（ONNX 推理）
 numpy>=1.24.0  # 数值计算（帧差/向量）
 qwen-vl-utils>=0.0.10  # Qwen-VL 视觉模型工具
 
+# OmniParser UI 结构化检测（可选，独立部署）
+# 部署方式：git clone https://github.com/microsoft/OmniParser.git
+#          cd OmniParser && pip install -r requirements.txt && python serve.py --port 8765
+# 不部署时自动降级到 OCR，功能可用但精度较低
+ultralytics>=8.1.0  # OmniParser 依赖（YOLO 目标检测）
+supervision>=0.18.0  # OmniParser 依赖（检测结果处理）
+
 # 工具库
 python-dotenv>=1.0.0
 loguru>=0.7.2

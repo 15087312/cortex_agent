@@ -227,6 +227,12 @@ def open_app(app_identifier: str, wait: bool = False) -> Dict[str, str]:
 
         if result["status"] == "success":
             logger.info(result["message"])
+            # 尝试加载该 app 的已学工具 Skill
+            try:
+                from modules.toolbuilder.skill_generator import SkillGenerator
+                SkillGenerator.load_for_app(app_identifier.strip())
+            except Exception:
+                pass  # 非致命，skill 不存在时跳过
         else:
             logger.warning(result["message"])
 

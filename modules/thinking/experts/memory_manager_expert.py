@@ -25,10 +25,11 @@ class MemoryManagerExpert(RuntimeExpert):
 
     template_key = "expert_memory_manager"
 
-    def __init__(self, model_instance=None,
+    def __init__(self, model_instance=None, blackboard=None,
                  session_id="", model_id=""):
         super().__init__(
             model_instance=model_instance,
+            blackboard=blackboard,
             session_id=session_id,
             model_id=model_id,
         )

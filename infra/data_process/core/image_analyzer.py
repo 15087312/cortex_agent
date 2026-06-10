@@ -380,8 +380,8 @@ class ImageAnalyzer:
         api_url = settings.effective_vision_api_url
         model = settings.effective_vision_api_model
 
-        client = openai.OpenAI(api_key=api_key, base_url=api_url)
-        response = client.chat.completions.create(
+        client = openai.AsyncOpenAI(api_key=api_key, base_url=api_url, timeout=30.0)
+        response = await client.chat.completions.create(
             model=model,
             messages=[{
                 "role": "user",
@@ -391,6 +391,7 @@ class ImageAnalyzer:
                 ]
             }]
         )
+        await client.close()
 
         return {
             "description": response.choices[0].message.content,
@@ -541,9 +542,10 @@ class ImageAnalyzer:
         from config.settings import settings
         import openai
 
-        client = openai.OpenAI(
+        client = openai.AsyncOpenAI(
             api_key=settings.OPENAI_API_KEY,
             base_url=settings.OPENAI_API_BASE_URL,
+            timeout=30.0,
         )
         prompt = """分析这张截图，找出所有UI元素。输出JSON格式：
 {"elements": [
@@ -553,7 +555,7 @@ class ImageAnalyzer:
 
 每行一个元素，bounds为[x1,y1,x2,y2]像素坐标。"""
 
-        response = client.chat.completions.create(
+        response = await client.chat.completions.create(
             model=settings.IMAGE_MODEL_NAME,
             messages=[{
                 "role": "user",
@@ -563,6 +565,7 @@ class ImageAnalyzer:
                 ]
             }]
         )
+        await client.close()
         
         try:
             return json.loads(response.choices[0].message.content)

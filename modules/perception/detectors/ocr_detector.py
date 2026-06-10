@@ -34,7 +34,7 @@ class OCRDetector(PerceptionDetector):
         """初始化 OCR 引擎（按优先级尝试）"""
         try:
             from paddleocr import PaddleOCR
-            self._ocr_engine = PaddleOCR(use_angle_cls=True, lang="ch", show_log=False)
+            self._ocr_engine = PaddleOCR(lang="ch")
             self._ocr_type = "paddleocr"
             logger.info("OCR 引擎: PaddleOCR")
             return
@@ -107,6 +107,11 @@ class OCRDetector(PerceptionDetector):
                 result = self._ocr_engine.ocr(image, cls=True)
                 if not result or not result[0]:
                     return ""
+                # PaddleOCR 3.6+ 返回 dict 格式
+                if isinstance(result[0], dict):
+                    texts = result[0].get("rec_texts", [])
+                    return "\n".join(t for t in texts if t)
+                # PaddleOCR 旧版返回 list 格式
                 lines = []
                 for line in result[0]:
                     if line and len(line) >= 2:
