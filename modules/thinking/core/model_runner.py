@@ -1152,8 +1152,9 @@ class ModelRunner:
 
         # 步骤 3：按 tier 特殊处理
         if tier == "expert":
-            # 专家不能直接启动/停止探针；委托必须走 delegate_task
-            blocked = {"probe_start", "probe_stop", "persona_inject"}
+            # 专家不能使用 internal 标签的工具（探针、人格注入等）
+            internal_tools = ToolRegistry.get_tools_by_tag("internal")
+            blocked = set(internal_tools)
             if role != "memory_manager":
                 blocked.add("memory_write")
             result = [name for name in result if name not in blocked]

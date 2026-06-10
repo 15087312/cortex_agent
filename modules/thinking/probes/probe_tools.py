@@ -288,6 +288,7 @@ def probe_start(
     params={"probe_id": "要停止的探针ID（从 probe_start 返回或 probe_list 查询）"},
     risk_level="MEDIUM",
     category="admin",
+    tags=["internal"],
 )
 def probe_stop(probe_id: str, **kwargs) -> Dict[str, Any]:
     """停止探针"""
@@ -522,6 +523,7 @@ def memory_write(
     },
     risk_level="MEDIUM",
     category="mutation",
+    tags=["internal"],
 )
 def persona_inject(
     target_model_id: str, guidance_text: str, **kwargs
