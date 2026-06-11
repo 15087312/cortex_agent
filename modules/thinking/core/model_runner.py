@@ -1338,6 +1338,20 @@ class ModelRunner:
         except Exception:
             pass
 
+        # ── learn 模式提示（所有非 learn 模式下告诉模型可以切换）──
+        try:
+            from config.settings import settings as _cfg
+            if _cfg.effective_execution_mode != "learn":
+                base_prompt += (
+                    "\n\n【学习 UI 操作】\n"
+                    "如果用户想学习如何操作某个应用（如「学习怎么在Chrome中搜索」），"
+                    "你可以调用 request_mode_change(suggested_mode='learn') 请求进入学习模式。\n"
+                    "用户批准后系统会自动：打开应用、截图、识别 UI 元素、规划步骤、执行录制、生成插件。\n"
+                    "学习完成后模式会自动恢复。"
+                )
+        except Exception:
+            pass
+
         # ── 安全最高指示规则（所有模式、所有 tier）──
         base_prompt += (
             "\n\n【安全规则 — 强制执行】\n"
@@ -1359,8 +1373,6 @@ class ModelRunner:
             "  - 无参数：截取全屏并总结\n"
             "  - focus=关注错误信息：重点关注错误提示\n"
             "  - focus=关注表格数据：重点关注数据内容\n\n"
-            "• learn_tool(tool_name, app_name, task_description, params_hint) — 学习 UI 自动化操作\n"
-            "  - 打开应用 → 截图 → 分析 UI → 规划步骤 → 录制保存\n\n"
             "• list_learned_tools(app_name) — 列出已学的自动化工具\n\n"
             "规则：\n"
             "1. 用户说「看看」「看一下」「看看屏幕」→ 立即调用 understand_screen()\n"
@@ -1485,7 +1497,8 @@ class ModelRunner:
                 return True
             required = info.to_json_schema().get("required", [])
             return all(str(name) in args and args.get(str(name)) not in (None, "") for name in required)
-        except Exception:
+        except Exception as e:
+            logger.warning(f"[参数验证] _has_required_tool_args 异常: {e}")
             return True
 
     def _missing_required_tool_args(self, tool_name: str, args: Dict[str, Any]) -> List[str]:
@@ -1496,7 +1509,8 @@ class ModelRunner:
                 return []
             required = info.to_json_schema().get("required", [])
             return [str(name) for name in required if str(name) not in args or args.get(str(name)) in (None, "")]
-        except Exception:
+        except Exception as e:
+            logger.warning(f"[参数验证] _missing_required_tool_args 异常: {e}")
             return []
 
     async def _generate_with_tools(
@@ -1658,7 +1672,9 @@ class ModelRunner:
                             supervisor_calls.append(tc)
                         elif tc.name == "respond_to_user":
                             control_calls.append(tc)
-                        elif tc.name in ("request_skill", "list_skills"):
+                        elif tc.name in ("request_skill", "list_skills", "stop_skill"):
+                            control_calls.append(tc)
+                        elif tc.name in ("request_mode_change", "ask_user_intent"):
                             control_calls.append(tc)
                         elif tc.name == "query_tool_details":
                             query_calls.append(tc)

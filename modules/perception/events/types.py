@@ -19,6 +19,7 @@ class PerceptionEventType:
     FILE_CHANGE = "file.change"             # 文件变化
     DIALOG_CHANGE = "dialog.change"         # 对话变化
     SPEECH_DETECTED = "speech.detected"     # 语音识别结果
+    MCP_RESOURCE_UPDATE = "mcp.resource.update"  # MCP 资源更新
 
     # 检测层产出
     DIFFERENCE_DETECTED = "difference.detected"  # 检测到差异

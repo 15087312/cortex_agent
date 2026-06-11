@@ -2,8 +2,15 @@
 
 核心原则: 只对变化的 ROI 做 OCR，不做全屏 OCR。
 通过文本 diff 检测新消息、通知等。
+
+支持 OCR 引擎（按优先级）:
+1. MCP OCR（通过 mcp_call_tool, 需配置 MCP server）
+2. PaddleOCR（本地）
+3. RapidOCR（本地，降级）
 """
 import hashlib
+import tempfile
+import os
 from typing import Any, Dict, List, Optional
 
 import numpy as np
@@ -24,14 +31,16 @@ class OCRDetector(PerceptionDetector):
     3. 有新文本 → 产出 SCREEN_OCR 事件
     """
 
-    def __init__(self):
+    def __init__(self, use_mcp: bool = False):
         self._ocr_engine = None
         self._ocr_type = None
         self._prev_texts: Dict[str, str] = {}  # roi_name → 上次完整文本
-        self._init_ocr()
+        self._mcp_mode = use_mcp
+        if not use_mcp:
+            self._init_ocr()
 
     def _init_ocr(self):
-        """初始化 OCR 引擎（按优先级尝试）"""
+        """初始化本地 OCR 引擎（按优先级尝试）"""
         try:
             from paddleocr import PaddleOCR
             self._ocr_engine = PaddleOCR(lang="ch")
@@ -50,10 +59,12 @@ class OCRDetector(PerceptionDetector):
         except ImportError:
             pass
 
-        logger.warning("无可用 OCR 引擎，OCR 检测器禁用")
+        # 两个都没有时尝试 MCP 降级
+        self._mcp_mode = True
+        logger.info("OCR 引擎: 无本地 OCR，降级到 MCP OCR")
 
     def is_available(self) -> bool:
-        return self._ocr_engine is not None
+        return self._ocr_engine is not None or self._mcp_mode
 
     @property
     def detector_type(self) -> str:
@@ -102,12 +113,14 @@ class OCRDetector(PerceptionDetector):
 
     def _extract_text(self, image: np.ndarray) -> Optional[str]:
         """从图像提取文本"""
+        if self._mcp_mode:
+            return self._extract_text_mcp(image)
+
         try:
             if self._ocr_type == "paddleocr":
                 result = self._ocr_engine.ocr(image, cls=True)
                 if not result or not result[0]:
                     return ""
-                # PaddleOCR 3.6+ 返回 dict 格式
                 texts = result[0].get("rec_texts", [])
                 return "\n".join(t for t in texts if t)
 
@@ -121,6 +134,54 @@ class OCRDetector(PerceptionDetector):
         except Exception as e:
             logger.debug(f"OCR 提取失败: {e}")
         return None
+
+    def _extract_text_mcp(self, image: np.ndarray) -> Optional[str]:
+        """通过 MCP OCR server 提取文本"""
+        import cv2
+        tmp_path = ""
+        try:
+            # 保存 ROI 图像到临时文件
+            fd, tmp_path = tempfile.mkstemp(suffix=".png")
+            os.close(fd)
+            cv2.imwrite(tmp_path, image)
+
+            # 调用 MCP OCR server
+            from infra.mcp.factory import get_server_manager
+            mgr = get_server_manager()
+            result = self._run_async(mgr.call_tool("ocr_image", {"imagePath": tmp_path}))
+
+            if result.get("isError"):
+                logger.debug(f"MCP OCR 失败: {result}")
+                return None
+
+            # 解析返回内容
+            texts = []
+            for item in result.get("content", []):
+                if item.get("type") == "text":
+                    texts.append(item.get("text", ""))
+            return "\n".join(texts) if texts else ""
+        except Exception as e:
+            logger.debug(f"MCP OCR 提取失败: {e}")
+            return None
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                try:
+                    os.unlink(tmp_path)
+                except Exception:
+                    pass
+
+    @staticmethod
+    def _run_async(coro):
+        """同步运行异步 coroutine"""
+        import asyncio
+        try:
+            loop = asyncio.get_running_loop()
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(asyncio.run, coro)
+                return future.result(timeout=30)
+        except RuntimeError:
+            return asyncio.run(coro)
 
     @staticmethod
     def _diff_text(old_text: str, new_text: str) -> List[str]:

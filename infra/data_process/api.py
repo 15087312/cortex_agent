@@ -4,6 +4,7 @@
 提供语音识别和图像分析的完整流程支持。
 """
 from fastapi import APIRouter, UploadFile, File, Form, Depends
+from api.auth import require_api_key
 from fastapi.responses import JSONResponse
 from typing import Optional
 import base64
@@ -49,7 +50,9 @@ def _validate_upload(file: UploadFile, allowed_mime: set, max_size: int = MAX_UP
         )
 
 
-router = APIRouter(prefix="/data-process", tags=["信息处理"])
+router = APIRouter(prefix="/data-process", tags=["信息处理"],
+    dependencies=[Depends(require_api_key)],
+)
 
 
 @router.post("/speech/recognize")

@@ -22,7 +22,7 @@
                        │ 路由分发
 ┌──────────────────────▼──────────────────────────────────┐
 │  L3 业务层 (modules/)                                    │
-│  16 个业务模块：思考/记忆/安全/感知/注意力/输出/插件/...   │
+│  15 个业务模块：思考/记忆/安全/感知/注意力/输出/工具管理/...   │
 └──────────────────────┬──────────────────────────────────┘
                        │ Protocol 接口 + 直接导入
 ┌──────────────────────▼──────────────────────────────────┐
@@ -279,7 +279,6 @@ Pydantic Settings (config/settings.py)
 | `config/memory_config.py` | `MemoryConfig` | 记忆 TTL、向量维度、批量操作 |
 | `config/attention_config.py` | `AttentionWeightConfig` 等 | 注意力权重、中断规则、调度配置 |
 | `config/output_config.py` | `OutputPriorityConfig` 等 | 输出优先级、TTS |
-| `config/plugin_config.py` | `PluginConfig` | 插件目录、沙箱设置 |
 
 ### 5.3 运行时配置修改
 
@@ -427,23 +426,88 @@ ModelPermissions:
 
 ---
 
-## 10. 插件系统架构
+## 10. MCP 与工具系统架构
 
-详见 [PLUGIN_SYSTEM.md](PLUGIN_SYSTEM.md)。
+插件系统已整体移除，其生态位由 **MCP（Model Context Protocol）** 和 **AI 自创工具** 替代。
 
-关键架构层次：
+### 10.1 三层工具模型
 
 ```
-Model/Expert 调用层
-  ↓
-治理层 (Governance) — 预算/确认/幂等/限流/循环检测
-  ↓
-引擎层 (Engine) — 生命周期/沙箱/调用/断路器
-  ↓
-网关层 (Gateway) — 权限校验/资源访问
-  ↓
-插件沙箱 (Sandbox) — sub_process 隔离
+┌──────────────────────────────────────────────────┐
+│                统一路由层                          │
+│  MCPToolService (MCPToolExecutor.merge_tools)    │
+│  CombinedToolProvider + CombinedToolExecutor     │
+│  ToolManagerPermissionAdapter (安全权限检查)      │
+└──────────────────────┬───────────────────────────┘
+                       │
+    ┌──────────────────┼──────────────────┐
+    ▼                  ▼                  ▼
+┌─────────┐    ┌──────────────┐    ┌────────────┐
+│ 内置工具 │    │  MCP 远程工具 │    │ AI 自创工具 │
+│ToolReg. │    │  stdio/SSE   │    │ create_tool │
+│ 50+ 个  │    │  7+ 个服务器  │    │ 运行时创建  │
+└─────────┘    └──────────────┘    └────────────┘
 ```
+
+### 10.2 MCP 集成架构
+
+```
+infra/mcp/
+├── transport.py             # MCPStdioTransport / MCPSseTransport
+│                            # 使用 mcp SDK 的 stdio_client / SSE 客户端
+├── server_manager.py        # MCPServerManager — 服务器生命周期
+│                            # add_server() 运行时添加、connect_all 自动连接
+├── combined_provider.py     # CombinedToolProvider — 合并本地+远程工具列表
+│                            # CombinedToolExecutor — 统一执行路由
+├── perception_client.py     # MCPPerceptionClient — 通过 resources/subscribe
+│                            # 获取外部感知数据
+└── factory.py               # MCP 连接工厂：stdio / sse / 自动检测
+```
+
+**关键技术细节**：
+- MCP 传输使用 `__aenter__`/`__aexit__` 手动管理生命周期（避免 `async with` 关闭连接）
+- 工具名冲突时优先保留内置 ToolRegistry 工具，跳过同名 MCP 工具
+- `ToolManagerPermissionAdapter` 包装 MCP 执行器，确保通过 `_check_tool_permission()` 进行安全审批
+
+### 10.3 AI 自创工具
+
+```
+infra/tool_manager/tools/create_tool.py
+├── create_tool(name, code, description, params)   # 创建新工具
+├── list_my_tools()                                 # 列出所有自创工具
+├── delete_tool(name)                               # 删除自创工具
+└── edit_tool(name, code, description, params)      # 编辑已有工具
+```
+
+- 自创工具以 `.py` 文件持久化到 `data/user_tools/`
+- 运行时通过 `ToolRegistry.register` 动态注册
+- 创建/编辑时自动语法检查（`compile()` + `ast.parse()`）
+- 支持断网离线创建和执行
+
+### 10.4 学习模式（Learn Mode）
+
+学习模式是**瞬态状态**，非固定执行模式。流程：
+
+```
+模型调用 request_mode_change("learn")
+  ↓
+model_runner 注入学习提示词
+  ↓
+run_learn_pipeline() 自动执行
+  ├─ 1. 打开应用（open_app）
+  ├─ 2. 截图（capture_screen）
+  ├─ 3. OmniParser 元素检测（本地或远程）
+  ├─ 4. ActionPlanner AI 规划动作序列
+  ├─ 5. 执行录制（语义动作：click_element/type_into 等）
+  └─ 6. 生成插件包（PluginBuilder）+ Skill YAML 更新
+  ↓
+自动恢复原始执行模式（plan/edit/yolo/control）
+```
+
+- 并发保护：`asyncio.Lock` 限制同时只能执行一个学习管线
+- 超时保护：整体 120 秒超时
+- 精度降级检测：识别 OCR-only 低精度模式，提前报错
+- 语义动作：`click_element("保存按钮")` 在运行时重新通过 OmniParser 检测坐标，不依赖固定像素位置
 
 ---
 

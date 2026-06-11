@@ -12,12 +12,15 @@
   POST /differences/scan         — 手动触发扫描
   GET  /differences/heartbeat    — 心跳状态
 """
-from fastapi import APIRouter, Query, Path
+from fastapi import Depends,  APIRouter, Query, Path
+from api.auth import require_api_key
 
 from api.errors import AppError, ErrorCode
 from modules.difference_detector import get_detector, get_heartbeat
 
-router = APIRouter(prefix="/differences", tags=["差异检测"])
+router = APIRouter(prefix="/differences", tags=["差异检测"],
+    dependencies=[Depends(require_api_key)],
+)
 
 
 @router.get("/status")

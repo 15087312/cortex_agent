@@ -251,13 +251,6 @@ class MultiModelOrchestrator:
             logger.warning(f"[安全拦截] {security_error}")
             return self._build_security_error(security_error, start_time)
 
-        # ---- 1.5 记录用户说话时间 ----
-        if turn_context:
-            now = time.time()
-            turn_context.last_user_message_time = now
-            if blackboard:
-                blackboard.runtime_state["last_user_message_time"] = now
-
         # ---- 2. 记忆上下文 ----
         memory_context_text, mm = await self._load_memory_context_via_api(
             user_input, context, session_id
@@ -455,6 +448,12 @@ class MultiModelOrchestrator:
                 logger.debug(f"[SessionLifecycle] 初始化失败 (非致命): {e}")
                 blackboard = None
                 turn_context = None
+
+            # 记录用户说话时间
+            if turn_context:
+                turn_context.last_user_message_time = time.time()
+                if blackboard:
+                    blackboard.runtime_state["last_user_message_time"] = time.time()
 
             # 注册 SecurityMonitor model_id 到 Blackboard（用于触发安全审查）
             if blackboard:

@@ -1185,23 +1185,23 @@ class REPL(Screen):
             self.notify("陪伴模式下执行模式固定为 plan，无法切换", severity="warning", timeout=3)
             return
 
-        _MODE_CYCLE = ["plan", "edit", "yolo", "control", "learn"]
+        _MODE_CYCLE = ["plan", "edit", "yolo", "control"]
         if mode not in _MODE_CYCLE:
             self.notify(f"未知模式: {mode}，可选: plan/edit/yolo/control", severity="warning", timeout=3)
             return
 
         self.state.execution_mode = mode
         self.api.update_config("EXECUTION_MODE", mode)
-        _LABELS = {"plan": "📋 Plan (只读)", "edit": "✏️ Edit (确认)", "yolo": "🚀 YOLO (宽松)", "control": "🎛️ Control (审批)", "learn": "🎓 Learn (学习)"}
+        _LABELS = {"plan": "📋 Plan (只读)", "edit": "✏️ Edit (确认)", "yolo": "🚀 YOLO (宽松)", "control": "🎛️ Control (审批)"}
         self.notify(f"✓ 执行模式: {_LABELS[mode]}", severity="information", timeout=2)
 
     def action_cycle_execution_mode(self):
-        """Shift+Tab 循环切换执行模式: plan → edit → yolo → control → learn → plan"""
+        """Shift+Tab 循环切换执行模式: plan → edit → yolo → control → plan"""
         if self.state.companion_mode:
             self.notify("陪伴模式下执行模式固定为 plan", severity="warning", timeout=2)
             return
 
-        _MODE_CYCLE = ["plan", "edit", "yolo", "control", "learn"]
+        _MODE_CYCLE = ["plan", "edit", "yolo", "control"]
         current = self.state.execution_mode
         idx = _MODE_CYCLE.index(current) if current in _MODE_CYCLE else 1
         next_mode = _MODE_CYCLE[(idx + 1) % len(_MODE_CYCLE)]

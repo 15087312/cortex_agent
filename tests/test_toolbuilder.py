@@ -515,9 +515,9 @@ class TestToolbuilderTools:
     """Toolbuilder 工具注册测试"""
 
     def test_tools_registered(self):
-        """5 个工具都已注册"""
+        """4 个工具都已注册"""
         from infra.tool_manager.tool_registry import ToolRegistry
-        for name in ["learn_tool", "delete_learned_tool", "list_learned_tools",
+        for name in ["delete_learned_tool", "list_learned_tools",
                       "create_app_skill", "execute_tool_recipe"]:
             assert ToolRegistry.get_func(name) is not None, f"{name} not registered"
 
@@ -603,11 +603,6 @@ class TestToolbuilderTools:
 class TestSecurityGateClassification:
     """安全门风险分类测试"""
 
-    def test_learn_tool_high_risk(self):
-        from infra.tool_manager.tool_registry import ToolRegistry
-        high_risk = ToolRegistry.get_tools_by_risk("HIGH") | ToolRegistry.get_tools_by_risk("CRITICAL")
-        assert "learn_tool" in high_risk
-
     def test_delete_learned_tool_medium(self):
         from infra.tool_manager.tool_registry import ToolRegistry
         medium_risk = ToolRegistry.get_tools_by_risk("MEDIUM")
@@ -617,7 +612,7 @@ class TestSecurityGateClassification:
     def test_mutation_tools(self):
         from infra.tool_manager.tool_registry import ToolRegistry
         mutation = ToolRegistry.get_mutation_tools()
-        for name in ["learn_tool", "delete_learned_tool", "execute_tool_recipe", "create_app_skill"]:
+        for name in ["delete_learned_tool", "execute_tool_recipe", "create_app_skill"]:
             assert name in mutation, f"{name} not in mutation tools"
 
 

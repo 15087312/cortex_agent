@@ -91,51 +91,23 @@ class ToolManager:
         self.logger = setup_logger("tool_manager")
         self._tool_events = deque(maxlen=2000)
         self._event_lock = threading.Lock()
-        self._tool_backend = self._load_tool_backend()
         self._mcp_service = None
 
         self._load_builtin_tools()
-
-    def _load_tool_backend(self) -> str:
-        """Load configured tool backend: legacy / mcp / hybrid.
-
-        # TECH DEBT: legacy/hybrid 模式路径保留以备回退，但当前默认 mcp 模式
-        # 底层仍通过 LegacyToolProviderAdapter 包装 ToolRegistry（非真正 MCP）。
-        # 接入真实 MCP server 后可移除 legacy 模式和 hybrid 分支。
-        """
-        try:
-            from config.settings import settings
-            backend = (settings.TOOL_BACKEND or "legacy").lower()
-        except Exception:
-            backend = "legacy"
-        if backend not in {"legacy", "mcp", "hybrid"}:
-            self.logger.warning(f"未知 TOOL_BACKEND={backend}，回退 legacy")
-            return "legacy"
-        return backend
 
     def _get_mcp_service(self):
         """Lazy MCP-shaped tool service."""
         if self._mcp_service is None:
             from infra.mcp.factory import get_mcp_tool_service
-            self._mcp_service = get_mcp_tool_service(tool_manager=self)
+            self._mcp_service = get_mcp_tool_service()
         return self._mcp_service
 
+    # 所有工具执行和查询均通过 MCPToolService 路由
     def _use_mcp_for_lookup(self) -> bool:
-        return self._tool_backend in {"mcp", "hybrid"}
+        return True
 
     def _use_mcp_for_execution(self, tool_name: str) -> bool:
-        if self._tool_backend == "legacy":
-            return False
-        if self._tool_backend == "mcp":
-            return True
-        try:
-            service = self._get_mcp_service()
-            tool = service.get_tool(tool_name)
-            if tool and tool.source == "mcp":
-                return True
-        except Exception as e:
-            self.logger.debug(f"MCP 工具查询失败，回退 legacy: {e}")
-        return False
+        return True
 
     def _load_builtin_tools(self):
         """加载内置工具 — tools/__init__.py 自动扫描所有模块"""
@@ -724,7 +696,7 @@ class ToolManager:
             "dynamic_count": len(by_source.get("dynamic", [])),
             "mcp_count": len(mcp_tool_names),
             "all_tools": list(all_tools.keys()) + mcp_tool_names,
-            "tool_backend": self._tool_backend,
+            "tool_backend": "mcp",  # 固定 mcp，连接本地 + 远程工具
             "event_stats": {
                 "total": event_stats.get("total", 0),
                 "success": event_stats.get("success", 0),

@@ -27,6 +27,7 @@ class PerceptionSystem:
         self.think_trigger = None
         self.file_perception = None
         self.dialog_perception = None
+        self.mcp_detector = None
         self._file_monitor_thread = None
         self._file_monitor_running = False
         self._started = False
@@ -64,6 +65,7 @@ class PerceptionSystem:
             "voice_language": getattr(settings, "PERCEPTION_VOICE_LANGUAGE", "zh"),
             "voice_energy": getattr(settings, "PERCEPTION_VOICE_ENERGY_THRESHOLD", 300),
             "voice_timeout": getattr(settings, "PERCEPTION_VOICE_TIMEOUT", 10.0),
+            "mcp_enabled": getattr(settings, "PERCEPTION_MCP_ENABLED", False),
             "fps": 5,
         }
         cfg.update(overrides)
@@ -88,6 +90,12 @@ class PerceptionSystem:
             self._setup_dialog_monitoring()
         else:
             logger.info("对话感知已禁用")
+
+        # 4.5 MCP 资源感知
+        if cfg["mcp_enabled"]:
+            self._setup_mcp_detector(cfg)
+        else:
+            logger.info("MCP 资源感知已禁用")
 
         # 5. 语音检测器（根据配置）
         if cfg["voice_enabled"]:
@@ -145,13 +153,21 @@ class PerceptionSystem:
         detectors["window"] = det
         logger.info(f"窗口检测器: available={det.is_available()}")
 
-        # OCR 检测器（如果有依赖）
+        # OCR 检测器（如果有依赖或 MCP OCR 配置）
         try:
+            mcp_ocr = False
+            try:
+                from config.settings import settings
+                mcp_servers = settings.MCP_SERVERS or ""
+                mcp_ocr = '"ocr"' in mcp_servers  # 配置了 MCP OCR server
+            except Exception:
+                pass
+
             from modules.perception.detectors.ocr_detector import OCRDetector
-            det = OCRDetector()
+            det = OCRDetector(use_mcp=mcp_ocr)
             if det.is_available():
                 detectors["ocr"] = det
-                logger.info("OCR 检测器: 已启用")
+                logger.info(f"OCR 检测器: 已启用 (mode={'mcp' if mcp_ocr else 'local'})")
         except Exception:
             pass
 
@@ -273,11 +289,60 @@ class PerceptionSystem:
             "pipeline": self.pipeline.get_stats() if self.pipeline else None,
             "voice_available": self.voice_detector is not None,
             "voice_detector_type": self.voice_detector.detector_type if self.voice_detector else None,
+            "mcp_available": self.mcp_detector is not None,
             "think_trigger": self.think_trigger.get_stats() if self.think_trigger else None,
             "world_state": self.world_state.get_state().to_dict() if self.world_state else None,
             "event_bus": self.event_bus.get_stats() if self.event_bus else None,
         }
         return status
+
+    def _setup_mcp_detector(self, cfg: dict):
+        """初始化 MCP 资源感知"""
+        try:
+            import asyncio
+            from modules.perception.detectors.mcp_detector import MCPResourceDetector
+            from infra.mcp.perception_client import MCPPerceptionClientManager, MCPPerceptionClient
+            from config.settings import settings
+            from infra.mcp.server_registry import parse_mcp_servers
+
+            manager = MCPPerceptionClientManager()
+
+            servers = parse_mcp_servers(settings.MCP_SERVERS)
+            for srv in servers:
+                if not srv.enabled:
+                    continue
+                if srv.command:
+                    client = MCPPerceptionClient(
+                        server_name=srv.name, command=srv.command,
+                        args=srv.args, env=srv.env, timeout=srv.timeout_seconds,
+                    )
+                elif srv.env.get("url"):
+                    client = MCPPerceptionClient(
+                        server_name=srv.name, url=srv.env["url"],
+                        timeout=srv.timeout_seconds,
+                    )
+                else:
+                    continue
+                manager.add_client(client)
+
+            if not manager.get_status():
+                logger.info("MCP 资源感知: 无可用 server 配置，跳过")
+                return
+
+            detector = MCPResourceDetector(manager)
+            if self.event_bus:
+                detector.set_event_callback(lambda ev: self.event_bus.publish(ev))
+            self.mcp_detector = detector
+
+            try:
+                asyncio.create_task(detector.start())
+            except RuntimeError:
+                logger.info("MCP 资源感知: 无事件循环，延迟启动")
+
+            logger.info(f"MCP 资源感知已初始化: {len(servers)} server(s)")
+        except Exception as e:
+            logger.warning(f"MCP 资源感知初始化失败 (非致命): {e}")
+            self.mcp_detector = None
 
 
 _system: Optional[PerceptionSystem] = None

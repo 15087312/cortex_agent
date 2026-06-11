@@ -788,14 +788,6 @@ class ContinuousThinker:
                 f"[委托响应处理] 更新委托状态异常 ({delegation_id}): {e}"
             )
 
-    def _update_delegation_status_from_sd(self, round_num: int = 0) -> None:
-        """【已废弃】在新架构中由 CognitiveBlackboard.update_delegation_status 替代
-
-        保留方法以保证兼容性，但直接返回（不做任何事）。
-        所有委托状态更新工作现由 CognitiveBlackboard 负责。
-        """
-        return
-
     def _normalize_think_result(self, result: Any) -> Dict[str, Any]:
         """确保单轮思考结果始终是 dict，避免下游 `.get` 崩溃。"""
         if isinstance(result, dict):

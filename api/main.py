@@ -27,9 +27,6 @@ from modules.management.api import router as management_router
 from modules.output_system.api import router as output_router
 from modules.security_system.api import router as security_router
 from config.settings import settings
-from modules.plugin_system.api import router as plugin_router
-from modules.plugin_system.api import init_engine as init_plugin_engine
-from modules.plugin_system.api import close_engine as close_plugin_engine
 
 # 条件导入差异检测器路由
 if settings.DIFFERENCE_DETECTOR_ENABLED:
@@ -118,15 +115,7 @@ async def lifespan(app: FastAPI):
             except Exception as e:
                 logger.error(f"✗ 主动搭话回调注册失败: {e}")
 
-        # 初始化插件引擎
-    if settings.PLUGIN_ENGINE_ENABLED:
-        try:
-            init_plugin_engine()
-            logger.info("✓ 插件引擎已初始化")
-        except Exception as e:
-            logger.error(f"✗ 插件引擎初始化失败: {e}")
-
-    # 初始化性能监控探针
+        # 初始化性能监控探针
     try:
         from modules.management.interface import get_perf_monitor, get_timeseries_db, get_alert_engine
         perf_monitor = get_perf_monitor()
@@ -346,7 +335,6 @@ def register_module_routers(app: FastAPI) -> None:
     app.include_router(management_router)
     app.include_router(output_router)
     app.include_router(security_router)
-    app.include_router(plugin_router)
     if settings.DIFFERENCE_DETECTOR_ENABLED:
         app.include_router(difference_router)
 

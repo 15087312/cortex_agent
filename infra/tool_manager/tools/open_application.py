@@ -13,6 +13,7 @@
 接口统一，内部自动平台适配，无需关心系统差异
 """
 import subprocess
+import shlex
 import platform
 import os
 import time
@@ -137,9 +138,10 @@ def _open_windows(app_identifier: str) -> Dict[str, str]:
                 except FileNotFoundError:
                     return {"status": "error", "message": f"应用不存在: {app_identifier}"}
         else:
-            # 应用名（不含扩展名）— 尝试用 start 命令
+            # 应用名（不含扩展名）— 用 start 命令，输入清洗防注入
+            safe_name = shlex.quote(app_identifier)
             try:
-                subprocess.Popen(f"start {app_identifier}", shell=True)
+                subprocess.Popen(["cmd", "/c", "start", "", safe_name])
                 return {"status": "success", "message": f"已启动: {app_identifier}"}
             except Exception as e:
                 return {"status": "error", "message": f"启动应用失败: {str(e)}"}

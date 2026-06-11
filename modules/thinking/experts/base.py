@@ -61,6 +61,7 @@ class RuntimeExpert(ABC):
         # 专属记忆目录
         self._expert_memory_dir = self._init_expert_memory()
         self._memory_entries: List[Dict[str, Any]] = []
+        self._max_memory_entries = 200  # 防止无限增长
 
         # 创建 expert 专属的 MemoryManager（整个生命周期复用，避免每次 search/save 重复创建）
         self._mm = self._create_memory_manager()
@@ -142,6 +143,9 @@ class RuntimeExpert(ABC):
             "timestamp": time.time(),
         }
         self._memory_entries.append(entry)
+        # 限制大小防止内存泄漏
+        if len(self._memory_entries) > self._max_memory_entries:
+            self._memory_entries = self._memory_entries[-self._max_memory_entries:]
 
     def query_memory(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
         """查询专属记忆（简单关键词匹配，子类可覆盖使用 FAISS）"""

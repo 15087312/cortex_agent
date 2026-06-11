@@ -75,8 +75,8 @@ models/
 *.bin
 *.onnx
 
-# OmniParser（用户自行下载权重）
-OmniParser/weights/
+# OmniParser（外部仓库，单独克隆）
+OmniParser/
 
 # Database
 *.db
@@ -122,3 +122,7 @@ dmypy.json
 
 # TODO tracking
 /todo/
+
+# 测试用临时文件（含 API Key）
+test_gpt55*
+test_gpt55_standard*

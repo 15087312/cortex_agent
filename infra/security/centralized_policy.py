@@ -146,11 +146,46 @@ class SecurityPolicy:
     # ── 文件安全检查 ──
 
     def is_path_allowed(self, path: str) -> bool:
-        """路径检查 — 真机模式：允许所有路径"""
-        return True
+        """路径检查 — 只允许项目目录、data/、/tmp 等白名单路径"""
+        try:
+            p = Path(path).expanduser().resolve()
+        except Exception:
+            return False
+
+        p_str = str(p)
+
+        # 系统临时目录始终允许
+        for d in self._allowed_dirs:
+            if p_str.startswith(str(d)):
+                return True
+
+        # 项目目录始终允许（含 data/、logs/ 等子目录）
+        project_root = self._get_project_root()
+        if p_str.startswith(str(project_root)):
+            return True
+
+        # 拒绝未知路径
+        return False
 
     def is_sensitive_file(self, path: str) -> bool:
-        """敏感文件检查 — 真机模式：不拦截"""
+        """敏感文件检查 — 匹配文件名模式和后缀"""
+        try:
+            p = Path(path).expanduser().resolve()
+        except Exception:
+            return True  # 无法解析的路径视为敏感
+
+        name_lower = p.name.lower()
+        suffix_lower = p.suffix.lower()
+
+        # 检查后缀
+        if suffix_lower in self.config.sensitive_file_extensions:
+            return True
+
+        # 检查文件名模式
+        for pattern in self.config.sensitive_file_patterns:
+            if pattern.lower() in name_lower:
+                return True
+
         return False
 
     def is_forbidden_write_path(self, path: str) -> bool:

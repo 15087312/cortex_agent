@@ -289,3 +289,63 @@ def _simple_summarize(ocr_text: str, window_info: str) -> str:
     else:
         summary += "屏幕无明显文字内容\n"
     return summary
+
+
+@ToolRegistry.register(
+    "detect_ui_elements",
+    description=(
+        "检测当前屏幕上的所有 UI 元素（按钮、输入框、文字、图标等），返回每个元素的类型、"
+        "文字标签和精确像素坐标。之后可使用 mouse_click(x=center_x, y=center_y) 点击相应元素。"
+    ),
+    params={
+        "focus": "可选，关注重点描述，如「关注错误信息」「关注搜索栏」",
+    },
+    risk_level="LOW",
+    category="perception",
+    core=True,
+)
+async def detect_ui_elements(focus: str = "") -> Dict[str, Any]:
+    """检测当前屏幕 UI 元素并返回坐标"""
+    try:
+        # 1. 截图
+        from utils.screen_capture import capture_screen_base64
+        screenshot_b64 = capture_screen_base64()
+        if not screenshot_b64:
+            return {"success": False, "error": "截图失败"}
+
+        import base64
+        image_bytes = base64.b64decode(screenshot_b64)
+
+        # 2. OmniParser 检测
+        from modules.perception.detectors.omniparser_detector import OmniParserDetector
+        detector = OmniParserDetector()
+        elements = detector.detect_elements(image_bytes)
+
+        if not elements:
+            return {"success": True, "elements": [], "message": "未检测到 UI 元素"}
+
+        # 3. 返回结构化元素列表
+        result = []
+        for elem in elements:
+            result.append({
+                "element_id": elem.element_id,
+                "type": elem.type,
+                "label": elem.label,
+                "bbox": elem.bbox,
+                "center_x": elem.center_x,
+                "center_y": elem.center_y,
+                "confidence": round(elem.confidence, 2),
+            })
+
+        return {
+            "success": True,
+            "elements": result,
+            "count": len(result),
+            "backend": detector.backend if hasattr(detector, 'backend') else detector._backend,
+            "precision": detector.precision,
+            "hint": "使用 mouse_click(x=center_x, y=center_y) 点击对应元素",
+        }
+    except Exception as e:
+        logger.error(f"UI 元素检测失败: {e}")
+        return {"success": False, "error": str(e)}
+

@@ -372,7 +372,7 @@ DEFAULT_TOOL_WHITELISTS: Dict[str, List[str]] = {
         "web_search", "web_fetch",
         "memory_match", "search_memory_by_category", "save_memory_to_category",
         "exec_command", "run_python",
-        "transcribe_audio", "understand_screen",
+        "transcribe_audio", "understand_screen", "detect_ui_elements",
         "calc",
         "todo",
         # 工具搜索 — 按需查找其他可用工具
@@ -381,6 +381,10 @@ DEFAULT_TOOL_WHITELISTS: Dict[str, List[str]] = {
         "tag:toolbuilder",
         # 工具详情查询 — 查询非核心工具的参数定义
         "query_tool_details",
+        # MCP 远程工具发现与调用
+        "mcp_discover", "mcp_call_tool", "mcp_server_status", "mcp_register_server",
+        # AI 自创工具管理
+        "create_tool", "list_my_tools", "delete_tool", "edit_tool",
     ],
     # 陪伴模式：只读工具，不做任何写入/执行/委托
     # 类人性优先于可用性，AI 可以拒绝干活、撒气、吐槽

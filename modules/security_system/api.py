@@ -2,7 +2,8 @@
 安全系统统一API - 全局唯一入口 + HTTP路由
 """
 from typing import Tuple, Dict, Optional
-from fastapi import APIRouter, Body
+from fastapi import Depends,  APIRouter, Body
+from api.auth import require_api_key
 from api.errors import AppError, ErrorCode
 from .security_level import SecurityLevel
 from .switch_manager import SecuritySwitchManager
@@ -15,7 +16,9 @@ from utils.logger import setup_logger
 
 logger = setup_logger("security_api")
 
-router = APIRouter(prefix="/security", tags=["安全系统"])
+router = APIRouter(prefix="/security", tags=["安全系统"],
+    dependencies=[Depends(require_api_key)],
+)
 
 
 class SecurityAPI:

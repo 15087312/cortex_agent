@@ -11,7 +11,6 @@ _MODE_LABELS = {
     "edit": ("✏️ ", "Edit", "bold yellow"),
     "yolo": ("🚀", "YOLO", "bold red"),
     "control": ("🔐", "Control", "bold cyan"),
-    "learn": ("🎓", "Learn", "bold green"),
 }
 
 

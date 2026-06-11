@@ -90,15 +90,8 @@ class Settings(BaseSettings):
     VECTOR_DB_PORT: int = 6333
     VECTOR_DB_DIMENSION: int = 768
 
-    # 插件系统配置
-    PLUGINS_DIR: str = "data/plugins"
-    PLUGIN_ENGINE_ENABLED: bool = True
-    PLUGIN_REQUIRE_SIGNATURES: bool = True
-    PLUGIN_REQUIRE_ENFORCED_SANDBOX: bool = True
-    PLUGIN_SANDBOX_BACKEND: str = "auto"
-
-    # 工具/MCP 配置
-    TOOL_BACKEND: str = "mcp"  # legacy / mcp / hybrid
+    # 工具后端 — 当前固定 mcp（本地 ToolRegistry + 远程 MCP server）
+    TOOL_BACKEND: str = "mcp"
     MCP_SERVERS: str = ""  # JSON object: {"server": {"command": "...", "args": []}}
 
     # 系统配置
@@ -121,7 +114,6 @@ class Settings(BaseSettings):
     # "edit":    确认 — 写操作前需用户确认（LLM + 用户）
     # "yolo":    宽松 — 仅安全专家检测，跳过用户确认
     # "control": 用户完全控制 — MEDIUM+工具需用户单独确认，无LLM参与
-    # "learn":   学习模式 — AI 自动学习 UI 操作并生成插件，过程在 TUI 可视化
     EXECUTION_MODE: str = "edit"
 
     # 上下文窗口配置
@@ -219,7 +211,7 @@ class Settings(BaseSettings):
     @field_validator("EXECUTION_MODE")
     @classmethod
     def validate_execution_mode(cls, v: str) -> str:
-        allowed = {"plan", "edit", "yolo", "control", "learn"}
+        allowed = {"plan", "edit", "yolo", "control"}
         if v.lower() not in allowed:
             raise ValueError(f"EXECUTION_MODE must be one of {allowed}, got '{v}'")
         return v.lower()
@@ -249,6 +241,7 @@ class Settings(BaseSettings):
     PERCEPTION_SCREEN_ENABLED: bool = True             # 屏幕感知（帧差+OCR+UI+窗口）
     PERCEPTION_FILE_ENABLED: bool = True               # 文件变化感知（watchdog）
     PERCEPTION_DIALOG_ENABLED: bool = True             # 对话变化感知
+    PERCEPTION_MCP_ENABLED: bool = True                # MCP 资源感知（通过 MCP 协议获取外部数据）
     PERCEPTION_VOICE_ENABLED: bool = False             # 语音感知（麦克风+Whisper STT）
     PERCEPTION_VOICE_DEVICE: Optional[int] = None      # 麦克风设备索引（None=系统默认）
     PERCEPTION_VOICE_MODEL: str = "tiny"               # Whisper 模型大小 (tiny/base/small/medium/large)

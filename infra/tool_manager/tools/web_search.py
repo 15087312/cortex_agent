@@ -638,6 +638,20 @@ def _fetch_page_content(url: str) -> Optional[str]:
     if not url.startswith(("http://", "https://")):
         return None
 
+    # SSRF 防护：拒绝内网地址
+    try:
+        from urllib.parse import urlparse
+        import socket, ipaddress
+        host = urlparse(url).hostname
+        if host:
+            addr = socket.getaddrinfo(host, 80, socket.AF_INET)[0][4][0]
+            ip = ipaddress.ip_address(addr)
+            if ip.is_private or ip.is_loopback or ip.is_link_local or str(ip) == "169.254.169.254":
+                logger.warning(f"[SSRF] 拒绝内网地址: {url} → {addr}")
+                return f"(SSRF 防护: 拒绝访问内网地址 {url})"
+    except Exception as e:
+        logger.debug(f"[SSRF] 地址检查失败 (非致命): {e}")
+
     # 1. crawl4ai（能处理 JS 重定向）
     text = None
     try:

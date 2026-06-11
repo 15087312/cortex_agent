@@ -8,7 +8,8 @@
 
 注意：记忆检索由 modules.memory.retriever 负责，完整上下文构建由 modules.context.manager 负责。
 """
-from fastapi import APIRouter, Form, Body, Query
+from fastapi import Depends,  APIRouter, Form, Body, Query
+from api.auth import require_api_key
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 
@@ -22,7 +23,9 @@ from modules.thinking.context import ContextManager
 from modules.attention.utils.task_sorter import TaskSorter
 from utils.logger import setup_logger
 
-router = APIRouter(prefix="/attention", tags=["注意力"])
+router = APIRouter(prefix="/attention", tags=["注意力"],
+    dependencies=[Depends(require_api_key)],
+)
 logger = setup_logger("attention_api")
 
 # 全局组件实例（延迟初始化）

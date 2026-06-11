@@ -111,7 +111,7 @@ cortex --api-key your-secret-key
 |------|------|------|
 | L1 入口 | `cortex/` | CLI 入口，子进程编排，版本管理 |
 | L2 API | `api/` | FastAPI 应用、WebSocket/SSE 流式、中间件（CORS/认证/限流/请求ID） |
-| L3 业务 | `modules/` | 16 个业务模块（思考、记忆、安全、感知、插件等） |
+| L3 业务 | `modules/` | 15 个业务模块（思考、记忆、安全、感知、工具管理等） |
 | L4 基础设施 | `infra/` | 模型客户端、工具注册/管理、Prompt 引擎、NLP、数据库、MCP |
 
 依赖规则：L3→L4 允许；L4→L3 禁止。跨模块通信仅通过 MessageBus、CognitiveBlackboard 或 Protocol 接口。
@@ -224,16 +224,33 @@ cortex --api-key your-secret-key
 
 ---
 
-## 插件系统
+## MCP 工具系统
 
-企业级插件架构，详见 [docs/PLUGIN_SYSTEM.md](docs/PLUGIN_SYSTEM.md)：
+插件系统已整体移除，其生态位由 **MCP（Model Context Protocol）** 和 **AI 自创工具（create_tool）** 替代。
 
-- **沙箱隔离**：sub_process + bubblewrap，超时控制，并发限制
-- **签名验证**：Ed25519 签名（生产），HMAC（开发）
-- **治理管控**：预算控制、确认令牌、幂等去重、限流、循环检测
-- **审计哈希链**：JSONL + SHA-256，Ed25519 检查点锚定
-- **Provider 多格式导出**：OpenAI / Anthropic / Generic
-- **Gateway 资源访问**：记忆、配置、网络、文件、输出、事件
+### 三层工具架构
+
+| 层级 | 来源 | 说明 |
+|------|------|------|
+| **ToolRegistry（内置）** | `infra/tool_manager/` | 50+ 内置工具：文件操作、搜索、感知、代码执行等 |
+| **MCP（远程）** | `infra/mcp/` | 通过 stdio/SSE 连接的 MCP 服务器（文件系统、数据库、浏览器等） |
+| **create_tool（AI 自创）** | `infra/tool_manager/tools/create_tool.py` | 模型在运行时动态创建/编辑/删除工具，持久化到磁盘 |
+
+### 统一路由
+
+所有工具（内置 + MCP + AI 自创）通过 `MCPToolService` 统一路由：
+- `CombinedToolProvider` 合并本地 ToolRegistry + 远程 MCP Server 的工具列表
+- 工具名冲突时优先保留内置工具，跳过同名 MCP 工具
+- `ToolManagerPermissionAdapter` 确保所有调用经过安全权限检查
+
+### 学习模式（Learn Mode）
+
+学习模式是一个**瞬态**状态，不固定存在于 EXECUTION_MODE 中：
+
+1. 模型调用 `request_mode_change("learn")` 进入学习模式
+2. `model_runner` 注入学习提示词并自动执行 `run_learn_pipeline`
+3. 管线步骤：打开应用 → 截图 → OmniParser 元素检测 → AI 规划动作序列 → 执行录制 → 生成插件
+4. 完成后自动恢复原始执行模式（plan/edit/yolo/control）
 
 ---
 
@@ -300,24 +317,29 @@ ai_backend/
 │   │   ├── integration/    # 感知/探针集成
 │   │   ├── intent/         # 委托编译器（角色名→身份映射）
 │   │   ├── probes/         # 探针系统（注册、缓存、权限、工具）
-│   │   ├── session/        # 会话管理器
 │   │   └── skills/         # 技能管理器（YAML 技能加载）
+│   ├── toolbuilder/        # 学习模式管线（动作规划、recipe 引擎、插件生成、Skill 生成）
 │   ├── memory/             # 7 层记忆系统（短期/长期/分类/人格/黑匣/笔记本/向量RAG）
 │   ├── security_system/    # 5 层安全（5 个 AST 验证器 + 审计）
 │   ├── perception/         # 感知系统（文件/对话/屏幕 + 规范违反检测）
 │   ├── attention/          # TF-IDF + 注意力评分
 │   ├── output_system/      # 输出管线（多通道分发、情感样式）
 │   ├── difference_detector/# 4 种差异源，SQLite 持久化
-│   ├── plugin_system/      # 插件系统（沙箱/签名/治理/审计）
 │   ├── management/         # GlobalMonitor、AlertEngine、HealthChecker
 │   ├── database/           # SQLAlchemy + SQLite WAL、DiskCache
 │   └── metrics/            # Prometheus 指标
 ├── infra/                  # 基础设施层
 │   ├── model/              # 模型客户端（Large/Medium/Small/Lite，三格式自动检测）
-│   ├── tool_manager/       # 工具注册/管理 + 21 个内置工具
+│   ├── tool_manager/       # 工具注册/管理 + 50+ 内置工具 + AI 自创工具
+│   │   └── tools/          # 工具实现（搜索、感知、文件、MCP、create_tool 等）
+│   ├── mcp/                # MCP 协议集成
+│   │   ├── transport.py    # stdio/SSE 传输层
+│   │   ├── server_manager.py  # MCP 服务器生命周期管理
+│   │   ├── combined_provider.py  # 本地+远程工具合并
+│   │   ├── perception_client.py  # MCP 感知客户端
+│   │   └── factory.py      # MCP 连接工厂
 │   ├── prompts/            # Prompt 引擎（模板 + 构建器 + 约束）
 │   ├── security/           # 集中安全策略
-│   ├── mcp/                # MCP 集成（六边形架构）
 │   ├── data_process/       # 语音识别 + 图像分析
 │   ├── nlp/                # NLP 服务（情感、NER、摘要）
 │   ├── hardware_input/     # 硬件输入（PyAutoGUI + Serial）
@@ -411,7 +433,6 @@ docker-compose down
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 详细架构设计文档 |
 | [docs/CODE_QUALITY.md](docs/CODE_QUALITY.md) | 代码质量分析报告 |
 | [docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md) | 已知问题清单 |
-| [docs/PLUGIN_SYSTEM.md](docs/PLUGIN_SYSTEM.md) | 插件系统完整文档 |
 | [docs/CONFIG_VALUE_EVOLUTION.md](docs/CONFIG_VALUE_EVOLUTION.md) | 价值观进化系统配置 |
 | [docs/expert_cli_mode.md](docs/expert_cli_mode.md) | 专家 CLI 模式使用指南 |
 | [TODO.md](TODO.md) | 设计问题与改进计划 |

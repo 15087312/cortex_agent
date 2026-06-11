@@ -208,8 +208,8 @@ class ToolSecurityGate:
                     content=tool_name, result=False,
                     metadata={"caller_model_id": caller_model_id, "reason": extreme_reason},
                 )
-            except Exception:
-                pass
+            except Exception as audit_err:
+                logger.error(f"[审计] 写入失败: {audit_err}")
             return False, extreme_reason
 
         # ── 安全最高指示：Blackboard 有安全拦截信号时，拒绝所有写操作 ──
@@ -227,8 +227,8 @@ class ToolSecurityGate:
                     )
                     _emit_security_event("安全拦截", tool_name, caller_model_id, False, reason)
                     return False, reason
-            except Exception:
-                pass
+            except Exception as audit_err:
+                logger.error(f'[审计] 写入失败: {audit_err}')
 
         # ── plan 模式：所有写操作直接拒绝 ──
         if exec_mode == "plan" and tool_name in _get_mutation_tools():
@@ -240,8 +240,8 @@ class ToolSecurityGate:
                     content=tool_name, result=False,
                     metadata={"caller_model_id": caller_model_id, "reason": reason, "execution_mode": "plan"},
                 )
-            except Exception:
-                pass
+            except Exception as audit_err:
+                logger.error(f'[审计] 写入失败: {audit_err}')
             return False, reason
 
         # ── plan 模式：delegate_task 检查 task 参数中的写操作关键词 ──

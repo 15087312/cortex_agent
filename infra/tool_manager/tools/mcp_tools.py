@@ -1,5 +1,7 @@
 """
-MCP 协议工具 — 发现、调用、注册 MCP 服务器工具
+MCP 协议工具 — 发现、调用已注册的 MCP server 工具
+
+依赖的 MCP server 通过 MCP_SERVERS 环境变量配置。
 """
 from typing import Dict, Any, Optional
 
@@ -9,70 +11,122 @@ from utils.logger import setup_logger
 logger = setup_logger("mcp_tools")
 
 
-@ToolRegistry.register("mcp_discover", description="发现可用的 MCP 服务器和其提供的工具。返回所有已注册的 MCP 工具列表。", params={}, risk_level="LOW", category="query")
+@ToolRegistry.register("mcp_discover", description="发现所有可用的 MCP 服务器和其提供的工具。返回已连接的外部 MCP 服务器列表及各服务器的工具。", params={}, risk_level="LOW", category="query")
 def mcp_discover() -> Dict[str, Any]:
-    """发现可用 MCP 服务器"""
+    """发现已连接的 MCP 服务器"""
     try:
-        from infra.mcp.factory import get_mcp_tool_service
-        service = get_mcp_tool_service()
-        if not service:
-            return {"success": True, "servers": [], "total_tools": 0}
-        tools = service.list_tools()
-        servers = {}
-        for name, spec in tools.items():
-            server_name = getattr(spec, 'source', 'builtin') or 'builtin'
-            servers.setdefault(server_name, []).append(name)
+        from infra.mcp.factory import get_server_manager
+        mgr = get_server_manager()
+        status = mgr.get_server_status()
+        tools = mgr.get_all_tools()
 
-        result = []
-        for server, tool_list in sorted(servers.items()):
-            result.append({"server": server, "tools": sorted(tool_list), "count": len(tool_list)})
-        return {"success": True, "servers": result, "total_tools": sum(s["count"] for s in result)}
+        servers = []
+        for s in status:
+            server_tools = [name for name, t in tools.items() if t.server_name == s["name"]]
+            servers.append({
+                "name": s["name"],
+                "connected": s["connected"],
+                "tools": sorted(server_tools),
+                "count": len(server_tools),
+            })
+
+        return {
+            "success": True,
+            "servers": servers,
+            "total_servers": len(servers),
+            "total_tools": len(tools),
+        }
     except Exception as e:
         logger.warning(f"MCP 发现失败: {e}")
-        return {"success": True, "servers": [], "total_tools": 0, "note": "MCP 服务未完全初始化"}
+        return {"success": True, "servers": [], "total_servers": 0, "total_tools": 0}
 
 
-@ToolRegistry.register("mcp_call_tool", description="调用 MCP 服务器提供的工具。需要指定服务器名和工具名。", params={
-    "server": "MCP 服务器名称",
+@ToolRegistry.register("mcp_call_tool", description="调用 MCP 服务器提供的远程工具。需要先通过 mcp_discover 查看可用的 MCP 服务器和工具列表。", params={
     "tool": "要调用的工具名",
     "params": "可选，工具参数（JSON 格式字符串）",
 }, risk_level="MEDIUM", category="admin")
-def mcp_call_tool(server: str, tool: str, params: Optional[str] = None) -> Dict[str, Any]:
-    """调用 MCP 工具"""
-    if not tool: return {"error": "工具名不能为空"}
+def mcp_call_tool(tool: str, params: Optional[str] = None) -> Dict[str, Any]:
+    """调用 MCP 远程工具"""
+    if not tool:
+        return {"success": False, "error": "工具名不能为空"}
     try:
-        from infra.mcp.factory import get_mcp_tool_service
-        from infra.mcp.types import ToolCallRequest
+        from infra.mcp.factory import get_server_manager
         import json
 
-        service = get_mcp_tool_service()
-        if not service:
-            return {"error": "MCP 服务未初始化"}
-
+        mgr = get_server_manager()
         args = {}
         if params:
-            try: args = json.loads(params)
-            except json.JSONDecodeError: return {"error": "params 不是有效的 JSON"}
+            try:
+                args = json.loads(params)
+            except json.JSONDecodeError:
+                return {"success": False, "error": "params 不是有效的 JSON"}
 
-        request = ToolCallRequest(tool_name=tool, params=args, caller_role="expert", caller_model_id="", source="mcp_tool")
-        result = service.execute(request)
-        return {"success": result.success, "result": str(result.result) if result.result is not None else "(空)", "error": result.error if not result.success else ""}
+        result = mgr.call_tool(tool, args)
+
+        # 格式化返回内容
+        content_text = ""
+        for item in result.get("content", []):
+            if item.get("type") == "text":
+                content_text += item.get("text", "")
+
+        is_error = result.get("isError", False)
+        return {
+            "success": not is_error,
+            "result": content_text,
+            "error": content_text if is_error else "",
+        }
     except Exception as e:
-        return {"error": f"MCP 调用失败: {e}"}
+        return {"success": False, "error": f"MCP 调用失败: {e}"}
 
 
-@ToolRegistry.register("mcp_register", description="注册一个工具为 MCP 服务。将当前系统的工具对外暴露为 MCP 端点。", params={
-    "tool_name": "要注册的工具名",
-    "server_name": "MCP 服务器名称",
-}, risk_level="MEDIUM", category="admin")
-def mcp_register(tool_name: str, server_name: str = "ai_backend") -> Dict[str, Any]:
-    """注册工具为 MCP 服务"""
-    if not tool_name: return {"error": "工具名不能为空"}
+@ToolRegistry.register("mcp_server_status", description="查看所有已配置的 MCP 服务器连接状态。", params={}, risk_level="LOW", category="query")
+def mcp_server_status() -> Dict[str, Any]:
+    """查看 MCP 服务器连接状态"""
     try:
-        from infra.tool_manager.tool_registry import ToolRegistry as TR
-        tool = TR.get_tool(tool_name)
-        if not tool:
-            return {"error": f"工具 '{tool_name}' 不存在"}
-        return {"success": True, "tool": tool_name, "server": server_name, "status": "已注册（MCP 服务通过 get_tools_for_api 暴露）"}
+        from infra.mcp.factory import get_server_manager
+        mgr = get_server_manager()
+        status = mgr.get_server_status()
+        return {
+            "success": True,
+            "servers": status,
+            "total": len(status),
+        }
     except Exception as e:
-        return {"error": str(e)}
+        return {"success": False, "error": str(e)}
+
+
+@ToolRegistry.register("mcp_register_server", description="动态安装并启动一个新的 MCP 服务器。输入命令后自动安装（如 npx 下载 npm 包）并连接，连接后工具立即可用。需要指定服务器名和启动命令。", params={
+    "name": "服务器名称，如 filesystem、sqlite",
+    "command": "启动命令，如 npx -y @modelcontextprotocol/server-filesystem ./",
+}, risk_level="MEDIUM", category="admin")
+async def mcp_register_server(name: str, command: str) -> Dict[str, Any]:
+    """动态注册一个新的 MCP server"""
+    import shlex
+    parts = shlex.split(command)
+    if not parts:
+        return {"success": False, "error": "command 不能为空"}
+
+    try:
+        from infra.mcp.factory import get_server_manager
+        mgr = get_server_manager()
+
+        cmd = parts[0]
+        args = parts[1:]
+
+        # 通过 add_server 异步连接
+        import asyncio
+        ok = await mgr.add_server(name=name, command=cmd, args=args)
+
+        if ok:
+            tools = mgr.get_all_tools()
+            server_tools = [t for t_name, t in tools.items() if mgr.get_server_for_tool(t_name) == name]
+            return {
+                "success": True,
+                "message": f"MCP server「{name}」已启动并连接",
+                "tools_count": len(server_tools),
+                "hint": f"使用 mcp_discover 查看可用工具，使用 mcp_call_tool 调用",
+            }
+        else:
+            return {"success": False, "error": f"MCP server「{name}」连接失败，请检查命令是否正确"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}

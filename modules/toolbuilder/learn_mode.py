@@ -213,6 +213,31 @@ async def _pipeline_steps(
             }
 
         from infra.tool_manager.tool_registry import ToolRegistry
+
+        # ── 语义动作：通过标签定位，不依赖坐标 ──
+        if action in ("click_element", "double_click_element", "right_click_element", "type_into"):
+            label = args.get("label", "")
+            if not label:
+                return {"status": "error", "message": f"{action} 需要 label 参数", "steps_executed": executed_steps}
+            elem = await _async_find_element(label)
+            if not elem:
+                return {"status": "error", "message": f"未找到元素「{label}」", "steps_executed": executed_steps}
+            cx, cy = elem["center_x"], elem["center_y"]
+            if action == "click_element":
+                await asyncio.to_thread(ToolRegistry.get_func("mouse_click"), x=cx, y=cy)
+            elif action == "double_click_element":
+                await asyncio.to_thread(ToolRegistry.get_func("mouse_click"), x=cx, y=cy, clicks=2)
+            elif action == "right_click_element":
+                await asyncio.to_thread(ToolRegistry.get_func("mouse_click"), x=cx, y=cy, button="right")
+            elif action == "type_into":
+                await asyncio.to_thread(ToolRegistry.get_func("mouse_click"), x=cx, y=cy)
+                await asyncio.sleep(0.3)
+                await asyncio.to_thread(ToolRegistry.get_func("keyboard_type"), text=args.get("text", ""))
+            executed_steps += 1
+            if wait_ms > 0:
+                await asyncio.sleep(wait_ms / 1000)
+            continue
+
         func = ToolRegistry.get_func(action)
         if func is None:
             _emit(progress_callback, EVENT_ERROR, {
@@ -285,14 +310,7 @@ async def _pipeline_steps(
         _emit(progress_callback, EVENT_ERROR, {"message": f"插件生成失败: {e}"})
         return {"status": "error", "message": f"插件生成失败: {e}"}
 
-    # 7. 热加载插件
-    try:
-        from modules.plugin_system.api import get_engine
-        engine = get_engine()
-        await asyncio.to_thread(engine.discover)
-        logger.info("插件热加载完成")
-    except Exception as e:
-        logger.warning(f"插件热加载失败（非致命）: {e}")
+    # 7. 插件系统已移除，跳过热加载
 
     # 8. 更新 Skill YAML
     try:
@@ -322,6 +340,27 @@ async def _pipeline_steps(
 async def _capture_current_screen_async() -> Optional[str]:
     """异步截取当前屏幕"""
     return await asyncio.to_thread(_capture_screen_sync)
+
+
+async def _async_find_element(label: str) -> Optional[Dict[str, Any]]:
+    """通过标签在当前屏幕查找 UI 元素"""
+    try:
+        from infra.tool_manager.tools.perception_tools import detect_ui_elements
+        result = await detect_ui_elements()
+        if not result.get("success"):
+            return None
+        label_lower = label.lower().strip()
+        elements = result.get("elements", [])
+        for elem in elements:
+            if elem.get("label", "").lower().strip() == label_lower:
+                return elem
+        for elem in elements:
+            if label_lower in elem.get("label", "").lower():
+                return elem
+        return None
+    except Exception as e:
+        logger.debug(f"元素查找失败: {e}")
+        return None
 
 
 def _capture_screen_sync() -> Optional[str]:

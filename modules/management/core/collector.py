@@ -53,7 +53,6 @@ class ModuleRegistry:
             "memory",
             "perception",
             "output_system",
-            "plugin_system",
             "security_system",
             "thinking",
             "tool_manager"
@@ -114,7 +113,6 @@ class StatusCollector:
         self._collectors["perception"] = self._collect_perception
         self._collectors["security_system"] = self._collect_security
         self._collectors["output_system"] = self._collect_output
-        self._collectors["plugin_system"] = self._collect_plugin
         self._collectors["database"] = self._collect_database
         self._collectors["tool_manager"] = self._collect_tool_manager
     
@@ -271,7 +269,6 @@ class StatusCollector:
                 "capabilities": [
                     "archiver",
                     "distributor",
-                    "styler",
                     "validators"
                 ],
                 "available": True
@@ -280,13 +277,8 @@ class StatusCollector:
             return {"status": "error", "error": "Resource collection failed"}
     
     def _collect_plugin(self) -> Dict[str, Any]:
-        """收集插件模块状态"""
-        try:
-            from modules.management.core.interfaces import get_plugin_status_port
-
-            return get_plugin_status_port().get_status()
-        except Exception as e:
-            return {"status": "error", "error": "Resource collection failed"}
+        """插件系统已移除"""
+        return {"status": "healthy", "note": "插件系统已移除", "available": False}
 
     def _collect_database(self) -> Dict[str, Any]:
         """收集数据库模块状态"""

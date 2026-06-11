@@ -8,7 +8,8 @@
 4. 屏幕操作
 """
 import asyncio
-from fastapi import APIRouter, Body, Query, Path
+from fastapi import Depends,  APIRouter, Body, Query, Path
+from api.auth import require_api_key
 from fastapi.responses import JSONResponse
 from typing import Dict, Any, List, Optional
 from pydantic import BaseModel
@@ -18,7 +19,9 @@ from modules.output_system import OutputSystem
 from modules.output_system.input_controller import InputController, input_controller
 from modules.output_system.ui_interactor import UIInteractor, ui_interactor
 
-router = APIRouter(prefix="/output", tags=["输出"])
+router = APIRouter(prefix="/output", tags=["输出"],
+    dependencies=[Depends(require_api_key)],
+)
 
 
 # ========== 请求模型 ==========
@@ -340,12 +343,6 @@ async def resume_controller():
     """恢复控制器"""
     input_controller.resume()
     return {"success": True, "data": {"message": "控制器已恢复"}}
-
-
-@router.post("/controller/mode")
-async def set_controller_mode(mode: str = Body(..., embed=True)):
-    """切换控制器类型（已废弃，使用基础设施配置）"""
-    raise AppError(ErrorCode.BAD_REQUEST, "模式切换功能已移除，请在基础设施层配置控制器")
 
 
 # ========== 状态 ==========

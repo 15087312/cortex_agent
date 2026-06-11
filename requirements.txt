@@ -44,6 +44,7 @@ pyserial>=3.5  # 串口通信
 # 感知系统
 mss>=10.0.0  # 跨平台屏幕捕获
 watchdog>=6.0.0  # 文件变化监控
+mcp>=1.0.0  # Model Context Protocol — 外部工具执行标准
 rapidocr_onnxruntime>=1.2.0  # 轻量 OCR（ONNX 推理）
 numpy>=1.24.0  # 数值计算（帧差/向量）
 qwen-vl-utils>=0.0.10  # Qwen-VL 视觉模型工具

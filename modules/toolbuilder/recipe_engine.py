@@ -27,6 +27,8 @@ _RECIPE_ALLOWED_ACTIONS = frozenset({
     "mouse_move", "mouse_drag", "mouse_scroll",
     "keyboard_type", "keyboard_press", "keyboard_hotkey",
     "keyboard_release",
+    "click_element", "double_click_element", "right_click_element",
+    "type_into",
     "wait", "sleep",
 })
 
@@ -224,6 +226,37 @@ class RecipeEngine:
                     "message": msg,
                 }
 
+            # ── 语义动作处理（通过元素标签定位，不依赖坐标）──
+            if action in ("click_element", "double_click_element", "right_click_element", "type_into"):
+                label = resolved_args.get("label", "") or resolved_args.get("text", "")
+                if not label:
+                    msg = f"步骤 {step.get('step_id', executed + 1)}: {action} 需要 label 参数"
+                    RecipeEngine.update_stats(tool_name, False, _now_ms() - start_ms, app_name)
+                    return {"status": "error", "steps_executed": executed, "message": msg}
+
+                elem = _find_element_by_label(label)
+                if not elem:
+                    msg = f"步骤 {step.get('step_id', executed + 1)}: 未找到元素「{label}」"
+                    RecipeEngine.update_stats(tool_name, False, _now_ms() - start_ms, app_name)
+                    return {"status": "error", "steps_executed": executed, "message": msg}
+
+                from infra.tool_manager.tool_registry import ToolRegistry
+                cx, cy = elem["center_x"], elem["center_y"]
+                if action == "click_element":
+                    ToolRegistry.get_func("mouse_click")(x=cx, y=cy)
+                elif action == "double_click_element":
+                    ToolRegistry.get_func("mouse_click")(x=cx, y=cy, clicks=2)
+                elif action == "right_click_element":
+                    ToolRegistry.get_func("mouse_click")(x=cx, y=cy, button="right")
+                elif action == "type_into":
+                    ToolRegistry.get_func("mouse_click")(x=cx, y=cy)
+                    time.sleep(0.3)
+                    ToolRegistry.get_func("keyboard_type")(text=resolved_args.get("text", ""))
+                executed += 1
+                if wait_after_ms > 0:
+                    time.sleep(wait_after_ms / 1000)
+                continue
+
             func = ToolRegistry.get_func(action)
             if func is None:
                 msg = f"步骤 {step.get('step_id', executed + 1)}: 动作 {action} 未注册"
@@ -397,6 +430,30 @@ def sanitize_name(name: str) -> str:
 
 # 向后兼容别名
 _sanitize_name = sanitize_name
+
+
+def _find_element_by_label(label: str) -> Optional[Dict[str, Any]]:
+    """通过标签在当前屏幕查找 UI 元素，返回元素信息（含坐标）"""
+    try:
+        from infra.tool_manager.tools.perception_tools import detect_ui_elements
+        import asyncio
+        result = asyncio.run(detect_ui_elements())
+        if not result.get("success"):
+            return None
+        label_lower = label.lower().strip()
+        elements = result.get("elements", [])
+        # 精确匹配
+        for elem in elements:
+            if elem.get("label", "").lower().strip() == label_lower:
+                return elem
+        # 模糊匹配（包含）
+        for elem in elements:
+            if label_lower in elem.get("label", "").lower():
+                return elem
+        return None
+    except Exception as e:
+        logger.debug(f"元素查找失败: {e}")
+        return None
 
 
 def _resolve_args(raw_args: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:

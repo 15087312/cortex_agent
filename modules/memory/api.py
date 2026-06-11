@@ -11,7 +11,8 @@
 - get_blackbox()
 - clear_short_term()
 """
-from fastapi import APIRouter, Body, Query
+from fastapi import Depends,  APIRouter, Body, Query
+from api.auth import require_api_key
 from typing import Dict, Any, List, Optional
 from pydantic import BaseModel, Field
 
@@ -19,7 +20,9 @@ from api.errors import AppError, ErrorCode
 from modules.memory.core.memory_manager import MemoryManager
 from utils.logger import setup_logger
 
-router = APIRouter(prefix="/memory", tags=["记忆"])
+router = APIRouter(prefix="/memory", tags=["记忆"],
+    dependencies=[Depends(require_api_key)],
+)
 logger = setup_logger("memory_api")
 
 # 记忆管理器实例（无 model_id — 使用默认共享记忆目录）
