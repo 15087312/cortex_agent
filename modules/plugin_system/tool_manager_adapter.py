@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+# TECH DEBT: 此适配器将新 PluginToolService 包装为旧 ToolManager 风格接口，
+# 供 model_loop_adapter.py 等旧调用者使用。待所有调用者迁移到 PluginToolService 直接调用后可移除。
+# 主要调用者: modules/plugin_system/model_loop_adapter.py
+
 import argparse
 import json
 import shutil

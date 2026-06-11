@@ -351,6 +351,7 @@ def first_evidence(payload: dict[str, Any] | None, evidence_type: str) -> dict[s
 
 
 def is_legacy_evidence(evidence: Any) -> bool:
+    """TECH DEBT: 旧格式证据检测（无 schema_version + evidence_type），仅发出警告不阻断。"""
     return isinstance(evidence, dict) and "schema_version" not in evidence and "evidence_type" not in evidence
 
 

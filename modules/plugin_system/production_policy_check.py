@@ -517,14 +517,6 @@ def _plugin_findings(
     else:
         findings.append(_pass("plugin.trust", f"{metadata.name} trust={metadata.runtime.trust.value}"))
 
-    findings.append(
-        _fail(
-            "plugin.legacy_local_layout",
-            "legacy metadata.json + plugin.py local plugin layout is forbidden for production",
-        )
-        if (plugin_dir / "metadata.json").exists() and (plugin_dir / "plugin.py").exists()
-        else _pass("plugin.legacy_local_layout", "legacy metadata.json + plugin.py local layout not present")
-    )
     findings.extend(_revocation_findings(metadata, governance))
     findings.extend(_gateway_usage_findings(plugin_dir, metadata))
     findings.extend(_tool_service_findings(metadata))

@@ -35,8 +35,6 @@ class TestSettings:
         s = Settings()
         assert hasattr(s, 'SIMPLE_API_KEY')
         assert hasattr(s, 'ALLOWED_CORS_ORIGINS')
-        assert hasattr(s, 'TOOL_API_TOKEN')
-        assert hasattr(s, 'INTERNAL_API_TOKEN')
         assert hasattr(s, 'SERVER_PORT')
         assert hasattr(s, 'LOGGING_ENABLED')
 

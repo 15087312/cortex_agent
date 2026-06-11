@@ -40,6 +40,10 @@ def _get_compat_proxy():
 
     class _CompatProxy:
         @property
+        def _running(self):
+            return ps._started
+
+        @property
         def file_perception(self):
             return ps.file_perception
 

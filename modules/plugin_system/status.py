@@ -259,7 +259,6 @@ class PluginSystemStatusProvider:
         signed = 0
         sbom_present = 0
         lockfile_present = 0
-        legacy_local_layout = 0
         for plugin in installed:
             plugin_dir = Path(plugin.path)
             manifest = _read_json(plugin_dir / MANIFEST_FILE)
@@ -269,8 +268,6 @@ class PluginSystemStatusProvider:
                 sbom_present += 1
             if (plugin_dir / PACKAGE_LOCK_FILE).exists():
                 lockfile_present += 1
-            if (plugin_dir / "metadata.json").exists() and (plugin_dir / "plugin.py").exists():
-                legacy_local_layout += 1
         governance = _read_json(self.plugins_dir / GOVERNANCE_FILE)
         revoked_versions = governance.get("revoked_plugin_versions") if isinstance(governance, dict) else []
         return {
@@ -285,7 +282,6 @@ class PluginSystemStatusProvider:
             "third_party_plugins": len(third_party),
             "plugins_with_sbom": sbom_present,
             "plugins_with_lockfile": lockfile_present,
-            "legacy_local_layout_count": legacy_local_layout,
             "revoked_keys_count": _revoked_key_count(governance),
             "revoked_versions_count": len(revoked_versions) if isinstance(revoked_versions, list) else 0,
             "generated_at": utc_now(),

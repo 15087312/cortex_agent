@@ -140,11 +140,10 @@ class ModelMessageBus:
             else:
                 self._event_emitters[session_id] = emitter
         else:
-            # 兼容旧调用：全局/广播模式
+            # 全局/广播模式
             if emitter is None:
                 self._event_emitters.clear()
             else:
-                # 全局 emitter 使用空字符串 key
                 self._event_emitters[""] = emitter
 
     def _emit_event(self, event_type: str, message: "Message", extra: Dict[str, Any] = None) -> None:

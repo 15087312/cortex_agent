@@ -384,24 +384,6 @@ class TestOCRDetector:
         text = det._extract_text(img)
         assert text == ""
 
-    def test_paddleocr_legacy_list_format(self):
-        """PaddleOCR 旧版 list 格式仍需兼容"""
-        from unittest.mock import MagicMock
-
-        det = OCRDetector()
-        det._ocr_type = "paddleocr"
-        det._ocr_engine = MagicMock()
-        # 旧格式: result = [[[bbox, (text, confidence)], ...]]
-        det._ocr_engine.ocr.return_value = [[
-            [[[0, 0], [100, 0], [100, 20], [0, 20]], ("Hello", 0.95)],
-            [[[0, 30], [100, 30], [100, 50], [0, 50]], ("World", 0.88)],
-        ]]
-
-        img = np.zeros((100, 200, 3), dtype=np.uint8)
-        text = det._extract_text(img)
-        assert "Hello" in text
-        assert "World" in text
-
 
 class TestUIDetector:
     def test_detector_type(self):

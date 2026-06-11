@@ -279,7 +279,8 @@ class RuntimeExpert(ABC):
         if not self._get_dialog():
             return None
         try:
-            # DEPRECATED: write_expert_finding 已移除，使用 write_response 替代
+            # 注: base.py 的 write_response 走 dialog 路径写入 expert_findings 区段
+            # model_runner 的 supervisor 路径仍直接调用 blackboard.write_expert_finding()
             entry = self._get_dialog().write_response(
                 model_id=self.model_id,
                 tier=self.identity.tier,

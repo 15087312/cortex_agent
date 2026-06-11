@@ -305,20 +305,26 @@ async def clear_memory(
 async def get_perception_full():
     """获取感知模块完整信息"""
     try:
-        from modules.perception import perception_manager
-        
-        context = perception_manager.get_full_context()
-        
+        import platform
+        from modules.perception import get_perception_system
+
+        ps = get_perception_system()
+        status = ps.get_status()
+
+        watch_paths = []
+        if ps.file_perception and hasattr(ps.file_perception, "watch_paths"):
+            watch_paths = ps.file_perception.watch_paths
+
         return {
             "success": True,
             "data": {
-                "status": "running" if perception_manager._running else "stopped",
-                "platform": perception_manager.screen_perception._platform,
-                "watch_paths": perception_manager.watch_paths,
-                "stats": context.get("stats", {}),
-                "attention_prompt": perception_manager.get_attention_prompt(),
-                "recent_changes": context.get("recent_changes", []),
-                "pool_size": len(perception_manager.attention_pool)
+                "status": "running" if ps._started else "stopped",
+                "platform": platform.system(),
+                "watch_paths": watch_paths,
+                "pipeline": status.get("pipeline"),
+                "voice_available": status.get("voice_available", False),
+                "world_state": status.get("world_state"),
+                "event_bus": status.get("event_bus"),
             }
         }
     except Exception as e:
@@ -357,14 +363,11 @@ async def stop_perception():
 
 @router.post("/perception/clear")
 async def clear_perception():
-    """清空调知池"""
+    """清空调知池（已迁移：新架构无独立注意力池）"""
     try:
-        from modules.perception import perception_manager
-        perception_manager.clear_attention_pool()
-        
         return {
             "success": True,
-            "data": {"message": "注意力池已清空"}
+            "data": {"message": "注意力池功能已迁移至新架构，无需手动清空"}
         }
     except Exception as e:
         raise AppError(ErrorCode.INTERNAL_ERROR, "管理操作失败")
@@ -1049,55 +1052,27 @@ async def cleanup_timeseries(days: int = Query(7, ge=1, le=90)):
 @router.get("/sessions")
 async def get_sessions(dialog_limit: int = Query(50, ge=1, le=500)):
     """
-    获取所有会话及对话框内容
-
-    返回主会话和所有副会话的完整信息，包括最近的对话记录。
-    供 test.py 等外部监控工具使用。
+    获取所有活跃会话及对话框内容
     """
     try:
-        # DEPRECATED: SessionManager 正逐步迁移到 SessionLifecycle + CognitiveBlackboard
-        logger.warning("[API] 会话查询使用了废弃的 SessionManager API，应迁移到 SessionLifecycle")
+        from modules.thinking.cognition.session_lifecycle import get_active_sessions
 
-        from modules.thinking.session.session_manager import get_session_manager
-
-        sm = get_session_manager()
-        main = sm.get_main_session()
-
-        result = {
-            "main": None,
-            "subs": [],
-            "total_sessions": 0,
-        }
-
-        if main:
-            dialog = main.blackboard.read_dialog(limit=dialog_limit) if main.blackboard else []
-            result["main"] = {
-                "session_id": main.session_id,
-                "is_main": True,
-                "parent_session_id": None,
-                "dialog_size": main.blackboard.size() if main.blackboard else 0,
-                "participants": list(main.participants) if main.participants else [],
-                "supervisor_id": None,
-                "supervisor_name": None,
-                "dialog": [e.to_dict() if hasattr(e, 'to_dict') else e for e in dialog],
-            }
-            result["total_sessions"] += 1
-
-        for sub in sm.list_sub_sessions():
-            dialog = sub.blackboard.read_dialog(limit=dialog_limit) if sub.blackboard else []
-            result["subs"].append({
-                "session_id": sub.session_id,
-                "is_main": False,
-                "parent_session_id": sub.parent_session_id,
-                "dialog_size": sub.blackboard.size() if sub.blackboard else 0,
-                "participants": list(sub.participants) if sub.participants else [],
-                "supervisor_id": sub.supervisor_id,
-                "supervisor_name": sub.supervisor_name,
+        sessions = []
+        for lifecycle in get_active_sessions():
+            bb = lifecycle.blackboard
+            dialog = bb.read_dialog(limit=dialog_limit) if bb else []
+            sessions.append({
+                "session_id": lifecycle.session_id,
+                "state": lifecycle.state.value,
+                "is_active": lifecycle.is_active,
+                "turn_id": lifecycle.turn_id,
+                "dialog_size": len(dialog),
+                "active_runners": len(lifecycle._active_runners) if hasattr(lifecycle, '_active_runners') else 0,
+                "participants": list(lifecycle._participants) if hasattr(lifecycle, '_participants') else [],
                 "dialog": [e.to_dict() if hasattr(e, 'to_dict') else e for e in dialog],
             })
-            result["total_sessions"] += 1
 
-        return {"success": True, "data": result}
+        return {"success": True, "data": {"sessions": sessions, "total": len(sessions)}}
 
     except Exception as e:
         logger.error(f"获取会话失败: {e}")
@@ -1112,25 +1087,20 @@ async def get_sessions(dialog_limit: int = Query(50, ge=1, le=500)):
 async def get_model_runners():
     """
     获取所有活跃模型实例（runner）状态
-
-    返回各层级模型的运行数量、上限、和每个 runner 的详细信息。
-    用于监控多模型并发协作状态。
     """
     try:
-        from modules.thinking.session.session_manager import get_session_manager
+        from modules.thinking.cognition.session_lifecycle import get_active_sessions
         from modules.thinking.core.model_runner import get_runner_manager, ModelRunnerManager
 
-        sm = get_session_manager()
-        main = sm.get_main_session()
-        if not main:
-            return {"success": True, "data": {"runners": [], "summary": {}}}
+        all_runners = []
+        for lifecycle in get_active_sessions():
+            rm = get_runner_manager(lifecycle.session_id)
+            if rm:
+                runners = rm.list_runners()
+                all_runners.extend(runners)
 
-        rm = get_runner_manager(main.session_id)
-        runners = rm.list_runners()
-
-        # 按层级汇总
         summary = {}
-        for r in runners:
+        for r in all_runners:
             tier = r.get("tier", "unknown")
             if tier not in summary:
                 summary[tier] = {"active": 0, "max": ModelRunnerManager.MAX_RUNNERS.get(tier, 8)}
@@ -1139,7 +1109,7 @@ async def get_model_runners():
         return {
             "success": True,
             "data": {
-                "runners": runners,
+                "runners": all_runners,
                 "summary": summary,
             },
         }
@@ -1157,25 +1127,23 @@ async def get_session_dialog(
     获取指定会话的对话框内容
     """
     try:
-        from modules.thinking.session.session_manager import get_session_manager
+        from modules.thinking.cognition.session_lifecycle import get_active_sessions
 
-        sm = get_session_manager()
-        session = sm.get_session(session_id)
+        bb = None
+        for lifecycle in get_active_sessions():
+            if lifecycle.session_id == session_id:
+                bb = lifecycle.blackboard
+                break
 
-        if not session:
+        if not bb:
             raise AppError(ErrorCode.NOT_FOUND, f"会话不存在: {session_id}")
 
-        if not session.blackboard:
-            return {"success": True, "data": {"session_id": session_id, "dialog": [], "dialog_size": 0}}
-
-        dialog = session.blackboard.read_dialog(limit=limit)
+        dialog = bb.read_dialog(limit=limit)
         return {
             "success": True,
             "data": {
                 "session_id": session_id,
-                "dialog_size": session.blackboard.size(),
-                "supervisor_name": session.supervisor_name,
-                "supervisor_id": session.supervisor_id,
+                "dialog_size": len(dialog),
                 "dialog": [e.to_dict() if hasattr(e, 'to_dict') else e for e in dialog],
             },
         }
@@ -1191,34 +1159,29 @@ async def get_session_dialog(
 async def get_runners():
     """
     获取所有活跃的 ModelRunner
-
-    返回每个 runner 的 model_id、identity_key、状态等。
     """
     try:
-        from modules.thinking.session.session_manager import get_session_manager
+        from modules.thinking.cognition.session_lifecycle import get_active_sessions
+        from modules.thinking.core.model_runner import get_runner_manager
 
-        sm = get_session_manager()
         runners = []
-
-        # 从所有会话收集 runner
-        for session in sm.list_all_sessions():
-            if not session.runner_manager:
-                continue
-            try:
-                rm = session.runner_manager
-                runner_list = rm.list_runners() if hasattr(rm, 'list_runners') else []
-                for r in runner_list:
-                    if isinstance(r, dict):
-                        runners.append({
-                            "model_id": r.get("model_id", ""),
-                            "identity_key": r.get("identity_key", ""),
-                            "tier": r.get("tier", ""),
-                            "role": r.get("role", ""),
-                            "status": r.get("status", "active"),
-                            "session_id": session.session_id,
-                        })
-            except Exception as e:
-                logger.debug(f"读取 session runner 信息失败: {e}")
+        for lifecycle in get_active_sessions():
+            rm = get_runner_manager(lifecycle.session_id)
+            if rm:
+                try:
+                    runner_list = rm.list_runners() if hasattr(rm, 'list_runners') else []
+                    for r in runner_list:
+                        if isinstance(r, dict):
+                            runners.append({
+                                "model_id": r.get("model_id", ""),
+                                "identity_key": r.get("identity_key", ""),
+                                "tier": r.get("tier", ""),
+                                "role": r.get("role", ""),
+                                "status": r.get("status", "active"),
+                                "session_id": lifecycle.session_id,
+                            })
+                except Exception as e:
+                    logger.debug(f"读取 runner 信息失败: {e}")
 
         return {"success": True, "data": {"count": len(runners), "runners": runners}}
 

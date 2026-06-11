@@ -121,6 +121,7 @@ class Settings(BaseSettings):
     # "edit":    确认 — 写操作前需用户确认（LLM + 用户）
     # "yolo":    宽松 — 仅安全专家检测，跳过用户确认
     # "control": 用户完全控制 — MEDIUM+工具需用户单独确认，无LLM参与
+    # "learn":   学习模式 — AI 自动学习 UI 操作并生成插件，过程在 TUI 可视化
     EXECUTION_MODE: str = "edit"
 
     # 上下文窗口配置
@@ -133,13 +134,8 @@ class Settings(BaseSettings):
     CONTEXT_COMPRESS_RATIO: float = 0.2
 
     # API 认证
-    SIMPLE_API_KEY: str = ""                   # HTTP API 认证密钥
+    SIMPLE_API_KEY: str = ""                   # HTTP API 认证密钥（所有外部端点统一使用 X-API-Key）
     ALLOWED_CORS_ORIGINS: str = "http://localhost:3000,http://localhost:8000"
-
-    # 内部服务 Token
-    TOOL_API_TOKEN: str = ""                   # 工具管理 API Token
-    INTERNAL_API_TOKEN: str = ""               # 内部管理 API Token
-    PLUGIN_API_TOKEN: str = ""                 # 插件系统 API Token
 
     # 服务端口
     SERVER_PORT: int = 8080
@@ -223,7 +219,7 @@ class Settings(BaseSettings):
     @field_validator("EXECUTION_MODE")
     @classmethod
     def validate_execution_mode(cls, v: str) -> str:
-        allowed = {"plan", "edit", "yolo", "control"}
+        allowed = {"plan", "edit", "yolo", "control", "learn"}
         if v.lower() not in allowed:
             raise ValueError(f"EXECUTION_MODE must be one of {allowed}, got '{v}'")
         return v.lower()

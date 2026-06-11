@@ -454,18 +454,6 @@ class SecurityMonitor(RuntimeExpert):
 
             # 提取各维度级别
             dimensions = data.get("dimensions", {})
-            if not dimensions:
-                # 兼容旧格式（单层 JSON）
-                risk_level = data.get("risk_level", "none")
-                if risk_level != "none":
-                    return SecurityVerdict(
-                        risk_level=risk_level,
-                        category=data.get("category", "语义分析"),
-                        description=data.get("description", ""),
-                        action=self.RESPONSE_ACTIONS.get(risk_level, "warn"),
-                    )
-                return None
-
             # 找最高级别 + 收集非 none 维度
             max_level = "none"
             active_dims = []

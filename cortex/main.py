@@ -142,17 +142,21 @@ def main():
     # ── 模式 2: 自动启动后端 ──
     api_url = f"http://{args.host}:{args.port}"
 
-    # 端口被占用 → 尝试复用
+    # 端口被占用 → 停止旧进程再重启
     if _port_in_use(args.port):
-        if _wait_for_server(api_url, timeout=3):
-            print(f"✓ 检测到已有后端: {api_url}")
-            args.api_url = api_url
-            if not args.no_tui:
-                launch_tui(args)
-            return
-        else:
-            print(f"✗ 端口 {args.port} 被占用但服务不可用")
-            sys.exit(1)
+        # 发送 SIGTERM 到旧进程
+        import subprocess as _sp
+        try:
+            pid_cmd = ["lsof", "-ti", f"tcp:{args.port}"]
+            pids = _sp.check_output(pid_cmd, timeout=5).decode().strip().split()
+            my_pid = str(os.getpid())
+            for pid in pids:
+                if pid != my_pid:  # 不要自杀
+                    os.kill(int(pid), signal.SIGTERM)
+            if pids:
+                time.sleep(1.5)
+        except Exception:
+            pass
 
     # 启动后端
     print(f"🚀 启动 Cortex Agent (:{args.port})...")

@@ -210,7 +210,7 @@ class MultiModelOrchestrator:
         处理用户输入 — 主入口（纯异步）
 
         Returns:
-            调度结果 dict，兼容旧 api_stream.py 的字段:
+            调度结果 dict:
             {response, focus, active_modules, sleep_modules, degraded,
              module_results, decisions, resource_status, security_passed,
              elapsed_ms, trace_id}
@@ -251,15 +251,12 @@ class MultiModelOrchestrator:
             logger.warning(f"[安全拦截] {security_error}")
             return self._build_security_error(security_error, start_time)
 
-        # ---- 1.5 记录用户说话时间（仅用户消息，非感知系统触发） ----
-        try:
-            from modules.thinking.session.session_manager import get_session_manager
-            _sm = get_session_manager()
-            _session = _sm.get_session(session_id)
-            if _session:
-                _session.last_user_message_time = time.time()
-        except Exception as e:
-            logger.debug(f"[会话管理] 记录用户说话时间失败 (非致命): {e}")
+        # ---- 1.5 记录用户说话时间 ----
+        if turn_context:
+            now = time.time()
+            turn_context.last_user_message_time = now
+            if blackboard:
+                blackboard.runtime_state["last_user_message_time"] = now
 
         # ---- 2. 记忆上下文 ----
         memory_context_text, mm = await self._load_memory_context_via_api(
@@ -441,10 +438,14 @@ class MultiModelOrchestrator:
             timings['开始'] = (0, '多模型思考启动')
 
             try:
-                from modules.thinking.cognition.session_lifecycle import SessionLifecycle
+                from modules.thinking.cognition.session_lifecycle import (
+                    SessionLifecycle, register_session,
+                )
                 lifecycle = SessionLifecycle(session_id or "")
                 turn_context = lifecycle.start_turn(user_input)
                 blackboard = lifecycle.blackboard
+                # 注册到全局 registry（供管理 API 遍历）
+                register_session(lifecycle)
                 t1 = time.time() - start
                 timings['SessionLifecycle'] = (t1, f'会话初始化完成')
                 logger.info(

@@ -79,7 +79,7 @@ async def test_root_returns_app_info(_mock_lifespan, _no_auth, _reset_rate_limit
     data = resp.json()
     assert data["success"] is True
     assert data["data"]["name"] == "Humanoid AGI"
-    assert data["data"]["version"] == "1.0.0"
+    assert data["data"]["version"] == "2.0.0"
     assert data["data"]["status"] == "running"
 
 
@@ -264,7 +264,7 @@ async def test_rate_limit_exceeded_returns_429(_mock_lifespan, _no_auth, _reset_
 
     # ASGI test transport reports request.client.host as "127.0.0.1"
     current_minute = int(time.time() / 60)
-    key = f"127.0.0.1:{current_minute}"
+    key = f"127.0.0.1|{current_minute}"
     api.main.request_counts[key] = 100  # already at the limit
 
     from api.main import app

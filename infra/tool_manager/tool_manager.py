@@ -97,7 +97,12 @@ class ToolManager:
         self._load_builtin_tools()
 
     def _load_tool_backend(self) -> str:
-        """Load configured tool backend: legacy / mcp / hybrid."""
+        """Load configured tool backend: legacy / mcp / hybrid.
+
+        # TECH DEBT: legacy/hybrid 模式路径保留以备回退，但当前默认 mcp 模式
+        # 底层仍通过 LegacyToolProviderAdapter 包装 ToolRegistry（非真正 MCP）。
+        # 接入真实 MCP server 后可移除 legacy 模式和 hybrid 分支。
+        """
         try:
             from config.settings import settings
             backend = (settings.TOOL_BACKEND or "legacy").lower()

@@ -480,7 +480,7 @@ class ToolSecurityGate:
                 tool_name, tool_params, caller_tier, caller_model_id, dialog_context
             )
             result = await self._lite_model.generate(
-                prompt, max_tokens=256, temperature=0.1
+                prompt, max_tokens=512, temperature=0.1
             )
             return self._parse_review_result(result, tool_name)
         except Exception as e:
@@ -536,7 +536,7 @@ class ToolSecurityGate:
         try:
             parsed = json.loads(text)
         except json.JSONDecodeError:
-            match = re.search(r'\{[^{}]+\}', text, re.DOTALL)
+            match = re.search(r'\{[\s\S]*?\}', text, re.DOTALL)
             if match:
                 try:
                     parsed = json.loads(match.group(0))

@@ -108,16 +108,8 @@ class OCRDetector(PerceptionDetector):
                 if not result or not result[0]:
                     return ""
                 # PaddleOCR 3.6+ 返回 dict 格式
-                if isinstance(result[0], dict):
-                    texts = result[0].get("rec_texts", [])
-                    return "\n".join(t for t in texts if t)
-                # PaddleOCR 旧版返回 list 格式
-                lines = []
-                for line in result[0]:
-                    if line and len(line) >= 2:
-                        text = line[1][0] if isinstance(line[1], (list, tuple)) else str(line[1])
-                        lines.append(text)
-                return "\n".join(lines)
+                texts = result[0].get("rec_texts", [])
+                return "\n".join(t for t in texts if t)
 
             elif self._ocr_type == "rapidocr":
                 result, _ = self._ocr_engine(image)

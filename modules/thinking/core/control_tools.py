@@ -214,19 +214,20 @@ REQUEST_MODE_CHANGE_TOOL = {
         "description": (
             "请求用户切换执行模式。当你在 plan 模式下完成了分析和规划，"
             "需要实际执行操作（写文件、运行命令等）时，调用此工具请求用户解除 plan 模式。"
-            "用户可以选择同意并指定目标模式（edit/yolo/control），或拒绝并给出理由。"
+            "或者当用户需要学习 UI 操作时，请求切换到 learn 模式。"
+            "用户可以选择同意并指定目标模式，或拒绝并给出理由。"
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "reason": {
                     "type": "string",
-                    "description": "请求切换模式的原因，例如「已完成架构设计，需要 edit 模式来实现代码」",
+                    "description": "请求切换模式的原因，例如「已完成架构设计，需要 edit 模式来实现代码」或「用户想学习 Chrome 搜索操作，需要 learn 模式」",
                 },
                 "suggested_mode": {
                     "type": "string",
                     "description": "建议的目标模式",
-                    "enum": ["edit", "yolo", "control"],
+                    "enum": ["edit", "yolo", "control", "learn"],
                 },
             },
             "required": ["reason", "suggested_mode"],

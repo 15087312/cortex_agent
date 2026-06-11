@@ -15,7 +15,7 @@ async def test_control_mode():
     """测试 control 模式的工具安全检查"""
     from config.settings import settings
     from modules.security_system.tool_security_gate import (
-        get_tool_security_gate, HIGH_RISK_TOOLS, MEDIUM_RISK_TOOLS
+        get_tool_security_gate,
     )
 
     print("=" * 60)

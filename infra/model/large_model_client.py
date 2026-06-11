@@ -472,6 +472,9 @@ class LargeModelClient(BaseModelClient):
                 ) as response:
                     if response.status != 200:
                         error_data = await response.text()
+                        # 诊断：记录实际使用的 API key 和 URL
+                        key_preview = self.api_key[:8] + "..." + self.api_key[-4:] if len(self.api_key) > 12 else "(empty)"
+                        logger.error(f"[Auth诊断] status={response.status} url={self.api_url} key={key_preview}")
                         raise Exception(f"Stream API error {response.status}: {error_data[:200]}")
 
                     # 按 API 格式解析 SSE 流

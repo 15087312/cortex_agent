@@ -1,4 +1,10 @@
-"""Adapters that expose legacy ToolRegistry through MCP tool ports."""
+"""Adapters that expose legacy ToolRegistry through MCP tool ports.
+
+# TECH DEBT: 当前 TOOL_BACKEND="mcp" 模式底层仍通过此适配器包装 ToolRegistry，
+# 并非真正接入外部 MCP server。待接入真实 MCP 后端后可移除此文件。
+# 依赖: infra/mcp/factory.py (build_legacy_mcp_tool_service)
+# 影响: infra/tool_manager/tool_manager.py, infra/tool_manager/tools/mcp_tools.py
+"""
 from __future__ import annotations
 
 import inspect

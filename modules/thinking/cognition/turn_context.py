@@ -54,6 +54,9 @@ class TurnContext:
     elapsed_seconds: float = 0.0  # 总耗时
     round_count: int = 0  # 轮数（若有多轮思考）
 
+    # ── 用户交互追踪 ──
+    last_user_message_time: float = 0.0  # 上次用户消息时间（用于构建「距上次对话」提示）
+
     def __post_init__(self):
         if not self.session_id:
             raise ValueError("session_id 不能为空")

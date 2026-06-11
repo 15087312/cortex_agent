@@ -939,6 +939,10 @@ class ModelRunner:
 
     async def _handle_mode_change_request(self, reason: str, suggested_mode: str) -> str:
         """处理 request_mode_change 工具调用"""
+        # 记录当前模式，learn 模式结束后恢复
+        from config.settings import settings as _cfg
+        previous_mode = _cfg.effective_execution_mode
+
         result = await self._wait_for_user_response("mode_change_request", {
             "action": "mode_change_request",
             "reason": reason,
@@ -949,10 +953,102 @@ class ModelRunner:
         approved = result.get("approved", False)
         if approved:
             target_mode = result.get("mode", suggested_mode)
+            # learn 模式：自动运行学习管线，完成后恢复原始模式
+            if target_mode == "learn":
+                learn_result = await self._run_learn_mode(reason, result)
+                # 恢复模式（TUI 状态和后端设置）
+                if previous_mode and previous_mode != "learn":
+                    try:
+                        object.__setattr__(_cfg, "EXECUTION_MODE", previous_mode)
+                    except Exception:
+                        pass
+                return learn_result
             return f"【模式切换】用户同意切换到 {target_mode} 模式。请继续执行任务。"
         else:
             user_reason = result.get("reason", "用户拒绝")
             return f"【模式切换】用户拒绝切换模式。原因：{user_reason}。请在当前模式下继续。"
+
+    async def _run_learn_mode(self, reason: str, user_result: dict) -> str:
+        """处理 learn 模式：运行学习管线"""
+        # 从用户回复或 reason 中提取学习参数
+        task_desc = user_result.get("task", "") or reason
+        app_name = user_result.get("app_name", "")
+        tool_name = user_result.get("tool_name", "")
+
+        # 如果用户没指定 app_name，尝试从 reason 中提取
+        if not app_name:
+            app_name = self._extract_app_name(reason)
+        if not tool_name:
+            safe_name = app_name.lower().replace(" ", "_").replace("-", "_")
+            tool_name = f"{safe_name}_learn"
+
+        logger.info(f"[Learn] 开始学习: app={app_name}, tool={tool_name}, task={task_desc[:60]}")
+
+        # 通知 TUI 学习开始
+        try:
+            from cli_tui.screens.repl import notify_learn_progress
+        except ImportError:
+            notify_learn_progress = None
+
+        def progress_callback(event: str, data: dict):
+            if notify_learn_progress:
+                try:
+                    notify_learn_progress(event, data)
+                except Exception:
+                    pass
+            logger.debug(f"[Learn] {event}: {data}")
+
+        try:
+            from modules.toolbuilder.learn_mode import run_learn_pipeline
+            learn_result = await run_learn_pipeline(
+                app_name=app_name,
+                tool_name=tool_name,
+                task_description=task_desc,
+                params_hint="{}",
+                progress_callback=progress_callback,
+                user_hint=user_result.get("custom_text", ""),
+            )
+        except Exception as e:
+            logger.error(f"[Learn] 管线异常: {e}")
+            return f"【学习失败】{e}"
+
+        if learn_result.get("status") == "success":
+            return (
+                f"【学习完成】工具 {learn_result['tool_name']} 已学会。\n"
+                f"应用: {learn_result['app_name']}\n"
+                f"步骤数: {learn_result['steps_count']}\n"
+                f"插件路径: {learn_result['plugin_path']}\n"
+                "你可以在后续对话中直接请求使用该工具。"
+            )
+        else:
+            return f"【学习失败】{learn_result.get('message', '未知错误')}"
+
+    @staticmethod
+    def _extract_app_name(text: str) -> str:
+        """从文本中提取应用名（简单启发式）"""
+        import re
+        # 优先匹配精确中文模式
+        patterns = [
+            # "在Chrome中搜索"、"在Chrome里面搜索"
+            r'在\s*(\S+)\s*(?:中|里面|里|上|下)',
+            # "打开Chrome"
+            r'打开\s*(\S+)',
+            # "学习Chrome搜索"、"学习Chrome的操作"
+            r'学习\s*(\S+?)(?:的|操作|搜索|查找|功能)',
+            # "启动Chrome"
+            r'启动\s*(\S+)',
+        ]
+        for pattern in patterns:
+            m = re.search(pattern, text)
+            if m:
+                name = m.group(1).strip()
+                if 1 < len(name) < 40:
+                    return name
+        # 兜底：取第一个看起来像应用名的词（大写开头或英文词）
+        m = re.search(r'([A-Z][a-zA-Z]+)', text)
+        if m:
+            return m.group(1)
+        return "target_app"
 
     async def _handle_ask_user_intent(self, question: str, options: list, context: str) -> str:
         """处理 ask_user_intent 工具调用"""
@@ -1231,6 +1327,14 @@ class ModelRunner:
                     "不要委派任何涉及写操作的任务给主管或专家。\n"
                     "如果用户请求需要写操作，告知用户当前为 plan 模式，建议切换到 edit 或 yolo 模式。"
                 )
+            elif _cfg.effective_execution_mode == "learn":
+                base_prompt += (
+                    "\n\n【执行模式: LEARN（学习）】\n"
+                    "当前为学习模式，你的任务是与用户沟通确定要学习的 UI 操作。\n"
+                    "调用 request_mode_change(suggested_mode='learn') 让系统开始自动学习。\n"
+                    "系统会自动：打开应用、截图、识别 UI 元素、规划操作步骤、执行录制、生成插件。\n"
+                    "你不需要调用 learn_tool 工具，模式切换后系统会自动处理。"
+                )
         except Exception:
             pass
 
@@ -1280,13 +1384,13 @@ class ModelRunner:
         user_name = getattr(_cfg, "USER_NAME", "用户") or "用户"
         parts.append(f"【对话对象】{user_name}")
 
-        # 距上次用户对话时长（仅用户消息触发时更新，感知系统触发不算）
+        # 距上次用户对话时长
         try:
-            from modules.thinking.session.session_manager import get_session_manager
-            _sm = get_session_manager()
-            _session = _sm.get_session(self.session_id)
-            if _session and _session.last_user_message_time > 0:
-                elapsed = time.time() - _session.last_user_message_time
+            last_time = 0.0
+            if self._blackboard:
+                last_time = self._blackboard.runtime_state.get("last_user_message_time", 0.0)
+            if last_time > 0:
+                elapsed = time.time() - last_time
                 if elapsed < 60:
                     time_ago = f"{int(elapsed)}秒前"
                 elif elapsed < 3600:
@@ -2537,14 +2641,6 @@ class ModelRunnerManager:
                 f"[ModelRunnerManager] probe_stopped: {probe_id} → {model_id}"
             )
             return
-
-        # fallback: 遍历查找（兼容旧格式 probe_id 或未映射的 runner）
-        with self._lock:
-            runners_snapshot = list(self._runners.items())
-        for rid, runner in runners_snapshot:
-            if probe_id in rid or runner.identity.role in probe_id:
-                await self.stop_runner(rid)
-                return
 
         logger.warning(f"[ModelRunnerManager] 无法找到 probe_stopped 对应的 runner: {probe_id}")
 

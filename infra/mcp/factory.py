@@ -1,4 +1,8 @@
-"""Factory functions for MCP tool services."""
+"""Factory functions for MCP tool services.
+
+# TECH DEBT: build_legacy_mcp_tool_service 将 ToolRegistry 包装为 MCPToolService，
+# 当前 mcp/hybrid 模式均依赖此路径。接入真实 MCP server 后应替换。
+"""
 from __future__ import annotations
 
 import threading

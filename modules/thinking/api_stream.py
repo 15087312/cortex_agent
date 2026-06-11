@@ -168,12 +168,7 @@ class StreamThinkingSystem:
             except Exception as e:
                 logger.debug(f"[SessionRepo] 创建会话记录失败: {e}")
 
-        # 确保 session_manager 中有此 session（Blackboard 共享给编排器）
-        try:
-            from modules.thinking.session.session_manager import get_session_manager
-            get_session_manager().create_main_session(session_id)
-        except Exception as e:
-            logger.debug(f"[SessionManager] 创建主会话失败 (非致命): {e}")
+        # SessionLifecycle 由 orchestrator 内部创建，无需提前创建
 
         # T1: 会话启动预加载核心记忆 (fire-and-forget, 不阻塞)
         asyncio.create_task(self._preload_session_memories(session_id))
@@ -966,14 +961,6 @@ async def _stream_sse(session_id: str, question: str):
 @router.get("/sse/{session_id}")
 async def sse_session_get(session_id: str, question: str = ""):
     """SSE 流式响应（GET）"""
-    if not question:
-        raise AppError(ErrorCode.BAD_REQUEST, "question 不能为空")
-    return EventSourceResponse(_stream_sse(session_id, question))
-
-
-@router.post("/sse/{session_id}")
-async def sse_session_post(session_id: str, question: str = ""):
-    """SSE 流式响应（POST，兼容旧客户端）"""
     if not question:
         raise AppError(ErrorCode.BAD_REQUEST, "question 不能为空")
     return EventSourceResponse(_stream_sse(session_id, question))

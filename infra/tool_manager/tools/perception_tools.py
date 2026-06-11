@@ -161,16 +161,8 @@ def _ocr_screenshot(screenshot_b64: str) -> str:
             logger.debug("PaddleOCR result type=%s", type(result))
             if result and result[0]:
                 # PaddleOCR 3.6+ 返回 dict 格式
-                if isinstance(result[0], dict):
-                    texts = result[0].get("rec_texts", [])
-                    return "\n".join(t for t in texts if t)
-                # PaddleOCR 旧版返回 list 格式
-                lines = []
-                for line in result[0]:
-                    if line and len(line) >= 2:
-                        text = line[1][0] if isinstance(line[1], (list, tuple)) else str(line[1])
-                        lines.append(text)
-                return "\n".join(lines)
+                texts = result[0].get("rec_texts", [])
+                return "\n".join(t for t in texts if t)
 
         return "(OCR 未识别到文字)"
     except Exception as e:

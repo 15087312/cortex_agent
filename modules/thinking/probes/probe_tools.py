@@ -173,29 +173,9 @@ def probe_start(
         probe_id = f"probe_{target_tier}_{identity_key}_{uuid.uuid4().hex[:8]}"
 
         # —— 层级会话管理: supervisor 启动时自动创建副会话（已弃用） ——
-        # DEPRECATED: 新架构使用 CognitiveBlackboard，不需要副会话
         sub_session_id = ""
         if target_tier == "supervisor":
             logger.debug("[probe_start] SessionManager 副会话已废弃，使用 CognitiveBlackboard")
-            # 旧代码保留但注释，确保向后兼容
-            # try:
-            #     from modules.thinking.session import get_session_manager
-            #     sm = get_session_manager()
-            #     main = sm.get_main_session()
-            #     if main:
-            #         template_name = template.get("name", identity_key)
-            #         template_model_id = template.get("model_id", identity_key)
-            #         sub = sm.create_sub_session(
-            #             parent_session_id=main.session_id,
-            #             supervisor_model_id=template_model_id,
-            #             supervisor_name=template_name,
-            #         )
-            #         sub_session_id = sub.session_id
-            #         logger.info(
-            #             f"[probe_start] 为主管 {template_name} 创建副会话: {sub_session_id[:24]}"
-            #         )
-            # except Exception as e:
-            #     logger.warning(f"[probe_start] 创建副会话失败 (非致命): {e}")
 
         # 注册到 ProbeCache
         try:
@@ -356,27 +336,6 @@ def probe_stop(probe_id: str, **kwargs) -> Dict[str, Any]:
             logger.debug(f"[probe_stop] MessageBus 通知失败 (非致命): {e}")
 
         logger.info(f"[probe_stop] 探针已停止: {probe_id}")
-
-        # —— 层级会话管理: supervisor 停止时销毁副会话 ——
-        if target_tier == "supervisor":
-            try:
-                from modules.thinking.session import get_session_manager
-                sm = get_session_manager()
-                # 从 probe_id 中提取 identity_key 来找 supervisor_model_id
-                from modules.thinking.identity import get_identities
-                for part in probe_id.split("_"):
-                    if part in get_identities():
-                        template = get_identities()[part]
-                        supervisor_model_id = template.get("model_id", "")
-                        if supervisor_model_id:
-                            destroyed = sm.destroy_sub_session(supervisor_model_id)
-                            if destroyed:
-                                logger.info(
-                                    f"[probe_stop] 副会话已销毁: supervisor={template.get('name', part)}"
-                                )
-                        break
-            except Exception as e:
-                logger.warning(f"[probe_stop] 销毁副会话失败 (非致命): {e}")
 
         return {"success": True, "probe_id": probe_id, "message": f"探针 {probe_id} 已停止"}
 
@@ -629,18 +588,18 @@ def request_intermediate_response(
 
         intermediate_text = ""
 
-        # 尝试从 SessionManager 获取 CognitiveBlackboard
+        # 尝试从 SessionLifecycle 获取 CognitiveBlackboard
+        dialog = None
         try:
-            from modules.thinking.session import get_session_manager
-            sm = get_session_manager()
-
-            if session_id:
-                session = sm.get_session(session_id)
-                dialog = session.blackboard if session else None
-            else:
-                # 无 session_id 时，尝试主会话
-                main_session = sm.get_main_session()
-                dialog = main_session.blackboard if main_session else None
+            from modules.thinking.cognition.session_lifecycle import get_active_sessions
+            for lifecycle in get_active_sessions():
+                if lifecycle.session_id == session_id:
+                    dialog = lifecycle.blackboard
+                    break
+            if not dialog:
+                for lifecycle in get_active_sessions():
+                    dialog = lifecycle.blackboard
+                    break
         except Exception:
             dialog = None
 
@@ -891,32 +850,63 @@ def view_sub_session(supervisor_name: str = "", limit: int = 30, **kwargs) -> Di
         格式化的聊天记录
     """
     try:
-        from modules.thinking.session import get_session_manager
-        sm = get_session_manager()
+        # 从 CognitiveBlackboard 读取对话记录，按 supervisor/expert 过滤
+        from modules.thinking.cognition.session_lifecycle import get_active_sessions
 
-        # 如果没指定主管名，列出所有可用副会话
-        if not supervisor_name:
-            subs = sm.list_sub_sessions()
-            if not subs:
+        entries = []
+        for lifecycle in get_active_sessions():
+            bb = lifecycle.blackboard
+            if bb:
+                all_entries = bb.read_dialog(limit=limit)
+                # 过滤出 supervisor 和 expert 的条目
+                for e in all_entries:
+                    tier = e.get("tier", "")
+                    if tier in ("supervisor", "expert"):
+                        entries.append(e)
+
+        if not entries:
+            # 没有指定主管名时列出可用 supervisor
+            supervisors = set()
+            for e in entries:
+                role = e.get("metadata", {}).get("role", "")
+                if role:
+                    supervisors.add(role)
+            if not supervisors:
                 return {
                     "success": True,
-                    "result": "当前没有活跃的副会话。请先委托任务给主管模型。",
+                    "result": "当前没有活跃的主管或专家对话记录。可通过 CognitiveBlackboard 的【专家发现】区段查看最新结果。",
                 }
-            available = [s.supervisor_name for s in subs if s.supervisor_name]
             return {
                 "success": True,
-                "result": (
-                    f"当前有 {len(subs)} 个活跃副会话。\n"
-                    f"可用主管: {', '.join(available) if available else '(无名称)'}\n"
-                    f"请指定 supervisor_name 查看具体副会话内容。"
-                ),
+                "result": f"当前活跃角色: {', '.join(sorted(supervisors))}\n请指定 supervisor_name 查看详情。",
             }
 
-        chat_text = sm.view_sub_session(
-            supervisor_name=supervisor_name,
-            limit=limit,
-        )
-        return {"success": True, "result": chat_text}
+        # 如果有主管名过滤
+        if supervisor_name:
+            filtered = [
+                e for e in entries
+                if supervisor_name in e.get("metadata", {}).get("role", "")
+                or supervisor_name in e.get("model_id", "")
+            ]
+            if not filtered:
+                available = sorted(set(
+                    e.get("metadata", {}).get("role", "") or e.get("model_id", "")[:20]
+                    for e in entries
+                ))
+                return {
+                    "success": True,
+                    "result": f"未找到「{supervisor_name}」的对话。当前活跃角色: {', '.join(available) if available else '(无)'}",
+                }
+            entries = filtered
+
+        lines = [f"=== 对话记录（{supervisor_name or '全部主管/专家'}）==="]
+        for e in entries[-limit:]:
+            tier = e.get("tier", "?")
+            role = e.get("metadata", {}).get("role", e.get("model_id", "?"))[:20]
+            content = e.get("content", "")[:300]
+            lines.append(f"[{tier}/{role}] {content}")
+
+        return {"success": True, "result": "\n\n".join(lines)}
 
     except Exception as e:
         logger.error(f"[view_sub_session] 失败: {e}")

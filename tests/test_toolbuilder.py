@@ -604,18 +604,21 @@ class TestSecurityGateClassification:
     """安全门风险分类测试"""
 
     def test_learn_tool_high_risk(self):
-        from modules.security_system.tool_security_gate import HIGH_RISK_TOOLS
-        assert "learn_tool" in HIGH_RISK_TOOLS
+        from infra.tool_manager.tool_registry import ToolRegistry
+        high_risk = ToolRegistry.get_tools_by_risk("HIGH") | ToolRegistry.get_tools_by_risk("CRITICAL")
+        assert "learn_tool" in high_risk
 
     def test_delete_learned_tool_medium(self):
-        from modules.security_system.tool_security_gate import MEDIUM_RISK_TOOLS
-        assert "delete_learned_tool" in MEDIUM_RISK_TOOLS
-        assert "execute_tool_recipe" in MEDIUM_RISK_TOOLS
+        from infra.tool_manager.tool_registry import ToolRegistry
+        medium_risk = ToolRegistry.get_tools_by_risk("MEDIUM")
+        assert "delete_learned_tool" in medium_risk
+        assert "execute_tool_recipe" in medium_risk
 
     def test_mutation_tools(self):
-        from modules.security_system.tool_security_gate import _MUTATION_TOOLS
+        from infra.tool_manager.tool_registry import ToolRegistry
+        mutation = ToolRegistry.get_mutation_tools()
         for name in ["learn_tool", "delete_learned_tool", "execute_tool_recipe", "create_app_skill"]:
-            assert name in _MUTATION_TOOLS, f"{name} not in _MUTATION_TOOLS"
+            assert name in mutation, f"{name} not in mutation tools"
 
 
 # ====================================================================
