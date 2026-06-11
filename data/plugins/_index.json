@@ -3,9 +3,9 @@
     "Chrome/chrome_search": {
       "tool_name": "chrome_search",
       "app_name": "Chrome",
-      "description": "在 Chrome 浏览器中执行搜索：在地址栏输入关键词后按回车搜索",
-      "added_at": "2026-06-11T14:48:28.864082+00:00"
+      "description": "在 Chrome 浏览器中执行搜索。打开 Chrome，定位到地址栏，输入搜索关键词，按回车进行搜索。",
+      "added_at": "2026-06-11T16:52:10.824450+00:00"
     }
   },
-  "updated_at": "2026-06-11T14:48:28.864085+00:00"
+  "updated_at": "2026-06-11T16:52:10.824454+00:00"
 }

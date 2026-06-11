@@ -120,12 +120,21 @@ def keyboard_press(key: str) -> str:
 @ToolRegistry.register(
     "keyboard_hotkey",
     description="按下组合键",
-    params={"keys": "按键列表(如 ['ctrl', 'c'])"}
+    params={"keys": "按键列表(如 ['ctrl', 'c']，或单个键如 'enter')"}
 )
-def keyboard_hotkey(keys: list) -> str:
-    """组合键"""
+def keyboard_hotkey(keys: list = None, key: str = None) -> str:
+    """组合键
+
+    接受 keys 或 key 参数，兼容模型传错参数名的情况。
+    - keys=['command', 'l'] — 组合键
+    - key='enter' — 单个键（自动转为 [key]）
+    """
+    if keys is None and key is not None:
+        keys = [key]
     if not isinstance(keys, list):
         keys = [keys]
+    if not keys or (len(keys) == 1 and keys[0] is None):
+        return "[错误] 请指定按键，如 keyboard_hotkey(keys=['enter']) 或 keyboard_hotkey(key='enter')"
     success = _controller.hotkey(*keys)
     if success:
         return f"组合键: {'+'.join(keys)}"
