@@ -58,13 +58,23 @@ class CrossModalFusion:
         weights = modality_weights or self.default_weights
         
         if self.strategy == "weighted_avg":
-            return self._weighted_average_fusion(vectors, weights)
+            result = self._weighted_average_fusion(vectors, weights)
         elif self.strategy == "gated":
-            return self._gated_fusion(vectors, weights)
+            result = self._gated_fusion(vectors, weights)
         elif self.strategy == "pooling":
-            return self._pooling_fusion(vectors, weights)
+            result = self._pooling_fusion(vectors, weights)
         else:
-            return self._weighted_average_fusion(vectors, weights)
+            result = self._weighted_average_fusion(vectors, weights)
+        
+        # 归一化到0-1范围
+        result.semantic = max(0.0, min(1.0, result.semantic))
+        result.temporal = max(0.0, min(1.0, result.temporal))
+        result.task = max(0.0, min(1.0, result.task))
+        result.emotion = max(0.0, min(1.0, result.emotion))
+        result.modality = max(0.0, min(1.0, result.modality))
+        result.confidence = max(0.0, min(1.0, result.confidence))
+        
+        return result
     
     def _weighted_average_fusion(
         self,

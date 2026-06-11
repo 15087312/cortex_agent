@@ -8,18 +8,21 @@
 4. 注意力驱动的资源分配
 5. 注意力可解释性
 """
-from modules.attention.core.v2.attention_vector import AttentionVector
+from modules.attention.core.v2.attention_vector import AttentionVector, AttentionVectorFactory
 from modules.attention.core.v2.cross_modal_fusion import CrossModalFusion
-from modules.attention.core.v2.adaptive_decay import AdaptiveDecay
-from modules.attention.core.v2.resource_allocator import ResourceAllocator
+from modules.attention.core.v2.adaptive_decay import AdaptiveDecay, DecayConfig
+from modules.attention.core.v2.resource_allocator import ResourceAllocator, ResourceBudget
 from modules.attention.core.v2.attention_explainer import AttentionExplainer
 from modules.attention.core.v2.attention_engine import AttentionEngine
 
 __all__ = [
     "AttentionVector",
+    "AttentionVectorFactory",
     "CrossModalFusion",
     "AdaptiveDecay",
+    "DecayConfig",
     "ResourceAllocator",
+    "ResourceBudget",
     "AttentionExplainer",
     "AttentionEngine",
 ]

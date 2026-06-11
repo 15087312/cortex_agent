@@ -152,6 +152,33 @@ async def save_recipe(
         # 更新 Skill
         SkillGenerator.generate_or_update(app_name)
 
+        # 注册到 ToolRegistry，让模型可以直接调用
+        try:
+            from infra.tool_manager.tool_registry import ToolRegistry
+            from modules.toolbuilder.recipe_engine import RecipeEngine
+
+            def _make_runner(tn, an):
+                def run(**kwargs):
+                    return RecipeEngine.execute(tn, kwargs, an)
+                run.__name__ = tn
+                run.__qualname__ = tn
+                return run
+
+            runner_func = _make_runner(tool_name, app_name)
+            registered = ToolRegistry.get_tool(tool_name)
+            if registered is None:
+                ToolRegistry.register(
+                    tool_name,
+                    description=description or f"已学工具: {app_name} 的自动化操作",
+                    params={k: {"type": "string"} for k in params.keys()},
+                    risk_level="LOW",
+                    category="mutation",
+                    core=False,
+                )(runner_func)
+                logger.info(f"已学工具已注册到 ToolRegistry: {tool_name}")
+        except Exception as e:
+            logger.warning(f"注册已学工具到 ToolRegistry 失败 (非致命): {e}")
+
         # 退出学习模式
         try:
             from config.settings import settings as _cfg

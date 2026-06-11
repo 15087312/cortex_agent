@@ -22,4 +22,62 @@ try:
 except Exception:
     pass
 
+# 加载已学的 UI 自动化工具（data/plugins/learned_*/）
+try:
+    _load_learned_tools()
+except Exception:
+    pass
+
 __all__ = _imported
+
+
+def _load_learned_tools():
+    """从 data/plugins/learned_*/ 目录加载已学工具到 ToolRegistry"""
+    from pathlib import Path
+    from infra.tool_manager.tool_registry import ToolRegistry
+    from modules.toolbuilder.recipe_engine import RecipeEngine
+
+    learned_dir = Path(__file__).parent.parent.parent.parent / "data" / "plugins"
+    if not learned_dir.exists():
+        return
+
+    for plugin_dir in learned_dir.iterdir():
+        if not plugin_dir.is_dir() or not plugin_dir.name.startswith("learned_"):
+            continue
+        # 解析 tool_name 和 app_name
+        parts = plugin_dir.name.replace("learned_", "", 1).split("_", 1)
+        if len(parts) != 2:
+            continue
+        app_name_raw, tool_name_raw = parts
+        # 反向映射：app_name 可能含下划线，tool_name 也可能含下划线
+        # 更可靠的方式是读 recipe.json
+        recipe_path = plugin_dir / "recipe.json"
+        if not recipe_path.exists():
+            continue
+        try:
+            import json
+            recipe = json.loads(recipe_path.read_text(encoding="utf-8"))
+            tool_name = recipe.get("tool_name", tool_name_raw)
+            app_name = recipe.get("app_name", app_name_raw)
+            desc = recipe.get("description", f"已学工具: {app_name} 的自动化操作")
+            params_schema = recipe.get("params", {})
+
+            if ToolRegistry.get_tool(tool_name) is not None:
+                continue  # 已注册
+
+            def _make_runner(tn, an):
+                def run(**kwargs):
+                    return RecipeEngine.execute(tn, kwargs, an)
+                run.__name__ = tn
+                return run
+
+            ToolRegistry.register(
+                tool_name,
+                description=desc,
+                params={k: {"type": "string"} for k in params_schema.get("properties", {}).keys()},
+                risk_level="LOW",
+                category="mutation",
+                core=False,
+            )(_make_runner(tool_name, app_name))
+        except Exception:
+            continue
