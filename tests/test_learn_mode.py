@@ -7,70 +7,69 @@ Learn 模式单元测试
 - 精度降级拒绝
 - 空参数/错误参数
 - 进度回调正确性
-- _extract_app_name 提取逻辑
+- request_mode_change learn 参数传递
 """
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
 
 
 # ====================================================================
-# _extract_app_name 测试
+# _handle_mode_change_request → learn 路径测试
 # ====================================================================
 
-class TestExtractAppName:
-    """从文本提取应用名的启发式逻辑"""
+class TestRequestModeChangeLearn:
+    """模型通过 request_mode_change 传递 learn 参数"""
 
-    def _extract(self, text: str) -> str:
-        """直接调用静态方法"""
+    @pytest.mark.asyncio
+    async def test_learn_with_app_name(self):
+        """模型提供 app_name 时应直接传递给管线"""
+        from config.settings import Settings
+        settings = Settings(_env_file=None)
+        with patch.object(settings, 'LARGE_MODEL_API_KEY', 'test_key'):
+            from modules.thinking.core.model_runner import ModelRunner
+
+            runner = ModelRunner.__new__(ModelRunner)
+            runner.model_id = "test_runner"
+            runner.logger = MagicMock()
+
+            result = await runner._handle_mode_change_request(
+                reason="用户想学习如何操作",
+                suggested_mode="learn",
+                app_name="Chrome",
+                tool_name="chrome_search",
+                task_description="打开Chrome并搜索Python教程",
+            )
+            # 没有 API Key 所以实际调用会失败，但应该走到管线而不是
+            # 因为缺少 app_name 直接返回错误
+            assert "请指定要学习的应用" not in result
+
+    @pytest.mark.asyncio
+    async def test_learn_without_app_name_returns_error(self):
+        """模型未提供 app_name 时应返回明确错误"""
         from modules.thinking.core.model_runner import ModelRunner
-        return ModelRunner._extract_app_name(text)
 
-    def test_open_app(self):
-        """打开Chrome"""
-        assert self._extract("打开Chrome") == "Chrome"
+        runner = ModelRunner.__new__(ModelRunner)
+        result = await runner._handle_mode_change_request(
+            reason="用户想学习",
+            suggested_mode="learn",
+        )
+        assert "请指定要学习的应用名称" in result
 
-    def test_in_app(self):
-        """在Chrome中搜索"""
-        assert self._extract("在Chrome中搜索") == "Chrome"
+    @pytest.mark.asyncio
+    async def test_non_learn_still_requires_approval(self):
+        """非 learn 模式仍需要用户确认"""
+        from modules.thinking.core.model_runner import ModelRunner
 
-    def test_in_app_variant(self):
-        """在Chrome里面搜索"""
-        assert self._extract("在Chrome里面搜索") == "Chrome"
+        runner = ModelRunner.__new__(ModelRunner)
+        runner._pending_user_responses = {}
 
-    def test_learn_app(self):
-        """学习Chrome搜索"""
-        assert self._extract("学习Chrome搜索") == "Chrome"
-
-    def test_learn_app_variant(self):
-        """学习Chrome的操作"""
-        assert self._extract("学习Chrome的操作") == "Chrome"
-
-    def test_launch_app(self):
-        """启动Chrome"""
-        assert self._extract("启动Chrome") == "Chrome"
-
-    def test_english_app_name_fallback(self):
-        """用户想学一个Chrome的搜索功能"""
-        result = self._extract("用户想学一个Chrome的搜索功能")
-        assert result in ("Chrome",), f"应该提取出 Chrome，实际为 {result}"
-
-    def test_chinese_app_name(self):
-        """打开微信"""
-        assert self._extract("打开微信") == "微信"
-
-    def test_no_match_returns_default(self):
-        """没有匹配时返回 target_app"""
-        assert self._extract("只是想学一下") == "target_app"
-
-    def test_space_in_app_name(self):
-        """打开Google Chrome → 完整应用名"""
-        result = self._extract("打开Google Chrome")
-        # 新版支持双词英文应用名（open -a "Google Chrome" 可正常打开）
-        assert result in ("Google Chrome",)
-
-    def test_complex_sentence(self):
-        """帮我学习一下怎么在PyCharm里面编写Python代码"""
-        assert self._extract("帮我学习一下怎么在PyCharm里面编写Python代码") == "PyCharm"
+        with patch.object(runner, '_wait_for_user_response',
+                          AsyncMock(return_value={"timeout": True})):
+            result = await runner._handle_mode_change_request(
+                reason="需要编辑代码",
+                suggested_mode="edit",
+            )
+            assert "用户未响应" in result
 
 
 # ====================================================================

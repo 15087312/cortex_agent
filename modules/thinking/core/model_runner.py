@@ -937,12 +937,19 @@ class ModelRunner:
             if future and not future.done():
                 future.set_result(response)
 
-    async def _handle_mode_change_request(self, reason: str, suggested_mode: str) -> str:
+    async def _handle_mode_change_request(self, reason: str, suggested_mode: str,
+                                           app_name: str = "", tool_name: str = "",
+                                           task_description: str = "") -> str:
         """处理 request_mode_change 工具调用"""
         # learn 模式：瞬态动作，不需要用户二次确认
         # 模型已经在响应用户的"学习"请求，直接执行管线
         if suggested_mode == "learn":
-            return await self._run_learn_mode(reason, {})
+            learn_params = {
+                "app_name": app_name,
+                "tool_name": tool_name,
+                "task": task_description or reason,
+            }
+            return await self._run_learn_mode(reason, learn_params)
 
         # 其他模式（plan/edit/yolo/control）需要用户确认
         result = await self._wait_for_user_response("mode_change_request", {
@@ -960,16 +967,16 @@ class ModelRunner:
             user_reason = result.get("reason", "用户拒绝")
             return f"【模式切换】用户拒绝切换模式。原因：{user_reason}。请在当前模式下继续。"
 
-    async def _run_learn_mode(self, reason: str, user_result: dict) -> str:
+    async def _run_learn_mode(self, reason: str, params: dict) -> str:
         """处理 learn 模式：运行学习管线"""
-        # 从用户回复或 reason 中提取学习参数
-        task_desc = user_result.get("task", "") or reason
-        app_name = user_result.get("app_name", "")
-        tool_name = user_result.get("tool_name", "")
+        # 参数由模型通过工具调用直接提供，不需要硬匹配
+        app_name = params.get("app_name", "")
+        tool_name = params.get("tool_name", "")
+        task_desc = params.get("task", "") or reason
 
-        # 如果用户没指定 app_name，尝试从 reason 中提取
         if not app_name:
-            app_name = self._extract_app_name(reason)
+            return "【学习失败】请指定要学习的应用名称（app_name）"
+
         if not tool_name:
             safe_name = app_name.lower().replace(" ", "_").replace("-", "_")
             tool_name = f"{safe_name}_learn"
@@ -1014,38 +1021,6 @@ class ModelRunner:
             )
         else:
             return f"【学习失败】{learn_result.get('message', '未知错误')}"
-
-    @staticmethod
-    def _extract_app_name(text: str) -> str:
-        """从文本中提取应用名
-
-        处理中英文混合文本，'打开Chrome并搜索' → 'Chrome'
-        中文无空格分隔，非空白字符会吞噬整句，必须限定边界。
-        """
-        import re
-        patterns = [
-            # "在Chrome中搜索"、"在Chrome里面搜索"
-            r'在\s*([a-zA-Z][a-zA-Z0-9_.]*)\s*(?:中|里面|里|上|下)',
-            # "打开VS Code"、"打开Google Chrome" — 英文 app 名（含空格）
-            r'打开\s*([a-zA-Z][a-zA-Z0-9_.]*(?:\s+[a-zA-Z][a-zA-Z0-9_.]*)?)',
-            # "打开微信"、"打开支付宝" — 中文 app 名（2-4 个汉字）
-            r'打开\s*([\u4e00-\u9fff]{2,4})(?:[，,。.、的并和与或及]|$)',
-            # "学习Chrome" — 英文名
-            r'学习\s*([a-zA-Z][a-zA-Z0-9_.]*)(?:的|操作|搜索|查找|功能)',
-            # "启动Chrome"
-            r'启动\s*([a-zA-Z][a-zA-Z0-9_.]*)',
-        ]
-        for pattern in patterns:
-            m = re.search(pattern, text)
-            if m:
-                name = m.group(1).strip()
-                if 1 < len(name) < 40:
-                    return name
-        # 兜底：取第一个看起来像应用名的词
-        m = re.search(r'([A-Z][a-zA-Z.]+)', text)
-        if m:
-            return m.group(1)
-        return "target_app"
 
     async def _handle_ask_user_intent(self, question: str, options: list, context: str) -> str:
         """处理 ask_user_intent 工具调用"""
@@ -1916,7 +1891,14 @@ class ModelRunner:
                                     # 请求模式切换 — 暂停等待用户选择
                                     reason = args.get("reason", "")
                                     suggested = args.get("suggested_mode", "edit")
-                                    mode_result = await self._handle_mode_change_request(reason, suggested)
+                                    app_name = args.get("app_name", "")
+                                    tool_name = args.get("tool_name", "")
+                                    task_desc = args.get("task_description", "")
+                                    mode_result = await self._handle_mode_change_request(
+                                        reason, suggested,
+                                        app_name=app_name, tool_name=tool_name,
+                                        task_description=task_desc,
+                                    )
                                     return mode_result
                                 elif tc.name == "ask_user_intent":
                                     # 询问用户意图 — 暂停等待用户选择
