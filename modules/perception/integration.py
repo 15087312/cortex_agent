@@ -2,7 +2,7 @@
 感知集成器 - 将感知系统集成到主流程
 
 提供：
-1. 自动启动/停止感知监控
+1. 订阅感知事件，自动注入到模型上下文
 2. 感知上下文注入到对话
 3. 对话流程集成
 """
@@ -17,7 +17,8 @@ class PerceptionIntegrator:
     """
     感知集成器
 
-    将感知系统无缝集成到AI对话流程
+    将感知系统无缝集成到AI对话流程。
+    订阅感知事件总线，自动将环境变化（屏幕/OCR/文件等）注入模型上下文。
     """
 
     def __init__(self):
@@ -25,23 +26,85 @@ class PerceptionIntegrator:
         self._context_injection_enabled = True
         self._attention_items: List[Dict[str, Any]] = []
         self._max_attention = 20
+        self._sub_id: str = ""
         logger.info("感知集成器初始化完成")
 
     def start(self) -> None:
-        """启动感知监控"""
+        """启动感知监控并订阅事件"""
         if self._auto_monitoring:
             from modules.perception import get_perception_system
             ps = get_perception_system()
             if not ps._started:
                 ps.setup()
                 ps.start()
-            logger.info("感知监控已启动")
+            # 订阅感知事件，自动填充注意力池
+            self._subscribe_events()
+            logger.info("感知监控已启动，已订阅感知事件")
+
+    def _subscribe_events(self) -> None:
+        """订阅感知事件总线"""
+        try:
+            from modules.perception.events.bus import get_event_bus
+            from modules.perception.events.types import PerceptionEventType
+
+            event_bus = get_event_bus()
+
+            # 订阅所有感知事件类型（屏幕、OCR、文件、差异等）
+            for event_type in [
+                PerceptionEventType.SCREEN_DIFF,
+                PerceptionEventType.SCREEN_OCR,
+                PerceptionEventType.FILE_CHANGE,
+                PerceptionEventType.DIALOG_CHANGE,
+                PerceptionEventType.DIFFERENCE_DETECTED,
+            ]:
+                try:
+                    event_bus.subscribe(event_type, self._on_perception_event)
+                except Exception:
+                    pass
+            logger.info("已订阅感知事件")
+        except Exception as e:
+            logger.debug(f"订阅感知事件失败 (非致命): {e}")
+
+    def _on_perception_event(self, event) -> None:
+        """感知事件回调 — 添加到注意力池"""
+        try:
+            payload = event.payload if hasattr(event, 'payload') else {}
+            source = payload.get('source_type', payload.get('type', 'unknown'))
+            category = payload.get('category', '')
+            description = payload.get('description', payload.get('text', ''))
+            intensity = payload.get('intensity', 0)
+
+            if isinstance(description, str) and description:
+                # 去重：相同描述的最近事件不再重复添加
+                for item in self._attention_items[-3:]:
+                    existing = item.get("description", "")
+                    if existing == description[:100]:
+                        return
+
+                self._attention_items.append({
+                    "source": source,
+                    "category": category,
+                    "description": description[:200],
+                    "intensity": intensity,
+                    "prompt": f"[{source}] {description[:200]}",
+                })
+                if len(self._attention_items) > self._max_attention:
+                    self._attention_items = self._attention_items[-self._max_attention:]
+        except Exception as e:
+            logger.debug(f"处理感知事件异常 (非致命): {e}")
 
     def stop(self) -> None:
         """停止感知监控"""
         from modules.perception import get_perception_system
         ps = get_perception_system()
         ps.stop()
+        if self._sub_id:
+            try:
+                from modules.perception.events.bus import get_event_bus
+                get_event_bus().unsubscribe(self._sub_id)
+            except Exception:
+                pass
+            self._sub_id = ""
         logger.info("感知监控已停止")
 
     def update_dialog(self, messages: List[Dict]) -> None:
@@ -76,8 +139,16 @@ class PerceptionIntegrator:
         """获取注意力提示"""
         if not self._attention_items:
             return ""
-        prompts = [item["prompt"] for item in self._attention_items[-5:]]
-        return "【感知变化】\n" + "\n".join(prompts)
+        items = self._attention_items[-5:]  # 最近5条
+        prompts = []
+        for item in items:
+            if "prompt" in item:
+                prompts.append(item["prompt"])
+            elif "description" in item:
+                prompts.append(f"[{item.get('source', '感知')}] {item['description']}")
+        if not prompts:
+            return ""
+        return "【环境感知】\n" + "\n".join(prompts)
 
     def build_system_prompt(self, base_prompt: str) -> str:
         """构建系统提示词（注入感知信息）"""
@@ -99,7 +170,7 @@ class PerceptionIntegrator:
         return full_messages
 
     def get_context_summary(self) -> str:
-        """获取感知上下文摘要"""
+        """获取感知上下文摘要（由编排层调用，注入到模型 prompt）"""
         attention_prompt = self.get_attention_prompt()
         if attention_prompt:
             return f"\n\n{attention_prompt}"

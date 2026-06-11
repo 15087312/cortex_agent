@@ -83,6 +83,10 @@ async def lifespan(app: FastAPI):
             ps.start()
             logger.info("✓ 感知系统已启动 (屏幕/文件/对话监控)")
 
+            # 启动感知集成器（订阅事件并注入模型上下文）
+            from modules.perception.integration import get_perception_integrator
+            get_perception_integrator().start()
+
             # 注册感知差异源到差异检测器
             if settings.DIFFERENCE_DETECTOR_ENABLED and ps.perception_source:
                 from modules.difference_detector import get_detector
