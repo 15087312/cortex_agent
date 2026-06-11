@@ -939,10 +939,12 @@ class ModelRunner:
 
     async def _handle_mode_change_request(self, reason: str, suggested_mode: str) -> str:
         """处理 request_mode_change 工具调用"""
-        # 记录当前模式，learn 模式结束后恢复
-        from config.settings import settings as _cfg
-        previous_mode = _cfg.effective_execution_mode
+        # learn 模式：瞬态动作，不需要用户二次确认
+        # 模型已经在响应用户的"学习"请求，直接执行管线
+        if suggested_mode == "learn":
+            return await self._run_learn_mode(reason, {})
 
+        # 其他模式（plan/edit/yolo/control）需要用户确认
         result = await self._wait_for_user_response("mode_change_request", {
             "action": "mode_change_request",
             "reason": reason,
@@ -953,16 +955,6 @@ class ModelRunner:
         approved = result.get("approved", False)
         if approved:
             target_mode = result.get("mode", suggested_mode)
-            # learn 模式：自动运行学习管线，完成后恢复原始模式
-            if target_mode == "learn":
-                learn_result = await self._run_learn_mode(reason, result)
-                # 恢复模式（TUI 状态和后端设置）
-                if previous_mode and previous_mode != "learn":
-                    try:
-                        object.__setattr__(_cfg, "EXECUTION_MODE", previous_mode)
-                    except Exception:
-                        pass
-                return learn_result
             return f"【模式切换】用户同意切换到 {target_mode} 模式。请继续执行任务。"
         else:
             user_reason = result.get("reason", "用户拒绝")
@@ -1025,18 +1017,23 @@ class ModelRunner:
 
     @staticmethod
     def _extract_app_name(text: str) -> str:
-        """从文本中提取应用名（简单启发式）"""
+        """从文本中提取应用名
+
+        处理中英文混合文本，'打开Chrome并搜索' → 'Chrome'
+        中文无空格分隔，非空白字符会吞噬整句，必须限定边界。
+        """
         import re
-        # 优先匹配精确中文模式
         patterns = [
             # "在Chrome中搜索"、"在Chrome里面搜索"
-            r'在\s*(\S+)\s*(?:中|里面|里|上|下)',
-            # "打开Chrome"
-            r'打开\s*(\S+)',
+            r'在\s*(\w+)\s*(?:中|里面|里|上|下)',
+            # "打开Chrome" — 中文紧跟，只取第一个中/英文词
+            r'打开\s*([a-zA-Z][\w.]*)',
+            # "打开微信" — 中文 app 名（2-6 个汉字）
+            r'打开\s*([\u4e00-\u9fff]{2,8})',
             # "学习Chrome搜索"、"学习Chrome的操作"
-            r'学习\s*(\S+?)(?:的|操作|搜索|查找|功能)',
+            r'学习\s*(\w+?)(?:的|操作|搜索|查找|功能)',
             # "启动Chrome"
-            r'启动\s*(\S+)',
+            r'启动\s*([\w.]+)',
         ]
         for pattern in patterns:
             m = re.search(pattern, text)
@@ -1044,8 +1041,8 @@ class ModelRunner:
                 name = m.group(1).strip()
                 if 1 < len(name) < 40:
                     return name
-        # 兜底：取第一个看起来像应用名的词（大写开头或英文词）
-        m = re.search(r'([A-Z][a-zA-Z]+)', text)
+        # 兜底：取第一个看起来像应用名的词
+        m = re.search(r'([A-Z][a-zA-Z.]+)', text)
         if m:
             return m.group(1)
         return "target_app"
