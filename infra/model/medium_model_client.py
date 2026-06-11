@@ -89,6 +89,9 @@ class MediumModelClient(BaseModelClient):
             api_messages = []
             for msg in messages:
                 d = {"role": msg.role, "content": msg.content or ""}
+                # thinking模式：传回reasoning_content
+                if msg.reasoning_content:
+                    d["reasoning_content"] = msg.reasoning_content
                 if msg.tool_calls:
                     d["tool_calls"] = [
                         {"id": tc.id, "type": "function", "function": {"name": tc.name, "arguments": tc.arguments}}
@@ -142,6 +145,7 @@ class MediumModelClient(BaseModelClient):
         choice = choices[0]
         message = choice.get("message", {})
         content = message.get("content", "") or ""
+        reasoning_content = message.get("reasoning_content")  # thinking模式
         raw_tool_calls = message.get("tool_calls")
         tool_calls = []
         if raw_tool_calls:
@@ -149,7 +153,12 @@ class MediumModelClient(BaseModelClient):
                 func = tc.get("function", {})
                 tool_calls.append(ToolCall(id=tc.get("id", ""), name=func.get("name", ""), arguments=func.get("arguments", "{}")))
         return ChatResponse(
-            message=ChatMessage(role="assistant", content=content, tool_calls=tool_calls if tool_calls else None),
+            message=ChatMessage(
+                role="assistant",
+                content=content,
+                tool_calls=tool_calls if tool_calls else None,
+                reasoning_content=reasoning_content,  # 保存thinking内容
+            ),
             usage={"prompt_tokens": data.get("usage", {}).get("prompt_tokens", 0), "completion_tokens": data.get("usage", {}).get("completion_tokens", 0)},
         )
 

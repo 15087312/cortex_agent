@@ -711,6 +711,10 @@ class LargeModelClient(BaseModelClient):
             if m.content is not None:
                 msg["content"] = m.content
 
+            # thinking模式：传回reasoning_content
+            if m.reasoning_content and fmt == "openai":
+                msg["reasoning_content"] = m.reasoning_content
+
             # Anthropic: assistant 的 tool_calls 用 tool_use content blocks
             if m.tool_calls and fmt == "anthropic":
                 blocks = []
@@ -804,6 +808,7 @@ class LargeModelClient(BaseModelClient):
                 msg = choice.get("message", {})
                 finish_reason = choice.get("finish_reason", "stop")
                 content = msg.get("content")
+                reasoning_content = msg.get("reasoning_content")  # thinking模式
                 tool_calls_raw = msg.get("tool_calls", [])
                 usage = data.get("usage")
 
@@ -823,6 +828,7 @@ class LargeModelClient(BaseModelClient):
                         role=msg.get("role", "assistant"),
                         content=content,
                         tool_calls=tool_calls,
+                        reasoning_content=reasoning_content,  # 保存thinking内容
                     ),
                     finish_reason=finish_reason,
                     usage=usage,

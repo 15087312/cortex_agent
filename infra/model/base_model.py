@@ -34,6 +34,7 @@ class ChatMessage:
     tool_calls: Optional[List[ToolCall]] = None
     name: Optional[str] = None        # DashScope: tool role 时标识函数名
     tool_call_id: Optional[str] = None  # OpenAI: tool role 时关联 tool_call
+    reasoning_content: Optional[str] = None  # thinking模式下的推理内容
 
 
 @dataclass

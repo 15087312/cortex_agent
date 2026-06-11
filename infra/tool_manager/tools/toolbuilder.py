@@ -308,7 +308,7 @@ def _ensure_learned_skill(app_name: str, tool_name: str, description: str, param
         "description": f"{app_name} 应用的已学工具集",
         "keywords": keywords,
         "role": f"{app_name} 操作专家",
-        "personality": f"你是 {app_name} 的自动化操作专家。你已学会 {tool_name}。",
+        "personality": f"你是 {app_name} 的自动化操作专家。你的专属工具是 {tool_name}，使用时直接调用即可。",
         "speaking_style": "直接执行操作，简洁说明结果",
         "expertise": [tool_name],
         "weaknesses": [],
