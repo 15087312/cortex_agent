@@ -1977,9 +1977,15 @@ class ModelRunner:
                                 args = json.loads(tc.arguments) if isinstance(tc.arguments, str) and tc.arguments.strip() else {}
                                 missing = self._missing_required_tool_args(tc.name, args)
                                 if missing:
+                                    # 生成友好提示，告诉模型正确的参数名
+                                    hint = ""
+                                    if tc.name == "keyboard_hotkey":
+                                        hint = " 正确用法: keyboard_hotkey(keys=['enter']) 或 keyboard_hotkey(key='enter')"
+                                    elif tc.name == "keyboard_press":
+                                        hint = " 正确用法: keyboard_press(key='enter')"
                                     result = (
                                         f"[工具 {tc.name} 调用被拦截: 缺少必填参数 {', '.join(missing)}。"
-                                        "不要无参重试；请补齐参数、改用 delegate_task，或等待已有委托结果。]"
+                                        f"{hint}"
                                     )
                                     logger.warning(
                                         f"[ModelRunner] 拦截无效工具调用: model={self.model_id} "

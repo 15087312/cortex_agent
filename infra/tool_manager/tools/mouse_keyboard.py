@@ -109,8 +109,20 @@ def keyboard_type(text: str, interval: float = 0.05) -> str:
     description="按下键盘按键",
     params={"key": "按键名称(如 enter, tab, escape, ctrl, alt, shift等)"}
 )
-def keyboard_press(key: str) -> str:
-    """键盘按键"""
+def keyboard_press(key: str = None, keys: list = None) -> str:
+    """键盘按键
+
+    接受 key 或 keys 参数，与其他键盘工具保持一致。
+    - key='enter' — 单个键
+    - keys=['enter'] — 等效
+    """
+    if key is None and keys is not None:
+        if isinstance(keys, list) and len(keys) > 0:
+            key = keys[0]
+        elif isinstance(keys, str):
+            key = keys
+    if not key:
+        return "[错误] 请指定按键，如 keyboard_press(key='enter')"
     success = _controller.press_key(key)
     if success:
         return f"按键: {key}"
