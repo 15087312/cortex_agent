@@ -1,3 +1,21 @@
+"""
+插件系统 — AI 自进化模块
+
+设计目标：
+  此系统不再是传统意义上的第三方插件市场，而是大模型自我进化的工具工厂。
+  AI 通过 learn 模式或直接调用本系统 API，可以动态创建、安装、启用、停用
+  和卸载自己的工具插件。
+
+与 MCP 的关系：
+  MCP → 外部社区工具，一行配置接入
+  本系统 → AI 自创的内部工具，learn 模式生成
+
+核心能力：
+  - learn 模式 → PluginBuilder → 插件包 → PluginLoader 热加载
+  - 插件包标准结构（plugin.yaml + tool_impl.py + recipe.json）
+  - 热加载、启用/停用、卸载
+  - 安全沙箱（可选）、签名验证（可选）
+"""
 from .audit import (
     AuditLogger,
     AuditLogIntegrityError,

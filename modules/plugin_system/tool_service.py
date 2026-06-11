@@ -1,3 +1,14 @@
+"""
+插件工具服务 — AI 自创工具的注册、发现、调用
+
+设计目标：
+  管理 AI 通过 learn 模式创建的插件工具。每个插件工具是一个标准包
+  （plugin.yaml + tool_impl.py + recipe.json），存放在 data/plugins/ 下。
+
+与 MCP 的关系：
+  本地自创工具走此服务，外部工具走 MCP。两者在 CombinedToolProvider 中合并，
+  模型看到的是统一的工具列表。
+"""
 from __future__ import annotations
 
 import argparse

@@ -1,3 +1,20 @@
+"""
+模型循环适配器 — 将插件系统工具桥接到推理循环
+
+设计目标：
+  插件系统作为 AI 自进化模块，本适配器负责在模型推理过程中
+  发现、解析、执行 AI 自创的工具插件。
+
+职责：
+  - list_tools: 列出当前可用的 AI 自创工具
+  - extract_tool_calls: 从模型输出中解析工具调用
+  - execute_tool_calls: 执行 AI 自创的工具
+  - append_tool_results_to_messages: 将执行结果追加到对话
+
+与 MCP 工具区别：
+  本适配器处理 AI 自创的插件工具（learn 模式生成）
+  MCP 工具通过 CombinedToolProvider 在另一个路径处理
+"""
 from __future__ import annotations
 
 import argparse

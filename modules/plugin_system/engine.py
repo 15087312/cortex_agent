@@ -1,3 +1,17 @@
+"""
+插件引擎 — AI 自创插件的生命周期管理
+
+设计目标：
+  管理 AI 自创插件的安装、启用、停用、卸载和热加载。
+  插件由 learn 模式生成，存放在 data/plugins/ 下。
+
+职责：
+  - 安装/卸载插件包
+  - 热加载（discover）
+  - 启用/停用
+  - 运行状态追踪
+  - 安全沙箱执行（production_mode 启用时）
+"""
 from __future__ import annotations
 
 import threading
