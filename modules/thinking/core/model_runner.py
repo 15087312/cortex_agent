@@ -1272,11 +1272,11 @@ class ModelRunner:
             from config.settings import settings as _cfg
             if _cfg.effective_execution_mode != "learn":
                 base_prompt += (
-                    "\n\n【学习 UI 操作】\n"
-                    "如果用户想学习如何操作某个应用（如「学习怎么在Chrome中搜索」），"
-                    "调用 request_mode_change(suggested_mode='learn') 进入学习模式。\n"
-                    "学习模式下你会获得自我进化提示，可以用 open_app / detect_ui_elements / "
-                    "鼠标键盘工具执行操作，最后用 save_recipe 保存成果。"
+                    "\n\n【学习新技能】\n"
+                    "当用户说「学习怎么使用XXX」或「教我怎么用XXX」时：\n"
+                    "1. 立即调用 request_mode_change(suggested_mode='learn') 进入学习模式\n"
+                    "2. 不要先查工具是否存在，不要用其他工具试探\n"
+                    "3. 进入学习模式后会获得完整指引"
                 )
         except Exception:
             pass

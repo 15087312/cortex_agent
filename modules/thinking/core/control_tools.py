@@ -212,9 +212,9 @@ REQUEST_MODE_CHANGE_TOOL = {
     "function": {
         "name": "request_mode_change",
         "description": (
-            "请求切换执行模式。当你在 plan 模式下完成了分析和规划，"
-            "需要实际执行操作（写文件、运行命令等）时，调用此工具请求用户解除 plan 模式。"
-            "当用户需要学习 UI 操作时，请求切换到 learn 模式。"
+            "请求切换执行模式。\n"
+            "- plan/edit/yolo/control: 切换工作模式，需用户确认。\n"
+            "- learn: 进入学习模式。用户说「学习怎么用XXX」时直接调这个，不用先查工具。"
         ),
         "parameters": {
             "type": "object",
