@@ -19,17 +19,6 @@ from ..services.api_client import APIClient
 from ..services.ws_client import WSClient
 from ..state import AppState
 
-# 全局学习进度通知（由 model_runner 的学习管线回调）
-_learn_progress_state: Optional[dict] = None
-
-
-def notify_learn_progress(event: str, data: dict):
-    """供后端 learn pipeline 调用的进度通知（运行在同一进程时有效）"""
-    global _learn_progress_state
-    if _learn_progress_state is None:
-        _learn_progress_state = {}
-    _learn_progress_state.update({"last_event": event, "last_data": data})
-
 from ..widgets.header import Header
 from ..widgets.message_list import MessageList
 from ..widgets.prompt_input import PromptInput
@@ -536,15 +525,9 @@ class REPL(Screen):
         if value.startswith("approve:"):
             mode = value.split(":", 1)[1]
             if ml:
-                if mode == "learn":
-                    desc = f" (任务: {custom_text})" if custom_text else ""
-                    ml.write(f"[bold green]✅ 同意切换到 {mode} 模式{desc}[/bold green]")
-                else:
-                    ml.write(f"[bold green]✅ 同意切换到 {mode} 模式[/bold green]")
+                ml.write(f"[bold green]✅ 同意切换到 {mode} 模式[/bold green]")
             self._set_execution_mode(mode)
             response_data = {"approved": True, "mode": mode}
-            if mode == "learn" and custom_text:
-                response_data["task"] = custom_text
             self._send_interactive_response(request_id, response_data)
         else:
             reason = custom_text or "用户拒绝"

@@ -212,10 +212,9 @@ REQUEST_MODE_CHANGE_TOOL = {
     "function": {
         "name": "request_mode_change",
         "description": (
-            "请求用户切换执行模式。当你在 plan 模式下完成了分析和规划，"
+            "请求切换执行模式。当你在 plan 模式下完成了分析和规划，"
             "需要实际执行操作（写文件、运行命令等）时，调用此工具请求用户解除 plan 模式。"
-            "或者当用户需要学习 UI 操作时，请求切换到 learn 模式并通过 app_name 告知要学习的应用。"
-            "用户可以选择同意并指定目标模式，或拒绝并给出理由。"
+            "当用户需要学习 UI 操作时，请求切换到 learn 模式。"
         ),
         "parameters": {
             "type": "object",
@@ -228,18 +227,6 @@ REQUEST_MODE_CHANGE_TOOL = {
                     "type": "string",
                     "description": "建议的目标模式",
                     "enum": ["edit", "yolo", "control", "learn"],
-                },
-                "app_name": {
-                    "type": "string",
-                    "description": "（learn 模式必填）要学习的应用名称，如 'Chrome'、'微信'、'VS Code'",
-                },
-                "tool_name": {
-                    "type": "string",
-                    "description": "（learn 模式可选）生成的工具名称，如 'chrome_search'。不填则自动生成",
-                },
-                "task_description": {
-                    "type": "string",
-                    "description": "（learn 模式可选）要学习的任务描述，如 '打开Chrome并搜索Python教程'。不填则使用 reason",
                 },
             },
             "required": ["reason", "suggested_mode"],

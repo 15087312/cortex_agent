@@ -30,29 +30,6 @@ class StatusLine(Static):
         icon, label, style = _MODE_LABELS.get(mode, ("✏️ ", "Edit", "bold yellow"))
         parts.append(f"[{style}]{icon} {label}[/{style}]")
 
-        # 学习模式进度
-        lp = s.learn_progress
-        if lp["active"]:
-            phase = lp.get("phase", "")
-            phase_icons = {
-                "start": "🚀",
-                "open_app": "📂",
-                "screenshot": "📷",
-                "element_detect": "🔍",
-                "planning": "📋",
-                "executing": "🖱",
-                "generating": "📦",
-                "done": "✅",
-            }
-            icon = phase_icons.get(phase, "●")
-            done = lp.get("steps_done", 0)
-            total = lp.get("steps_total", 0)
-            if phase == "executing" and total > 0:
-                pct = int(done / total * 100)
-                parts.append(f"[bold green]{icon} [{phase}] {done}/{total} ({pct}%)[/bold green]")
-            else:
-                parts.append(f"[bold green]{icon} [{phase}][/bold green]")
-
         if s.trace_id:
             parts.append(f"trace: {s.trace_id[:12]}")
         if s.tool_stats["total"]:

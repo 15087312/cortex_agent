@@ -406,66 +406,11 @@ class TestSkillGenerator:
 # ActionPlanner
 # ====================================================================
 
-class TestActionPlanner:
-    """ActionPlanner 测试"""
 
-    def test_parse_steps_valid(self):
-        from modules.toolbuilder.action_planner import _parse_steps
-        output = json.dumps({"steps": [
-            {"step_id": 1, "action": "click", "args": {"x": 100, "y": 200}, "description": "点击", "wait_after_ms": 300}
-        ]})
-        steps = _parse_steps(output)
-        assert len(steps) == 1
-        assert steps[0]["action"] == "click"
-        assert steps[0]["args"]["x"] == 100
-
-    def test_parse_steps_markdown(self):
-        from modules.toolbuilder.action_planner import _parse_steps
-        output = '```json\n{"steps": [{"step_id": 1, "action": "type", "args": {"text": "hi"}, "wait_after_ms": 100}]}\n```'
-        steps = _parse_steps(output)
-        assert len(steps) == 1
-
-    def test_parse_steps_invalid_json(self):
-        from modules.toolbuilder.action_planner import _parse_steps
-        assert _parse_steps("not json") == []
-
-    def test_parse_steps_missing_fields(self):
-        from modules.toolbuilder.action_planner import _parse_steps
-        output = json.dumps({"steps": [{"step_id": 1}]})
-        assert _parse_steps(output) == []
-
-    def test_format_elements(self):
-        from modules.toolbuilder.action_planner import _format_elements
-        from modules.perception.detectors.omniparser_detector import UIElement
-        elems = [UIElement(element_id="e001", type="button", label="OK", center_x=50, center_y=30)]
-        text = _format_elements(elems)
-        assert "e001" in text
-        assert "button" in text
-        assert "OK" in text
-
-    def test_format_elements_empty(self):
-        from modules.toolbuilder.action_planner import _format_elements
-        assert _format_elements([]) == "(无元素)"
-
-    def test_format_elements_dict(self):
-        from modules.toolbuilder.action_planner import _format_elements
-        elems = [{"element_id": "e001", "type": "text", "label": "hi", "center_x": 10, "center_y": 20}]
-        text = _format_elements(elems)
-        assert "e001" in text
-
-    @pytest.mark.asyncio
-    async def test_plan_with_mock_llm(self):
-        from modules.toolbuilder.action_planner import ActionPlanner
-        planner = ActionPlanner()
-
-        mock_response = json.dumps({"steps": [
-            {"step_id": 1, "action": "keyboard_type", "args": {"text": "{query}"}, "wait_after_ms": 200}
-        ]})
-        planner._call_llm = AsyncMock(return_value=mock_response)
-
-        steps = await planner.plan("搜索", [], {"query": {"type": "string"}})
-        assert len(steps) == 1
-        assert steps[0]["action"] == "keyboard_type"
+# ====================================================================
+# 去除的模块：ActionPlanner（模型自编排替代）
+# 去除的模块：learn_mode.py（save_recipe 替代管线）
+# ====================================================================
 
 
 # ====================================================================
@@ -517,8 +462,8 @@ class TestToolbuilderTools:
     def test_tools_registered(self):
         """4 个工具都已注册"""
         from infra.tool_manager.tool_registry import ToolRegistry
-        for name in ["delete_learned_tool", "list_learned_tools",
-                      "create_app_skill", "execute_tool_recipe"]:
+        for name in ["save_recipe", "delete_learned_tool", "list_learned_tools",
+                      "execute_tool_recipe"]:
             assert ToolRegistry.get_func(name) is not None, f"{name} not registered"
 
     @pytest.mark.asyncio
@@ -539,29 +484,6 @@ class TestToolbuilderTools:
         mod._LEARNED_TOOLS_ROOT = old
         shutil.rmtree(tmp)
 
-    @pytest.mark.asyncio
-    async def test_create_app_skill_no_tools(self):
-        """无工具时返回提示"""
-        import modules.toolbuilder.recipe_engine as mod
-        import modules.toolbuilder.skill_generator as sg_mod
-        import tempfile
-        tmp = tempfile.mkdtemp()
-        old_root = mod._LEARNED_TOOLS_ROOT
-        old_skills = sg_mod._SKILLS_LEARNED_DIR
-        mod._LEARNED_TOOLS_ROOT = Path(tmp)
-        sg_mod._SKILLS_LEARNED_DIR = Path(tmp) / "skills"
-
-        from infra.tool_manager.tool_registry import ToolRegistry
-        func = ToolRegistry.get_func("create_app_skill")
-        result = await func(app_name="EmptyApp")
-        assert result["status"] == "success"
-        assert "无已学工具" in result["message"]
-
-        mod._LEARNED_TOOLS_ROOT = old_root
-        sg_mod._SKILLS_LEARNED_DIR = old_skills
-        shutil.rmtree(tmp)
-
-    @pytest.mark.asyncio
     async def test_delete_nonexistent(self):
         """删除不存在的工具返回错误"""
         import modules.toolbuilder.recipe_engine as mod
@@ -612,7 +534,7 @@ class TestSecurityGateClassification:
     def test_mutation_tools(self):
         from infra.tool_manager.tool_registry import ToolRegistry
         mutation = ToolRegistry.get_mutation_tools()
-        for name in ["delete_learned_tool", "execute_tool_recipe", "create_app_skill"]:
+        for name in ["delete_learned_tool", "execute_tool_recipe"]:
             assert name in mutation, f"{name} not in mutation tools"
 
 

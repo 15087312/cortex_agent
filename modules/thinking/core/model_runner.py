@@ -937,19 +937,16 @@ class ModelRunner:
             if future and not future.done():
                 future.set_result(response)
 
-    async def _handle_mode_change_request(self, reason: str, suggested_mode: str,
-                                           app_name: str = "", tool_name: str = "",
-                                           task_description: str = "") -> str:
+    async def _handle_mode_change_request(self, reason: str, suggested_mode: str) -> str:
         """处理 request_mode_change 工具调用"""
-        # learn 模式：瞬态动作，不需要用户二次确认
-        # 模型已经在响应用户的"学习"请求，直接执行管线
         if suggested_mode == "learn":
-            learn_params = {
-                "app_name": app_name,
-                "tool_name": tool_name,
-                "task": task_description or reason,
-            }
-            return await self._run_learn_mode(reason, learn_params)
+            # learn 是瞬态模式：只需设 mode，prompt 会告诉模型该做什么
+            from config.settings import settings as _cfg
+            try:
+                object.__setattr__(_cfg, "EXECUTION_MODE", "learn")
+            except Exception:
+                pass
+            return "【学习模式】已切换到学习模式，请按流程使用工具完成学习。完成后调用 save_recipe 保存成果。"
 
         # 其他模式（plan/edit/yolo/control）需要用户确认
         result = await self._wait_for_user_response("mode_change_request", {
@@ -966,61 +963,6 @@ class ModelRunner:
         else:
             user_reason = result.get("reason", "用户拒绝")
             return f"【模式切换】用户拒绝切换模式。原因：{user_reason}。请在当前模式下继续。"
-
-    async def _run_learn_mode(self, reason: str, params: dict) -> str:
-        """处理 learn 模式：运行学习管线"""
-        # 参数由模型通过工具调用直接提供，不需要硬匹配
-        app_name = params.get("app_name", "")
-        tool_name = params.get("tool_name", "")
-        task_desc = params.get("task", "") or reason
-
-        if not app_name:
-            return "【学习失败】请指定要学习的应用名称（app_name）"
-
-        if not tool_name:
-            safe_name = app_name.lower().replace(" ", "_").replace("-", "_")
-            tool_name = f"{safe_name}_learn"
-
-        logger.info(f"[Learn] 开始学习: app={app_name}, tool={tool_name}, task={task_desc[:60]}")
-
-        # 通知 TUI 学习开始
-        try:
-            from cli_tui.screens.repl import notify_learn_progress
-        except ImportError:
-            notify_learn_progress = None
-
-        def progress_callback(event: str, data: dict):
-            if notify_learn_progress:
-                try:
-                    notify_learn_progress(event, data)
-                except Exception:
-                    pass
-            logger.debug(f"[Learn] {event}: {data}")
-
-        try:
-            from modules.toolbuilder.learn_mode import run_learn_pipeline
-            learn_result = await run_learn_pipeline(
-                app_name=app_name,
-                tool_name=tool_name,
-                task_description=task_desc,
-                params_hint="{}",
-                progress_callback=progress_callback,
-                user_hint=user_result.get("custom_text", ""),
-            )
-        except Exception as e:
-            logger.error(f"[Learn] 管线异常: {e}")
-            return f"【学习失败】{e}"
-
-        if learn_result.get("status") == "success":
-            return (
-                f"【学习完成】工具 {learn_result['tool_name']} 已学会。\n"
-                f"应用: {learn_result['app_name']}\n"
-                f"步骤数: {learn_result['steps_count']}\n"
-                f"插件路径: {learn_result['plugin_path']}\n"
-                "你可以在后续对话中直接请求使用该工具。"
-            )
-        else:
-            return f"【学习失败】{learn_result.get('message', '未知错误')}"
 
     async def _handle_ask_user_intent(self, question: str, options: list, context: str) -> str:
         """处理 ask_user_intent 工具调用"""
@@ -1301,25 +1243,29 @@ class ModelRunner:
                 )
             elif _cfg.effective_execution_mode == "learn":
                 base_prompt += (
-                    "\n\n【执行模式: LEARN（学习）】\n"
-                    "当前为学习模式，你的任务是与用户沟通确定要学习的 UI 操作。\n"
-                    "调用 request_mode_change(suggested_mode='learn') 让系统开始自动学习。\n"
-                    "系统会自动：打开应用、截图、识别 UI 元素、规划操作步骤、执行录制、生成插件。\n"
-                    "你不需要调用 learn_tool 工具，模式切换后系统会自动处理。"
+                    "\n\n【执行模式: LEARN（自我进化）】\n"
+                    "当前为学习模式，你正在自动化一个 UI 操作流程，完成后你的工具列表会扩展。\n"
+                    "推荐的执行步骤：\n"
+                    "1. open_app(app_name) — 打开要学习的应用\n"
+                    "2. detect_ui_elements() — 识别界面上的元素\n"
+                    "3. 用鼠标/键盘工具执行操作，向用户展示每一步\n"
+                    "4. 操作完成后用 save_recipe(name, app_name, steps, description) 保存\n\n"
+                    "学习完成后会自动退出学习模式，新工具立即可用。\n"
+                    "调用 save_recipe 后请调用 respond_to_user 输出学习结果。"
                 )
         except Exception:
             pass
 
-        # ── learn 模式提示（所有非 learn 模式下告诉模型可以切换）──
+        # ── 非 learn 模式下告诉模型可以切换学习 —─
         try:
             from config.settings import settings as _cfg
             if _cfg.effective_execution_mode != "learn":
                 base_prompt += (
                     "\n\n【学习 UI 操作】\n"
                     "如果用户想学习如何操作某个应用（如「学习怎么在Chrome中搜索」），"
-                    "你可以调用 request_mode_change(suggested_mode='learn') 请求进入学习模式。\n"
-                    "用户批准后系统会自动：打开应用、截图、识别 UI 元素、规划步骤、执行录制、生成插件。\n"
-                    "学习完成后模式会自动恢复。"
+                    "调用 request_mode_change(suggested_mode='learn') 进入学习模式。\n"
+                    "学习模式下你会获得自我进化提示，可以用 open_app / detect_ui_elements / "
+                    "鼠标键盘工具执行操作，最后用 save_recipe 保存成果。"
                 )
         except Exception:
             pass
@@ -1891,14 +1837,7 @@ class ModelRunner:
                                     # 请求模式切换 — 暂停等待用户选择
                                     reason = args.get("reason", "")
                                     suggested = args.get("suggested_mode", "edit")
-                                    app_name = args.get("app_name", "")
-                                    tool_name = args.get("tool_name", "")
-                                    task_desc = args.get("task_description", "")
-                                    mode_result = await self._handle_mode_change_request(
-                                        reason, suggested,
-                                        app_name=app_name, tool_name=tool_name,
-                                        task_description=task_desc,
-                                    )
+                                    mode_result = await self._handle_mode_change_request(reason, suggested)
                                     return mode_result
                                 elif tc.name == "ask_user_intent":
                                     # 询问用户意图 — 暂停等待用户选择

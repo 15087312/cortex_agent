@@ -1,22 +1,125 @@
-"""ToolBuilder 工具注册 — 注册 5 个工具到 ToolRegistry
+"""ToolBuilder 工具注册 — 注册 4 个工具到 ToolRegistry
 
 | 工具名 | risk_level | category | 说明 |
 |--------|-----------|----------|------|
-| learn_tool | HIGH | mutation | 学习新 UI 操作 |
+| save_recipe | MEDIUM | mutation | 保存已执行的 UI 操作序列为可复用工具 |
 | delete_learned_tool | MEDIUM | mutation | 删除已学工具 |
 | list_learned_tools | LOW | query | 列出已学工具 |
-| create_app_skill | LOW | mutation | 手动更新 Skill YAML |
 | execute_tool_recipe | MEDIUM | mutation | 直接执行 recipe（调试用）|
 """
 import json
-import time
-from typing import Dict
+from typing import Dict, List, Any
 
 from infra.tool_manager.tool_registry import ToolRegistry
 from utils.logger import setup_logger
 
 logger = setup_logger("toolbuilder_tools")
 
+_STEP_ACTIONS_HELP = (
+    "steps 中的每个元素是 action/args/description 三个字段。\n"
+    "支持的 action: mouse_click, mouse_double_click, mouse_right_click, "
+    "mouse_move, mouse_drag, mouse_scroll, "
+    "keyboard_type, keyboard_press, keyboard_hotkey, keyboard_release, "
+    "click_element, double_click_element, right_click_element, type_into。\n"
+    "type_into 的 args 需要 label 和 text；click_element 等需要 label。\n"
+    'args 中的 {{变量名}} 会被替换为调用时传入的参数。'
+)
+
+
+@ToolRegistry.register(
+    name="save_recipe",
+    description=(
+        "保存已执行的 UI 操作序列为可复用的工具。"
+        "在学习模式下执行完操作后调用此工具保存成果，会生成 recipe + 插件包 + Skill。"
+    ),
+    params={
+        "tool_name": "工具名（如 chrome_search），将用于后续调用",
+        "app_name": "应用名（如 Chrome、微信）",
+        "description": "工具描述，模型看到的内容",
+        "steps": {
+            "type": "array",
+            "description": _STEP_ACTIONS_HELP,
+            "items": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "description": "操作类型"},
+                    "args": {"type": "object", "description": "操作参数"},
+                    "description": {"type": "string", "description": "步骤说明"},
+                },
+                "required": ["action"],
+            },
+        },
+        "params_schema": {
+            "type": "object",
+            "description": "可选，参数模板。如 {'type':'object','properties':{'query':{'type':'string'}}}",
+        },
+    },
+    source="builtin",
+    risk_level="MEDIUM",
+    category="mutation",
+    tags=["toolbuilder", "automation", "learning"],
+    core=True,
+)
+async def save_recipe(
+    tool_name: str,
+    app_name: str,
+    description: str,
+    steps: List[Dict[str, Any]],
+    params_schema: str = "",
+) -> Dict:
+    """保存已执行的 UI 操作序列为可复用工具"""
+    if not tool_name:
+        return {"status": "error", "message": "tool_name 不能为空"}
+    if not app_name:
+        return {"status": "error", "message": "app_name 不能为空"}
+    if not steps:
+        return {"status": "error", "message": "steps 不能为空"}
+    if not isinstance(steps, list) or len(steps) < 1:
+        return {"status": "error", "message": "steps 必须是非空数组"}
+
+    # 校验每个 step
+    from modules.toolbuilder.recipe_engine import _RECIPE_ALLOWED_ACTIONS
+    for i, step in enumerate(steps):
+        action = step.get("action", "")
+        if not action:
+            return {"status": "error", "message": f"steps[{i}] 缺少 action"}
+        if action not in _RECIPE_ALLOWED_ACTIONS:
+            return {"status": "error", "message": f"steps[{i}] 不支持的动作: {action}。支持的: {', '.join(sorted(_RECIPE_ALLOWED_ACTIONS))}"}
+
+    try:
+        from modules.toolbuilder.plugin_builder import PluginBuilder
+        from modules.toolbuilder.skill_generator import SkillGenerator
+
+        params = json.loads(params_schema) if params_schema else {}
+        if not isinstance(params, dict):
+            params = {}
+
+        # 生成插件包（含 recipe.json）
+        plugin_path = PluginBuilder.create_plugin(
+            tool_name, app_name, steps, params, description
+        )
+
+        # 更新 Skill
+        SkillGenerator.generate_or_update(app_name)
+
+        # 退出学习模式
+        try:
+            from config.settings import settings as _cfg
+            if _cfg.effective_execution_mode == "learn":
+                object.__setattr__(_cfg, "EXECUTION_MODE", "edit")
+        except Exception:
+            pass
+
+        return {
+            "status": "success",
+            "tool_name": tool_name,
+            "app_name": app_name,
+            "plugin_path": str(plugin_path),
+            "steps_count": len(steps),
+            "message": f"工具 {tool_name} 已保存！共 {len(steps)} 步，立即可用。",
+        }
+    except Exception as e:
+        return {"status": "error", "message": f"保存失败: {e}"}
 
 
 @ToolRegistry.register(
@@ -97,40 +200,6 @@ async def list_learned_tools(app_name: str = "") -> Dict:
 
 
 @ToolRegistry.register(
-    name="create_app_skill",
-    description="手动触发指定应用的 Skill YAML 生成/更新",
-    params={
-        "app_name": "应用名",
-    },
-    source="builtin",
-    risk_level="LOW",
-    category="mutation",
-    tags=["toolbuilder", "skill"],
-    core=True,
-)
-async def create_app_skill(app_name: str) -> Dict:
-    """手动触发 Skill 生成"""
-    if not app_name:
-        return {"status": "error", "message": "app_name 不能为空"}
-
-    try:
-        from modules.toolbuilder.skill_generator import SkillGenerator
-        path = SkillGenerator.generate_or_update(app_name)
-        if path:
-            return {
-                "status": "success",
-                "skill_path": str(path),
-                "message": f"Skill 已生成: {path}",
-            }
-        return {
-            "status": "success",
-            "message": f"应用 {app_name} 无已学工具，未生成 Skill",
-        }
-    except Exception as e:
-        return {"status": "error", "message": f"Skill 生成失败: {e}"}
-
-
-@ToolRegistry.register(
     name="execute_tool_recipe",
     description="直接执行已学工具的 recipe（调试用）",
     params={
@@ -164,9 +233,3 @@ async def execute_tool_recipe(
         return result
     except Exception as e:
         return {"status": "error", "message": f"执行失败: {e}"}
-
-
-def _capture_current_screen() -> str:
-    """截取当前屏幕，返回 base64 编码的 PNG"""
-    from utils.screen_capture import capture_screen
-    return capture_screen() or ""

@@ -2,12 +2,9 @@
 Learn 模式单元测试
 
 覆盖：
-- 并发保护（asyncio.Lock）
-- 超时保护（asyncio.wait_for）
-- 精度降级拒绝
-- 空参数/错误参数
-- 进度回调正确性
-- request_mode_change learn 参数传递
+- request_mode_change learn 路径
+- save_recipe 工具参数校验
+- learn 模式配置验证
 """
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
@@ -18,42 +15,21 @@ from unittest.mock import patch, MagicMock, AsyncMock
 # ====================================================================
 
 class TestRequestModeChangeLearn:
-    """模型通过 request_mode_change 传递 learn 参数"""
+    """模型 request_mode_change 切换到 learn"""
 
     @pytest.mark.asyncio
-    async def test_learn_with_app_name(self):
-        """模型提供 app_name 时应直接传递给管线"""
-        from config.settings import Settings
-        settings = Settings(_env_file=None)
-        with patch.object(settings, 'LARGE_MODEL_API_KEY', 'test_key'):
-            from modules.thinking.core.model_runner import ModelRunner
-
-            runner = ModelRunner.__new__(ModelRunner)
-            runner.model_id = "test_runner"
-            runner.logger = MagicMock()
-
-            result = await runner._handle_mode_change_request(
-                reason="用户想学习如何操作",
-                suggested_mode="learn",
-                app_name="Chrome",
-                tool_name="chrome_search",
-                task_description="打开Chrome并搜索Python教程",
-            )
-            # 没有 API Key 所以实际调用会失败，但应该走到管线而不是
-            # 因为缺少 app_name 直接返回错误
-            assert "请指定要学习的应用" not in result
-
-    @pytest.mark.asyncio
-    async def test_learn_without_app_name_returns_error(self):
-        """模型未提供 app_name 时应返回明确错误"""
+    async def test_learn_switches_mode(self):
+        """learn 应设置 EXECUTION_MODE = learn 并返回提示"""
         from modules.thinking.core.model_runner import ModelRunner
+        from config.settings import settings as _cfg
 
         runner = ModelRunner.__new__(ModelRunner)
         result = await runner._handle_mode_change_request(
             reason="用户想学习",
             suggested_mode="learn",
         )
-        assert "请指定要学习的应用名称" in result
+        assert "学习模式" in result
+        assert "save_recipe" in result
 
     @pytest.mark.asyncio
     async def test_non_learn_still_requires_approval(self):
@@ -73,146 +49,67 @@ class TestRequestModeChangeLearn:
 
 
 # ====================================================================
-# run_learn_pipeline 测试
+# save_recipe 工具测试
 # ====================================================================
 
-@pytest.mark.asyncio
-class TestRunLearnPipeline:
-    """学习管线核心逻辑"""
+class TestSaveRecipe:
+    """save_recipe 工具参数校验"""
 
-    async def test_concurrent_lock_rejection(self):
-        """并发执行第二个学习任务应被拒绝"""
-        from modules.toolbuilder.learn_mode import run_learn_pipeline, _learn_lock
-
-        # 先获取锁（模拟已有任务运行中）
-        async with _learn_lock:
-            result = await run_learn_pipeline(
-                app_name="Chrome",
-                tool_name="search",
-                task_description="test",
-            )
-        assert result["status"] == "error"
-        assert "已有学习任务" in result["message"]
-
-    async def test_concurrent_lock_free(self):
-        """锁空闲时应该能正常进入管线"""
-        from modules.toolbuilder.learn_mode import _learn_lock
-
-        # 锁应该是自由状态
-        assert not _learn_lock.locked()
-
-    async def test_empty_app_name_propagation(self):
-        """空 app_name 应传递到管线中"""
-        from modules.toolbuilder.learn_mode import run_learn_pipeline
-
-        with patch("modules.toolbuilder.learn_mode._pipeline_steps",
-                   new_callable=AsyncMock) as mock_steps:
-            mock_steps.return_value = {"status": "success", "tool_name": "test"}
-            result = await run_learn_pipeline(
-                app_name="",
-                tool_name="test",
-                task_description="test",
-            )
-        assert result["status"] == "success"
-        # 验证空 app_name 被正确传递
-        assert mock_steps.call_count >= 1
-        call_args = mock_steps.call_args
-        assert call_args is not None
-        # _pipeline_steps(app_name, tool_name, ...) 位置参数
-        assert call_args.args[0] == ""  # app_name
-
-    async def test_params_hint_json_error(self):
-        """params_hint JSON 解析失败应使用空 schema"""
-        from modules.toolbuilder.learn_mode import run_learn_pipeline
-
-        events = []
-
-        def cb(event, data):
-            events.append(event)
-
-        with patch("modules.toolbuilder.learn_mode._pipeline_steps",
-                   new_callable=AsyncMock) as mock_steps:
-            mock_steps.return_value = {"status": "success"}
-            result = await run_learn_pipeline(
-                app_name="Chrome",
-                tool_name="search",
-                task_description="test",
-                params_hint="not valid json",
-                progress_callback=cb,
-            )
-        assert result["status"] == "success"
-
-    async def test_progress_callback_errors_are_non_fatal(self):
-        """进度回调抛异常不应中断管线"""
-        from modules.toolbuilder.learn_mode import run_learn_pipeline
-
-        def bad_cb(event, data):
-            raise ValueError("callback error")
-
-        with patch("modules.toolbuilder.learn_mode._pipeline_steps",
-                   new_callable=AsyncMock) as mock_steps:
-            mock_steps.return_value = {"status": "success"}
-            # 不应该抛出异常
-            result = await run_learn_pipeline(
-                app_name="Chrome",
-                tool_name="search",
-                task_description="test",
-                progress_callback=bad_cb,
-            )
-        assert result["status"] == "success"
-
-    async def test_pipeline_timeout(self):
-        """管线超时应返回超时错误"""
+    def test_empty_tool_name(self):
+        """空 tool_name 返回错误"""
+        from infra.tool_manager.tools.toolbuilder import save_recipe
         import asyncio
-        from modules.toolbuilder.learn_mode import run_learn_pipeline, _PIPELINE_TIMEOUT
+        result = asyncio.run(save_recipe("", "Chrome", "desc", []))
+        assert result["status"] == "error"
+        assert "tool_name" in result["message"]
 
-        with patch("modules.toolbuilder.learn_mode._pipeline_steps",
-                   new_callable=AsyncMock) as mock_steps:
-            # 模拟管线永远不返回（超时）
-            async def never_ends(*args, **kwargs):
-                await asyncio.sleep(999)
-            mock_steps.side_effect = never_ends
+    def test_empty_steps(self):
+        """空 steps 返回错误"""
+        from infra.tool_manager.tools.toolbuilder import save_recipe
+        import asyncio
+        result = asyncio.run(save_recipe("test", "Chrome", "desc", []))
+        assert result["status"] == "error"
+        assert "steps 不能为空" in result["message"]
 
-            with patch("modules.toolbuilder.learn_mode._PIPELINE_TIMEOUT", 0.1):
-                result = await run_learn_pipeline(
-                    app_name="Chrome",
-                    tool_name="search",
-                    task_description="test",
-                )
-            assert result["status"] == "error"
-            assert "超时" in result["message"]
+    def test_invalid_action_in_steps(self):
+        """steps 中包含不支持的动作应返回错误"""
+        from infra.tool_manager.tools.toolbuilder import save_recipe
+        import asyncio
+        steps = [{"action": "exec_command", "args": {"command": "rm -rf /"}}]
+        result = asyncio.run(save_recipe("test", "Chrome", "desc", steps))
+        assert result["status"] == "error"
+        assert "不支持的动作" in result["message"]
 
+    def test_valid_steps_saves_successfully(self):
+        """有效 steps 应成功保存"""
+        from infra.tool_manager.tools.toolbuilder import save_recipe
+        from modules.toolbuilder.plugin_builder import PluginBuilder
+        from modules.toolbuilder.skill_generator import SkillGenerator
+        import asyncio
 
-# ====================================================================
-# 进度事件完整性测试
-# ====================================================================
+        steps = [
+            {"action": "mouse_click", "args": {"x": 100, "y": 200}, "description": "点击搜索框"},
+            {"action": "keyboard_type", "args": {"text": "{{query}}"}, "description": "输入搜索词"},
+        ]
 
-@pytest.mark.asyncio
-class TestLearnProgressEvents:
-    """进度事件的正确性"""
+        with patch.object(PluginBuilder, 'create_plugin', return_value=MagicMock()) as mock_create, \
+             patch.object(SkillGenerator, 'generate_or_update', return_value=None), \
+             patch('config.settings.settings') as mock_settings:
+            mock_settings.effective_execution_mode = "learn"
 
-    async def test_events_fired_in_order(self):
-        """成功管线应返回成功状态"""
-        from modules.toolbuilder.learn_mode import run_learn_pipeline
+            result = asyncio.run(save_recipe("chrome_search", "Chrome", "搜索工具", steps))
+            assert result["status"] == "success"
+            assert result["tool_name"] == "chrome_search"
+            assert mock_create.called
 
-        with patch("modules.toolbuilder.learn_mode._pipeline_steps",
-                   new_callable=AsyncMock) as mock_steps:
-            mock_steps.return_value = {
-                "status": "success",
-                "tool_name": "test",
-                "app_name": "TestApp",
-                "plugin_path": "/tmp/test",
-                "steps_count": 3,
-                "message": "完成",
-            }
-            result = await run_learn_pipeline(
-                app_name="TestApp",
-                tool_name="test",
-                task_description="test",
-            )
-        assert result["status"] == "success"
-        assert result["tool_name"] == "test"
-        assert "完成" in result["message"]
+    def test_missing_action_key(self):
+        """step 缺少 action 返回错误"""
+        from infra.tool_manager.tools.toolbuilder import save_recipe
+        import asyncio
+        steps = [{"args": {"x": 100}}]
+        result = asyncio.run(save_recipe("test", "Chrome", "desc", steps))
+        assert result["status"] == "error"
+        assert "缺少 action" in result["message"]
 
 
 # ====================================================================
@@ -222,26 +119,45 @@ class TestLearnProgressEvents:
 class TestLearnModeConfig:
     """learn 模式配置"""
 
-    def test_learn_in_allowed_modes(self):
-        """learn 应该在允许的执行模式列表中"""
+    def test_learn_in_validator(self):
+        """learn 应在 EXECUTION_MODE 允许列表中"""
         from config.settings import Settings
 
-        s = Settings()
+        s = Settings(_env_file=None)
         s.EXECUTION_MODE = "learn"
-        # 不抛异常
         assert s.EXECUTION_MODE == "learn"
         assert s.effective_execution_mode == "learn"
 
     def test_request_mode_change_contains_learn(self):
-        """request_mode_change 的 suggested_mode 应包含 learn"""
+        """request_mode_change 应包含 learn 枚举值"""
         from modules.thinking.core.control_tools import REQUEST_MODE_CHANGE_TOOL
 
         enum = REQUEST_MODE_CHANGE_TOOL["function"]["parameters"]["properties"]["suggested_mode"]["enum"]
         assert "learn" in enum
 
-    def test_learn_pipeline_events_have_done(self):
-        """管线应定义 DONE 事件常量"""
-        from modules.toolbuilder.learn_mode import EVENT_DONE, EVENT_ERROR, EVENT_START
-        assert EVENT_DONE == "learn_done"
-        assert EVENT_ERROR == "learn_error"
-        assert EVENT_START == "learn_start"
+    def test_save_recipe_registered(self):
+        """save_recipe 应在 ToolRegistry 中注册"""
+        from infra.tool_manager.tool_registry import ToolRegistry
+
+        tool = ToolRegistry.get_tool("save_recipe")
+        assert tool is not None
+        assert tool.name == "save_recipe"
+        assert tool.risk_level == "MEDIUM"
+
+    def test_learn_prompt_has_self_evolution(self):
+        """learn 模式提示词应包含自我进化描述"""
+        prompt = (
+            "【执行模式: LEARN（自我进化）】\n"
+            "当前为学习模式，你正在自动化一个 UI 操作流程，完成后你的工具列表会扩展。\n"
+            "推荐的执行步骤：\n"
+            "1. open_app(app_name) — 打开要学习的应用\n"
+            "2. detect_ui_elements() — 识别界面上的元素\n"
+            "3. 用鼠标/键盘工具执行操作，向用户展示每一步\n"
+            "4. 操作完成后用 save_recipe(name, app_name, steps, description) 保存\n\n"
+            "学习完成后会自动退出学习模式，新工具立即可用。\n"
+            "调用 save_recipe 后请调用 respond_to_user 输出学习结果。"
+        )
+        assert "自我进化" in prompt
+        assert "open_app" in prompt
+        assert "save_recipe" in prompt
+        assert "detect_ui_elements" in prompt

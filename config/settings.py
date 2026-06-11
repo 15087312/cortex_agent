@@ -114,6 +114,7 @@ class Settings(BaseSettings):
     # "edit":    确认 — 写操作前需用户确认（LLM + 用户）
     # "yolo":    宽松 — 仅安全专家检测，跳过用户确认
     # "control": 用户完全控制 — MEDIUM+工具需用户单独确认，无LLM参与
+    # "learn":   自我进化 — 模型自编排 UI 学习流程，只能通过工具切换
     EXECUTION_MODE: str = "edit"
 
     # 上下文窗口配置
@@ -211,9 +212,9 @@ class Settings(BaseSettings):
     @field_validator("EXECUTION_MODE")
     @classmethod
     def validate_execution_mode(cls, v: str) -> str:
-        allowed = {"plan", "edit", "yolo", "control"}
+        allowed = {"plan", "edit", "yolo", "control", "learn"}
         if v.lower() not in allowed:
-            raise ValueError(f"EXECUTION_MODE must be one of {allowed}, got '{v}'")
+            raise ValueError(f"EXECUTION_MODE must be one of plan/edit/yolo/control/learn, got '{v}'")
         return v.lower()
 
     def validate_production(self) -> None:

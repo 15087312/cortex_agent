@@ -74,20 +74,6 @@ class AppState:
     # 安全审批状态
     pending_security_review: Optional[Dict[str, Any]] = field(default=None)
 
-    # 学习模式进度
-    learn_progress: Dict[str, Any] = field(default_factory=lambda: {
-        "active": False,
-        "app_name": "",
-        "tool_name": "",
-        "phase": "",
-        "element_count": 0,
-        "steps_total": 0,
-        "steps_done": 0,
-        "current_action": "",
-        "error": "",
-        "result": "",
-    })
-
     def reset_for_new_input(self):
         """每次新输入前重置"""
         self.dialog_entries = []
