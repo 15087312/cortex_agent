@@ -106,6 +106,7 @@ class ModelRunner:
         self._pending_memories: List[Dict[str, Any]] = []
         self._thinker: Optional[Any] = None  # ContinuousThinker, 延迟创建
         self._active_skill: Any = None  # 当前激活的技能（Skill 实例）
+        self._active_skill_tool_rules: Any = None  # 技能的工具范围规则
         self._wakeup_event: Optional[threading.Event] = None  # 事件驱动唤醒
 
         logger.info(
@@ -1174,7 +1175,62 @@ class ModelRunner:
                 blocked.add("memory_write")
             result = [name for name in result if name not in blocked]
 
+        # 步骤 4：按 active_skill 的工具范围过滤
+        skill_tool_rules = getattr(self, '_active_skill_tool_rules', None)
+        if skill_tool_rules:
+            result = self._apply_skill_tool_rules(result, skill_tool_rules)
+
         return result
+
+    def _apply_skill_tool_rules(self, tools: List[str], rules) -> List[str]:
+        """按技能工具范围过滤工具列表"""
+        from infra.tool_manager.tool_registry import ToolRegistry
+        all_tools = ToolRegistry._tools
+
+        filtered = list(tools)
+
+        # 1. 只保留指定 tag 的工具
+        if rules.allow_tags:
+            allowed = set()
+            for name, info in all_tools.items():
+                if any(tag in info.tags for tag in rules.allow_tags):
+                    allowed.add(name)
+            filtered = [t for t in filtered if t in allowed]
+
+        # 2. 只保留指定 category 的工具
+        if rules.allow_categories:
+            filtered = [
+                t for t in filtered
+                if all_tools.get(t) and all_tools[t].category in rules.allow_categories
+            ]
+
+        # 3. 只保留 core=True 的工具
+        if rules.allow_core_only:
+            filtered = [
+                t for t in filtered
+                if all_tools.get(t) and all_tools[t].core
+            ]
+
+        # 4. 排除指定工具名
+        if rules.block_tools:
+            filtered = [t for t in filtered if t not in rules.block_tools]
+
+        # 5. 排除指定 tag
+        if rules.block_tags:
+            blocked = set()
+            for name, info in all_tools.items():
+                if any(tag in info.tags for tag in rules.block_tags):
+                    blocked.add(name)
+            filtered = [t for t in filtered if t not in blocked]
+
+        # 6. 排除指定 category
+        if rules.block_categories:
+            filtered = [
+                t for t in filtered
+                if not (all_tools.get(t) and all_tools[t].category in rules.block_categories)
+            ]
+
+        return filtered
 
     def _build_system_prompt_for_mode(self) -> str:
         """根据运行模式构建系统提示词 — 技能 > 陪伴模式 > 默认身份"""
@@ -1662,7 +1718,9 @@ class ModelRunner:
                                     skill = skill_manager.get_skill(skill_id)
                                     if skill:
                                         self._active_skill = skill
-                                        logger.info(f"[ModelRunner] 技能已切换: {skill_id}")
+                                        self._active_skill_tool_rules = skill.tool_rules
+                                        tool_info = f" (+工具规则)" if skill.tool_rules else ""
+                                        logger.info(f"[ModelRunner] 技能已切换: {skill_id}{tool_info}")
                                     else:
                                         logger.warning(f"[ModelRunner] 未知技能: {skill_id}")
                             elif tc.name == "stop_skill":
@@ -1670,6 +1728,7 @@ class ModelRunner:
                                     reason = args.get("reason", "")
                                     logger.info(f"[ModelRunner] 技能已停用: {self._active_skill.id} ({reason})")
                                     self._active_skill = None
+                                    self._active_skill_tool_rules = None
                                 else:
                                     logger.debug(f"[ModelRunner] stop_skill 无活跃技能")
                             elif tc.name == "list_skills":
@@ -2337,6 +2396,7 @@ class ModelRunnerManager:
                     skill = skill_manager.get_skill(skill_id)
                     if skill:
                         runner._active_skill = skill
+                        runner._active_skill_tool_rules = skill.tool_rules
                         logger.info(
                             f"[ModelRunnerManager] 技能已注入: {skill_id} → {model_id}"
                         )

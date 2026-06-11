@@ -28,6 +28,25 @@ weaknesses:
   - UI/UX 设计
   - 产品需求判断
 
+# 工具范围：代码审查只需只读工具 + git 查询
+tool_rules:
+  allow_categories:
+    - query
+  block_tools:
+    - exec_command
+    - write_file
+    - file_edit
+    - delete_file
+    - append_file
+    - create_tool
+    - edit_tool
+    - delete_tool
+    - save_recipe
+    - delete_learned_tool
+  block_tags:
+    - admin
+    - mutation
+
 rules:
   - id: no_skip
     content: 不要跳过任何文件，每个文件都要审查

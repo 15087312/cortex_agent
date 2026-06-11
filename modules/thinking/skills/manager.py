@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 from typing import Dict, List, Optional
 from utils.logger import setup_logger
-from .skill import Skill, SkillRule, WorkflowStep
+from .skill import Skill, SkillRule, ToolRules, WorkflowStep
 
 logger = setup_logger("skill_manager")
 
@@ -195,6 +195,19 @@ class SkillManager:
                     output=w.get("output", ""),
                 ))
 
+        # 解析工具范围
+        tool_rules = None
+        tr = data.get("tool_rules")
+        if tr and isinstance(tr, dict):
+            tool_rules = ToolRules(
+                allow_tags=tr.get("allow_tags", []),
+                allow_categories=tr.get("allow_categories", []),
+                allow_core_only=tr.get("allow_core_only", False),
+                block_tools=tr.get("block_tools", []),
+                block_tags=tr.get("block_tags", []),
+                block_categories=tr.get("block_categories", []),
+            )
+
         return Skill(
             id=data.get("id", file_path.stem),
             name=data.get("name", ""),
@@ -207,6 +220,7 @@ class SkillManager:
             weaknesses=data.get("weaknesses", []),
             rules=rules,
             workflow=workflow,
+            tool_rules=tool_rules,
             examples=data.get("examples", []),
             metadata=data.get("metadata", {}),
         )

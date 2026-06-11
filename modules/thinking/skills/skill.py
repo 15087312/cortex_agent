@@ -1,11 +1,12 @@
 """技能定义 — 描述一个完整的角色技能
 
-技能 = 角色 + 规章 + 流程
+技能 = 角色 + 规章 + 流程 + 工具范围
 
 每个技能定义了：
 - 角色：模型扮演的身份和性格
 - 规章：必须遵守的规则（硬约束）
 - 流程：标准操作步骤（SOP）
+- 工具范围：激活时可见的工具列表
 """
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional
@@ -29,6 +30,21 @@ class WorkflowStep:
 
 
 @dataclass
+class ToolRules:
+    """技能的工具范围 — 激活时只暴露这些工具
+
+    所有字段均为可选，未设置时不限制。
+    过滤逻辑：先加 allow_*，再减 block_*。
+    """
+    allow_tags: List[str] = field(default_factory=list)       # 只保留这些 tag 的工具
+    allow_categories: List[str] = field(default_factory=list) # 只保留这些 category 的工具
+    allow_core_only: bool = False                             # 只保留 core=True 的工具
+    block_tools: List[str] = field(default_factory=list)      # 明确排除的工具名
+    block_tags: List[str] = field(default_factory=list)       # 排除这些 tag 的工具
+    block_categories: List[str] = field(default_factory=list) # 排除这些 category 的工具
+
+
+@dataclass
 class Skill:
     """完整技能定义"""
     id: str = ""
@@ -48,6 +64,9 @@ class Skill:
 
     # 流程
     workflow: List[WorkflowStep] = field(default_factory=list)
+
+    # 工具范围（可选，不设置则不限制）
+    tool_rules: Optional[ToolRules] = None
 
     # 元数据
     examples: List[str] = field(default_factory=list)
@@ -99,6 +118,9 @@ class Skill:
         if self.weaknesses:
             parts.append(f"\n❌ 不擅长: {', '.join(self.weaknesses)}")
 
+        if self.tool_rules:
+            parts.append(f"\n🔧 可用工具范围: {self._format_tool_rules()}")
+
         rules_text = self.format_rules()
         if rules_text:
             parts.append(f"\n📜 规章（必须遵守）:\n{rules_text}")
@@ -114,3 +136,17 @@ class Skill:
 
         parts.append(f"\n══════ 技能结束 ══════")
         return "\n".join(parts)
+
+    def _format_tool_rules(self) -> str:
+        if not self.tool_rules:
+            return "无限制"
+        parts = []
+        if self.tool_rules.allow_tags:
+            parts.append(f"允许标签: {', '.join(self.tool_rules.allow_tags)}")
+        if self.tool_rules.allow_categories:
+            parts.append(f"允许类别: {', '.join(self.tool_rules.allow_categories)}")
+        if self.tool_rules.allow_core_only:
+            parts.append("仅核心工具")
+        if self.tool_rules.block_tools:
+            parts.append(f"禁止: {', '.join(self.tool_rules.block_tools)}")
+        return "; ".join(parts)
