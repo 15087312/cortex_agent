@@ -20,12 +20,33 @@ _learn_recorded_actions: List[Dict[str, Any]] = []
 
 
 def record_learn_action(action: str, args: dict, description: str = "") -> None:
-    """记录一条学习模式下的 UI 操作"""
+    """记录一条学习模式下的 UI 操作
+
+    自动过滤：
+    - keyboard_type 中纯模板文本（如 {{query}}）不记录，那是变量占位不是实际输入
+    """
+    # 过滤纯模板输入：keyboard_type 文本全是 {{...}} 变量时不记录
+    if action == "keyboard_type":
+        text = args.get("text", "")
+        if _is_pure_template(text):
+            return
+
     _learn_recorded_actions.append({
         "action": action,
         "args": dict(args),
         "description": description or f"{action}: {json.dumps(args, ensure_ascii=False)[:60]}",
     })
+
+
+def _is_pure_template(text: str) -> bool:
+    """判断文本是否仅包含模板变量 {{...}}"""
+    import re
+    stripped = text.strip()
+    if not stripped:
+        return False
+    # 去掉所有 {{...}} 后只剩空白则为纯模板
+    without_vars = re.sub(r'\{\{[^}]+}}', '', stripped)
+    return not without_vars.strip()
 
 
 def get_learn_recorded_actions() -> List[Dict[str, Any]]:
