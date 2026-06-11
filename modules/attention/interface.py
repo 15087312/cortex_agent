@@ -172,7 +172,7 @@ class AttentionV2Adapter(AttentionInterface):
         return self._engine
 
 
-def create_attention_interface(attention_core=None, use_v2: bool = False) -> AttentionInterface:
+def create_attention_interface(attention_core=None, use_v2: bool = True) -> AttentionInterface:
     """Create an attention interface.
     
     Args:
