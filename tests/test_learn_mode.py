@@ -179,16 +179,22 @@ class TestLearnModeConfig:
         prompt = (
             "【执行模式: LEARN（自我进化）】\n"
             "当前为学习模式，系统会自动记录你的每一步 UI 操作。\n"
-            "学习流程（使用以下工具）：\n"
-            "1. exec_command(\"open -a 'Google Chrome'\") — 打开要学习的应用\n"
+            "学习流程：\n"
+            "1. exec_command(\"open -a 'Google Chrome'\") — 打开应用\n"
             "2. detect_ui_elements() 或 understand_screen() — 识别界面\n"
-            "3. mouse_click(x, y) / keyboard_type(text) / keyboard_hotkey(key) — 执行操作\n"
-            "4. 操作完成后调用 save_recipe(name, app_name, description) 保存\n\n"
-            "注意：\n"
-            "- 打开应用用 exec_command('open -a 应用名')，不要用 osascript\n"
-            "- keyboard_type 使用真实文本（如「今天的天气」），不要用 {{query}}\n"
+            "3. mouse_click(x, y) / keyboard_type(text) / keyboard_press(key) — 操作\n"
+            "4. 全部步骤成功后调 save_recipe(name, app_name, description) 保存\n\n"
+            "键盘工具参数：\n"
+            "- keyboard_press(key='enter') — 按单个键\n"
+            "- keyboard_hotkey(keys=['command', 'l']) — 组合键（参数是 keys 列表）\n"
+            "- keyboard_type(text='真实文本') — 输入文字\n\n"
+            "关键规则：\n"
+            "- 每一步检查工具返回结果，失败了就重试，不要跳过\n"
+            "- 所有步骤都成功了才调 save_recipe\n"
+            "- keyboard_type 使用真实文本，不要用 {{query}}\n"
         )
         assert "自我进化" in prompt
-        assert "exec_command" in prompt
+        assert "keyboard_press" in prompt
+        assert "keyboard_hotkey" in prompt
+        assert "check" in prompt
         assert "save_recipe" in prompt
-        assert "detect_ui_elements" in prompt

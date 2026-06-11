@@ -1,0 +1,11 @@
+{
+  "tools": {
+    "Chrome/chrome_search": {
+      "tool_name": "chrome_search",
+      "app_name": "Chrome",
+      "description": "在 Chrome 浏览器中执行搜索：在地址栏输入关键词后按回车搜索",
+      "added_at": "2026-06-11T14:48:28.864082+00:00"
+    }
+  },
+  "updated_at": "2026-06-11T14:48:28.864085+00:00"
+}
