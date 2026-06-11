@@ -1,10 +1,24 @@
 """
-感知集成器 - 将感知系统集成到主流程
+感知集成器 — 将感知系统采集的数据注入模型上下文
 
-提供：
-1. 订阅感知事件，自动注入到模型上下文
-2. 感知上下文注入到对话
-3. 对话流程集成
+设计意图：
+  被动感知系统（屏幕/OCR/文件/对话变化）采集的数据需要进入模型 prompt
+  才能被模型"看到"。这个模块就是做这个连接的。
+
+  数据流：
+  感知事件（screen.diff / file.change / dialog.change / ...）
+    → PerceptionEventBus
+      → PerceptionIntegrator 订阅并接收
+        → _attention_items 累计（去重，最多 20 条）
+          → get_context_summary() 返回 "【环境感知】..."
+            → 编排器每轮对话调用 → 注入模型 prompt
+
+  这个连接曾经是断的（_attention_items 始终为空），
+  现在通过订阅事件总线实时填充。
+
+ThinkTrigger（差异→思考触发器）：
+  这是另一条路径——高强度差异（intensity ≥ 50）可以主动触发思考，
+  但需要外部注入 trigger_port。当前未连接，预留接口。
 """
 import threading
 from typing import List, Dict, Any, Optional

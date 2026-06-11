@@ -1,7 +1,17 @@
 """
 内置工具集 — 自动扫描并导入本目录下所有模块，触发 @ToolRegistry.register 装饰器。
 
-新增工具只需在 tools/ 下创建 .py 文件并使用 @ToolRegistry.register 装饰器，无需手动 import。
+设计意图：
+  新增工具只需在 tools/ 下创建 .py 文件并使用 @ToolRegistry.register 装饰器，
+  无需手动 import，自动发现并注册。
+
+启动时加载策略：
+  1. 扫描 infra/tool_manager/tools/ 下所有 .py 模块 → 注册内置工具
+  2. 加载 modules/memory/tools/classified_memory_tool → 记忆分类工具
+  3. 扫描 data/plugins/learned_*/ → 加载之前学过的 UI 自动化工具
+     （每个已学工具注册为一个包装函数，委托给 RecipeEngine.execute()）
+
+  步骤 3 确保重启后已学工具仍然可用，无需重新学习。
 """
 import importlib
 import pkgutil

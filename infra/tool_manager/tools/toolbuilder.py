@@ -1,11 +1,17 @@
 """ToolBuilder 工具注册 — 注册 4 个工具到 ToolRegistry
 
-| 工具名 | risk_level | category | 说明 |
-|--------|-----------|----------|------|
-| save_recipe | MEDIUM | mutation | 保存已执行的 UI 操作序列为可复用工具 |
-| delete_learned_tool | MEDIUM | mutation | 删除已学工具 |
-| list_learned_tools | LOW | query | 列出已学工具 |
-| execute_tool_recipe | MEDIUM | mutation | 直接执行 recipe（调试用）|
+设计意图：
+  学习模式产出的工具（通过 save_recipe 保存）与内置工具分开管理。
+  已学工具注册到 ToolRegistry 时 tags=["learned"]，core=False，
+  通过白名单 "tag:learned" 暴露给模型，而不是混在主工具列表里。
+
+  save_recipe 保存后会自动注册一个包装函数，委托给 RecipeEngine.execute()。
+  这样已学工具对模型来说和内置工具一样可调用，但维护上是分离的。
+
+存储：
+  - recipe.json: 动作序列（核心数据）
+  - plugin.yaml: 元数据（向后兼容插件系统）
+  - ToolRegistry: 运行时注册（进程内，重启后通过 __init__.py 自动加载）
 """
 import json
 from typing import Dict, List, Any

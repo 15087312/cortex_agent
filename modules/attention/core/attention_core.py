@@ -1,10 +1,24 @@
 """
-注意力核心
+注意力核心 — 任务重要性分类器 + 记忆过滤器
 
-实际功能（已去掉装饰性代码）：
-1. 关键词重要性分类 → 影响记忆检索阈值（MemoryAttentionScorer）
-2. TF-IDF 相关记忆提取 → 注入对话上下文
-3. 重要性分数 → 注入模型 prompt
+设计意图：
+  这个模块名字叫"注意力"，实际做的是两件事：
+  1. 关键词分类：扫描用户输入中的紧急/任务关键词 → 重要性分数
+  2. TF-IDF 相关记忆：计算输入与短期记忆的余弦相似度 → 相关记忆
+
+  影响行为的方式：
+  - importance_score: 注入模型 prompt 作为提示（仅提示，不强制）
+  - attention_level: 控制 MemoryAttentionScorer 的记忆检索阈值
+    （任务越重要，阈值越低=召回更多记忆；反之越少=省 token）
+
+  2026-06 裁掉了装饰性代码：
+  - _decide_modules / _calculate_priority（输出从未被消费）
+  - _check_perception_changes（感知变化由 PerceptionIntegrator 处理）
+  - module_keywords 字典（专家关键词映射，从未被路由使用）
+  - context_related / reasoning / probe_signals 等字段
+
+  现在的 AttentionDecision 从 13 个字段减到 5 个，
+  只保留真正影响行为的部分。
 """
 import time
 import json

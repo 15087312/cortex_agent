@@ -1,12 +1,24 @@
 """技能定义 — 描述一个完整的角色技能
 
-技能 = 角色 + 规章 + 流程 + 工具范围
+设计意图：
+  Skill 是系统的角色/状态管理单元。模型通过切换 Skill 进入不同角色，
+  获得对应的提示词上下文和工具权限。
 
-每个技能定义了：
-- 角色：模型扮演的身份和性格
-- 规章：必须遵守的规则（硬约束）
-- 流程：标准操作步骤（SOP）
-- 工具范围：激活时可见的工具列表
+  每个 Skill = 角色(Role) + 规章(Rules) + 流程(Workflow) + 工具范围(ToolRules)
+
+  角色：模型扮演的身份和性格
+  规章：必须遵守的规则（硬约束）
+  流程：标准操作步骤（SOP）
+  工具范围：激活时可见的工具列表（可选，不设置则不限制）
+
+  这种设计实现了"状态即技能"——不同的工作状态（代码审查/架构设计/问题诊断）
+  用不同的 Skill 表示，切换 Skill 就是切换状态，提示词和工具列表同时变更。
+
+ToolRules 设计：
+  工具范围采用"先加白名单，再减黑名单"的策略：
+  1. allow_tags / allow_categories / allow_core_only — 先限定范围
+  2. block_tools / block_tags / block_categories — 再排除特定项
+  这样 skill 作者可以灵活控制：比如"只准用 query 类工具，但禁止 exec_command"。
 """
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional
