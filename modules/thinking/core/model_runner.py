@@ -1025,15 +1025,15 @@ class ModelRunner:
         import re
         patterns = [
             # "在Chrome中搜索"、"在Chrome里面搜索"
-            r'在\s*(\w+)\s*(?:中|里面|里|上|下)',
-            # "打开Chrome" — 中文紧跟，只取第一个中/英文词
-            r'打开\s*([a-zA-Z][\w.]*)',
-            # "打开微信" — 中文 app 名（2-6 个汉字）
-            r'打开\s*([\u4e00-\u9fff]{2,8})',
-            # "学习Chrome搜索"、"学习Chrome的操作"
-            r'学习\s*(\w+?)(?:的|操作|搜索|查找|功能)',
+            r'在\s*([a-zA-Z][a-zA-Z0-9_.]*)\s*(?:中|里面|里|上|下)',
+            # "打开VS Code"、"打开Google Chrome" — 英文 app 名（含空格）
+            r'打开\s*([a-zA-Z][a-zA-Z0-9_.]*(?:\s+[a-zA-Z][a-zA-Z0-9_.]*)?)',
+            # "打开微信"、"打开支付宝" — 中文 app 名（2-4 个汉字）
+            r'打开\s*([\u4e00-\u9fff]{2,4})(?:[，,。.、的并和与或及]|$)',
+            # "学习Chrome" — 英文名
+            r'学习\s*([a-zA-Z][a-zA-Z0-9_.]*)(?:的|操作|搜索|查找|功能)',
             # "启动Chrome"
-            r'启动\s*([\w.]+)',
+            r'启动\s*([a-zA-Z][a-zA-Z0-9_.]*)',
         ]
         for pattern in patterns:
             m = re.search(pattern, text)

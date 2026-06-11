@@ -63,10 +63,10 @@ class TestExtractAppName:
         assert self._extract("只是想学一下") == "target_app"
 
     def test_space_in_app_name(self):
-        """打开Google Chrome"""
+        """打开Google Chrome → 完整应用名"""
         result = self._extract("打开Google Chrome")
-        # "打开\s*(\S+?)" 只捕获第一个非空白词
-        assert result in ("Google",)
+        # 新版支持双词英文应用名（open -a "Google Chrome" 可正常打开）
+        assert result in ("Google Chrome",)
 
     def test_complex_sentence(self):
         """帮我学习一下怎么在PyCharm里面编写Python代码"""

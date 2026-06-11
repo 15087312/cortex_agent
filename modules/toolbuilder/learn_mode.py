@@ -128,10 +128,14 @@ async def _pipeline_steps(
 
     # 2. 截图
     _emit(progress_callback, EVENT_SCREENSHOT, {"status": "capturing"})
-    screenshot = await _capture_current_screen_async()
+    try:
+        screenshot = await _capture_current_screen_async()
+    except Exception as e:
+        _emit(progress_callback, EVENT_ERROR, {"message": f"截图失败: {e}"})
+        return {"status": "error", "message": f"截图失败: {e}"}
     if not screenshot:
-        _emit(progress_callback, EVENT_ERROR, {"message": "截图失败"})
-        return {"status": "error", "message": "截图失败"}
+        _emit(progress_callback, EVENT_ERROR, {"message": "截图失败: 返回为空"})
+        return {"status": "error", "message": "截图失败: 返回为空"}
     _emit(progress_callback, EVENT_SCREENSHOT, {"status": "done", "size": len(screenshot)})
 
     # 3. OmniParser 元素检测
@@ -370,7 +374,7 @@ def _capture_screen_sync() -> Optional[str]:
         return capture_screen_base64()
     except Exception as e:
         logger.error(f"截图失败: {e}")
-        return None
+        raise  # 让调用方看到具体错误
 
 
 def _emit(callback: Optional[Callable], event: str, data: Dict[str, Any]):
