@@ -49,6 +49,7 @@ COMMAND_WHITELIST = {
     "tar", "gzip", "gunzip", "zip", "unzip",
     "make", "cmake",
     "env", "pwd", "date", "whoami",
+    "open",  # macOS 打开应用/文件
 }
 
 # exec_command 危险命令模式 — 检测到时在响应中添加警告

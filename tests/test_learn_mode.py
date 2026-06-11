@@ -178,16 +178,17 @@ class TestLearnModeConfig:
         """learn 模式提示词应包含自我进化描述"""
         prompt = (
             "【执行模式: LEARN（自我进化）】\n"
-            "当前为学习模式，你正在自动化一个 UI 操作流程，完成后你的工具列表会扩展。\n"
-            "推荐的执行步骤：\n"
-            "1. open_app(app_name) — 打开要学习的应用\n"
-            "2. detect_ui_elements() — 识别界面上的元素\n"
-            "3. 用鼠标/键盘工具执行操作，向用户展示每一步\n"
-            "4. 操作完成后用 save_recipe(name, app_name, steps, description) 保存\n\n"
-            "学习完成后会自动退出学习模式，新工具立即可用。\n"
-            "调用 save_recipe 后请调用 respond_to_user 输出学习结果。"
+            "当前为学习模式，系统会自动记录你的每一步 UI 操作。\n"
+            "学习流程（使用以下工具）：\n"
+            "1. exec_command(\"open -a 'Google Chrome'\") — 打开要学习的应用\n"
+            "2. detect_ui_elements() 或 understand_screen() — 识别界面\n"
+            "3. mouse_click(x, y) / keyboard_type(text) / keyboard_hotkey(key) — 执行操作\n"
+            "4. 操作完成后调用 save_recipe(name, app_name, description) 保存\n\n"
+            "注意：\n"
+            "- 打开应用用 exec_command('open -a 应用名')，不要用 osascript\n"
+            "- keyboard_type 使用真实文本（如「今天的天气」），不要用 {{query}}\n"
         )
         assert "自我进化" in prompt
-        assert "open_app" in prompt
+        assert "exec_command" in prompt
         assert "save_recipe" in prompt
         assert "detect_ui_elements" in prompt

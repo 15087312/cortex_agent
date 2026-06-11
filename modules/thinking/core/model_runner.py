@@ -1250,16 +1250,14 @@ class ModelRunner:
                 base_prompt += (
                     "\n\n【执行模式: LEARN（自我进化）】\n"
                     "当前为学习模式，系统会自动记录你的每一步 UI 操作。\n"
-                    "必须使用以下工具完成学习，禁止使用 exec_command 或 run_command：\n"
-                    "1. open_app(app_name) — 打开要学习的应用（不要用 exec_command）\n"
+                    "学习流程（使用以下工具）：\n"
+                    "1. exec_command(\"open -a 'Google Chrome'\") — 打开要学习的应用\n"
                     "2. detect_ui_elements() 或 understand_screen() — 识别界面\n"
                     "3. mouse_click(x, y) / keyboard_type(text) / keyboard_hotkey(key) — 执行操作\n"
                     "4. 操作完成后调用 save_recipe(name, app_name, description) 保存\n\n"
                     "注意：\n"
-                    "- 绝对不要用 exec_command 或 run_command 来打开应用或执行 UI 操作\n"
-                    "- keyboard_type 请使用真实文本（如「今天的天气」），不要用 {{query}} 这类模板\n"
-                    "- 不需要手动构造 steps 参数，系统会自动记录你刚才的操作\n"
-                    "- 调用 save_recipe 后请调用 respond_to_user 输出学习结果"
+                    "- 打开应用用 exec_command('open -a 应用名')，不要用 osascript\n"
+                    "- keyboard_type 使用真实文本（如「今天的天气」），不要用 {{query}}\n"
                 )
         except Exception:
             pass
