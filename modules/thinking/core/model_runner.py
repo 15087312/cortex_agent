@@ -1183,78 +1183,41 @@ class ModelRunner:
         return result
 
     def _apply_skill_tool_rules(self, tools: List[str], rules) -> List[str]:
-        """按技能工具范围过滤工具列表
+        """按技能工具范围重排工具列表
 
-        安全保护：如果过滤后工具太少（< 10），可能是配置错误，放弃过滤。
+        技能不应限制模型工具，而是将技能相关工具排在前面，让模型优先看到。
+        只有 block_tools/block_tags/block_categories 会实际移除工具（安全排除）。
         """
         from infra.tool_manager.tool_registry import ToolRegistry
         all_tools = ToolRegistry._tools
 
-        filtered = list(tools)
-
-        # 0. allow_tools 优先级最高：只保留指定的具体工具
+        # 按 allow_tools 重排（不删除，只是把技能工具移到前面）
+        prioritized = list(tools)
         if rules.allow_tools:
-            candidate = [t for t in filtered if t in rules.allow_tools]
-            if len(candidate) >= 5:
-                filtered = candidate
-            else:
-                logger.warning(f"[技能] allow_tools 过滤后仅剩 {len(candidate)} 个工具，跳过")
+            skill_tools = [t for t in tools if t in rules.allow_tools]
+            other_tools = [t for t in tools if t not in rules.allow_tools]
+            prioritized = skill_tools + other_tools
 
-        # 1. 只保留指定 tag 的工具
-        if rules.allow_tags:
-            allowed = set()
-            for name, info in all_tools.items():
-                if any(tag in info.tags for tag in rules.allow_tags):
-                    allowed.add(name)
-            candidate = [t for t in filtered if t in allowed]
-            # 安全保护：allow_tags 不应过滤掉大部分工具
-            if len(candidate) >= 10:
-                filtered = candidate
-            else:
-                logger.warning(f"[技能] allow_tags={rules.allow_tags} 过滤后仅剩 {len(candidate)} 个工具，跳过过滤")
-
-        # 2. 只保留指定 category 的工具
-        if rules.allow_categories:
-            candidate = [
-                t for t in filtered
-                if all_tools.get(t) and all_tools[t].category in rules.allow_categories
-            ]
-            if len(candidate) >= 10:
-                filtered = candidate
-            else:
-                logger.warning(f"[技能] allow_categories={rules.allow_categories} 过滤后仅剩 {len(candidate)} 个工具，跳过过滤")
-
-        # 3. 只保留 core=True 的工具
-        if rules.allow_core_only:
-            candidate = [
-                t for t in filtered
-                if all_tools.get(t) and all_tools[t].core
-            ]
-            if len(candidate) >= 10:
-                filtered = candidate
-            else:
-                logger.warning(f"[技能] allow_core_only 过滤后仅剩 {len(candidate)} 个工具，跳过过滤")
-
-        # 4. 排除指定工具名
+        # 排除指定工具名（安全排除，如 code_review 屏蔽 exec_command）
         if rules.block_tools:
-            filtered = [t for t in filtered if t not in rules.block_tools]
+            prioritized = [t for t in prioritized if t not in rules.block_tools]
 
-        # 5. 排除指定 tag
+        # 排除指定 tag
         if rules.block_tags:
             blocked = set()
             for name, info in all_tools.items():
                 if any(tag in info.tags for tag in rules.block_tags):
                     blocked.add(name)
-            filtered = [t for t in filtered if t not in blocked]
+            prioritized = [t for t in prioritized if t not in blocked]
 
-        # 6. 排除指定 category
+        # 排除指定 category
         if rules.block_categories:
-            filtered = [
-                t for t in filtered
+            prioritized = [
+                t for t in prioritized
                 if not (all_tools.get(t) and all_tools[t].category in rules.block_categories)
             ]
 
-        return filtered
+        return prioritized
 
     def _build_system_prompt_for_mode(self) -> str:
         """根据运行模式构建系统提示词 — 技能 > 陪伴模式 > 默认身份"""

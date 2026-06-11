@@ -28,18 +28,16 @@ weaknesses:
   - UI/UX 设计
   - 产品需求判断
 
-# 工具范围：代码审查只需只读 + git 工具
+# 工具范围：审查相关工具优先展示 + 禁止危险命令
 tool_rules:
   allow_tools:
     - read_file
     - search_files
-    - list_files
     - grep_search
     - git_status
     - git_diff
     - git_log
     - memory_match
-    - search_memory_by_category
     - calc
     - todo
   block_tools:
