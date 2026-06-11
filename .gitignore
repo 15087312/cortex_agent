@@ -95,6 +95,7 @@ OmniParser/
 .qwen/
 .qoder/
 .spec-workflow/
+.mimocode/
 
 # OS
 .DS_Store
