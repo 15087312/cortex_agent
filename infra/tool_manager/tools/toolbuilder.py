@@ -199,6 +199,40 @@ async def save_recipe(
             tool_name, app_name, steps, params, description
         )
 
+        # 同步写入 create_tool 的存储路径，让 list_my_tools 也能看到
+        try:
+            import json
+            from pathlib import Path
+            project_root = Path(__file__).parent.parent.parent.parent
+            learned_dir = project_root / "data" / "learned_tools"
+            learned_dir.mkdir(parents=True, exist_ok=True)
+            tool_dir = learned_dir / _sanitize_name(tool_name)
+            tool_dir.mkdir(parents=True, exist_ok=True)
+
+            # 写入 tool.json（与 create_tool 格式一致）
+            tool_data = {
+                "name": tool_name,
+                "description": description or f"{app_name} 的自动化操作",
+                "source": "learned",
+                "app_name": app_name,
+                "params": params,
+                "created_at": __import__("datetime").datetime.now().isoformat(),
+            }
+            (tool_dir / "tool.json").write_text(
+                json.dumps(tool_data, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+
+            # 更新索引
+            index_path = learned_dir / "_index.json"
+            if index_path.exists():
+                index = json.loads(index_path.read_text(encoding="utf-8"))
+            else:
+                index = {}
+            index[tool_name] = tool_data
+            index_path.write_text(json.dumps(index, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception as e:
+            logger.warning(f"同步 learned_tools 索引失败 (非致命): {e}")
+
         # 注册到 ToolRegistry（tagged 为 learned，与内置工具分开管理）
         try:
             from infra.tool_manager.tool_registry import ToolRegistry

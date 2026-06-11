@@ -233,11 +233,23 @@ async def delete_tool(tool_name: str) -> Dict[str, Any]:
     # 从 ToolRegistry 移除
     ToolRegistry._tools.pop(safe_name, None)
 
-    # 从磁盘移除
+    # 从磁盘移除（自创工具路径）
     tool_dir = _get_learned_dir() / safe_name
     if tool_dir.exists():
         import shutil
         shutil.rmtree(tool_dir)
+
+    # 从磁盘移除（已学 UI 工具路径 — data/plugins/learned_*）
+    try:
+        from pathlib import Path
+        project_root = Path(__file__).parent.parent.parent.parent
+        plugins_dir = project_root / "data" / "plugins"
+        for d in plugins_dir.iterdir():
+            if d.is_dir() and d.name.startswith("learned_") and d.name.endswith(f"_{safe_name}"):
+                shutil.rmtree(d)
+                break
+    except Exception:
+        pass
 
     # 更新索引
     index = _load_learned_tools()
