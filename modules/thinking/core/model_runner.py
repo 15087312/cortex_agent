@@ -1194,7 +1194,11 @@ class ModelRunner:
 
         # 0. allow_tools 优先级最高：只保留指定的具体工具
         if rules.allow_tools:
-            filtered = [t for t in filtered if t in rules.allow_tools]
+            candidate = [t for t in filtered if t in rules.allow_tools]
+            if len(candidate) >= 5:
+                filtered = candidate
+            else:
+                logger.warning(f"[技能] allow_tools 过滤后仅剩 {len(candidate)} 个工具，跳过")
 
         # 1. 只保留指定 tag 的工具
         if rules.allow_tags:
