@@ -10,12 +10,35 @@
 
 import threading
 import time
-from typing import Optional, Any
+from typing import Optional, Any, Dict, List
 from .turn_context import TurnContext, TurnState
 from .blackboard import CognitiveBlackboard
 from utils.logger import setup_logger
 
 logger = setup_logger("session_lifecycle")
+
+
+# ── 全局注册表（替代 SessionManager 的会话查找功能）──
+_session_registry: Dict[str, Any] = {}  # session_id → SessionLifecycle
+_registry_lock = threading.Lock()
+
+
+def register_session(lifecycle: 'SessionLifecycle') -> None:
+    """注册活跃的 SessionLifecycle"""
+    with _registry_lock:
+        _session_registry[lifecycle.session_id] = lifecycle
+
+
+def unregister_session(session_id: str) -> None:
+    """注销 SessionLifecycle"""
+    with _registry_lock:
+        _session_registry.pop(session_id, None)
+
+
+def get_active_sessions() -> list:
+    """获取所有活跃的 SessionLifecycle 实例"""
+    with _registry_lock:
+        return list(_session_registry.values())
 
 
 class SessionLifecycle:
