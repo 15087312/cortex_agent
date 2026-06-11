@@ -155,8 +155,8 @@ def _build_skill_yaml(app_name: str, tools_summary: List[Dict[str, Any]]) -> str
                 "severity": "must",
             },
             {
-                "id": "no_redundant_perception",
-                "content": "有已学工具时不要主动调用 understand_screen，被动感知会自动监控",
+                "id": "verify_with_perception",
+                "content": "执行已学工具后，调用 understand_screen 或 detect_ui_elements 验证操作结果",
                 "severity": "should",
             },
         ],

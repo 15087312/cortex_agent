@@ -604,6 +604,8 @@ class ContinuousThinker:
         }
 
         attention_level = 0.6
+        attention_vector = None
+        allocation = None
         try:
             short_memories = []
             try:
@@ -622,6 +624,13 @@ class ContinuousThinker:
                 short_term_memory=short_memories,
             )
             attention_level = getattr(attention_decision, "attention_level", 0.6)
+            attention_vector = getattr(attention_decision, "attention_vector", None)
+            allocation = getattr(attention_decision, "allocation", None)
+            
+            # V2可解释性日志
+            explanation = getattr(attention_decision, "explanation", None)
+            if explanation and explanation.get("summary"):
+                self.logger.debug(f"[Attention V2] {explanation['summary']}")
         except Exception as e:
             self.logger.debug(f"[Attention] 动态注意力计算失败，回退默认值: {e}")
             attention_level = 0.6
@@ -630,6 +639,7 @@ class ContinuousThinker:
             current_goal=initial_question,
             current_state=current_state,
             attention_level=attention_level,
+            attention_vector=attention_vector,
         )
 
         prompt = await self._compress_prompt_if_needed(prompt)

@@ -1,9 +1,14 @@
 """
 注意力接口
 
-AttentionDecision 只保留实际影响行为字段：
-- importance_score: 注入模型 prompt
-- attention_level: 控制 MemoryAttentionScorer 的记忆检索阈值
+支持V1（标量）和V2（多维度向量）两种模式。
+
+V1模式：
+- attention_level: 标量，控制记忆检索阈值
+
+V2模式：
+- AttentionVector: 多维度向量（semantic, temporal, task, emotion, modality）
+- AttentionState: 完整注意力状态（向量 + 资源分配 + 解释）
 """
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -12,12 +17,16 @@ from typing import List, Dict, Any, Optional, Protocol, runtime_checkable
 
 @dataclass
 class AttentionDecision:
-    """任务重要性决策"""
+    """任务重要性决策（V1兼容）"""
     focus: str = ""
     related_memory: List[str] = field(default_factory=list)
     importance_score: float = 0.5
     importance_reasons: List[str] = field(default_factory=list)
     attention_level: float = 0.6
+    # V2扩展字段
+    attention_vector: Optional[Any] = None  # AttentionVector (V2)
+    allocation: Optional[Any] = None        # AllocationResult (V2)
+    explanation: Optional[Dict[str, Any]] = None  # V2可解释性
 
 
 @runtime_checkable
@@ -103,10 +112,102 @@ class AttentionAdapter(AttentionInterface):
         )
 
 
-def create_attention_interface(attention_core=None) -> AttentionInterface:
-    """Create an attention interface from an existing or default attention core."""
+class AttentionV2Adapter(AttentionInterface):
+    """V2注意力适配器 - 将 AttentionEngine 适配为 AttentionInterface"""
+
+    def __init__(self, engine=None):
+        """初始化V2适配器
+        
+        Args:
+            engine: AttentionEngine实例，如果为None则自动创建
+        """
+        if engine is None:
+            from modules.attention.core.v2.attention_engine import create_attention_engine
+            engine = create_attention_engine()
+        self._engine = engine
+
+    def analyze(
+        self,
+        user_input: str,
+        context: Optional[List[Dict]] = None,
+        short_term_memory: Optional[List[str]] = None
+    ) -> AttentionDecision:
+        """使用V2引擎分析输入"""
+        # 处理感知事件（如果有的话）
+        perception_events = []
+        if context:
+            for msg in context:
+                if isinstance(msg, dict) and msg.get("role") == "system":
+                    content = msg.get("content", "")
+                    if "【环境感知】" in content:
+                        # 提取感知事件
+                        perception_events.append({
+                            "type": "text",
+                            "confidence": 0.8,
+                            "urgency": 0.5,
+                        })
+
+        # 使用V2引擎处理
+        state = self._engine.process_input(
+            user_input=user_input,
+            context=context,
+            perception_events=perception_events if perception_events else None,
+        )
+
+        # 转换为AttentionDecision
+        return AttentionDecision(
+            focus=user_input[:50],
+            related_memory=[],
+            importance_score=state.current_vector.to_scalar(),
+            importance_reasons=["V2多维度分析"],
+            attention_level=state.current_vector.to_scalar(),
+            attention_vector=state.current_vector,
+            allocation=state.allocation,
+            explanation=state.explanation,
+        )
+
+    @property
+    def engine(self):
+        """获取底层V2引擎"""
+        return self._engine
+
+
+def create_attention_interface(attention_core=None, use_v2: bool = False) -> AttentionInterface:
+    """Create an attention interface.
+    
+    Args:
+        attention_core: V1核心实例（仅V1模式使用）
+        use_v2: 是否使用V2引擎
+    
+    Returns:
+        AttentionInterface实例
+    """
+    if use_v2:
+        return AttentionV2Adapter()
+    
     if attention_core is None:
         from modules.attention.core.attention_core import AttentionCore
-
         attention_core = AttentionCore()
+    
     return AttentionAdapter(attention_core)
+
+
+def get_attention_engine():
+    """获取全局V2注意力引擎（延迟初始化）"""
+    from modules.attention.core.v2.attention_engine import AttentionEngine
+    from modules.core.singleton import Singleton
+    
+    class AttentionEngineSingleton(Singleton):
+        _instance = None
+        
+        def __init__(self):
+            if AttentionEngineSingleton._instance is None:
+                AttentionEngineSingleton._instance = AttentionEngine()
+        
+        @classmethod
+        def get_instance(cls):
+            if cls._instance is None:
+                cls._instance = cls()
+            return cls._instance._engine if hasattr(cls._instance, '_engine') else cls._instance
+    
+    return AttentionEngineSingleton.get_instance()

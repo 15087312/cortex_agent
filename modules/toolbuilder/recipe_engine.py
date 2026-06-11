@@ -187,6 +187,14 @@ class RecipeEngine:
 
         from infra.tool_manager.tool_registry import ToolRegistry
 
+        # 执行前：捕获环境基线
+        try:
+            from modules.toolbuilder.environment_monitor import get_environment_monitor
+            monitor = get_environment_monitor()
+            monitor.capture_baseline()
+        except Exception as e:
+            logger.debug(f"环境基线捕获失败（非致命）: {e}")
+
         steps = recipe.get("steps", [])
         start_ms = _now_ms()
         executed = 0
@@ -296,6 +304,26 @@ class RecipeEngine:
             executed += 1
             if wait_after_ms > 0:
                 time.sleep(wait_after_ms / 1000)
+
+        # 执行后：被动感知监控环境一致性
+        env_check_result = None
+        try:
+            from modules.toolbuilder.environment_monitor import get_environment_monitor
+            monitor = get_environment_monitor()
+            env_check_result = monitor.check_consistency()
+            
+            if not env_check_result.consistent:
+                logger.warning(
+                    f"已学工具 {tool_name} 执行后环境不一致: "
+                    f"changes={env_check_result.changes}, "
+                    f"confidence={env_check_result.confidence}"
+                )
+            else:
+                logger.debug(f"已学工具 {tool_name} 执行后环境一致性正常")
+            
+            monitor.reset()
+        except Exception as e:
+            logger.debug(f"环境一致性检查失败（非致命）: {e}")
 
         total_ms = _now_ms() - start_ms
         RecipeEngine.update_stats(tool_name, True, total_ms, app_name)

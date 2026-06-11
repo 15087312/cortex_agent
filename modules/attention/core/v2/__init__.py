@@ -13,7 +13,7 @@ from modules.attention.core.v2.cross_modal_fusion import CrossModalFusion
 from modules.attention.core.v2.adaptive_decay import AdaptiveDecay, DecayConfig
 from modules.attention.core.v2.resource_allocator import ResourceAllocator, ResourceBudget
 from modules.attention.core.v2.attention_explainer import AttentionExplainer
-from modules.attention.core.v2.attention_engine import AttentionEngine
+from modules.attention.core.v2.attention_engine import AttentionEngine, create_attention_engine
 
 __all__ = [
     "AttentionVector",
@@ -25,4 +25,5 @@ __all__ = [
     "ResourceBudget",
     "AttentionExplainer",
     "AttentionEngine",
+    "create_attention_engine",
 ]

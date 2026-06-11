@@ -150,6 +150,31 @@ async def save_recipe(
         if not isinstance(params, dict):
             params = {}
 
+        # 保存前验证（学习阶段主动感知）：截图+OCR确认操作效果
+        verification_result = None
+        try:
+            from modules.toolbuilder.operation_verifier import get_operation_verifier
+            verifier = get_operation_verifier()
+            verification_result = await verifier.verify_operation(
+                operation_description=f"学习操作: {tool_name}",
+                expected_outcome=description,
+                focus="验证学习操作的最终状态"
+            )
+            if verification_result.success:
+                logger.info(
+                    f"学习验证通过: {tool_name}, "
+                    f"confidence={verification_result.confidence:.2f}, "
+                    f"ocr_text={verification_result.ocr_text[:100] if verification_result.ocr_text else 'N/A'}"
+                )
+            else:
+                logger.warning(
+                    f"学习验证未通过: {tool_name}, "
+                    f"confidence={verification_result.confidence:.2f}, "
+                    f"error={verification_result.error}"
+                )
+        except Exception as e:
+            logger.warning(f"保存前验证失败（非致命）: {e}")
+
         # 生成插件包（含 recipe.json）
         plugin_path = PluginBuilder.create_plugin(
             tool_name, app_name, steps, params, description
@@ -262,6 +287,143 @@ def _ensure_learned_skill(app_name: str, tool_name: str, description: str, param
         logger.info(f"技能已生成: {skill_id}")
     except Exception:
         pass
+
+
+@ToolRegistry.register(
+    "view_recipe",
+    description="查看已学工具的完整 recipe，包括 steps 和 params_schema。学完一个工具后可以用此工具审查，找出需要参数化的地方。",
+    params={
+        "tool_name": "工具名",
+        "app_name": "可选，应用名（不提供则自动搜索）",
+    },
+    risk_level="LOW",
+    category="query",
+    tags=["toolbuilder"],
+    core=True,
+)
+async def view_recipe(tool_name: str, app_name: str = "") -> dict:
+    """查看已学工具的 recipe"""
+    if not tool_name:
+        return {"status": "error", "message": "tool_name 不能为空"}
+
+    from modules.toolbuilder.recipe_engine import RecipeEngine
+    recipe = RecipeEngine.load(tool_name, app_name)
+    if not recipe:
+        return {"status": "error", "message": f"未找到工具 {tool_name} 的 recipe"}
+
+    # 只返回结构，不包含统计信息
+    return {
+        "status": "success",
+        "tool_name": tool_name,
+        "app_name": recipe.get("app_name", app_name),
+        "params_schema": recipe.get("params", {}),
+        "steps": recipe.get("steps", []),
+        "step_count": len(recipe.get("steps", [])),
+    }
+
+
+@ToolRegistry.register(
+    "edit_recipe",
+    description=(
+        "修改已学工具的 recipe。可以修改步骤参数和参数模板。"
+        "典型用法：把固定文本改为 {{变量名}}，然后在 params_schema 中定义变量类型。"
+    ),
+    params={
+        "tool_name": "工具名，如 chrome_search",
+        "app_name": "应用名，如 Chrome",
+        "step_edits": {
+            "type": "array",
+            "description": "要修改的步骤列表。[{step_index: 0, args: {text: '{{query}}'}}, ...]",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "step_index": {"type": "number", "description": "步骤索引（从 0 开始）"},
+                    "args": {"type": "object", "description": "新的 args，会替换原有 args"},
+                },
+                "required": ["step_index", "args"],
+            },
+        },
+        "params_schema": {
+            "type": "object",
+            "description": "新的参数模板。如 {properties: {query: {type: 'string'}}, required: ['query']}。不传则不修改。",
+        },
+    },
+    risk_level="MEDIUM",
+    category="mutation",
+    tags=["toolbuilder"],
+    core=True,
+)
+async def edit_recipe(tool_name: str, app_name: str = "", step_edits: list = None, params_schema: dict = None) -> dict:
+    """修改已学工具的 recipe"""
+    if not tool_name:
+        return {"status": "error", "message": "tool_name 不能为空"}
+    if not step_edits and not params_schema:
+        return {"status": "error", "message": "至少提供 step_edits 或 params_schema 之一"}
+
+    from modules.toolbuilder.recipe_engine import RecipeEngine
+    recipe = RecipeEngine.load(tool_name, app_name)
+    if not recipe:
+        return {"status": "error", "message": f"未找到工具 {tool_name} 的 recipe"}
+
+    steps = recipe.get("steps", [])
+    resolved_app = recipe.get("app_name", app_name)
+
+    # 应用步骤修改
+    if step_edits:
+        for edit in step_edits:
+            idx = edit.get("step_index")
+            if not isinstance(idx, int) or idx < 0 or idx >= len(steps):
+                return {"status": "error", "message": f"步骤索引 {idx} 无效（共 {len(steps)} 步）"}
+            steps[idx]["args"] = edit.get("args", {})
+
+    # 应用 params_schema 修改
+    if params_schema:
+        recipe["params"] = params_schema
+
+    # 重新保存
+    import json
+    from pathlib import Path
+    from datetime import datetime, timezone
+
+    from modules.toolbuilder.recipe_engine import RecipeEngine as RE
+    recipe_path = RE.get_recipe_path(tool_name, resolved_app)
+    recipe_path.parent.mkdir(parents=True, exist_ok=True)
+
+    recipe["steps"] = steps
+    recipe_path.write_text(json.dumps(recipe, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    # 更新 meta.json
+    meta_path = recipe_path.parent / "meta.json"
+    if meta_path.exists():
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        meta["params"] = list((params_schema or recipe.get("params", {})).get("properties", {}).keys())
+        meta["step_count"] = len(steps)
+        meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    # 如果是模板变量发生了变化，更新 ToolRegistry 中的参数定义
+    from infra.tool_manager.tool_registry import ToolRegistry
+    tool_info = ToolRegistry.get_tool(tool_name)
+    if tool_info and params_schema:
+        try:
+            tool_info.description = recipe.get("description", tool_info.description)
+        except Exception:
+            pass
+
+    # 更新 Skill YAML
+    from modules.toolbuilder.recipe_engine import RecipeEngine
+    try:
+        _ensure_learned_skill(resolved_app, tool_name, recipe.get("description", ""), params_schema or recipe.get("params", {}))
+    except Exception:
+        pass
+
+    return {
+        "status": "success",
+        "tool_name": tool_name,
+        "app_name": resolved_app,
+        "steps_edited": len(step_edits or []),
+        "params_updated": params_schema is not None,
+        "message": f"工具 {tool_name} 已更新（{len(step_edits or [])} 步修改）",
+    }
 
 
 @ToolRegistry.register(

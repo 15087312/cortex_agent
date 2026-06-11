@@ -123,7 +123,26 @@ class ContextManager:
         current_goal: str,
         current_state: Optional[Dict[str, Any]] = None,
         attention_level: float = 0.6,
+        attention_vector=None,  # Optional[AttentionVector] (V2)
     ) -> str:
+        # 如果有V2向量，将其信息注入上下文
+        v2_context = ""
+        if attention_vector is not None:
+            try:
+                from modules.attention.core.v2.attention_vector import AttentionVector
+                if isinstance(attention_vector, AttentionVector):
+                    # 生成V2上下文信息
+                    v2_parts = [
+                        f"语义相关性: {attention_vector.semantic:.2f}",
+                        f"时间敏感性: {attention_vector.temporal:.2f}",
+                        f"任务重要性: {attention_vector.task:.2f}",
+                        f"情感强度: {attention_vector.emotion:.2f}",
+                        f"模态权重: {attention_vector.modality:.2f}",
+                    ]
+                    v2_context = f"【注意力状态】{', '.join(v2_parts)}"
+            except Exception:
+                pass
+
         working = await self.build_working_context(
             current_goal=current_goal,
             current_state=current_state,
@@ -142,6 +161,11 @@ class ContextManager:
                 "has_skill": current_state.get("has_skill", False) if current_state else False,
             },
         )
+        
+        # 注入V2注意力上下文
+        if v2_context:
+            prompt += "\n\n" + v2_context
+        
         if working.external_guidance:
             prompt += "\n\n" + working.external_guidance
         if working.expert_context:

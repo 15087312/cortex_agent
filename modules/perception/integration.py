@@ -83,10 +83,12 @@ class PerceptionIntegrator:
         """感知事件回调 — 添加到注意力池"""
         try:
             payload = event.payload if hasattr(event, 'payload') else {}
-            source = payload.get('source_type', payload.get('type', 'unknown'))
-            category = payload.get('category', '')
-            description = payload.get('description', payload.get('text', ''))
-            intensity = payload.get('intensity', 0)
+            event_type = event.event_type if hasattr(event, 'event_type') else 'unknown'
+            source = payload.get('source_type', payload.get('type', event_type.split('.')[0] if '.' in event_type else 'unknown'))
+            
+            # 根据事件类型提取具体信息
+            description = self._extract_description(event_type, payload)
+            intensity = payload.get('intensity', 0.5)
 
             if isinstance(description, str) and description:
                 # 去重：相同描述的最近事件不再重复添加
@@ -97,15 +99,80 @@ class PerceptionIntegrator:
 
                 self._attention_items.append({
                     "source": source,
-                    "category": category,
-                    "description": description[:200],
+                    "event_type": event_type,
+                    "description": description[:300],
                     "intensity": intensity,
-                    "prompt": f"[{source}] {description[:200]}",
+                    "payload": payload,
                 })
                 if len(self._attention_items) > self._max_attention:
                     self._attention_items = self._attention_items[-self._max_attention:]
         except Exception as e:
             logger.debug(f"处理感知事件异常 (非致命): {e}")
+
+    def _extract_description(self, event_type: str, payload: Dict[str, Any]) -> str:
+        """根据事件类型提取具体描述"""
+        try:
+            if event_type == "screen.window":
+                # 窗口变化：返回具体窗口信息
+                app_name = payload.get("app_name", "")
+                window_title = payload.get("window_title", "")
+                prev_app = payload.get("prev_app", "")
+                prev_window = payload.get("prev_window", "")
+                
+                if prev_app and prev_app != app_name:
+                    return f"窗口切换: {prev_app} → {app_name} ({window_title})"
+                elif prev_window and prev_window != window_title:
+                    return f"窗口标题变化: {app_name} [{prev_window}] → [{window_title}]"
+                else:
+                    return f"当前窗口: {app_name} - {window_title}"
+            
+            elif event_type == "screen.ocr":
+                # OCR变化：返回新增文本
+                new_lines = payload.get("new_lines", [])
+                text = payload.get("text", "")
+                roi_name = payload.get("roi_name", "屏幕")
+                
+                if new_lines:
+                    new_text = "\n".join(new_lines[:5])  # 最多5行
+                    return f"屏幕新文本 [{roi_name}]: {new_text}"
+                elif text:
+                    return f"屏幕文本 [{roi_name}]: {text[:200]}"
+            
+            elif event_type == "file.change":
+                # 文件变化：返回文件路径和操作
+                change = payload.get("change", "")
+                path = payload.get("path", "")
+                if change and path:
+                    return f"文件{change}: {path}"
+                return f"文件变化: {change or path or '未知'}"
+            
+            elif event_type == "dialog.change":
+                # 对话变化：返回消息内容
+                change = payload.get("change", "")
+                if change:
+                    return f"对话变化: {change[:200]}"
+            
+            elif event_type == "speech.detected":
+                # 语音识别：返回识别文本
+                text = payload.get("text", "")
+                if text:
+                    return f"语音识别: {text}"
+            
+            elif event_type == "difference.detected":
+                # 差异检测：返回差异描述
+                description = payload.get("description", "")
+                intensity = payload.get("intensity", 0)
+                if description:
+                    return f"环境差异 (强度{intensity:.0f}/100): {description[:200]}"
+            
+            # 兜底：返回通用描述
+            description = payload.get("description", payload.get("text", ""))
+            if description:
+                return f"[{event_type}] {description[:200]}"
+            
+            return ""
+        except Exception as e:
+            return ""
 
     def stop(self) -> None:
         """停止感知监控"""
@@ -150,19 +217,61 @@ class PerceptionIntegrator:
             self._attention_items = self._attention_items[-self._max_attention:]
 
     def get_attention_prompt(self) -> str:
-        """获取注意力提示"""
+        """获取注意力提示（结构化输出）"""
         if not self._attention_items:
             return ""
+        
         items = self._attention_items[-5:]  # 最近5条
-        prompts = []
+        
+        # 按事件类型分组
+        grouped = {
+            "windows": [],   # 窗口变化
+            "text": [],      # 文本/OCR变化
+            "files": [],     # 文件变化
+            "dialog": [],    # 对话变化
+            "other": [],     # 其他
+        }
+        
         for item in items:
-            if "prompt" in item:
-                prompts.append(item["prompt"])
-            elif "description" in item:
-                prompts.append(f"[{item.get('source', '感知')}] {item['description']}")
-        if not prompts:
+            event_type = item.get("event_type", "")
+            description = item.get("description", "")
+            
+            if not description:
+                continue
+            
+            if "window" in event_type:
+                grouped["windows"].append(description)
+            elif "ocr" in event_type:
+                grouped["text"].append(description)
+            elif "file" in event_type:
+                grouped["files"].append(description)
+            elif "dialog" in event_type:
+                grouped["dialog"].append(description)
+            else:
+                grouped["other"].append(description)
+        
+        # 构建结构化输出
+        sections = []
+        
+        if grouped["windows"]:
+            sections.append("【窗口状态】\n" + "\n".join(grouped["windows"]))
+        
+        if grouped["text"]:
+            sections.append("【屏幕文本】\n" + "\n".join(grouped["text"]))
+        
+        if grouped["files"]:
+            sections.append("【文件变化】\n" + "\n".join(grouped["files"]))
+        
+        if grouped["dialog"]:
+            sections.append("【对话变化】\n" + "\n".join(grouped["dialog"]))
+        
+        if grouped["other"]:
+            sections.append("【其他感知】\n" + "\n".join(grouped["other"]))
+        
+        if not sections:
             return ""
-        return "【环境感知】\n" + "\n".join(prompts)
+        
+        return "【环境感知】\n" + "\n\n".join(sections)
 
     def build_system_prompt(self, base_prompt: str) -> str:
         """构建系统提示词（注入感知信息）"""
@@ -187,7 +296,7 @@ class PerceptionIntegrator:
         """获取感知上下文摘要（由编排层调用，注入到模型 prompt）"""
         attention_prompt = self.get_attention_prompt()
         if attention_prompt:
-            return f"\n\n{attention_prompt}"
+            return attention_prompt
         return ""
 
     def check_rule_compliance(self, content: str) -> List:

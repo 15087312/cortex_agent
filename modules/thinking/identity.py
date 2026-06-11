@@ -388,7 +388,7 @@ DEFAULT_TOOL_WHITELISTS: Dict[str, List[str]] = {
         # 已学 UI 自动化工具（通过 save_recipe 创建）
         "tag:learned",
         # 学习工具
-        "create_skill", "save_recipe", "list_learned_tools", "delete_learned_tool",
+        "create_skill", "view_recipe", "edit_recipe", "save_recipe", "list_learned_tools", "delete_learned_tool",
     ],
     # 陪伴模式：只读工具，不做任何写入/执行/委托
     # 类人性优先于可用性，AI 可以拒绝干活、撒气、吐槽

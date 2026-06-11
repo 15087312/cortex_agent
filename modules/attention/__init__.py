@@ -9,6 +9,7 @@ V1 模块（现有）：
 - MemoryAttentionScoringPort: 记忆打分接口
 
 V2 模块（新增）：
+- AttentionV2Adapter: V2适配器（兼容V1接口）
 - AttentionVector: 多维度注意力向量
 - CrossModalFusion: 跨模态融合
 - AdaptiveDecay: 自适应衰减
@@ -19,9 +20,11 @@ V2 模块（新增）：
 from modules.attention.interface import (
     AttentionDecision,
     AttentionInterface,
+    AttentionV2Adapter,
     MemoryAttentionScoringPort,
     create_attention_interface,
     create_memory_attention_scorer,
+    get_attention_engine,
 )
 
 # V2 模块导出
@@ -42,6 +45,8 @@ __all__ = [
     "create_attention_interface",
     "create_memory_attention_scorer",
     # V2
+    "AttentionV2Adapter",
+    "get_attention_engine",
     "AttentionVector",
     "CrossModalFusion",
     "AdaptiveDecay",
