@@ -359,11 +359,7 @@ async def analyze_attention(
             "success": True,
             "data": {
                 "focus": decision.focus,
-                "active_modules": decision.active_modules,
-                "sleep_modules": decision.sleep_modules,
-                "priority_weights": decision.priority_weights,
                 "related_memory_count": len(decision.related_memory),
-                "context_related_count": len(decision.context_related),
                 "importance_score": getattr(decision, "importance_score", 0.5),
                 "importance_reasons": getattr(decision, "importance_reasons", []),
                 "attention_level": getattr(decision, "attention_level", 0.6),

@@ -267,27 +267,22 @@ class MultiModelOrchestrator:
         except Exception as e:
             logger.debug(f"[感知] 获取感知上下文失败 (非致命): {e}")
 
-        # ---- 2.6 注意力上下文（任务重要性分析）----
-        attention_context = ""
+        # ---- 2.6 任务重要性分析（关键词匹配 → 影响记忆检索阈值）----
+        importance_context = ""
         try:
             from modules.attention.interface import create_attention_interface
             attention = create_attention_interface()
-            decision = attention.analyze(
-                user_input=user_input,
-                context=[],
-                short_term_memory=[],
-            )
+            decision = attention.analyze(user_input=user_input)
             if decision:
                 importance = getattr(decision, "importance_score", 0.5)
                 level = getattr(decision, "attention_level", 0.5)
-                attention_context = (
+                importance_context = (
                     f"\n\n【任务重要性】{importance:.2f}/1.0\n"
-                    f"【注意力水平】{level:.2f}/1.0\n"
                     f"高重要性任务应投入更多思考轮次和工具调用。"
                 )
-                logger.debug(f"[注意力] importance={importance:.2f} level={level:.2f}")
+                logger.debug(f"[重要性] score={importance:.2f} level={level:.2f}")
         except Exception as e:
-            logger.debug(f"[注意力] 分析失败 (非致命): {e}")
+            logger.debug(f"[重要性] 分析失败 (非致命): {e}")
 
         # ---- 3. 专家引导 (情绪 + 价值观) ----
         from config.settings import settings as _settings
@@ -311,7 +306,7 @@ class MultiModelOrchestrator:
             event_callback=event_callback,
             skill_id=skill_id,
             perception_context=perception_context,
-            attention_context=attention_context,
+            importance_context=importance_context,
         )
 
         raw_response = thinking_result.get("response", "")
@@ -429,7 +424,7 @@ class MultiModelOrchestrator:
         event_callback,
         skill_id: str = "",
         perception_context: str = "",
-        attention_context: str = "",
+        importance_context: str = "",
     ) -> Dict:
         """执行多模型思考 — 统一探针驱动流程
 
@@ -580,8 +575,8 @@ class MultiModelOrchestrator:
                 full_context = memory_context_text
                 if perception_context:
                     full_context += f"\n\n{perception_context}"
-                if attention_context:
-                    full_context += f"\n\n{attention_context}"
+                if importance_context:
+                    full_context += f"\n\n{importance_context}"
                 self._get_context_service().inject_to_dialog(blackboard, full_context)
 
             # ---- 直接激活大模型（替代 SessionMonitor）----

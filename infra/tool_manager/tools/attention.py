@@ -17,8 +17,8 @@ def set_attention_manager(manager) -> None:
 
 @ToolRegistry.register(
     name="set_attention_level",
-    description="设置注意力水平（感知强度阈值），控制对环境变化的敏感程度",
-    params={"level": "0-1的数值，越高越敏感"},
+    description="设置任务重要性敏感度。调整关键词匹配的阈值，越高对紧急/任务关键词越敏感。",
+    params={"level": "0-1的数值，0.6=默认，越高对紧急关键词越敏感"},
     source="security"
 )
 def set_attention_level(level: float = None, **kwargs) -> str:

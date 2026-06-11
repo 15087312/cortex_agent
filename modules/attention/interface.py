@@ -1,7 +1,9 @@
 """
-注意力接口 - 解耦注意力决策
+注意力接口
 
-定义注意力决策的抽象接口
+AttentionDecision 只保留实际影响行为字段：
+- importance_score: 注入模型 prompt
+- attention_level: 控制 MemoryAttentionScorer 的记忆检索阈值
 """
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -10,14 +12,9 @@ from typing import List, Dict, Any, Optional, Protocol, runtime_checkable
 
 @dataclass
 class AttentionDecision:
-    """注意力决策"""
-    focus: str
-    active_modules: List[str]
-    sleep_modules: List[str]
-    priority_weights: Dict[str, float]
-    related_memory: List[str]
-    context_related: List[Dict]
-    reasoning: str = ""  # 决策原因
+    """任务重要性决策"""
+    focus: str = ""
+    related_memory: List[str] = field(default_factory=list)
     importance_score: float = 0.5
     importance_reasons: List[str] = field(default_factory=list)
     attention_level: float = 0.6
@@ -98,13 +95,8 @@ class AttentionAdapter(AttentionInterface):
         decision = self._core.analyze(user_input, context, short_term_memory)
 
         return AttentionDecision(
-            focus=decision.focus,
-            active_modules=decision.active_modules,
-            sleep_modules=decision.sleep_modules,
-            priority_weights=decision.priority_weights,
-            related_memory=decision.related_memory,
-            context_related=decision.context_related,
-            reasoning=getattr(decision, 'reasoning', ''),
+            focus=getattr(decision, 'focus', ''),
+            related_memory=getattr(decision, 'related_memory', []),
             importance_score=getattr(decision, 'importance_score', 0.5),
             importance_reasons=getattr(decision, 'importance_reasons', []),
             attention_level=getattr(decision, 'attention_level', 0.6),
