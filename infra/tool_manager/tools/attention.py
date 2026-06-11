@@ -24,24 +24,31 @@ def set_attention_manager(manager) -> None:
 def set_attention_level(level: float = None, **kwargs) -> str:
     """
     设置注意力水平
-    
+
     Args:
         level: 0-1的数值，越高越敏感
-        
+
     Returns:
         设置结果
     """
     if level is None:
         level = kwargs.get("level")
-    
+
     if level is None:
         return "[错误] 必须提供 level 参数"
-    
+
     try:
         level = float(level)
         if not 0 <= level <= 1:
             return "[错误] level 必须在 0-1 之间"
-        
+
+        # 实际写入运行时配置，影响 AttentionCore 的行为
+        try:
+            from config.settings import settings
+            object.__setattr__(settings, "ATTENTION_FORCE_STATIC_LEVEL", level)
+        except Exception:
+            pass
+
         level_names = {
             0.0: "极度迟钝",
             0.2: "迟钝",
@@ -50,10 +57,10 @@ def set_attention_level(level: float = None, **kwargs) -> str:
             0.8: "高度敏感",
             1.0: "极度敏感"
         }
-        
+
         nearest = min(level_names.keys(), key=lambda x: abs(x - level))
         level_name = level_names.get(nearest, f"等级{nearest}")
-        
+
         return f"[成功] 注意力水平已调整为 {level:.2f} ({level_name})"
     except (TypeError, ValueError):
         return "[错误] level 必须是 0-1 的数值"
@@ -66,20 +73,28 @@ def set_attention_level(level: float = None, **kwargs) -> str:
 )
 def get_attention_level() -> str:
     """获取当前注意力水平"""
-    if _attention_manager is None:
-        return "[信息] 注意力管理器未初始化，使用默认值 0.6"
-    
-    level = _attention_manager.intensity_threshold
-    level_names = {
-        0.0: "极度迟钝",
-        0.2: "迟钝",
-        0.4: "一般",
-        0.6: "敏感",
-        0.8: "高度敏感",
-        1.0: "极度敏感"
-    }
-    
-    nearest = min(level_names.keys(), key=lambda x: abs(x - level))
-    level_name = level_names.get(nearest, f"等级{nearest}")
-    
-    return f"[当前] 注意力水平: {level:.2f} ({level_name})"
+    try:
+        from config.settings import settings
+        level = getattr(settings, "ATTENTION_FORCE_STATIC_LEVEL", None)
+        if level is not None:
+            level_names = {
+                0.0: "极度迟钝", 0.2: "迟钝", 0.4: "一般",
+                0.6: "敏感", 0.8: "高度敏感", 1.0: "极度敏感",
+            }
+            nearest = min(level_names.keys(), key=lambda x: abs(x - level))
+            level_name = level_names.get(nearest, f"等级{nearest}")
+            return f"[当前] 注意力水平: {level:.2f} ({level_name})"
+    except Exception:
+        pass
+
+    if _attention_manager is not None:
+        level = _attention_manager.intensity_threshold
+        level_names = {
+            0.0: "极度迟钝", 0.2: "迟钝", 0.4: "一般",
+            0.6: "敏感", 0.8: "高度敏感", 1.0: "极度敏感",
+        }
+        nearest = min(level_names.keys(), key=lambda x: abs(x - level))
+        level_name = level_names.get(nearest, f"等级{nearest}")
+        return f"[当前] 注意力水平: {level:.2f} ({level_name})"
+
+    return "[信息] 使用默认注意力 0.6"
