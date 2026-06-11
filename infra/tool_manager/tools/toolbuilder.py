@@ -243,9 +243,8 @@ def _ensure_learned_skill(app_name: str, tool_name: str, description: str, param
             {"step": 2, "name": "调用工具", "description": f"直接调用 {tool_name} 执行操作", "output": "执行结果"},
             {"step": 3, "name": "失败处理", "description": "工具失败时删除并重新学习", "output": "重新学习"},
         ],
-        "tool_rules": {
-            "allow_tags": ["learned"],
-        },
+        # 注意：不设 tool_rules，已学工具技能只提供上下文（角色/规章/流程），
+        # 不限制模型的其他工具。工具限制用例见 skills/code_review.yaml。
         "metadata": {
             "learned_tools": [{"name": tool_name, "description": description or tool_name, "params": list(params.keys())}],
             "generated_at": __import__("datetime").datetime.now().isoformat(),

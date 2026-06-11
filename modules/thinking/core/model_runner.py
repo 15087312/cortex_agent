@@ -1183,7 +1183,10 @@ class ModelRunner:
         return result
 
     def _apply_skill_tool_rules(self, tools: List[str], rules) -> List[str]:
-        """按技能工具范围过滤工具列表"""
+        """按技能工具范围过滤工具列表
+
+        安全保护：如果过滤后工具太少（< 10），可能是配置错误，放弃过滤。
+        """
         from infra.tool_manager.tool_registry import ToolRegistry
         all_tools = ToolRegistry._tools
 
@@ -1195,21 +1198,34 @@ class ModelRunner:
             for name, info in all_tools.items():
                 if any(tag in info.tags for tag in rules.allow_tags):
                     allowed.add(name)
-            filtered = [t for t in filtered if t in allowed]
+            candidate = [t for t in filtered if t in allowed]
+            # 安全保护：allow_tags 不应过滤掉大部分工具
+            if len(candidate) >= 10:
+                filtered = candidate
+            else:
+                logger.warning(f"[技能] allow_tags={rules.allow_tags} 过滤后仅剩 {len(candidate)} 个工具，跳过过滤")
 
         # 2. 只保留指定 category 的工具
         if rules.allow_categories:
-            filtered = [
+            candidate = [
                 t for t in filtered
                 if all_tools.get(t) and all_tools[t].category in rules.allow_categories
             ]
+            if len(candidate) >= 10:
+                filtered = candidate
+            else:
+                logger.warning(f"[技能] allow_categories={rules.allow_categories} 过滤后仅剩 {len(candidate)} 个工具，跳过过滤")
 
         # 3. 只保留 core=True 的工具
         if rules.allow_core_only:
-            filtered = [
+            candidate = [
                 t for t in filtered
                 if all_tools.get(t) and all_tools[t].core
             ]
+            if len(candidate) >= 10:
+                filtered = candidate
+            else:
+                logger.warning(f"[技能] allow_core_only 过滤后仅剩 {len(candidate)} 个工具，跳过过滤")
 
         # 4. 排除指定工具名
         if rules.block_tools:
