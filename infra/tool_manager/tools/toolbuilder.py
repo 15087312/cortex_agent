@@ -150,6 +150,25 @@ async def save_recipe(
         if not isinstance(params, dict):
             params = {}
 
+        # 自动参数化：如果提供了 params_schema，扫描 steps 把匹配的值替换为 {{变量名}}
+        # 模型学到的是真实文本，但作为工具使用时应该接受参数。
+        # 例如 params_schema={query:...}，keyboard_type(text="今天的天气")
+        # 自动替换为 keyboard_type(text="{{query}}")
+        if params.get("properties"):
+            param_keys = list(params["properties"].keys())
+            for step in steps:
+                args = step.get("args", {})
+                for key in param_keys:
+                    for arg_name, arg_val in list(args.items()):
+                        if isinstance(arg_val, str) and arg_val.strip():
+                            # 如果 args 的值恰好包含某个参数名（作为关键词），标记为模板
+                            # 更精确：如果值以参数名结尾 或 包含参数名且长度接近
+                            val_lower = arg_val.lower().strip(".,!?，。！？")
+                            key_lower = key.lower().strip()
+                            if val_lower == key_lower or val_lower.endswith(key_lower):
+                                args[arg_name] = f"{{{{{key}}}}}"
+                                logger.info(f"[自动参数化] step.{step.get('action','')}.{arg_name}: '{arg_val}' → '{{{{{key}}}}}'")
+
         # 保存前验证（学习阶段主动感知）：截图+OCR确认操作效果
         verification_result = None
         try:
