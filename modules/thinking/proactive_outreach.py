@@ -159,8 +159,8 @@ class ProactiveOutreachHandler:
         """
         logger.info(f"[主动搭话] _do_outreach 开始, idle_minutes={idle_minutes}")
 
-        # 1. 获取活跃 session 和历史对话
-        session_id, history = self._get_active_session_info()
+        # 1. 获取活跃 session 和对话上下文
+        session_id, conversation_context, style_examples = self._get_active_session_info()
 
         if not session_id:
             logger.warning("[主动搭话] 无活跃 session，跳过")
@@ -170,10 +170,11 @@ class ProactiveOutreachHandler:
         from config.settings import settings
         is_companion = settings.COMPANION_MODE
 
-        # 3. 构建 prompt
+        # 3. 构建 prompt（传入完整对话上下文）
         prompt = self._build_prompt(
             is_companion=is_companion,
-            history=history,
+            conversation_context=conversation_context,
+            style_examples=style_examples,
             idle_minutes=idle_minutes,
         )
 
@@ -199,20 +200,22 @@ class ProactiveOutreachHandler:
     # ------------------------------------------------------------------
 
     def _get_active_session_info(self):
-        """获取最近活跃的 session_id 和历史对话
+        """获取最近活跃的 session_id 和对话上下文
 
         优先选择有活跃 WebSocket 连接的 session，
         避免推送到无连接的 session 导致消息丢失。
 
         Returns:
-            (session_id, recent_assistant_messages: List[str])
+            (session_id, conversation_context: str, style_examples: List[str])
+            - conversation_context: 最近对话记录（用户+助手），供模型理解话题
+            - style_examples: 最近助手消息，供风格模仿
         """
         try:
             from modules.thinking.api_stream import get_thinking_system, connection_manager
             system = get_thinking_system()
 
             if not system.sessions:
-                return "", []
+                return "", "", []
 
             # 优先选有活跃 WebSocket 连接的 session
             active_ws_sessions = set(connection_manager.active_connections.keys())
@@ -231,7 +234,7 @@ class ProactiveOutreachHandler:
                     best_session_id = sid
 
             if not best_session_id:
-                return "", []
+                return "", "", []
 
             if best_session_id not in active_ws_sessions:
                 logger.warning(
@@ -239,19 +242,29 @@ class ProactiveOutreachHandler:
                     f"消息可能无法实时送达"
                 )
 
-            # 获取历史 assistant 消息（用于风格模仿）
+            # 获取最近对话消息（用户 + 助手），构造可读的对话上下文
             messages = system.get_context(best_session_id)
-            history = [
-                m["content"]
-                for m in messages
-                if m.get("role") == "assistant" and m.get("content", "").strip()
-            ][-5:]  # 最近5条
+            recent = [
+                m for m in messages
+                if m.get("role") in ("user", "assistant") and m.get("content", "").strip()
+            ][-6:]  # 最近6条（~3轮对话）
 
-            return best_session_id, history
+            conversation_lines = []
+            style_examples = []
+            for m in recent:
+                role_label = "用户" if m["role"] == "user" else "你"
+                content = m["content"][:300]
+                conversation_lines.append(f"{role_label}: {content}")
+                if m["role"] == "assistant":
+                    style_examples.append(content)
+
+            conversation_context = "\n".join(conversation_lines)
+
+            return best_session_id, conversation_context, style_examples[-5:]
 
         except Exception as e:
             logger.debug(f"[主动搭话] 获取会话信息失败: {e}")
-            return "", []
+            return "", "", []
 
     # ------------------------------------------------------------------
     # Prompt 构建
@@ -260,7 +273,8 @@ class ProactiveOutreachHandler:
     def _build_prompt(
         self,
         is_companion: bool,
-        history: List[str],
+        conversation_context: str,
+        style_examples: List[str],
         idle_minutes: float,
     ) -> str:
         """根据模式和历史构建搭话 prompt
@@ -272,50 +286,54 @@ class ProactiveOutreachHandler:
         if is_companion:
             custom = settings.PROACTIVE_OUTREACH_COMPANION_PROMPT
             if custom:
-                return self._apply_custom_prompt(custom, idle_minutes, history)
-            return self._build_companion_prompt(history, idle_minutes)
+                return self._apply_custom_prompt(custom, idle_minutes, conversation_context, style_examples)
+            return self._build_companion_prompt(conversation_context, style_examples, idle_minutes)
         else:
             custom = settings.PROACTIVE_OUTREACH_WORK_PROMPT
             if custom:
-                return self._apply_custom_prompt(custom, idle_minutes, history)
-            return self._build_detector_prompt(idle_minutes)
+                return self._apply_custom_prompt(custom, idle_minutes, conversation_context, style_examples)
+            return self._build_detector_prompt(conversation_context, idle_minutes)
 
     def _apply_custom_prompt(
-        self, template: str, idle_minutes: float, history: List[str]
+        self, template: str, idle_minutes: float,
+        conversation_context: str, style_examples: List[str],
     ) -> str:
         """将自定义提示词模板中的变量替换为实际值
 
         支持的变量:
         - {idle_minutes}: 空闲分钟数
-        - {history}: 最近对话历史（格式化文本）
+        - {conversation_context}: 最近对话记录（用户+助手）
+        - {history}: 最近助手消息列表（向下兼容）
         - {user_name}: 用户名
         """
         from config.settings import settings as cfg
 
         history_text = ""
-        if history:
+        if style_examples:
             history_text = "\n".join(
-                f"- \"{msg[:200]}\"" for msg in history[-3:]
+                f"- \"{msg[:200]}\"" for msg in style_examples[-3:]
             )
 
         return template.format(
             idle_minutes=f"{idle_minutes:.0f}",
+            conversation_context=conversation_context or "（无最近对话）",
             history=history_text,
             user_name=getattr(cfg, "USER_NAME", "用户"),
         )
 
     def _build_companion_prompt(
-        self, history: List[str], idle_minutes: float
+        self, conversation_context: str, style_examples: List[str], idle_minutes: float
     ) -> str:
-        """陪伴模式: 朋友身份，模仿之前的说话风格"""
+        """陪伴模式: 朋友身份，延续之前的对话话题"""
         from modules.thinking.identity import ModelIdentity
 
         identity = ModelIdentity.from_template("large_companion")
 
+        # 风格模仿
         style_block = ""
-        if history:
+        if style_examples:
             examples = "\n".join(
-                f"- \"{msg[:200]}\"" for msg in history[-3:]
+                f"- \"{msg[:200]}\"" for msg in style_examples[-3:]
             )
             style_block = (
                 f"\n\n【你之前的说话风格 — 请模仿】\n"
@@ -328,31 +346,51 @@ class ProactiveOutreachHandler:
                 "不要正式，不要太热情，就像一个好朋友随口问一句。"
             )
 
+        # 对话上下文（让模型知道用户之前在聊什么）
+        context_block = ""
+        if conversation_context:
+            context_block = (
+                f"\n\n【最近对话记录】\n"
+                f"以下是你们最近的对话内容，了解上下文后自然地延续话题：\n"
+                f"{conversation_context}\n"
+            )
+
         return (
             f"你是用户的对话伙伴。{identity.personality}\n\n"
             f"【当前情况】\n"
             f"用户已经 {idle_minutes:.0f} 分钟没有说话了。\n"
-            f"你想主动跟用户打个招呼，问问对方是否需要帮助或者只是聊聊天。\n\n"
-            f"【要求】\n"
+            f"你想主动跟用户打个招呼，问问对方是否需要帮助或者只是聊聊天。\n"
+            f"{context_block}"
+            f"\n【要求】\n"
             f"- 只输出你要对用户说的话（1-2句话，简短自然）\n"
             f"- 不要提'系统'、'检测'、'差异'、'工具'这些词\n"
             f"- 不要说'作为AI'、'我检测到'、'我发现'这类话\n"
             f"- 不要用敬语，不用'您'\n"
             f"- 语气要自然随意，像朋友随口问一句\n"
             f"- 可以有点小情绪（比如抱怨无聊、吐槽没人理）但不要太夸张\n"
+            f"- 如果知道用户在做什么，可以自然地接上之前的话题\n"
             f"{style_block}\n\n"
             f"现在说："
         )
 
-    def _build_detector_prompt(self, idle_minutes: float) -> str:
-        """工作模式: 探测器身份，专业报告"""
+    def _build_detector_prompt(self, conversation_context: str, idle_minutes: float) -> str:
+        """工作模式: 探测器身份，基于对话上下文询问"""
+        context_block = ""
+        if conversation_context:
+            context_block = (
+                f"\n【最近对话记录】\n"
+                f"{conversation_context}\n\n"
+                f"基于以上对话上下文，自然地询问用户是否需要继续之前的话题。\n"
+            )
+
         return (
             "你是系统的差异检测器，负责监控系统状态并在异常时通知用户。\n\n"
             "【当前情况】\n"
-            f"系统已空闲 {idle_minutes:.0f} 分钟，超过正常阈值。\n\n"
+            f"系统已空闲 {idle_minutes:.0f} 分钟，超过正常阈值。\n"
+            f"{context_block}"
             "【要求】\n"
             "- 简洁专业地报告当前状态\n"
-            "- 询问用户是否需要帮助\n"
+            "- 询问用户是否需要帮助，可以自然地衔接之前的话题\n"
             "- 1-2句话即可，不要啰嗦\n"
             "- 不要暴露内部实现细节（如 intensity、TTL 等技术参数）\n\n"
             "现在通知用户："
