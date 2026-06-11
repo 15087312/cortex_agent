@@ -200,6 +200,7 @@ class SkillManager:
         tr = data.get("tool_rules")
         if tr and isinstance(tr, dict):
             tool_rules = ToolRules(
+                allow_tools=tr.get("allow_tools", []),
                 allow_tags=tr.get("allow_tags", []),
                 allow_categories=tr.get("allow_categories", []),
                 allow_core_only=tr.get("allow_core_only", False),

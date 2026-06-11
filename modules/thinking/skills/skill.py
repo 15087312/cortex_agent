@@ -48,12 +48,13 @@ class ToolRules:
     所有字段均为可选，未设置时不限制。
     过滤逻辑：先加 allow_*，再减 block_*。
     """
-    allow_tags: List[str] = field(default_factory=list)       # 只保留这些 tag 的工具
-    allow_categories: List[str] = field(default_factory=list) # 只保留这些 category 的工具
-    allow_core_only: bool = False                             # 只保留 core=True 的工具
-    block_tools: List[str] = field(default_factory=list)      # 明确排除的工具名
-    block_tags: List[str] = field(default_factory=list)       # 排除这些 tag 的工具
-    block_categories: List[str] = field(default_factory=list) # 排除这些 category 的工具
+    allow_tools: List[str] = field(default_factory=list)          # 只保留这些具体工具（最高优先级）
+    allow_tags: List[str] = field(default_factory=list)            # 只保留这些 tag 的工具
+    allow_categories: List[str] = field(default_factory=list)      # 只保留这些 category 的工具
+    allow_core_only: bool = False                                  # 只保留 core=True 的工具
+    block_tools: List[str] = field(default_factory=list)           # 明确排除的工具名
+    block_tags: List[str] = field(default_factory=list)            # 排除这些 tag 的工具
+    block_categories: List[str] = field(default_factory=list)      # 排除这些 category 的工具
 
 
 @dataclass
@@ -153,6 +154,8 @@ class Skill:
         if not self.tool_rules:
             return "无限制"
         parts = []
+        if self.tool_rules.allow_tools:
+            parts.append(f"允许工具: {', '.join(self.tool_rules.allow_tools)}")
         if self.tool_rules.allow_tags:
             parts.append(f"允许标签: {', '.join(self.tool_rules.allow_tags)}")
         if self.tool_rules.allow_categories:

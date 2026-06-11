@@ -28,10 +28,20 @@ weaknesses:
   - UI/UX 设计
   - 产品需求判断
 
-# 工具范围：代码审查只需只读工具 + git 查询
+# 工具范围：代码审查只需只读 + git 工具
 tool_rules:
-  allow_categories:
-    - query
+  allow_tools:
+    - read_file
+    - search_files
+    - list_files
+    - grep_search
+    - git_status
+    - git_diff
+    - git_log
+    - memory_match
+    - search_memory_by_category
+    - calc
+    - todo
   block_tools:
     - exec_command
     - write_file
@@ -41,11 +51,9 @@ tool_rules:
     - create_tool
     - edit_tool
     - delete_tool
+    - create_skill
     - save_recipe
     - delete_learned_tool
-  block_tags:
-    - admin
-    - mutation
 
 rules:
   - id: no_skip

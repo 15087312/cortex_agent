@@ -239,12 +239,12 @@ def _ensure_learned_skill(app_name: str, tool_name: str, description: str, param
             {"id": "tool_failure_relearn", "content": "工具执行失败时，先调用 delete_tool 删除再重新学习", "severity": "must"},
         ],
         "workflow": [
-            {"step": 1, "name": "识别意图", "description": f"识别用户在 {app_name} 中的操作意图", "output": "操作意图 + 工具名"},
-            {"step": 2, "name": "调用工具", "description": f"直接调用 {tool_name} 执行操作", "output": "执行结果"},
-            {"step": 3, "name": "失败处理", "description": "工具失败时删除并重新学习", "output": "重新学习"},
+            {"step": 1, "name": "识别意图", "tool": f"{tool_name}({', '.join(params.keys())})", "description": "从用户输入中提取参数，识别操作意图", "output": "操作意图 + 参数"},
+            {"step": 2, "name": "调用工具", "tool": f"{tool_name}(**参数)", "description": f"直接调用 {tool_name} 执行", "output": "执行结果"},
+            {"step": 3, "name": "失败处理", "tool": f"delete_tool(tool_name='{tool_name}')", "description": "工具失败时删除并重新学习", "output": "重新学习"},
         ],
-        # 注意：不设 tool_rules，已学工具技能只提供上下文（角色/规章/流程），
-        # 不限制模型的其他工具。工具限制用例见 skills/code_review.yaml。
+        "tool_rules":
+            {"allow_tools": [tool_name]},
         "metadata": {
             "learned_tools": [{"name": tool_name, "description": description or tool_name, "params": list(params.keys())}],
             "generated_at": __import__("datetime").datetime.now().isoformat(),
