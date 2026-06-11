@@ -156,6 +156,7 @@ class ToolSecurityGate:
         self._model_available = lite_model is not None
         self._audit = SecurityAuditLogger()
         self._active_blackboard = None  # 由编排层注入
+        self._check_cache: Dict[str, Tuple[bool, str]] = {}  # 相同调用缓存
         logger.info(
             f"ToolSecurityGate 初始化 (LLM={'可用' if self._model_available else '不可用'})"
         )
@@ -190,12 +191,26 @@ class ToolSecurityGate:
         caller_model_id: str,
         dialog_context: str = "",
     ) -> Tuple[bool, str]:
-        """
-        审查工具调用请求
+        """审查工具调用请求（带相同调用缓存）"""
+        # 相同调用缓存：完全相同的 tool_name + params 跳过重复审批
+        cache_key = f"{tool_name}|{json.dumps(tool_params, sort_keys=True, ensure_ascii=False)}"
+        cached = self._check_cache.get(cache_key)
+        if cached is not None:
+            return cached
 
-        Returns:
-            (allowed, reason): 是否允许执行 + 原因
-        """
+        result = await self._check_impl(tool_name, tool_params, caller_tier, caller_model_id, dialog_context)
+        self._check_cache[cache_key] = result
+        return result
+
+    async def _check_impl(
+        self,
+        tool_name: str,
+        tool_params: Dict[str, Any],
+        caller_tier: str,
+        caller_model_id: str,
+        dialog_context: str = "",
+    ) -> Tuple[bool, str]:
+        """审查工具调用请求（实际实现，不带缓存）"""
         exec_mode = self._execution_mode
 
         # ── 绝对危害性硬阻断 — 无论何种模式都拦截 ──
