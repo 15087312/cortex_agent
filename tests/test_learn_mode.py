@@ -196,5 +196,5 @@ class TestLearnModeConfig:
         assert "自我进化" in prompt
         assert "keyboard_press" in prompt
         assert "keyboard_hotkey" in prompt
-        assert "check" in prompt
+        assert "检查" in prompt
         assert "save_recipe" in prompt
