@@ -1255,8 +1255,10 @@ class ModelRunner:
                     "2. detect_ui_elements() — 识别界面上的元素\n"
                     "3. 用鼠标/键盘工具执行操作，向用户展示每一步\n"
                     "4. 操作完成后调用 save_recipe(name, app_name, description) 保存\n\n"
-                    "注意：不需要手动构造 steps 参数，系统会自动记录你刚才的操作。\n"
-                    "调用 save_recipe 后请调用 respond_to_user 输出学习结果。"
+                    "注意：\n"
+                    "- keyboard_type 请使用真实文本（如「今天的天气」），不要用 {{query}} 这类模板\n"
+                    "- 不需要手动构造 steps 参数，系统会自动记录你刚才的操作\n"
+                    "- 调用 save_recipe 后请调用 respond_to_user 输出学习结果"
                 )
         except Exception:
             pass

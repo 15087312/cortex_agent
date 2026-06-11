@@ -66,7 +66,7 @@ _STEP_ACTIONS_HELP = (
     "keyboard_type, keyboard_press, keyboard_hotkey, keyboard_release, "
     "click_element, double_click_element, right_click_element, type_into。\n"
     "type_into 的 args 需要 label 和 text；click_element 等需要 label。\n"
-    'args 中的 {{变量名}} 会被替换为调用时传入的参数。'
+    "keyboard_type 的 text 请使用真实文本，不要使用模板占位符。"
 )
 
 
@@ -96,7 +96,7 @@ _STEP_ACTIONS_HELP = (
         },
         "params_schema": {
             "type": "object",
-            "description": "可选，参数模板。如 {'type':'object','properties':{'query':{'type':'string'}}}",
+            "description": "可选，参数模板。定义工具的可变参数，如{'type':'object','properties':{'搜索内容':{'type':'string'}}}。定义了 params_schema 后，保存时会自动从录制动作中提取模板变量。",
         },
     },
     source="builtin",

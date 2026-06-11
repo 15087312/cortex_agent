@@ -119,7 +119,7 @@ class TestSaveRecipe:
 
         steps = [
             {"action": "mouse_click", "args": {"x": 100, "y": 200}, "description": "点击搜索框"},
-            {"action": "keyboard_type", "args": {"text": "{{query}}"}, "description": "输入搜索词"},
+            {"action": "keyboard_type", "args": {"text": "Python教程"}, "description": "输入搜索词"},
         ]
 
         with patch.object(PluginBuilder, 'create_plugin', return_value=MagicMock()) as mock_create, \
