@@ -952,7 +952,7 @@ class ModelRunner:
                 clear_learn_recorded_actions()
             except Exception:
                 pass
-            return "【学习模式】已切换到学习模式。系统会自动记录你的 UI 操作，完成后调 save_recipe 保存。可以不传 steps 参数。"
+            return "【学习模式】已切换到学习模式。系统会自动记录你的 UI 操作。操作完成后调用 save_recipe 保存为工具并生成技能。"
 
         # 其他模式（plan/edit/yolo/control）需要用户确认
         result = await self._wait_for_user_response("mode_change_request", {
@@ -1319,6 +1319,8 @@ class ModelRunner:
                     "- 每一步检查工具返回结果，失败了就重试，不要跳过\n"
                     "- 所有步骤都成功了才调 save_recipe\n"
                     "- keyboard_type 使用真实文本，不要用 {{query}}\n"
+                    "- save_recipe 会自动生成对应的技能（Skill），激活技能后工具可用\n"
+                    "- 也可以用 create_skill 手动创建通用技能"
                 )
         except Exception:
             pass

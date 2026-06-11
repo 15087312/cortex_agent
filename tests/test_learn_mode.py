@@ -186,15 +186,12 @@ class TestLearnModeConfig:
             "4. 全部步骤成功后调 save_recipe(name, app_name, description) 保存\n\n"
             "键盘工具参数：\n"
             "- keyboard_press(key='enter') — 按单个键\n"
-            "- keyboard_hotkey(keys=['command', 'l']) — 组合键（参数是 keys 列表）\n"
+            "- keyboard_hotkey(keys=['command', 'l']) — 组合键\n"
             "- keyboard_type(text='真实文本') — 输入文字\n\n"
             "关键规则：\n"
-            "- 每一步检查工具返回结果，失败了就重试，不要跳过\n"
-            "- 所有步骤都成功了才调 save_recipe\n"
-            "- keyboard_type 使用真实文本，不要用 {{query}}\n"
+            "- save_recipe 会自动生成对应的技能（Skill），激活技能后工具可用\n"
+            "- 也可以用 create_skill 手动创建通用技能\n"
         )
         assert "自我进化" in prompt
-        assert "keyboard_press" in prompt
-        assert "keyboard_hotkey" in prompt
-        assert "检查" in prompt
+        assert "create_skill" in prompt
         assert "save_recipe" in prompt

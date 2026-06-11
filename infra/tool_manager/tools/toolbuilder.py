@@ -155,9 +155,6 @@ async def save_recipe(
             tool_name, app_name, steps, params, description
         )
 
-        # 更新 Skill
-        SkillGenerator.generate_or_update(app_name)
-
         # 注册到 ToolRegistry（tagged 为 learned，与内置工具分开管理）
         try:
             from infra.tool_manager.tool_registry import ToolRegistry
@@ -183,6 +180,12 @@ async def save_recipe(
         except Exception as e:
             logger.warning(f"注册已学工具失败 (非致命): {e}")
 
+        # 生成/更新 Skill YAML，把此工具注册到 skill 的工具范围
+        try:
+            _ensure_learned_skill(app_name, tool_name, description, params)
+        except Exception as e:
+            logger.warning(f"生成 Skill 失败 (非致命): {e}")
+
         # 退出学习模式
         try:
             from config.settings import settings as _cfg
@@ -197,10 +200,150 @@ async def save_recipe(
             "app_name": app_name,
             "plugin_path": str(plugin_path),
             "steps_count": len(steps),
-            "message": f"工具 {tool_name} 已保存！共 {len(steps)} 步，立即可用。",
+            "message": f"工具 {tool_name} 已保存！已生成技能 {app_name}_skill，激活后可用。",
         }
     except Exception as e:
         return {"status": "error", "message": f"保存失败: {e}"}
+
+
+def _ensure_learned_skill(app_name: str, tool_name: str, description: str, params: dict):
+    """为已学工具生成或更新 Skill YAML"""
+    import yaml
+    from pathlib import Path
+
+    project_root = Path(__file__).parent.parent.parent.parent
+    skills_learned_dir = project_root / "skills" / "learned"
+    skills_learned_dir.mkdir(parents=True, exist_ok=True)
+
+    skill_id = f"{app_name.lower().replace(' ', '_')}_skill"
+    skill_path = skills_learned_dir / f"{skill_id}.yaml"
+
+    # 构建 keywords（应用名 + 工具名）
+    keywords = [app_name, tool_name]
+    if len(app_name) > 2:
+        keywords.append(app_name.lower())
+
+    # 构建 Skill
+    skill_data = {
+        "id": skill_id,
+        "name": f"{app_name} 自动化",
+        "description": f"{app_name} 应用的已学工具集",
+        "keywords": keywords,
+        "role": f"{app_name} 操作专家",
+        "personality": f"你是 {app_name} 的自动化操作专家。你已学会 {tool_name}。",
+        "speaking_style": "直接执行操作，简洁说明结果",
+        "expertise": [tool_name],
+        "weaknesses": [],
+        "rules": [
+            {"id": "use_learned_tools", "content": f"执行 {app_name} 操作时优先使用已学工具，不要重复感知", "severity": "must"},
+            {"id": "tool_failure_relearn", "content": "工具执行失败时，先调用 delete_tool 删除再重新学习", "severity": "must"},
+        ],
+        "workflow": [
+            {"step": 1, "name": "识别意图", "description": f"识别用户在 {app_name} 中的操作意图", "output": "操作意图 + 工具名"},
+            {"step": 2, "name": "调用工具", "description": f"直接调用 {tool_name} 执行操作", "output": "执行结果"},
+            {"step": 3, "name": "失败处理", "description": "工具失败时删除并重新学习", "output": "重新学习"},
+        ],
+        "tool_rules": {
+            "allow_tags": ["learned"],
+        },
+        "metadata": {
+            "learned_tools": [{"name": tool_name, "description": description or tool_name, "params": list(params.keys())}],
+            "generated_at": __import__("datetime").datetime.now().isoformat(),
+            "auto_generated": True,
+        },
+    }
+
+    skill_path.write_text(yaml.dump(skill_data, allow_unicode=True, default_flow_style=False, sort_keys=False), encoding="utf-8")
+
+    # 重载 SkillManager
+    try:
+        from modules.thinking.skills import skill_manager
+        skill_manager._loaded = False
+        skill_manager.load_skills()
+        logger.info(f"技能已生成: {skill_id}")
+    except Exception:
+        pass
+
+
+@ToolRegistry.register(
+    "create_skill",
+    description="创建一个新的技能（Skill）。技能定义了角色、规章、流程和工具范围。激活技能后，模型进入对应角色并只看到 skill 允许的工具。",
+    params={
+        "skill_id": "技能唯一 ID，如 chrome_automation",
+        "name": "技能显示名，如 Chrome 自动化",
+        "description": "技能描述",
+        "keywords": "关键词列表，用于自动匹配，如 ['chrome', 'Chrome']",
+        "role": "角色描述，如 Chrome 操作专家",
+        "personality": "可选，人格特征",
+        "rules": "可选，规章列表。[{'id':'rule1','content':'...','severity':'must'}]",
+        "workflow": "可选，流程步骤。[{'step':1,'name':'步骤名','description':'...'}]",
+        "tool_allow_tags": "可选，允许的工具标签列表，如 ['learned']",
+        "tool_block_tools": "可选，禁止的工具名列表，如 ['exec_command']",
+    },
+    risk_level="LOW",
+    category="mutation",
+    core=True,
+)
+async def create_skill(
+    skill_id: str,
+    name: str,
+    description: str,
+    keywords: list,
+    role: str = "",
+    personality: str = "",
+    rules: list = None,
+    workflow: list = None,
+    tool_allow_tags: list = None,
+    tool_block_tools: list = None,
+) -> dict:
+    """创建一个技能 YAML"""
+    if not skill_id or not name:
+        return {"status": "error", "message": "skill_id 和 name 不能为空"}
+
+    import yaml
+    from pathlib import Path
+
+    project_root = Path(__file__).parent.parent.parent.parent
+    skills_dir = project_root / "skills"
+    skills_dir.mkdir(parents=True, exist_ok=True)
+
+    skill_path = skills_dir / f"{skill_id}.yaml"
+    if skill_path.exists():
+        return {"status": "error", "message": f"技能 {skill_id} 已存在"}
+
+    tool_rules = {}
+    if tool_allow_tags:
+        tool_rules["allow_tags"] = tool_allow_tags
+    if tool_block_tools:
+        tool_rules["block_tools"] = tool_block_tools
+
+    data = {
+        "id": skill_id,
+        "name": name,
+        "description": description,
+        "keywords": keywords or [],
+        "role": role or f"{name} 专家",
+        "personality": personality or f"你是 {name} 的专家。",
+        "speaking_style": "专业、高效",
+        "expertise": [],
+        "weaknesses": [],
+        "rules": rules or [],
+        "workflow": workflow or [{"step": 1, "name": "分析", "description": "分析用户需求", "output": "行动计划"}],
+    }
+    if tool_rules:
+        data["tool_rules"] = tool_rules
+
+    skill_path.write_text(yaml.dump(data, allow_unicode=True, default_flow_style=False, sort_keys=False), encoding="utf-8")
+
+    # 重载 SkillManager
+    try:
+        from modules.thinking.skills import skill_manager
+        skill_manager._loaded = False
+        skill_manager.load_skills()
+    except Exception:
+        pass
+
+    return {"status": "success", "skill_id": skill_id, "path": str(skill_path), "message": f"技能 {name} 已创建，可用 request_skill(skill_id='{skill_id}') 激活"}
 
 
 @ToolRegistry.register(
