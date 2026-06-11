@@ -940,13 +940,18 @@ class ModelRunner:
     async def _handle_mode_change_request(self, reason: str, suggested_mode: str) -> str:
         """处理 request_mode_change 工具调用"""
         if suggested_mode == "learn":
-            # learn 是瞬态模式：只需设 mode，prompt 会告诉模型该做什么
             from config.settings import settings as _cfg
             try:
                 object.__setattr__(_cfg, "EXECUTION_MODE", "learn")
             except Exception:
                 pass
-            return "【学习模式】已切换到学习模式，请按流程使用工具完成学习。完成后调用 save_recipe 保存成果。"
+            # 清空上次学习的录制缓冲区
+            try:
+                from infra.tool_manager.tools.toolbuilder import clear_learn_recorded_actions
+                clear_learn_recorded_actions()
+            except Exception:
+                pass
+            return "【学习模式】已切换到学习模式。系统会自动记录你的 UI 操作，完成后调 save_recipe 保存。可以不传 steps 参数。"
 
         # 其他模式（plan/edit/yolo/control）需要用户确认
         result = await self._wait_for_user_response("mode_change_request", {
@@ -1244,13 +1249,13 @@ class ModelRunner:
             elif _cfg.effective_execution_mode == "learn":
                 base_prompt += (
                     "\n\n【执行模式: LEARN（自我进化）】\n"
-                    "当前为学习模式，你正在自动化一个 UI 操作流程，完成后你的工具列表会扩展。\n"
+                    "当前为学习模式，系统会自动记录你的每一步 UI 操作。\n"
                     "推荐的执行步骤：\n"
                     "1. open_app(app_name) — 打开要学习的应用\n"
                     "2. detect_ui_elements() — 识别界面上的元素\n"
                     "3. 用鼠标/键盘工具执行操作，向用户展示每一步\n"
-                    "4. 操作完成后用 save_recipe(name, app_name, steps, description) 保存\n\n"
-                    "学习完成后会自动退出学习模式，新工具立即可用。\n"
+                    "4. 操作完成后调用 save_recipe(name, app_name, description) 保存\n\n"
+                    "注意：不需要手动构造 steps 参数，系统会自动记录你刚才的操作。\n"
                     "调用 save_recipe 后请调用 respond_to_user 输出学习结果。"
                 )
         except Exception:
@@ -1936,6 +1941,16 @@ class ModelRunner:
                                         mcp_result = mcp.execute(request)
                                         if mcp_result.success:
                                             result = str(mcp_result.result) if mcp_result.result is not None else "(无返回值)"
+                                            # 学习模式：自动录制 UI 操作
+                                            try:
+                                                from config.settings import settings as _cfg
+                                                if _cfg.effective_execution_mode == "learn":
+                                                    from infra.tool_manager.tools.toolbuilder import record_learn_action
+                                                    from modules.toolbuilder.recipe_engine import _RECIPE_ALLOWED_ACTIONS
+                                                    if tc.name in _RECIPE_ALLOWED_ACTIONS:
+                                                        record_learn_action(tc.name, args)
+                                            except Exception:
+                                                pass
                                         else:
                                             result = f"[错误: {mcp_result.error}]"
                                             if self.tier == "expert":

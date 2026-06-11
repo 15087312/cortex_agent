@@ -15,6 +15,29 @@ from utils.logger import setup_logger
 
 logger = setup_logger("toolbuilder_tools")
 
+# 学习模式动作录制缓冲区 — 自动记录模型在 learn 模式下的 UI 操作
+_learn_recorded_actions: List[Dict[str, Any]] = []
+
+
+def record_learn_action(action: str, args: dict, description: str = "") -> None:
+    """记录一条学习模式下的 UI 操作"""
+    _learn_recorded_actions.append({
+        "action": action,
+        "args": dict(args),
+        "description": description or f"{action}: {json.dumps(args, ensure_ascii=False)[:60]}",
+    })
+
+
+def get_learn_recorded_actions() -> List[Dict[str, Any]]:
+    """获取当前学习会话中记录的所有操作"""
+    return list(_learn_recorded_actions)
+
+
+def clear_learn_recorded_actions() -> None:
+    """清空录制缓冲区（进入学习模式时调用）"""
+    _learn_recorded_actions.clear()
+
+
 _STEP_ACTIONS_HELP = (
     "steps 中的每个元素是 action/args/description 三个字段。\n"
     "支持的 action: mouse_click, mouse_double_click, mouse_right_click, "
@@ -31,6 +54,7 @@ _STEP_ACTIONS_HELP = (
     description=(
         "保存已执行的 UI 操作序列为可复用的工具。"
         "在学习模式下执行完操作后调用此工具保存成果，会生成 recipe + 插件包 + Skill。"
+        "可以不传 steps，系统会自动使用刚才记录的全部操作。"
     ),
     params={
         "tool_name": "工具名（如 chrome_search），将用于后续调用",
@@ -38,7 +62,7 @@ _STEP_ACTIONS_HELP = (
         "description": "工具描述，模型看到的内容",
         "steps": {
             "type": "array",
-            "description": _STEP_ACTIONS_HELP,
+            "description": _STEP_ACTIONS_HELP + " 可选，不传则使用系统自动记录的操作序列",
             "items": {
                 "type": "object",
                 "properties": {
@@ -64,7 +88,7 @@ async def save_recipe(
     tool_name: str,
     app_name: str,
     description: str,
-    steps: List[Dict[str, Any]],
+    steps: List[Dict[str, Any]] = None,
     params_schema: str = "",
 ) -> Dict:
     """保存已执行的 UI 操作序列为可复用工具"""
@@ -72,9 +96,14 @@ async def save_recipe(
         return {"status": "error", "message": "tool_name 不能为空"}
     if not app_name:
         return {"status": "error", "message": "app_name 不能为空"}
+
+    # 如果没传 steps，使用自动录制的操作
     if not steps:
-        return {"status": "error", "message": "steps 不能为空"}
-    if not isinstance(steps, list) or len(steps) < 1:
+        recorded = get_learn_recorded_actions()
+        if not recorded:
+            return {"status": "error", "message": "未检测到操作记录。请先执行一些 UI 操作再保存。"}
+        steps = recorded
+    elif not isinstance(steps, list) or len(steps) < 1:
         return {"status": "error", "message": "steps 必须是非空数组"}
 
     # 校验每个 step

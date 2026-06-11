@@ -57,19 +57,49 @@ class TestSaveRecipe:
 
     def test_empty_tool_name(self):
         """空 tool_name 返回错误"""
-        from infra.tool_manager.tools.toolbuilder import save_recipe
+        from infra.tool_manager.tools.toolbuilder import save_recipe, clear_learn_recorded_actions
         import asyncio
+        clear_learn_recorded_actions()
         result = asyncio.run(save_recipe("", "Chrome", "desc", []))
         assert result["status"] == "error"
         assert "tool_name" in result["message"]
 
-    def test_empty_steps(self):
-        """空 steps 返回错误"""
-        from infra.tool_manager.tools.toolbuilder import save_recipe
+    def test_empty_steps_list(self):
+        """传空 steps 数组也返回错误"""
+        from infra.tool_manager.tools.toolbuilder import save_recipe, clear_learn_recorded_actions
         import asyncio
+        clear_learn_recorded_actions()
         result = asyncio.run(save_recipe("test", "Chrome", "desc", []))
         assert result["status"] == "error"
-        assert "steps 不能为空" in result["message"]
+        assert "未检测到操作记录" in result["message"]
+
+    def test_empty_steps_uses_recorded(self):
+        """空 steps 应使用录制的操作而非返回错误"""
+        from infra.tool_manager.tools.toolbuilder import save_recipe, clear_learn_recorded_actions, record_learn_action
+        import asyncio
+
+        clear_learn_recorded_actions()
+        result = asyncio.run(save_recipe("test", "Chrome", "desc"))
+        assert result["status"] == "error"
+        assert "未检测到操作记录" in result["message"]
+
+    def test_empty_steps_with_recorded(self):
+        """有录制内容时，空 steps 应自动使用录制内容"""
+        from infra.tool_manager.tools.toolbuilder import save_recipe, clear_learn_recorded_actions, record_learn_action
+        from modules.toolbuilder.plugin_builder import PluginBuilder
+        from modules.toolbuilder.skill_generator import SkillGenerator
+        import asyncio
+
+        clear_learn_recorded_actions()
+        record_learn_action("mouse_click", {"x": 100, "y": 200}, "点击")
+
+        with patch.object(PluginBuilder, 'create_plugin', return_value=MagicMock()) as mock_create, \
+             patch.object(SkillGenerator, 'generate_or_update', return_value=None), \
+             patch('config.settings.settings') as mock_settings:
+            mock_settings.effective_execution_mode = "learn"
+            result = asyncio.run(save_recipe("chrome_search", "Chrome", "搜索工具"))
+            assert result["status"] == "success"
+            assert mock_create.called
 
     def test_invalid_action_in_steps(self):
         """steps 中包含不支持的动作应返回错误"""
