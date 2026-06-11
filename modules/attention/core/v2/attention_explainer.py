@@ -337,9 +337,16 @@ class AttentionExplainer:
         # 分析常见因素
         factor_counts = {}
         for record in self.decision_history:
-            for factor in record.factors:
-                name = factor.get("name", "unknown")
-                factor_counts[name] = factor_counts.get(name, 0) + 1
+            if isinstance(record.factors, dict):
+                # Dict[str, float] 格式
+                for name, value in record.factors.items():
+                    factor_counts[name] = factor_counts.get(name, 0) + 1
+            else:
+                # List[Dict] 格式（兼容旧格式）
+                for factor in record.factors:
+                    if isinstance(factor, dict):
+                        name = factor.get("name", "unknown")
+                        factor_counts[name] = factor_counts.get(name, 0) + 1
         
         return {
             "total_decisions": n,

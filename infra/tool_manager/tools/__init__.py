@@ -78,6 +78,7 @@ def _load_learned_tools():
                 risk_level="LOW",
                 category="mutation",
                 core=False,
+                tags=["learned"],
             )(_make_runner(tool_name, app_name))
         except Exception:
             continue

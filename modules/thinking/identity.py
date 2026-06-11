@@ -385,6 +385,8 @@ DEFAULT_TOOL_WHITELISTS: Dict[str, List[str]] = {
         "mcp_discover", "mcp_call_tool", "mcp_server_status", "mcp_register_server",
         # AI 自创工具管理
         "create_tool", "list_my_tools", "delete_tool", "edit_tool",
+        # 已学 UI 自动化工具（通过 save_recipe 创建）
+        "tag:learned",
         # 学习工具
         "save_recipe", "list_learned_tools", "delete_learned_tool",
     ],
