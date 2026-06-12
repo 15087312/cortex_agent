@@ -702,8 +702,7 @@ class MultiModelOrchestrator:
             if not final_response:
                 if completed:
                     logger.warning(
-                        "[编排器] 大模型已发送完成信号，但没有可见 final_draft，"
-                        "返回最后可用的内容"
+                        "[编排器] 大模型已发送完成信号但无 final_response，返回最后可用内容"
                     )
                 else:
                     logger.warning(
