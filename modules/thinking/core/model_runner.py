@@ -943,8 +943,13 @@ class ModelRunner:
 
     async def _handle_mode_change_request(self, reason: str, suggested_mode: str) -> str:
         """处理 request_mode_change 工具调用"""
+        from config.settings import settings as _cfg
+
         if suggested_mode == "learn":
-            from config.settings import settings as _cfg
+            # 已经在学习模式？不重复进入，不清空录制
+            if _cfg.effective_execution_mode == "learn":
+                return "【学习模式】已在学习模式中，继续当前操作即可。完成后调 save_recipe 保存。"
+
             try:
                 object.__setattr__(_cfg, "EXECUTION_MODE", "learn")
             except Exception:
@@ -1340,7 +1345,8 @@ class ModelRunner:
                     "- 验证失败立即重试，不跳过\n"
                     "- 全部验证通过后才能调 save_recipe\n"
                     "- 不能委托给主管或专家，所有操作自己完成\n"
-                    "- save_recipe 成功后 exit，必须用 respond_to_user 回复"
+                    "- 操作过程中不要输出任何文字说明，只调工具\n"
+                    "- 全部完成后用 save_recipe 保存，然后用 respond_to_user 回复用户"
                 )
         except Exception:
             pass
