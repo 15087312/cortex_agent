@@ -954,6 +954,12 @@ class ModelRunner:
                 object.__setattr__(_cfg, "EXECUTION_MODE", "learn")
             except Exception:
                 pass
+            # 通知上下文控制器
+            try:
+                from modules.thinking.context.controller import get_context_controller
+                get_context_controller().set_mode("learn")
+            except Exception:
+                pass
             # 清空上次学习的录制缓冲区
             try:
                 from infra.tool_manager.tools.toolbuilder import clear_learn_recorded_actions
@@ -1546,7 +1552,7 @@ class ModelRunner:
         from config.settings import settings as _settings
         control_tools = [CONTINUE_THINKING_TOOL, QUERY_TOOL_DETAILS_TOOL]
         if _settings.is_delegation_available and self.tier in ("large", "supervisor"):
-            # 学习模式下禁用委托，模型自己操作 UI，不需要主管/专家
+            # 学习模式下禁用委托
             if _settings.effective_execution_mode != "learn":
                 control_tools.append(DELEGATE_TASK_TOOL)
         if _settings.is_delegation_available and self.tier == "large":

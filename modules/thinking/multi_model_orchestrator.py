@@ -256,33 +256,49 @@ class MultiModelOrchestrator:
             user_input, context, session_id
         )
 
-        # ---- 2.5 感知上下文（外部状态变化）----
-        perception_context = ""
+        # ---- 2.5 上下文控制器（统一管理所有上下文注入）----
+        controller_context = ""
         try:
-            from modules.perception.integration import get_perception_integrator
-            integrator = get_perception_integrator()
-            perception_context = integrator.get_context_summary()
-            if perception_context:
-                logger.debug(f"[感知] 注入感知上下文: {len(perception_context)} 字符")
-        except Exception as e:
-            logger.debug(f"[感知] 获取感知上下文失败 (非致命): {e}")
+            from modules.thinking.context.controller import get_context_controller
+            ctrl = get_context_controller()
 
-        # ---- 2.6 任务重要性分析（关键词匹配 → 影响记忆检索阈值）----
-        importance_context = ""
-        try:
-            from modules.attention.interface import create_attention_interface
-            attention = create_attention_interface()
-            decision = attention.analyze(user_input=user_input)
-            if decision:
-                importance = getattr(decision, "importance_score", 0.5)
-                level = getattr(decision, "attention_level", 0.5)
-                importance_context = (
-                    f"\n\n【任务重要性】{importance:.2f}/1.0\n"
-                    f"高重要性任务应投入更多思考轮次和工具调用。"
-                )
-                logger.debug(f"[重要性] score={importance:.2f} level={level:.2f}")
+            # 从 settings 获取当前模式
+            from config.settings import settings as _cfg
+            ctrl.set_mode(_cfg.effective_execution_mode)
+
+            # 收集各来源上下文
+            perception_context = ""
+            try:
+                from modules.perception.integration import get_perception_integrator
+                integrator = get_perception_integrator()
+                perception_context = integrator.get_context_summary()
+            except Exception:
+                pass
+
+            importance_context = ""
+            try:
+                from modules.attention.interface import create_attention_interface
+                attention = create_attention_interface()
+                decision = attention.analyze(user_input=user_input)
+                if decision:
+                    importance = getattr(decision, "importance_score", 0.5)
+                    importance_context = (
+                        f"\n\n【任务重要性】{importance:.2f}/1.0\n"
+                        f"高重要性任务应投入更多思考轮次和工具调用。"
+                    )
+            except Exception:
+                pass
+
+            # 交给控制器组装（自动去重/压缩/模式过滤）
+            controller_context = ctrl.build_context(
+                memory=memory_context_text,
+                perception=perception_context,
+                importance=importance_context,
+            )
+            if controller_context:
+                logger.debug(f"[上下文] 控制器输出: {len(controller_context)} 字符")
         except Exception as e:
-            logger.debug(f"[重要性] 分析失败 (非致命): {e}")
+            logger.debug(f"[上下文] 控制器失败 (非致命): {e}")
 
         # ---- 3. 专家引导 (情绪 + 价值观) ----
         from config.settings import settings as _settings
@@ -305,8 +321,7 @@ class MultiModelOrchestrator:
             memory_manager=mm,
             event_callback=event_callback,
             skill_id=skill_id,
-            perception_context=perception_context,
-            importance_context=importance_context,
+            controller_context=controller_context,
         )
 
         raw_response = thinking_result.get("response", "")
@@ -423,8 +438,7 @@ class MultiModelOrchestrator:
         memory_manager,
         event_callback,
         skill_id: str = "",
-        perception_context: str = "",
-        importance_context: str = "",
+        controller_context: str = "",
     ) -> Dict:
         """执行多模型思考 — 统一探针驱动流程
 
@@ -573,10 +587,8 @@ class MultiModelOrchestrator:
             if blackboard:
                 # 合并感知上下文到记忆上下文
                 full_context = memory_context_text
-                if perception_context:
-                    full_context += f"\n\n{perception_context}"
-                if importance_context:
-                    full_context += f"\n\n{importance_context}"
+                if controller_context:
+                    full_context += f"\n\n{controller_context}"
                 self._get_context_service().inject_to_dialog(blackboard, full_context)
 
             # ---- 直接激活大模型（替代 SessionMonitor）----

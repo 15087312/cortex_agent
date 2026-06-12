@@ -5,7 +5,13 @@
       "app_name": "Chrome",
       "description": "在Chrome浏览器中打开地址栏，输入搜索内容并执行搜索",
       "added_at": "2026-06-12T01:06:30.374679+00:00"
+    },
+    "Google Chrome/chrome_search": {
+      "tool_name": "chrome_search",
+      "app_name": "Google Chrome",
+      "description": "在 Chrome 浏览器中搜索内容，自动聚焦地址栏并输入搜索关键词后回车搜索",
+      "added_at": "2026-06-12T02:37:34.254328+00:00"
     }
   },
-  "updated_at": "2026-06-12T01:06:30.374686+00:00"
+  "updated_at": "2026-06-12T02:37:34.254334+00:00"
 }
