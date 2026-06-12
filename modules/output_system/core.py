@@ -18,7 +18,7 @@ logger = setup_logger("output_system")
 
 
 class OutputSystem:
-    def __init__(self, memory_module=None, security: Optional[SecurityPort] = None):
+    def __init__(self, _memory_module=None, security: Optional[SecurityPort] = None):
         self.security_api = security or get_security_port()
 
         self.core_validator = CoreValidator()

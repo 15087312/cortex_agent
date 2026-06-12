@@ -414,6 +414,10 @@ class ToolSecurityGate:
             else:
                 return False, "yolo 模式下安全专家不可用，拒绝 HIGH 风险操作"
 
+        # learn 模式：用户已同意进入学习模式，学习相关工具自动放行
+        if exec_mode == "learn":
+            return True, "学习模式自动批准"
+
         # edit 模式：先 LLM 审批，通过后再用户确认（AND 逻辑）
         if exec_mode == "edit":
             if self._model_available:

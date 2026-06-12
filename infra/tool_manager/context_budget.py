@@ -107,7 +107,6 @@ class ContextBudgetManager:
     def should_simplify_tool_descriptions(
         self,
         tool_count: int,
-        conversation_tokens: int,
         budget_allocation: Dict[str, int],
     ) -> bool:
         """判断是否应该简化工具描述以节省空间

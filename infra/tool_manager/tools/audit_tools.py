@@ -73,7 +73,7 @@ def generate_audit_report(limit: int = 50) -> Dict[str, Any]:
     "content_before": "可选，修改前内容（用于记录）",
     "rollback_count": "可选，回滚到倒数第几步（默认1）",
 }, risk_level="LOW", category="query")
-def track_changes(action: str = "history", file_path: Optional[str] = None, content_before: Optional[str] = None, rollback_count: int = 1) -> Dict[str, Any]:
+def track_changes(action: str = "history", file_path: Optional[str] = None, content_before: Optional[str] = None, _rollback_count: int = 1) -> Dict[str, Any]:
     action = action.lower().strip()
     if action == "log":
         if not file_path: return {"error": "需要 file_path"}

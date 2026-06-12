@@ -688,9 +688,8 @@ class PreGenExpertPipeline:
         if _settings.effective_values_enabled:
             tasks.append(self.values_expert.analyze(user_input, context))
             task_names.append("values")
-        if True:  # 安全始终启用
-            tasks.append(self.security_expert.analyze(user_input, context))
-            task_names.append("security")
+        tasks.append(self.security_expert.analyze(user_input, context))
+        task_names.append("security")
         if _settings.effective_emotion_enabled:
             tasks.append(self.emotion_expert.analyze(user_input, context))
             task_names.append("emotion")

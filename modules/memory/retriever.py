@@ -111,7 +111,7 @@ class MemoryRetriever:
             return []
 
     async def _retrieve_warm(
-        self, query: str, recent_memories: List[Dict[str, Any]]
+        self, query: str, _recent_memories: List[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
         try:
             context = self.memory.get_context(limit=500)
