@@ -377,8 +377,6 @@ DEFAULT_TOOL_WHITELISTS: Dict[str, List[str]] = {
         "todo",
         # 工具搜索 — 按需查找其他可用工具
         "tools_search",
-        # 学习工具（tag:toolbuilder → learn_tool, list_learned_tools, delete_learned_tool, create_app_skill, execute_tool_recipe）
-        "tag:toolbuilder",
         # 工具详情查询 — 查询非核心工具的参数定义
         "query_tool_details",
         # MCP 远程工具发现与调用
