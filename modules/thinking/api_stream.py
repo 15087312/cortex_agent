@@ -182,13 +182,8 @@ class StreamThinkingSystem:
             mm = MemoryManager()
             mm.set_session_id(session_id)
 
-            gcm_pool = None
-            try:
-                from modules.thinking.context import gcm_pool
-            except Exception as e:
-                logger.debug(f"[T1] gcm_pool 导入失败，跳过 GCM 集成: {e}")
-
-            preloader = SessionMemoryPreloader(mm, gcm_pool)
+            # GCM 已移除，gcm_pool 始终为 None
+            preloader = SessionMemoryPreloader(mm, None)
             await preloader.preload(session_id)
         except Exception as e:
             logger.debug(f"[T1] 会话预加载失败 (非致命): {e}")

@@ -731,12 +731,6 @@ class PreGenExpertPipeline:
             f"准则={expert_guidance.get('principle', '') or '无'}"
         )
 
-        try:
-            from modules.thinking.context import gcm_pool
-            guidance_items = []
-            if guidance_items:
-                pass  # GCM 已移除，不再同步
-        except Exception:
-            pass
+        # GCM 已移除，不再同步到全局上下文池
 
         return expert_guidance
