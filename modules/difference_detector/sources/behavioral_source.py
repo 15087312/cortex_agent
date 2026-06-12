@@ -38,7 +38,7 @@ class BehavioralDifferenceSource(DifferenceSource):
     def _get_gcm_pool(self):
         if self._gcm_pool is not None:
             return self._gcm_pool
-        from modules.thinking.context.global_context_pool import gcm_pool
+        from modules.thinking.context import gcm_pool
         return gcm_pool
 
     def detect(self) -> List[Difference]:

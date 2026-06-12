@@ -129,7 +129,7 @@ class DifferenceDetector:
     def _log_to_gcm(self, differences: List[Difference]) -> None:
         """将差异记录到全局上下文池事件日志"""
         try:
-            from modules.thinking.context.global_context_pool import gcm_pool
+            from modules.thinking.context import gcm_pool
             from modules.thinking.context.types import EventRecord, EventType
         except ImportError:
             return
