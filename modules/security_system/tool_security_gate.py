@@ -453,8 +453,18 @@ class ToolSecurityGate:
         caller_tier: str,
         caller_model_id: str,
     ) -> Tuple[bool, str]:
-        """用户审查模式 — 推送到 CLI，等待用户审批"""
+        """用户审查模式 — 推送到 CLI，等待用户审批
+
+        防重叠：如果同一工具已有待审批，返回等待提示而非创建新审批。
+        """
+        # 检查是否已有待审批
+        for rid, fut in list(self._pending_reviews.items()):
+            if not fut.done() and rid.startswith(f"review_{tool_name}_"):
+                logger.info(f"[安全门控] {tool_name} 已有待审批 (id={rid})，跳过重复审批")
+                return True, f"同一工具已在审批中，等待上一请求结果"
+
         request_id = uuid.uuid4().hex[:12]
+        request_id = f"review_{tool_name}_{request_id}"
         loop = asyncio.get_running_loop()
         future: asyncio.Future = loop.create_future()
         self._pending_reviews[request_id] = future

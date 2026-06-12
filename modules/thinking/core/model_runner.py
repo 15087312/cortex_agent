@@ -881,8 +881,11 @@ class ModelRunner:
 
     # ── 交互式工具处理 ──
 
-    async def _wait_for_user_response(self, event_type: str, event_data: Dict[str, Any], timeout: float = 300) -> Dict[str, Any]:
-        """发送交互事件到 TUI 并等待用户响应"""
+    async def _wait_for_user_response(self, event_type: str, event_data: Dict[str, Any], timeout: float = None) -> Dict[str, Any]:
+        """发送交互事件到 TUI 并等待用户响应
+
+        timeout: 默认 None（不限时），用户不响应就一直等。
+        """
         future = asyncio.get_running_loop().create_future()
         request_id = f"{event_type}_{uuid.uuid4().hex[:8]}"
         event_data["request_id"] = request_id
