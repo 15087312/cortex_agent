@@ -204,6 +204,7 @@ class SkillManager:
                 allow_tags=tr.get("allow_tags", []),
                 allow_categories=tr.get("allow_categories", []),
                 allow_core_only=tr.get("allow_core_only", False),
+                restrict_to=tr.get("restrict_to", False),
                 block_tools=tr.get("block_tools", []),
                 block_tags=tr.get("block_tags", []),
                 block_categories=tr.get("block_categories", []),

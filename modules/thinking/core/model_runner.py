@@ -1209,17 +1209,21 @@ class ModelRunner:
         return result
 
     def _apply_skill_tool_rules(self, tools: List[str], rules) -> List[str]:
-        """按技能工具范围重排工具列表
-
-        技能不应限制模型工具，而是将技能相关工具排在前面，让模型优先看到。
-        只有 block_tools/block_tags/block_categories 会实际移除工具（安全排除）。
-        """
+        """按技能工具范围重排工具列表（降级路径，主路径在 ToolPermissionController）"""
         from infra.tool_manager.tool_registry import ToolRegistry
         all_tools = ToolRegistry._tools
 
-        # 按 allow_tools 重排（不删除，只是把技能工具移到前面）
         prioritized = list(tools)
-        if rules.allow_tools:
+
+        # restrict_to: 限制到 allow_tools + 核心系统工具
+        if getattr(rules, 'restrict_to', False) and rules.allow_tools:
+            core_system = {"read_file", "search_files", "list_my_tools",
+                           "tools_search", "query_tool_details",
+                           "calc", "memory_match", "todo"}
+            restricted = set(rules.allow_tools) | core_system
+            prioritized = [t for t in prioritized if t in restricted]
+
+        if rules.allow_tools and not getattr(rules, 'restrict_to', False):
             skill_tools = [t for t in tools if t in rules.allow_tools]
             other_tools = [t for t in tools if t not in rules.allow_tools]
             prioritized = skill_tools + other_tools

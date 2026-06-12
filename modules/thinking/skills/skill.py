@@ -52,6 +52,7 @@ class ToolRules:
     allow_tags: List[str] = field(default_factory=list)            # 只保留这些 tag 的工具
     allow_categories: List[str] = field(default_factory=list)      # 只保留这些 category 的工具
     allow_core_only: bool = False                                  # 只保留 core=True 的工具
+    restrict_to: bool = False                                       # 是否限制到 allow_tools（排除非核心工具）
     block_tools: List[str] = field(default_factory=list)           # 明确排除的工具名
     block_tags: List[str] = field(default_factory=list)            # 排除这些 tag 的工具
     block_categories: List[str] = field(default_factory=list)      # 排除这些 category 的工具
@@ -162,6 +163,8 @@ class Skill:
             parts.append(f"允许类别: {', '.join(self.tool_rules.allow_categories)}")
         if self.tool_rules.allow_core_only:
             parts.append("仅核心工具")
+        if self.tool_rules.restrict_to:
+            parts.append("限制模式")
         if self.tool_rules.block_tools:
             parts.append(f"禁止: {', '.join(self.tool_rules.block_tools)}")
         return "; ".join(parts)

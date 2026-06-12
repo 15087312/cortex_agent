@@ -30,6 +30,7 @@ weaknesses:
 
 # 工具范围：审查相关工具优先展示 + 禁止危险命令
 tool_rules:
+  restrict_to: true
   allow_tools:
     - read_file
     - search_files

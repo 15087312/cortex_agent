@@ -132,9 +132,20 @@ class ToolPermissionController:
         ]
 
     def _apply_skill_rules(self, tools: List[str], rules, registry) -> List[str]:
-        """应用技能工具规则（重排 + 排除）"""
+        """应用技能工具规则（重排 + 排除 + 限制模式）"""
         prioritized = list(tools)
-        if rules.allow_tools:
+
+        # restrict_to: 限制到 allow_tools + 核心系统工具
+        if rules.restrict_to and rules.allow_tools:
+            # 核心系统工具（所有模式都必须保留）
+            core_system = {"read_file", "search_files", "list_my_tools",
+                           "tools_search", "query_tool_details",
+                           "calc", "memory_match", "todo"}
+            restricted = set(rules.allow_tools) | core_system
+            prioritized = [t for t in prioritized if t in restricted]
+
+        if rules.allow_tools and not rules.restrict_to:
+            # 非限制模式：只重排，不删除
             skill_tools = [t for t in tools if t in rules.allow_tools]
             other = [t for t in tools if t not in rules.allow_tools]
             prioritized = skill_tools + other
