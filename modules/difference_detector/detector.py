@@ -127,27 +127,8 @@ class DifferenceDetector:
         return all_differences
 
     def _log_to_gcm(self, differences: List[Difference]) -> None:
-        """将差异记录到全局上下文池事件日志"""
-        try:
-            from modules.thinking.context import gcm_pool
-            from modules.thinking.context.types import EventRecord, EventType
-        except ImportError:
-            return
-
-        for diff in differences[:10]:  # 最多记录 10 条避免日志爆炸
-            record = EventRecord(
-                timestamp=time.time(),
-                source_role="difference_detector",
-                event_type=EventType.SYSTEM,
-                content={
-                    "diff_id": diff.id,
-                    "source_type": diff.source_type,
-                    "category": diff.category,
-                    "intensity": diff.intensity,
-                },
-                importance=diff.intensity / 100.0,
-            )
-            gcm_pool.add_event(record)
+        """差异写入 GCM（GCM 已移除，此方法已禁用）"""
+        pass
 
     def get_active(self, source_type: str = None, min_intensity: float = 0.0, limit: int = 50) -> List[dict]:
         return self.repository.get_active(

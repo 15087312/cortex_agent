@@ -733,16 +733,10 @@ class PreGenExpertPipeline:
 
         try:
             from modules.thinking.context import gcm_pool
-            guidance_items = [
-                f"准则: {expert_guidance.get('principle', '')} → {expert_guidance.get('reflection', '')}",
-                f"安全: 风险={expert_guidance.get('risk_level', 'none')} {expert_guidance.get('safety_guidance', '')}",
-                f"情绪: {expert_guidance.get('emotion', 'neutral')}({expert_guidance.get('emotion_intensity', 0.3)}) {expert_guidance.get('emotion_guidance', '')}",
-            ]
-            guidance_items = [g for g in guidance_items if g.split(': ', 1)[-1].strip()]
+            guidance_items = []
             if guidance_items:
-                from modules.thinking.context.wire import sync_expert_guidance_to_gcm
-                sync_expert_guidance_to_gcm(gcm_pool, guidance_items, "pre_gen_experts")
-        except Exception as e:
-            logger.debug(f"[GCM] 专家同步失败: {e}")
+                pass  # GCM 已移除，不再同步
+        except Exception:
+            pass
 
         return expert_guidance

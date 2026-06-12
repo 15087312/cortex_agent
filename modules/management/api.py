@@ -952,50 +952,26 @@ async def repair_module(module: str):
 
 @router.get("/context")
 async def get_context_status():
-    """
-    获取全局上下文池状态
-
-    包含：池统计、内存使用、冗余检测、事件分布、一致性检查
-    """
-    try:
-        from modules.thinking.context.wire import gcm_status_for_api, gcm_health_check
-        status = gcm_status_for_api()
-        health = gcm_health_check()
-        status["data"]["health"] = health
-        return status
-    except Exception as e:
-        raise AppError(ErrorCode.INTERNAL_ERROR, "上下文管理API暂时不可用")
+    """获取全局上下文池状态 — GCM 已移除"""
+    return {"success": True, "data": {"status": "removed", "note": "GCM 已移除，此端点不再提供服务"}}
 
 
 @router.get("/context/stats")
 async def get_context_stats():
-    """获取上下文简略统计"""
-    try:
-        from modules.thinking.context import gcm_pool
-        return {"success": True, "data": gcm_pool.get_stats()}
-    except Exception as e:
-        raise AppError(ErrorCode.INTERNAL_ERROR, "管理操作失败")
+    """获取上下文简略统计 — GCM 已移除"""
+    return {"success": True, "data": {"status": "removed"}}
 
 
 @router.get("/context/warnings")
 async def get_context_warnings(limit: int = Query(20, ge=1, le=100)):
-    """获取上下文审计警告"""
-    try:
-        from modules.thinking.context import auditor
-        return {"success": True, "data": auditor.get_warnings(limit)}
-    except Exception as e:
-        raise AppError(ErrorCode.INTERNAL_ERROR, "管理操作失败")
+    """获取上下文审计警告 — GCM 已移除"""
+    return {"success": True, "data": {"warnings": [], "note": "GCM 已移除"}}
 
 
 @router.post("/context/clear-warnings")
 async def clear_context_warnings():
-    """清除上下文审计警告"""
-    try:
-        from modules.thinking.context import auditor
-        auditor.clear_warnings()
-        return {"success": True, "data": {"message": "警告已清除"}}
-    except Exception as e:
-        raise AppError(ErrorCode.INTERNAL_ERROR, "管理操作失败")
+    """清除上下文审计警告 — GCM 已移除"""
+    return {"success": True, "data": {"message": "GCM 已移除，无警告"}}
 
 
 # 15. 时序数据库 API

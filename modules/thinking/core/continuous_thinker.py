@@ -918,22 +918,8 @@ class ContinuousThinker:
                     "is_finished": True,
                 }
 
-        # === GCM: 同步思考输出到全局上下文池 ===
-        if self.gcm_pool:
-            try:
-                from modules.thinking.context.wire import sync_model_call
-                sync_model_call(
-                    self.gcm_pool,
-                    "continuous_thinker",
-                    thought,
-                    metadata={
-                        "duration_ms": duration_ms,
-                        "question": initial_question[:100],
-                    },
-                    importance=0.5,
-                )
-            except Exception as e:
-                self.logger.debug(f"[GCM] 思考同步失败: {e}")
+        # GCM 已移除，不再同步思考输出到全局上下文池
+        pass
 
         record = {
             "thought": thought,

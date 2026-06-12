@@ -61,15 +61,9 @@ class SessionMemoryPreloader:
             f"lessons={bool(preloaded['global_lessons'])}"
         )
 
-        # 写入 GCM 会话上下文，供后续管线阶段读取
+        # GCM 已移除，不再写入会话上下文
         if self.gcm_pool:
-            try:
-                self.gcm_pool.set_session_context(session_id, {
-                    "preloaded_memory": preloaded,
-                    "preloaded_at": preloaded["preloaded_at"],
-                })
-            except Exception as e:
-                logger.debug(f"[T1] GCM 写入失败 (非致命): {e}")
+            pass
 
         return preloaded
 

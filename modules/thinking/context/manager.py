@@ -481,17 +481,8 @@ class ContextManager:
             )
 
             if gcm_pool and response:
-                from modules.thinking.context.wire import sync_model_call
-                sync_model_call(
-                    gcm_pool,
-                    "continuous_thinker",
-                    response,
-                    metadata={
-                        "turns": turns,
-                        "user_input": user_input,
-                    },
-                    importance=0.7,
-                )
+                pass  # GCM 已移除，不再同步
+
         except Exception as e:
             logger = setup_logger("context_manager")
             logger.debug(f"[记忆] 存储/GCM 同步失败: {e}")
