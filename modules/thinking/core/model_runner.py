@@ -1128,14 +1128,26 @@ class ModelRunner:
             )
 
     def _visible_tool_whitelist(self) -> List[str]:
-        """获取当前模型可见工具白名单，支持 tag: 前缀和 risk_level 自动过滤。
+        """获取当前模型可见工具列表（委托给 ToolPermissionController）"""
+        try:
+            from modules.security_system.tool_permission_controller import (
+                get_tool_permission_controller,
+            )
+            from config.settings import settings as _cfg
+            ctrl = get_tool_permission_controller()
+            return ctrl.get_visible_tools(
+                tier=getattr(self.identity, "tier", ""),
+                mode=_cfg.effective_execution_mode,
+                role=getattr(self.identity, "role", ""),
+                skill_tool_rules=getattr(self, '_active_skill_tool_rules', None),
+                companion_mode=_cfg.COMPANION_MODE,
+            )
+        except Exception as e:
+            logger.warning(f"[权限] 控制器失败，走降级路径: {e}")
+            return self._visible_tool_whitelist_legacy()
 
-        处理流程：
-        0. 陪伴模式下，large 模型强制使用 companion 只读白名单
-        1. 展开 tag: 前缀的白名单项（tag:file_rw → read_file, write_file, ...）
-        2. 按 risk_level 自动过滤（HIGH/CRITICAL 仅给 large/supervisor）
-        3. 按 tier 特殊处理（expert 不能调用 probe_start/probe_stop）
-        """
+    def _visible_tool_whitelist_legacy(self) -> List[str]:
+        """降级路径：原有的白名单逻辑（控制器不可用时使用）"""
         tier = getattr(self.identity, "tier", "")
         role = getattr(self.identity, "role", "")
 
@@ -1546,26 +1558,17 @@ class ModelRunner:
             logger.error(f"[ModelRunner] {self.model_id} 无可用工具")
             raise RuntimeError(f"{self.model_id} 无可用工具，无法执行工具调用")
 
-        # 注入控制工具（不在 registry 中注册，仅在此处使用）
-        # 专家不能委托或创建主管，只保留 continue_thinking
-        # 陪伴模式下关闭委托工具，大模型只能自己思考和回复
-        from config.settings import settings as _settings
-        control_tools = [CONTINUE_THINKING_TOOL, QUERY_TOOL_DETAILS_TOOL]
-        if _settings.is_delegation_available and self.tier in ("large", "supervisor"):
-            # 学习模式下禁用委托
-            if _settings.effective_execution_mode != "learn":
-                control_tools.append(DELEGATE_TASK_TOOL)
-        if _settings.is_delegation_available and self.tier == "large":
-            if _settings.effective_execution_mode != "learn":
-                control_tools.append(CREATE_SUPERVISOR_TOOL)
-        if self.tier == "large":
-            control_tools.append(RESPOND_TO_USER_TOOL)
-            control_tools.append(REQUEST_SKILL_TOOL)
-            control_tools.append(LIST_SKILLS_TOOL)
-            control_tools.append(STOP_SKILL_TOOL)
-            control_tools.append(REQUEST_MODE_CHANGE_TOOL)
-            control_tools.append(ASK_USER_INTENT_TOOL)
-        tools_with_control = list(tools) + control_tools
+        # 注入控制工具（使用 ToolPermissionController）
+        from modules.security_system.tool_permission_controller import (
+            get_tool_permission_controller,
+        )
+        perm_ctrl = get_tool_permission_controller()
+        control_tool_names = perm_ctrl.get_control_tools(
+            tier=self.tier,
+            mode=_settings.effective_execution_mode,
+            delegation_available=_settings.is_delegation_available,
+        )
+        tools_with_control = list(tools) + control_tool_names
 
         messages = [
             ChatMessage(role="system", content=f"{system_prompt}\n\n{self._build_tool_guard_prompt()}"),
