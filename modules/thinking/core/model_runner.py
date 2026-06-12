@@ -955,7 +955,7 @@ class ModelRunner:
                 clear_learn_recorded_actions()
             except Exception:
                 pass
-            return "【学习模式】已切换到学习模式。系统会自动记录你的 UI 操作。操作完成后调用 save_recipe 保存为工具并生成技能。"
+            return "【学习模式】已进入学习模式。按流程操作：打开应用 → 识别界面 → 执行操作 → 每步验证 → 全部成功后 save_recipe 保存。完成后必须用 respond_to_user 回复用户。"
 
         # 其他模式（plan/edit/yolo/control）需要用户确认
         result = await self._wait_for_user_response("mode_change_request", {
@@ -1294,31 +1294,47 @@ class ModelRunner:
                 )
             elif _cfg.effective_execution_mode == "learn":
                 base_prompt += (
-                    "\n\n【执行模式: LEARN（自我进化）】\n"
-                    "当前为学习模式，系统会自动记录你的每一步 UI 操作。\n"
-                    "学习流程：\n"
-                    "1. exec_command(\"open -a 'Google Chrome'\") — 打开应用\n"
-                    "2. detect_ui_elements() 或 understand_screen() — 识别界面\n"
-                    "3. mouse_click(x, y) / keyboard_type(text) / keyboard_press(key) — 操作\n"
-                    "4. understand_screen() — 验证操作结果（必须！）\n"
-                    "5. 全部步骤验证成功后调 save_recipe 保存\n\n"
-                    "键盘工具参数：\n"
-                    "- keyboard_press(key='enter') — 按单个键\n"
-                    "- keyboard_hotkey(keys=['command', 'l']) — 组合键（参数是 keys 列表）\n"
-                    "- keyboard_type(text='真实文本') — 输入文字（中文自动用剪贴板，不依赖输入法）\n\n"
-                    "让工具可传参（避免硬编码）：\n"
-                    "调用 save_recipe 时传 params_schema，系统会自动把步骤中的匹配文本替换为 {{变量}}：\n"
-                    "  save_recipe(name='chrome_search', app_name='Chrome',\n"
-                    "    description='在Chrome中搜索',\n"
-                    "    params_schema={'type':'object','properties':{'query':{'type':'string'}}})\n"
-                    "  → keyboard_type(text='今天的天气') 自动变为 keyboard_type(text='{{query}}')\n"
-                    "  → 调用时 chrome_search(query='Python教程') 搜索不同内容\n\n"
-                    "关键规则：\n"
-                    "- 每一步操作后必须调用 understand_screen() 验证操作是否成功\n"
-                    "- 只有验证确认操作成功后才继续下一步，全部成功才调 save_recipe\n"
-                    "- keyboard_type 使用真实文本，不要用 {{query}}（系统会自动替换）\n"
-                    "- save_recipe 会自动生成对应的技能（Skill），激活技能后工具可用\n"
-                    "- **学习模式下不能委托给主管或专家**，所有操作自己完成"
+                    "\n\n╔══════════════════════════════════════════╗\n"
+                    "║        学习模式 - 自我进化               ║\n"
+                    "╚══════════════════════════════════════════╝\n\n"
+                    "你正在录制一个 UI 操作流程。系统会自动记录你的每一步操作。\n"
+                    "你的目标：完成操作，保存为可复用工具，然后退出学习模式回复用户。\n\n"
+                    "━━━━━━━━━━━━ 执行流程 ━━━━━━━━━━━━\n"
+                    "1. 打开应用\n"
+                    "   exec_command(\"open -a '应用名'\") — 打开目标应用\n"
+                    "   验证: understand_screen() — 确认应用已打开\n\n"
+                    "2. 识别界面\n"
+                    "   detect_ui_elements() — 获取界面元素\n\n"
+                    "3. 执行操作（系统自动录制每一步）\n"
+                    "   keyboard_type(text='真实文本') — 输入（中文自动剪贴板）\n"
+                    "   keyboard_press(key='enter')     — 按单个键\n"
+                    "   keyboard_hotkey(keys=[...])     — 组合键，参数是 keys 列表\n"
+                    "   mouse_click(x, y)               — 点击\n\n"
+                    "4. 【必须】验证操作结果\n"
+                    "   每步操作后调用 understand_screen() 检查：\n"
+                    "   - 页面是否跳转/变化？\n"
+                    "   - 预期元素是否出现？\n"
+                    "   - 操作是否真的生效了？\n"
+                    "   验证失败 → 重试该步骤，不要跳过\n"
+                    "   验证通过 → 继续下一步\n\n"
+                    "5. 保存成果\n"
+                    "   全部步骤验证通过后调用 save_recipe 保存：\n"
+                    "   save_recipe(name='工具名', app_name='应用名', description='描述')\n\n"
+                    "   可选传参（让工具可接收不同输入）：\n"
+                    "   save_recipe(..., params_schema={'type':'object','properties':{'query':{'type':'string'}}})\n"
+                    "   → 步骤中的固定文本自动替换为 {{query}}\n\n"
+                    "━━━━━━━━━━━━ 完成后 ━━━━━━━━━━━━\n"
+                    "save_recipe 成功后：\n"
+                    "  - 工具已注册到系统，可直接调用\n"
+                    "  - 调用 list_my_tools() 查看已保存的工具\n"
+                    "  - 调用 respond_to_user() 回复用户，告知工具已可用\n"
+                    "  - **不要再次进入学习模式**，学习已完成\n\n"
+                    "━━━━━━━━━━━━ 规则 ━━━━━━━━━━━━\n"
+                    "- 每步操作后必须验证，验证通过才能继续\n"
+                    "- 验证失败立即重试，不跳过\n"
+                    "- 全部验证通过后才能调 save_recipe\n"
+                    "- 不能委托给主管或专家，所有操作自己完成\n"
+                    "- save_recipe 成功后 exit，必须用 respond_to_user 回复"
                 )
         except Exception:
             pass
@@ -1329,10 +1345,11 @@ class ModelRunner:
             if _cfg.effective_execution_mode != "learn":
                 base_prompt += (
                     "\n\n【学习新技能】\n"
-                    "当用户说「学习怎么使用XXX」或「教我怎么用XXX」时：\n"
-                    "1. 立即调用 request_mode_change(suggested_mode='learn') 进入学习模式\n"
-                    "2. 不要先查工具是否存在，不要用其他工具试探\n"
-                    "3. 进入学习模式后会获得完整指引"
+                    "当用户说「学习怎么使用XXX」时：\n"
+                    "1. 调 request_mode_change(suggested_mode='learn')\n"
+                    "2. 进入学习模式后按流程操作（打开→识别→操作→验证→保存）\n"
+                    "3. save_recipe 成功后自动退出，此时用 respond_to_user 告知用户工具已可用\n"
+                    "4. 不要学完再进学习模式"
                 )
         except Exception:
             pass
