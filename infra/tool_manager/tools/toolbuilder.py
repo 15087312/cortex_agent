@@ -278,7 +278,7 @@ async def save_recipe(
             "app_name": app_name,
             "plugin_path": str(plugin_path),
             "steps_count": len(steps),
-            "message": f"工具 {tool_name} 已保存。调用 list_my_tools 查看。学习完成，请用 respond_to_user 回复用户，不要再进入学习模式。",
+            "message": f"工具 {tool_name} 已保存。请用 list_my_tools 和 view_recipe 验证保存结果，确认后用 respond_to_user 回复用户。",
         }
     except Exception as e:
         return {"status": "error", "message": f"保存失败: {e}"}
