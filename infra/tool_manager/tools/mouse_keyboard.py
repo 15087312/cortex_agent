@@ -96,12 +96,53 @@ def mouse_drag(start_x: int, start_y: int, end_x: int, end_y: int, duration: flo
     params={"text": "要输入的文本", "interval": "字符间隔时间(秒)"}
 )
 def keyboard_type(text: str, interval: float = 0.05) -> str:
-    """键盘输入"""
-    success = _controller.type_text(text, interval)
-    if success:
+    """键盘输入
+
+    非 ASCII 文本（中文/日文/符号）使用剪贴板+Cmd+V，
+    因为 pyautogui.write() 无法正确输入非英文字符。
+    """
+    if not text:
+        return "[错误] 请输入要输入的文本"
+
+    if any(ord(c) > 127 for c in text):
+        return _type_via_clipboard(text)
+    else:
+        success = _controller.type_text(text, interval)
+        if success:
+            preview = text[:50] + "..." if len(text) > 50 else text
+            return f"键盘输入: {preview}"
+        return "文本输入失败，请检查硬件控制器状态"
+
+
+def _type_via_clipboard(text: str) -> str:
+    """通过剪贴板输入文本：复制到剪贴板 → Cmd+V
+
+    适用于中文/日文等非 ASCII 文本，避免依赖系统输入法。
+    """
+    try:
+        import subprocess
+        # macOS: 使用 pbcopy 写入剪贴板
+        proc = subprocess.run(
+            ["pbcopy"], input=text.encode("utf-8"), capture_output=True, timeout=5
+        )
+        if proc.returncode != 0:
+            # 降级：直接按键输入
+            success = _controller.type_text(text, interval=0.1)
+            if success:
+                return f"键盘输入: {text[:50]}"
+            return "文本输入失败"
+
+        # Cmd+V 粘贴
+        _controller.hotkey("command", "v")
         preview = text[:50] + "..." if len(text) > 50 else text
-        return f"键盘输入: {preview}"
-    return "文本输入失败，请检查硬件控制器状态"
+        return f"键盘输入(剪贴板): {preview}"
+    except Exception as e:
+        logger.error(f"剪贴板输入失败: {e}")
+        # 降级：直接按键输入
+        success = _controller.type_text(text, interval=0.1)
+        if success:
+            return f"键盘输入: {text[:50]}"
+        return "文本输入失败"
 
 
 @ToolRegistry.register(

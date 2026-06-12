@@ -1302,7 +1302,7 @@ class ModelRunner:
                     "键盘工具参数：\n"
                     "- keyboard_press(key='enter') — 按单个键\n"
                     "- keyboard_hotkey(keys=['command', 'l']) — 组合键（参数是 keys 列表）\n"
-                    "- keyboard_type(text='真实文本') — 输入文字\n\n"
+                    "- keyboard_type(text='真实文本') — 输入文字（中文自动用剪贴板，不依赖输入法）\n\n"
                     "让工具可传参（避免硬编码）：\n"
                     "调用 save_recipe 时传 params_schema，系统会自动把步骤中的匹配文本替换为 {{变量}}：\n"
                     "  save_recipe(name='chrome_search', app_name='Chrome',\n"
