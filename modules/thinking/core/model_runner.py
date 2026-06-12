@@ -1345,8 +1345,7 @@ class ModelRunner:
                     "- 验证失败立即重试，不跳过\n"
                     "- 全部验证通过后才能调 save_recipe\n"
                     "- 不能委托给主管或专家，所有操作自己完成\n"
-                    "- 操作过程中不要输出任何文字说明，只调工具\n"
-                    "- 全部完成后用 save_recipe 保存，然后用 respond_to_user 回复用户"
+                    "- 保存成功后用 respond_to_user 回复用户"
                 )
         except Exception:
             pass
@@ -1973,10 +1972,13 @@ class ModelRunner:
                         return content
 
                     # ── 原有逻辑：构建 assistant 消息（只包含正常工具调用）──
+                    # 注意：content 中仅保留 tool_calls 响应文本，不保留模型思考旁白
+                    # 模型在调工具时输出的"好的我来学习"等前言会随 history 传入下一轮，
+                    # 导致模型看到自己的话后重复输出。有 tool_calls 时 content 设为空。
                     if normal_calls:
                         assistant_msg = ChatMessage(
                             role="assistant",
-                            content=content or None,
+                            content=None,  # 有 tool_calls 时丢弃文本，避免上下文污染
                             tool_calls=normal_calls,
                         )
                         messages.append(assistant_msg)
