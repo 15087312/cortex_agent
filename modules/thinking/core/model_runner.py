@@ -1314,7 +1314,8 @@ class ModelRunner:
                     "- 每一步操作后必须调用 understand_screen() 验证操作是否成功\n"
                     "- 只有验证确认操作成功后才继续下一步，全部成功才调 save_recipe\n"
                     "- keyboard_type 使用真实文本，不要用 {{query}}（系统会自动替换）\n"
-                    "- save_recipe 会自动生成对应的技能（Skill），激活技能后工具可用"
+                    "- save_recipe 会自动生成对应的技能（Skill），激活技能后工具可用\n"
+                    "- **学习模式下不能委托给主管或专家**，所有操作自己完成"
                 )
         except Exception:
             pass
@@ -1514,9 +1515,12 @@ class ModelRunner:
         from config.settings import settings as _settings
         control_tools = [CONTINUE_THINKING_TOOL, QUERY_TOOL_DETAILS_TOOL]
         if _settings.is_delegation_available and self.tier in ("large", "supervisor"):
-            control_tools.append(DELEGATE_TASK_TOOL)
+            # 学习模式下禁用委托，模型自己操作 UI，不需要主管/专家
+            if _settings.effective_execution_mode != "learn":
+                control_tools.append(DELEGATE_TASK_TOOL)
         if _settings.is_delegation_available and self.tier == "large":
-            control_tools.append(CREATE_SUPERVISOR_TOOL)
+            if _settings.effective_execution_mode != "learn":
+                control_tools.append(CREATE_SUPERVISOR_TOOL)
         if self.tier == "large":
             control_tools.append(RESPOND_TO_USER_TOOL)
             control_tools.append(REQUEST_SKILL_TOOL)
