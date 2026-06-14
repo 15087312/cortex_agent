@@ -101,7 +101,7 @@ DEFAULT_IDENTITIES: Dict[str, dict] = {
         ),
         "speaking_style": "沉稳、全面、有大局观",
         "expertise": ["任务分解", "全局调度", "价值观判断", "风险管理", "资源分配"],
-        "weaknesses": ["细节执行"],
+        "weaknesses": ["需委托专家处理大规模数据"],
     },
 
     # —— 主管模型 ——
@@ -661,6 +661,7 @@ class ModelIdentity:
     speaking_style: str = ""                     # 说话风格
     expertise: List[str] = field(default_factory=list)    # 专长领域
     weaknesses: List[str] = field(default_factory=list)   # 不擅长领域
+    capability: str = ""                                   # 能力描述（注入 system prompt）
     tool_whitelist: List[str] = field(default_factory=list)  # 可见工具
     model_name: str = ""                         # 底层模型名 (qwen-max / qwq-32b / ...)
     max_tokens: int = 256                        # 最大生成 token 数
@@ -716,6 +717,7 @@ class ModelIdentity:
             "speaking_style": template["speaking_style"],
             "expertise": list(template.get("expertise", [])),
             "weaknesses": list(template.get("weaknesses", [])),
+            "capability": template.get("capability", ""),
             "tool_whitelist": whitelist,
             "model_name": resolved_model_name,
             "max_tokens": template.get("max_tokens", 256),
@@ -738,15 +740,27 @@ class ModelIdentity:
         """从身份构建 system prompt"""
         expertise_str = "、".join(self.expertise)
         weaknesses_str = "、".join(self.weaknesses)
+        capability_str = getattr(self, 'capability', '')
 
-        return (
-            f"【定位】你是 {self.name}（{self.role}），属于{self._tier_label()}。\n"
-            f"【人格】{self.personality}\n"
-            f"【风格】{self.speaking_style}\n"
-            f"【擅长】{expertise_str}\n"
-            f"【不擅长】{weaknesses_str}\n"
-            f"【约束】严格遵守你的角色边界，不要越权操作。"
+        parts = [
+            f"【人格】{self.personality}",
+            f"【风格】{self.speaking_style}",
+            f"【擅长】{expertise_str}",
+            f"【不擅长】{weaknesses_str}",
+            f"【约束】严格遵守你的角色边界，不要越权操作。",
+        ]
+        if capability_str:
+            parts.append(f"【能力】{capability_str}")
+
+        parts.append(
+            f"【工具使用】你有多种工具可用于执行任务。注意：所有工具（包括 run_command）"
+            f"都在用户本地电脑上执行，不是远程服务器。"
+            f"例如 run_command('open -a 网易云音乐') 会在用户电脑上启动应用。"
+            f"其他可用工具包括：read_file（读文件）、write_file（写文件）、"
+            f"web_search（联网搜索）等。"
+            f"当用户要求你执行操作时，先思考是否有可用工具能完成，而不是直接说做不到。"
         )
+        return "\n".join(parts)
 
     def _tier_label(self) -> str:
         labels = {"large": "大模型层", "supervisor": "主管模型层", "expert": "专家模型层"}

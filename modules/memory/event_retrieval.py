@@ -69,13 +69,21 @@ class EventRetrieval:
         query: str,
         top_k: int = 5,
         min_importance: float = 0.0,
+        types: Optional[List[str]] = None,
     ) -> List[MemoryEvent]:
         """根据查询检索最相关的记忆事件
+
+        Args:
+            query: 查询文本
+            top_k: 返回数量
+            min_importance: 最低重要性过滤
+            types: 可选，只返回指定类型的事件，如 ["strategy", "fact"]
 
         1. 向量语义搜索得到候选集
         2. 合并关键词命中候选
         3. 用「遗忘曲线 × 强化 × 重要性」算最终分
-        4. 返回时 touch 每条事件（更新 last_accessed + access_count）
+        4. 按 type 过滤（如果指定）
+        5. 返回时 touch 每条事件（更新 last_accessed + access_count）
         """
         # 1. 向量语义搜索
         vector_results = await self._vector_search(query, top_k=top_k * 3)
@@ -88,18 +96,77 @@ class EventRetrieval:
         now = datetime.now(timezone.utc)
         scored = self._score_events(vector_results, keyword_results, now)
 
-        # 4. 过滤
+        # 4. 按 type 过滤（如果指定）
+        if types:
+            types_set = set(t.lower() for t in types)
+            scored = [(ev, s) for ev, s in scored if ev.type in types_set]
+
+        # 5. 过滤低重要性
         if min_importance > 0:
             scored = [(ev, s) for ev, s in scored if ev.importance >= min_importance]
 
         top_events = [ev for ev, _ in scored[:top_k]]
 
-        # 5. touch 每条结果（更新 last_accessed + access_count）
+        # 6. touch 每条结果（更新 last_accessed + access_count）
         store = self._get_store()
         for ev in top_events:
             store.touch_event(ev.id)
 
         return top_events
+
+    async def retrieve_mixed(
+        self,
+        mix: Dict[str, float],
+        top_k: int = 5,
+        types: Optional[List[str]] = None,
+    ) -> List[MemoryEvent]:
+        """按主题配比多路检索合并
+
+        Args:
+            mix: {主题: 权重}，如 {"coding": 0.7, "architecture": 0.2, "experience": 0.1}
+            top_k: 总返回数量
+            types: 可选，传给每次检索的类型过滤
+
+        每个主题按权重分配 top_k 中的名额，分别检索后合并打分。
+        """
+        if not mix:
+            return []
+
+        # 归一化权重
+        total = sum(mix.values())
+        if total <= 0:
+            return []
+        norm = {k: v / total for k, v in mix.items()}
+
+        all_scored: Dict[str, Tuple[MemoryEvent, float]] = {}
+        now = datetime.now(timezone.utc)
+
+        for topic, weight in norm.items():
+            if not topic.strip():
+                continue
+            topic_top_k = max(1, round(top_k * weight))
+            # 向量搜索
+            vector_results = await self._vector_search(topic, top_k=topic_top_k * 3)
+            kw_results = self._keyword_search(self._extract_keywords(topic))
+            scored = self._score_events(vector_results, kw_results, now)
+            # 类型过滤
+            if types:
+                ts = set(t.lower() for t in types)
+                scored = [(ev, s) for ev, s in scored if ev.type in ts]
+            # 加权重后放入总池
+            for ev, s in scored[:topic_top_k]:
+                adjusted = s * weight
+                if ev.id not in all_scored or adjusted > all_scored[ev.id][1]:
+                    all_scored[ev.id] = (ev, adjusted)
+
+        # 按调整后分数排序
+        ordered = sorted(all_scored.values(), key=lambda x: x[1], reverse=True)
+
+        store = self._get_store()
+        for ev, _ in ordered[:top_k]:
+            store.touch_event(ev.id)
+
+        return [ev for ev, _ in ordered[:top_k]]
 
     # ------------------------------------------------------------------
     # 评分引擎（核心）

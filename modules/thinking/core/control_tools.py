@@ -134,9 +134,9 @@ REQUEST_SKILL_TOOL = {
     "function": {
         "name": "request_skill",
         "description": (
-            "请求激活一个技能。激活后你将扮演该技能定义的角色，遵循其规章和流程。"
-            "当你判断当前任务需要特定专业知识或流程时使用。"
-            "使用 list_skills 查看可用技能。"
+            "激活一个技能说明书。阅读 get_skill_detail 获取完整内容后，"
+            "按照说明书的指引执行任务。"
+            "使用 list_skills 查看所有可用技能。"
         ),
         "parameters": {
             "type": "object",
@@ -229,6 +229,31 @@ REQUEST_MODE_CHANGE_TOOL = {
                 },
             },
             "required": ["reason", "suggested_mode"],
+        },
+    },
+}
+
+
+SET_MEMORY_FOCUS_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "set_memory_focus",
+        "description": (
+            "设置当前任务的记忆检索配比。按主题分配检索权重，"
+            "后续 prompt 中的历史事件会按此比例从各主题检索。"
+            "例如 coding=0.7, architecture=0.2, experience=0.1"
+            "会在 prompt 中注入 70% 编码相关的记忆、20% 架构、10% 经验。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "mix": {
+                    "type": "object",
+                    "description": "主题及其权重，如 {\"coding\": 0.7, \"architecture\": 0.2}",
+                    "additionalProperties": {"type": "number"},
+                },
+            },
+            "required": ["mix"],
         },
     },
 }

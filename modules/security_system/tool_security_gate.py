@@ -166,8 +166,10 @@ def _check_extreme_danger(tool_name: str, tool_params: Dict[str, Any]) -> Option
 class ToolSecurityGate:
     """工具安全门控 — 统一审查所有工具调用"""
 
+    # 类级别 pending_reviews，供 @classmethod resolve_review 访问
+    _pending_reviews: Dict[str, asyncio.Future] = {}
+
     def __init__(self, lite_model=None):
-        self._pending_reviews: Dict[str, asyncio.Future] = {}
         self._lite_model = lite_model
         self._model_available = lite_model is not None
         self._audit = SecurityAuditLogger()

@@ -88,6 +88,8 @@ class ContinuousThinker:
         # 分类外部提示词：持久引导每轮都注入，临时引导仅下一轮有效
         self._persistent_prompts: List[str] = []
         self._transient_prompts: List[str] = []
+        # 记忆检索配比（由 set_memory_focus 设置）
+        self._memory_focus: Optional[Dict[str, float]] = None
         self.logger = setup_logger("continuous_thinker")
         self._running = False
         self._session_id: str = session_id or str(uuid.uuid4())
@@ -587,7 +589,8 @@ class ContinuousThinker:
                 "- delegate_task: 【关键】向主管委托任务。所有需要查询、搜索、文件操作等具身任务都必须通过 delegate_task 委托，不能自己用 probe_start。\n"
                 "- continue_thinking: 继续/结束思考循环\n"
                 "- respond_to_user: 向用户输出最终回复\n"
-                "- request_skill: 请求激活技能（按角色、规章、流程执行任务）\n"
+                "- request_skill: 激活技能说明书（先 list_skills 查看可用技能，再 get_skill_detail 阅读）\n"
+                "- set_memory_focus: 设置记忆检索配比\n"
                 "- list_skills: 列出所有可用技能\n"
                                 f"当前任务：{goal}"
             )
@@ -646,7 +649,15 @@ class ContinuousThinker:
             from infra.model.lite_model_client import LiteModelClient
 
             retrieval = get_event_retrieval()
-            events = await retrieval.retrieve(query=initial_question, top_k=5)
+
+            # 有记忆配比时按主题分布检索，否则用用户问题直接查
+            if self._memory_focus:
+                events = await retrieval.retrieve_mixed(
+                    mix=self._memory_focus,
+                    top_k=5,
+                )
+            else:
+                events = await retrieval.retrieve(query=initial_question, top_k=5)
 
             if events:
                 parts = []
@@ -973,7 +984,8 @@ class ContinuousThinker:
             "duration_ms": duration_ms,
         }
 
-        self.memory.set_working_memory(f"last_thought_{int(time.time())}", record, ttl=300)
+        if self.memory is not None:
+            self.memory.set_working_memory(f"last_thought_{int(time.time())}", record, ttl=300)
         self.history_thoughts.append(thought)
 
         if self._get_dialog and self._model_id:

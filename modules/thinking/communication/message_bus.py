@@ -368,7 +368,7 @@ class ModelMessageBus:
                 else:
                     cb(None)
             except Exception as e:
-                logger.debug(f"[消息总线] 订阅回调异常: {e}")
+                logger.warning(f"[消息总线] 订阅回调异常: {e}")
 
     # ------------------------------------------------------------------
     # 维护

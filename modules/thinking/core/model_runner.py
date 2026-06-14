@@ -30,6 +30,7 @@ from modules.thinking.core.control_tools import (
     REQUEST_SKILL_TOOL,
     LIST_SKILLS_TOOL,
     STOP_SKILL_TOOL,
+    SET_MEMORY_FOCUS_TOOL,
     QUERY_TOOL_DETAILS_TOOL,
     REQUEST_MODE_CHANGE_TOOL,
     ASK_USER_INTENT_TOOL,
@@ -1490,7 +1491,7 @@ class ModelRunner:
                             supervisor_calls.append(tc)
                         elif tc.name == "respond_to_user":
                             control_calls.append(tc)
-                        elif tc.name in ("request_skill", "list_skills", "stop_skill"):
+                        elif tc.name in ("request_skill", "list_skills", "stop_skill", "set_memory_focus"):
                             control_calls.append(tc)
                         elif tc.name in ("request_mode_change", "ask_user_intent"):
                             control_calls.append(tc)
@@ -1551,11 +1552,15 @@ class ModelRunner:
                                     skill = skill_manager.get_skill(skill_id)
                                     if skill:
                                         self._active_skill = skill
-                                        self._active_skill_tool_rules = skill.tool_rules
                                         tool_info = f" (+工具规则)" if skill.tool_rules else ""
                                         logger.info(f"[ModelRunner] 技能已切换: {skill_id}{tool_info}")
                                     else:
-                                        logger.warning(f"[ModelRunner] 未知技能: {skill_id}")
+                                        content = f"技能 {skill_id} 不存在"
+                            elif tc.name == "set_memory_focus":
+                                mix = args.get("mix", {})
+                                if self._thinker and isinstance(mix, dict):
+                                    self._thinker._memory_focus = mix
+                                    logger.info(f"[ModelRunner] 记忆配比已设置: {mix}")
                             elif tc.name == "stop_skill":
                                 if self._active_skill:
                                     reason = args.get("reason", "")
@@ -1808,7 +1813,12 @@ class ModelRunner:
                                 else:
                                     # ── 安全门控：所有工具调用经过安全审查 ──
                                     gate = get_tool_security_gate()
-                                    dialog_ctx = self._format_messages_for_context(messages[-10:])
+                                    # 构建审查上下文：任务描述 + 最近对话历史
+                                    ctx_parts = [f"当前任务: {self._task_description}"]
+                                    msgs = await self._check_messages()
+                                    if msgs:
+                                        ctx_parts.append(self._format_messages_for_context(msgs[-10:]))
+                                    dialog_ctx = "\n".join(ctx_parts)
                                     try:
                                         allowed, reason = await gate.check(
                                             tool_name=tc.name,

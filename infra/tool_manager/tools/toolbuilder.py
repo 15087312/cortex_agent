@@ -495,15 +495,9 @@ async def create_skill(
     skill_id: str,
     name: str,
     description: str,
-    keywords: list,
-    role: str = "",
-    personality: str = "",
-    rules: list = None,
-    workflow: list = None,
-    tool_allow_tags: list = None,
-    tool_block_tools: list = None,
+    keywords: list = None,
 ) -> dict:
-    """创建一个技能 YAML"""
+    """创建一个技能 YAML（技能说明书格式：纯提示词文档）"""
     if not skill_id or not name:
         return {"status": "error", "message": "skill_id 和 name 不能为空"}
 
@@ -518,27 +512,12 @@ async def create_skill(
     if skill_path.exists():
         return {"status": "error", "message": f"技能 {skill_id} 已存在"}
 
-    tool_rules = {}
-    if tool_allow_tags:
-        tool_rules["allow_tags"] = tool_allow_tags
-    if tool_block_tools:
-        tool_rules["block_tools"] = tool_block_tools
-
     data = {
         "id": skill_id,
         "name": name,
         "description": description,
         "keywords": keywords or [],
-        "role": role or f"{name} 专家",
-        "personality": personality or f"你是 {name} 的专家。",
-        "speaking_style": "专业、高效",
-        "expertise": [],
-        "weaknesses": [],
-        "rules": rules or [],
-        "workflow": workflow or [{"step": 1, "name": "分析", "description": "分析用户需求", "output": "行动计划"}],
     }
-    if tool_rules:
-        data["tool_rules"] = tool_rules
 
     skill_path.write_text(yaml.dump(data, allow_unicode=True, default_flow_style=False, sort_keys=False), encoding="utf-8")
 

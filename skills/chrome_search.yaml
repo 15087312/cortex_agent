@@ -1,27 +1,15 @@
 id: chrome_search
 name: Chrome 搜索
-description: 在 Chrome 浏览器中打开 Google 搜索指定关键词，自动适配 macOS/Windows/Linux 系统
+description: |-
+  在 Chrome 浏览器中打开 Google 搜索指定关键词，自动适配 macOS/Windows/Linux 系统。
+
+  规则：
+  - 仅使用 chrome_search 工具进行搜索操作
+  - 搜索前先确认用户需要搜索的关键词
 keywords:
-- chrome
-- Chrome
-- 搜索
-- search
-- 谷歌
-- Google
-role: Chrome 搜索助手
-personality: 你是 Chrome 搜索 的专家。
-speaking_style: 专业、高效
-expertise: []
-weaknesses: []
-rules:
-- id: r1
-  content: 仅使用 chrome_search 工具进行搜索操作
-  severity: must
-- id: r2
-  content: 搜索前先确认用户需要搜索的关键词
-  severity: should
-workflow:
-- step: 1
-  name: 分析
-  description: 分析用户需求
-  output: 行动计划
+  - chrome
+  - Chrome
+  - 搜索
+  - search
+  - 谷歌
+  - Google

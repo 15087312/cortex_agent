@@ -16,35 +16,41 @@ logger = setup_logger("memory_tools")
 @ToolRegistry.register(
     "event_query",
     description="查询历史记忆事件。按语义相似度×遗忘曲线×强化×重要性排序返回最相关的事件。"
-                "每个事件包含事实(fact)、经验教训(lesson)和重要性评分。",
+                "每个事件包含事实(fact)、经验教训(lesson)、类型(type)和重要性评分。"
+                "可指定 type 过滤，多个类型用逗号分隔，如 type=fact,strategy",
     params={
         "query": "搜索查询，描述你想查找的记忆内容",
         "top_k": "可选，返回结果数量（默认3，最多10）",
+        "type": "可选，按类型过滤。emotion|thought|fact|strategy，多个用逗号分隔",
     },
     risk_level="LOW",
     category="query",
 )
-def event_query(query: str, top_k: int = 3) -> Dict[str, Any]:
+def event_query(query: str, top_k: int = 3, type: str = "") -> Dict[str, Any]:
     """查询记忆事件 — 同步包装异步检索"""
     if not query:
         return {"error": "查询不能为空"}
     top_k = max(1, min(top_k, 10))
+    types = None
+    if type and type.strip():
+        parts = [t.strip().lower() for t in type.split(",") if t.strip()]
+        valid = {"emotion", "thought", "fact", "strategy"}
+        types = [t for t in parts if t in valid] or None
 
     try:
-        # 同步桥接异步检索
         loop = _get_event_loop()
-        result = loop.run_until_complete(_do_query(query, top_k))
+        result = loop.run_until_complete(_do_query(query, top_k, types))
         return result
     except Exception as e:
         logger.warning(f"[event_query] 检索失败: {e}")
         return {"error": str(e)}
 
 
-async def _do_query(query: str, top_k: int) -> Dict[str, Any]:
+async def _do_query(query: str, top_k: int, types: list = None) -> Dict[str, Any]:
     from modules.memory.event_retrieval import get_event_retrieval
 
     retrieval = get_event_retrieval()
-    events = await retrieval.retrieve(query=query, top_k=top_k)
+    events = await retrieval.retrieve(query=query, top_k=top_k, types=types)
 
     if not events:
         return {

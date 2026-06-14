@@ -319,6 +319,7 @@ class MultiModelOrchestrator:
             event_callback=event_callback,
             skill_id=skill_id,
             controller_context=controller_context,
+            context=context,  # 传递对话历史用于短期记忆
         )
 
         raw_response = thinking_result.get("response", "")
@@ -436,6 +437,7 @@ class MultiModelOrchestrator:
         event_callback,
         skill_id: str = "",
         controller_context: str = "",
+        context: List[Dict] = None,
     ) -> Dict:
         """执行多模型思考 — 统一探针驱动流程
 
@@ -553,6 +555,21 @@ class MultiModelOrchestrator:
                 )
 
 
+            # 1b. 当前会话对话历史（短期记忆）
+            if blackboard and context:
+                history_lines = []
+                for msg in context[-12:]:
+                    role = msg.get("role", "unknown")
+                    content = msg.get("content", "")
+                    if content and isinstance(content, str):
+                        history_lines.append(f"[{role}]: {content[:500]}")
+                if history_lines:
+                    blackboard.add_observation(
+                        tier="system",
+                        content="【对话历史】\n" + "\n".join(history_lines),
+                        metadata={"context_type": "conversation_history"},
+                    )
+
             # 2. 专家引导（情绪 + 价值观 + 安全）
             if expert_guidance:
                 guidance_text = self._format_expert_guidance(expert_guidance)
@@ -665,13 +682,12 @@ class MultiModelOrchestrator:
             orch_channel = f"orchestrator_{session_id[:12]}"
 
             async def _on_orchestrator_msg(_msg):
+                """消息到达时检查是否为 thinking_complete"""
                 try:
-                    msgs = await bus.receive(orch_channel)
+                    # 用 peek 非破坏性检查，避免 receive 的锁竞争
+                    msgs = await bus.peek(orch_channel, limit=5)
                     for m in msgs:
-                        content = (
-                            m.content if hasattr(m, 'content')
-                            else m.get("content", {})
-                        )
+                        content = m.content if hasattr(m, 'content') else {}
                         if (
                             isinstance(content, dict)
                             and content.get("action") == "thinking_complete"
@@ -681,7 +697,7 @@ class MultiModelOrchestrator:
                             done_event.set()
                             return
                 except Exception as e:
-                    logger.debug(f"[编排器] 消息处理回调异常 (非致命): {e}")
+                    logger.warning(f"[编排器] 消息回调异常: {e}")
 
             completed = False
             try:
