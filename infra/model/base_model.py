@@ -147,7 +147,7 @@ class BaseModelClient(ABC):
         """获取或创建 HTTP session"""
         if self._session is None or self._session.closed:
             timeout = aiohttp.ClientTimeout(total=self.timeout)
-            self._session = aiohttp.ClientSession(timeout=timeout)
+            self._session = aiohttp.ClientSession(timeout=timeout, trust_env=True)
         return self._session
     
     async def close(self):

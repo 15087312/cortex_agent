@@ -279,7 +279,11 @@ class ImageAnalyzer:
         elif self.model_type == "openai":
             return await self._analyze_openai(image_data, prompt)
         elif self.model_type == "unavailable":
-            return {"error": "视觉后端不可用：未安装 mlx-vlm/transformers 且未配置 VISION_API_KEY", "format": "unavailable"}
+            return {
+                "error": "视觉后端不可用：未安装 mlx-vlm/transformers 且未配置 VISION_API_KEY",
+                "description": "",
+                "format": "unavailable"
+            }
         else:
             return await self._analyze_mock(image_data, prompt)
 

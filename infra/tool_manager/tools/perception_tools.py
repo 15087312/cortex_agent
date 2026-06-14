@@ -236,6 +236,7 @@ async def _vision_understand(
     focus: str,
 ) -> Dict[str, Any]:
     """视觉理解：使用 ImageAnalyzer 调用本地或云端视觉模型"""
+    analyzer = None
     try:
         from infra.data_process.core.image_analyzer import ImageAnalyzer
         import base64 as b64
@@ -243,19 +244,33 @@ async def _vision_understand(
         analyzer = ImageAnalyzer(model_type="auto")
         await analyzer.initialize()
 
-        if analyzer.model_type in ("qwen_vl", "mlx_vlm", "openai"):
-            prompt = "请详细描述这个屏幕截图的内容。包括：当前应用、界面布局、可见的文字、按钮、错误信息等。"
-            if focus:
-                prompt += f"\n特别关注：{focus}"
+        prompt = "请详细描述这个屏幕截图的内容。包括：当前应用、界面布局、可见的文字、按钮、错误信息等。"
+        if focus:
+            prompt += f"\n特别关注：{focus}"
 
-            result = await analyzer.analyze(b64.b64decode(screenshot_b64), prompt=prompt)
-            understanding = result.get("description", "")
-            if understanding:
-                return {"understanding": understanding, "method": analyzer.model_type, "ocr_text": ""}
+        result = await analyzer.analyze(b64.b64decode(screenshot_b64), prompt=prompt)
+
+        # 处理所有模型类型的返回（包括 mock、unavailable 等）
+        understanding = result.get("description", "")
+
+        # 如果有理解内容，返回成功
+        if understanding:
+            return {"understanding": understanding, "method": analyzer.model_type, "ocr_text": ""}
+
+        # 有错误但没有理解内容
+        if "error" in result:
+            return {"error": result.get("error", "视觉理解失败")}
+
+        # 没有理解内容也没有错误字段（异常情况）
+        return {"error": "视觉理解返回空内容"}
+
     except Exception as e:
         logger.error(f"视觉理解失败: {e}")
-
-    return {"error": f"视觉理解失败，请检查 VISION_BACKEND 配置（当前: {analyzer.model_type if 'analyzer' in dir() else '未初始化'}）"}
+        return {"error": f"视觉理解失败: {e}"}
+    finally:
+        # 确保诊断信息正确
+        if analyzer is None:
+            logger.warning("[视觉理解] 分析器未初始化")
 
 
 def _simple_summarize(ocr_text: str, window_info: str) -> str:

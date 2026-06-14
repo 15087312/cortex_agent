@@ -48,7 +48,7 @@ class LiteModelClient(BaseModelClient):
         temperature: float = 0.1,
         api_key: str = None,
         api_url: str = None,
-        timeout: int = 15,
+        timeout: int = 30,
     ):
         key = api_key or settings.SMALL_MODEL_API_KEY or settings.LARGE_MODEL_API_KEY
         url = api_url or settings.SMALL_MODEL_API_URL or settings.LARGE_MODEL_API_URL
@@ -84,7 +84,7 @@ class LiteModelClient(BaseModelClient):
             temperature=0.1,
             api_key=settings.SMALL_MODEL_API_KEY or settings.LARGE_MODEL_API_KEY,
             api_url=settings.SMALL_MODEL_API_URL or settings.LARGE_MODEL_API_URL,
-            timeout=15,
+            timeout=30,
         )
 
     async def generate(self, prompt: str, max_retries: int = 3, **kwargs) -> str:

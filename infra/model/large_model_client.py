@@ -469,6 +469,7 @@ class LargeModelClient(BaseModelClient):
                 session = await self._get_session()
                 async with session.post(
                     self.api_url, headers=headers, json=payload,
+                    timeout=aiohttp.ClientTimeout(total=self.timeout, sock_read=30)
                 ) as response:
                     if response.status != 200:
                         error_data = await response.text()
