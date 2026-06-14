@@ -351,30 +351,7 @@ class ModelRunner:
 
     def _save_private_memory(self, final_thought: str) -> None:
         """保存当前模型私有任务记忆，不写入共享会话窗口。"""
-        if not final_thought or not self.model_id:
-            return
-        try:
-            from modules.memory.core.memory_manager import MemoryManager
-
-            mm = MemoryManager(model_id=self.model_id)
-            mm.set_session_id(self.session_id)
-            mm.set_owner(self.model_id)
-            mm.save_dialog_turn(
-                user_input=self._task_description,
-                assistant_response=final_thought,
-                metadata={
-                    "scope": "private",
-                    "owner": self.model_id,
-                    "visible_to": [self.model_id],
-                    "model_id": self.model_id,
-                    "tier": self.tier,
-                    "role": self.identity.role,
-                    "source": "model_runner_final",
-                },
-                scope="private",
-            )
-        except Exception as e:
-            logger.debug(f"[ModelRunner] 私有记忆写入失败: {e}")
+        return
 
     async def _think_loop(self) -> None:
         """通用思考循环（含等待唤醒）— large/supervisor 委托后等待结果再重启
@@ -385,10 +362,8 @@ class ModelRunner:
         # 延迟创建 ContinuousThinker
         if self._thinker is None:
             from modules.thinking.core.continuous_thinker import ContinuousThinker
-            from modules.memory.core.memory_manager import MemoryManager
 
-            mm = MemoryManager()
-            mm.set_session_id(self.session_id)
+            # 旧版 MemoryManager 已废弃，事件记忆由 EventReducer 处理
 
             # supervisor/expert tier 限制最少轮次（快速委托或执行，不要深度思考）
             max_rounds_for_tier = self.MAX_ROUNDS
@@ -407,7 +382,7 @@ class ModelRunner:
                 max_rounds=max_rounds_for_tier,
                 min_rounds=min_rounds_for_tier,
                 interval=0,
-                memory_manager=mm,
+                memory_manager=None,
                 session_id=self.session_id,
                 model_id=self.model_id,
                 tier=self.tier,
@@ -446,11 +421,7 @@ class ModelRunner:
                 # 增强任务描述（只在大模型第一次时）
                 task_desc = self._task_description
                 from config.settings import settings as _cfg
-                if _cfg.COMPANION_MODE and self.tier == "large":
-                    # 陪伴模式：不注入系统提示，直接用原始输入
-                    task_desc = self._task_description
-                    self._task_enhanced = True
-                elif self.tier in ("large", "supervisor") and not hasattr(self, '_task_enhanced'):
+                if self.tier in ("large", "supervisor") and not hasattr(self, '_task_enhanced'):
                     task_desc = self._task_description + _TASK_ENHANCEMENT_PROMPT
                     self._task_enhanced = True
                 else:
@@ -945,29 +916,6 @@ class ModelRunner:
         """处理 request_mode_change 工具调用"""
         from config.settings import settings as _cfg
 
-        if suggested_mode == "learn":
-            # 已经在学习模式？不重复进入，不清空录制
-            if _cfg.effective_execution_mode == "learn":
-                return "【学习模式】已在学习模式中，继续当前操作即可。完成后调 save_recipe 保存。"
-
-            try:
-                object.__setattr__(_cfg, "EXECUTION_MODE", "learn")
-            except Exception:
-                pass
-            # 通知上下文控制器
-            try:
-                from modules.thinking.context.controller import get_context_controller
-                get_context_controller().set_mode("learn")
-            except Exception:
-                pass
-            # 清空上次学习的录制缓冲区
-            try:
-                from infra.tool_manager.tools.toolbuilder import clear_learn_recorded_actions
-                clear_learn_recorded_actions()
-            except Exception:
-                pass
-            return "【学习模式】已进入学习模式。按流程操作：打开应用 → 识别界面 → 执行操作 → 每步验证 → 全部成功后 save_recipe 保存。完成后必须用 respond_to_user 回复用户。"
-
         # 其他模式（plan/edit/yolo/control）需要用户确认
         result = await self._wait_for_user_response("mode_change_request", {
             "action": "mode_change_request",
@@ -1140,7 +1088,6 @@ class ModelRunner:
                 mode=_cfg.effective_execution_mode,
                 role=getattr(self.identity, "role", ""),
                 skill_tool_rules=getattr(self, '_active_skill_tool_rules', None),
-                companion_mode=_cfg.COMPANION_MODE,
             )
         except Exception as e:
             logger.warning(f"[权限] 控制器失败，走降级路径: {e}")
@@ -1151,14 +1098,7 @@ class ModelRunner:
         tier = getattr(self.identity, "tier", "")
         role = getattr(self.identity, "role", "")
 
-        # 陪伴模式：大模型强制只读工具
-        from config.settings import settings as _cfg
-        if _cfg.COMPANION_MODE and tier == "large":
-            from modules.thinking.identity import DEFAULT_TOOL_WHITELISTS
-            raw_whitelist = list(DEFAULT_TOOL_WHITELISTS.get("companion", ["read_file", "search_files"]))
-            logger.info(f"[陪伴模式] 工具白名单限制为只读: {raw_whitelist}")
-        else:
-            raw_whitelist = list(getattr(self.identity, "tool_whitelist", []) or [])
+        raw_whitelist = list(getattr(self.identity, "tool_whitelist", []) or [])
 
         # 步骤 1：展开 tag: 前缀
         expanded = []
@@ -1250,174 +1190,28 @@ class ModelRunner:
         return prioritized
 
     def _build_system_prompt_for_mode(self) -> str:
-        """根据运行模式构建系统提示词 — 技能 > 陪伴模式 > 默认身份"""
-        # 技能优先：技能覆盖身份
-        if self._active_skill and self.tier == "large":
-            skill = self._active_skill
-            expertise_str = "、".join(skill.expertise) if skill.expertise else ""
-            weaknesses_str = "、".join(skill.weaknesses) if skill.weaknesses else ""
-            parts = [
-                f"【身份】你是 {skill.name}（{skill.role}）",
-                f"【人格】{skill.personality}",
-                f"【风格】{skill.speaking_style}",
-            ]
-            if expertise_str:
-                parts.append(f"【擅长】{expertise_str}")
-            if weaknesses_str:
-                parts.append(f"【不擅长】{weaknesses_str}")
-            parts.append("【约束】严格遵守你的角色边界和技能规章，不要越权操作。")
-            return "\n".join(parts)
-
+        """根据运行模式构建系统提示词 — 委托给 ContextController"""
         from config.settings import settings as _cfg
-        if _cfg.COMPANION_MODE and self.tier == "large":
-            try:
-                from modules.thinking.identity import ModelIdentity
-                companion_identity = ModelIdentity.from_template("large_companion")
-                return companion_identity.build_system_prompt()
-            except Exception as e:
-                logger.debug(f"[ModelRunner] 陪伴模式身份加载失败，使用默认身份: {e}")
-
-        base_prompt = self.identity.build_system_prompt()
-
-        # 主管注入专家能力列表（动态加载，主管才知道该委托给谁）
-        if self.tier == "supervisor":
-            try:
-                from modules.thinking.identity import build_expert_capability_list
-                expert_table = build_expert_capability_list()
-                base_prompt += (
-                    "\n\n【可委托的专家】\n"
-                    "你可以通过 delegate_task(role=..., task=...) 委托以下专家：\n"
-                    f"{expert_table}\n\n"
-                    "选择专家时，根据任务类型匹配最合适的 role。"
-                    "需要联网搜索信息时，使用 data_analyzer（有 web_search 工具）。"
-                )
-            except Exception as e:
-                logger.debug(f"[ModelRunner] 专家能力列表注入失败 (非致命): {e}")
-
-        # 大模型注入主管能力列表（知道该委托给哪个主管）
-        if self.tier == "large":
-            try:
-                from modules.thinking.identity import build_supervisor_capability_list
-                supervisor_table = build_supervisor_capability_list()
-                base_prompt += (
-                    "\n\n【可委托的主管】\n"
-                    "你可以通过 delegate_task(role=..., task=...) 委托以下主管：\n"
-                    f"{supervisor_table}\n\n"
-                    "根据任务类型选择最合适的主管。"
-                )
-            except Exception as e:
-                logger.debug(f"[ModelRunner] 主管能力列表注入失败 (非致命): {e}")
-
-        # ── plan 模式：注入只读约束 ──
         try:
-            from config.settings import settings as _cfg
-            if _cfg.effective_execution_mode == "plan":
-                base_prompt += (
-                    "\n\n【执行模式: PLAN（只读）】\n"
-                    "当前为只读模式。你只能执行查询、分析、搜索类任务。\n"
-                    "禁止：写入/修改/删除文件、执行命令、安装依赖、部署、提交代码。\n"
-                    "不要委派任何涉及写操作的任务给主管或专家。\n"
-                    "如果用户请求需要写操作，告知用户当前为 plan 模式，建议切换到 edit 或 yolo 模式。"
-                )
-            elif _cfg.effective_execution_mode == "learn":
-                base_prompt += (
-                    "\n\n╔══════════════════════════════════════════╗\n"
-                    "║        学习模式 - 自我进化               ║\n"
-                    "╚══════════════════════════════════════════╝\n\n"
-                    "你正在录制一个 UI 操作流程。系统会自动记录你的每一步操作。\n"
-                    "你的目标：完成操作，保存为可复用工具，然后退出学习模式回复用户。\n\n"
-                    "━━━━━━━━━━━━ 执行流程 ━━━━━━━━━━━━\n"
-                    "1. 打开应用\n"
-                    "   exec_command(\"open -a '应用名'\") — 打开目标应用\n"
-                    "   验证: understand_screen() — 确认应用已打开\n\n"
-                    "2. 识别界面\n"
-                    "   detect_ui_elements() — 获取界面元素\n\n"
-                    "3. 执行操作（系统自动录制每一步）\n"
-                    "   keyboard_type(text='真实文本') — 输入（中文自动剪贴板）\n"
-                    "   keyboard_press(key='enter')     — 按单个键\n"
-                    "   keyboard_hotkey(keys=[...])     — 组合键，参数是 keys 列表\n"
-                    "   mouse_click(x, y)               — 点击\n\n"
-                    "4. 【必须】验证操作结果\n"
-                    "   每步操作后调用 understand_screen() 检查：\n"
-                    "   - 页面是否跳转/变化？\n"
-                    "   - 预期元素是否出现？\n"
-                    "   - 操作是否真的生效了？\n"
-                    "   验证失败 → 重试该步骤，不要跳过\n"
-                    "   验证通过 → 继续下一步\n\n"
-                    "5. 保存成果\n"
-                    "   全部步骤验证通过后调用 save_recipe 保存：\n"
-                    "   save_recipe(name='工具名', app_name='应用名', description='描述')\n\n"
-                    "   可选传参（让工具可接收不同输入）：\n"
-                    "   save_recipe(..., params_schema={'type':'object','properties':{'query':{'type':'string'}}})\n"
-                    "   → 步骤中的固定文本自动替换为 {{query}}\n\n"
-                    "6. 【必须】验证保存结果\n"
-                    "   save_recipe 后必须验证工具已正确保存：\n"
-                    "   - list_my_tools() — 确认工具在列表中\n"
-                    "   - view_recipe('工具名') — 确认步骤和参数正确\n"
-                    "   - 如有参数（params_schema），用 edit_recipe 调整步骤中的 {{变量}}\n"
-                    "   - 验证不通过 → 删除工具重新学习\n\n"
-                    "━━━━━━━━━━━━ 完成后 ━━━━━━━━━━━━\n"
-                    "save_recipe 成功后：\n"
-                    "  - 工具已注册到系统，可直接调用\n"
-                    "  - 调用 list_my_tools() 查看已保存的工具\n"
-                    "  - 调用 respond_to_user() 回复用户，告知工具已可用\n"
-                    "  - **不要再次进入学习模式**，学习已完成\n\n"
-                    "━━━━━━━━━━━━ 规则 ━━━━━━━━━━━━\n"
-                    "- 每步操作后必须验证，验证通过才能继续\n"
-                    "- 验证失败立即重试，不跳过\n"
-                    "- 全部验证通过后才能调 save_recipe\n"
-                    "- 不能委托给主管或专家，所有操作自己完成\n"
-                    "- 保存成功后用 respond_to_user 回复用户"
-                )
-        except Exception:
-            pass
-
-        # ── 非 learn 模式下告诉模型可以切换学习 —─
-        try:
-            from config.settings import settings as _cfg
-            if _cfg.effective_execution_mode != "learn":
-                base_prompt += (
-                    "\n\n【学习新技能】\n"
-                    "当用户说「学习怎么使用XXX」时：\n"
-                    "1. 调 request_mode_change(suggested_mode='learn')\n"
-                    "2. 进入学习模式后按流程操作（打开→识别→操作→验证→保存）\n"
-                    "3. save_recipe 成功后自动退出，此时用 respond_to_user 告知用户工具已可用\n"
-                    "4. 不要学完再进学习模式"
-                )
-        except Exception:
-            pass
-
-        # ── 安全最高指示规则（所有模式、所有 tier）──
-        base_prompt += (
-            "\n\n【安全规则 — 强制执行】\n"
-            "Blackboard 中可能出现带 must_follow=True 标记的条目（来自安全监察专家）。\n"
-            "当你看到此类条目时：\n"
-            "1. 立即停止当前任务\n"
-            "2. 阅读并遵循指示内容\n"
-            "3. 如指示要求停止写操作，不得再调用任何写工具或委派写任务\n"
-            "4. 违反最高指示将导致会话被安全系统终止\n"
-            "用户目标是最高优先级，安全监察专家负责确保团队不偏离用户目标。"
-        )
-
-        # ── 感知工具使用规则 ──
-        base_prompt += (
-            "\n\n【感知工具 — 必须实际调用】\n"
-            "你拥有以下感知工具，当用户要求你看、查看、观察屏幕/桌面/当前界面时，"
-            "你必须直接调用工具，而不是描述工具的功能或猜测屏幕内容。\n\n"
-            "• understand_screen(focus=...) — 截取当前屏幕并智能理解\n"
-            "  - 无参数：截取全屏并总结\n"
-            "  - focus=关注错误信息：重点关注错误提示\n"
-            "  - focus=关注表格数据：重点关注数据内容\n\n"
-            "• list_learned_tools(app_name) — 列出已学的自动化工具\n\n"
-            "规则：\n"
-            "1. 用户说「看看」「看一下」「看看屏幕」→ 立即调用 understand_screen()\n"
-            "2. 不要在调用前描述工具能做什么，直接调用\n"
-            "3. 调用结果会告诉你屏幕内容，基于结果回答用户\n"
-            "4. 如果工具返回错误，告知用户具体错误原因"
-        )
-
-        return base_prompt
-
+            from modules.thinking.context.controller import get_context_controller
+            ctrl = get_context_controller()
+            mode = _cfg.effective_execution_mode
+            logger.info(f"[ModelRunner] 构建系统提示词: mode={mode}, tier={self.tier}")
+            result = ctrl.build_system_prompt(
+                mode=mode,
+                tier=self.tier,
+                identity=self.identity,
+                active_skill=self._active_skill,
+                delegation_available=_cfg.is_delegation_available,
+                blackboard=self.blackboard,
+                tool_count=len(self._visible_tool_whitelist()),
+            )
+            # 记录提示词前 100 字符确认身份
+            logger.info(f"[ModelRunner] 系统提示词前100字: {result[:100]}")
+            return result
+        except Exception as e:
+            logger.warning(f"[ModelRunner] ContextController 构建系统提示词失败，回退默认身份: {e}")
+            return self.identity.build_system_prompt()
     def _build_time_context(self) -> str:
         """构建时间感知上下文 — 当前时间 + 距上次用户对话时长 + 用户身份"""
         from datetime import datetime
@@ -1474,12 +1268,6 @@ class ModelRunner:
 
         # 工具多的角色 → 详细约束
         from config.settings import settings as _cfg
-
-        if _cfg.COMPANION_MODE and self.tier == "large":
-            return (
-                '你可以用搜索和文件工具查资料，但不要主动提"工具"、"系统"这些词。\n'
-                "对话中自然地使用你的能力就好，就像一个朋友顺手帮你查一下。"
-            )
 
         delegation_rules = ""
         if _cfg.is_delegation_available:
@@ -1567,6 +1355,7 @@ class ModelRunner:
             get_tool_permission_controller,
         )
         perm_ctrl = get_tool_permission_controller()
+        from config.settings import settings as _settings
         control_tool_names = perm_ctrl.get_control_tools(
             tier=self.tier,
             mode=_settings.effective_execution_mode,
@@ -1575,7 +1364,7 @@ class ModelRunner:
         tools_with_control = list(tools) + control_tool_names
 
         messages = [
-            ChatMessage(role="system", content=f"{system_prompt}\n\n{self._build_tool_guard_prompt()}"),
+            ChatMessage(role="system", content=system_prompt),
             ChatMessage(role="user", content=user_prompt),
         ]
 
@@ -2059,16 +1848,6 @@ class ModelRunner:
                                         mcp_result = mcp.execute(request)
                                         if mcp_result.success:
                                             result = str(mcp_result.result) if mcp_result.result is not None else "(无返回值)"
-                                            # 学习模式：自动录制 UI 操作
-                                            try:
-                                                from config.settings import settings as _cfg
-                                                if _cfg.effective_execution_mode == "learn":
-                                                    from infra.tool_manager.tools.toolbuilder import record_learn_action
-                                                    from modules.toolbuilder.recipe_engine import _RECIPE_ALLOWED_ACTIONS
-                                                    if tc.name in _RECIPE_ALLOWED_ACTIONS:
-                                                        record_learn_action(tc.name, args)
-                                            except Exception:
-                                                pass
                                         else:
                                             result = f"[错误: {mcp_result.error}]"
                                             if self.tier == "expert":
@@ -2236,7 +2015,7 @@ class ModelRunner:
         """构建本轮 prompt"""
         from config.settings import settings as _cfg
 
-        # 技能优先：覆盖陪伴模式和默认身份
+        # 技能优先：覆盖默认身份
         identity = self.identity
         if self._active_skill and self.tier == "large":
             skill = self._active_skill
@@ -2250,14 +2029,6 @@ class ModelRunner:
             skill_block = skill.to_context_block()
             if skill_block:
                 parts.append(skill_block)
-        elif _cfg.COMPANION_MODE and self.tier == "large":
-            try:
-                from modules.thinking.identity import ModelIdentity
-                identity = ModelIdentity.from_template("large_companion")
-            except Exception as e:
-                logger.debug(f"[ModelRunner] 陪伴模式身份加载失败 (非致命): {e}")
-            parts = []
-            parts.append(self._task_description)
         else:
             parts = []
             parts.append(
@@ -2414,25 +2185,7 @@ class ModelRunnerManager:
                 turn_context=self.turn_context,
             )
 
-            # —— per-model 记忆初始化 ——
-            try:
-                from modules.thinking.experts.memory_manager_expert import MemoryManagerExpert
-                with self._lock:
-                    runners_snapshot = dict(self._runners)
-                for _rid, active_runner in runners_snapshot.items():
-                    if getattr(active_runner, 'identity_key', '') == 'expert_memory_manager':
-                        expert = getattr(active_runner, '_expert_instance', None)
-                        if isinstance(expert, MemoryManagerExpert):
-                            mm = expert.get_or_create_model_memory(model_id, tier)
-                            logger.info(
-                                f"[ModelRunnerManager] {model_id} 记忆已初始化 "
-                                f"(tier={tier}, modules={mm.config})"
-                            )
-                            break
-            except Exception as e:
-                logger.debug(
-                    f"[ModelRunnerManager] {model_id} per-model 记忆初始化跳过: {e}"
-                )
+            # —— per-model 记忆初始化（已移除，旧记忆系统已废弃） ——
 
             # 注册并启动
             with self._lock:
@@ -2524,6 +2277,7 @@ class ModelRunnerManager:
                 "task": r._task_description[:100],
                 "context_tokens": r.context_tokens,
                 "context_window_size": r.context_window_size,
+                "active_skill": r._active_skill.name if r._active_skill else "",
             }
             for r in self._runners.values()
         ]

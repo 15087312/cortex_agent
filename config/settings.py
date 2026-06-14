@@ -23,7 +23,7 @@ class Settings(BaseSettings):
         "PROACTIVE_OUTREACH_ENABLED", "PROACTIVE_OUTREACH_COOLDOWN_MINUTES",
         "PROACTIVE_OUTREACH_IDLE_MINUTES",
         "MEMORY_TTL_SHORT", "MEMORY_TTL_LONG",
-        "EXECUTION_MODE", "COMPANION_MODE",
+        "EXECUTION_MODE",
     }
 
     # 用户身份
@@ -73,7 +73,7 @@ class Settings(BaseSettings):
     QWEN_VL_MLX_MODEL_NAME: str = "mlx-community/Qwen2-VL-7B-Instruct-4bit"  # Apple Silicon MLX 路径
 
     # Embedding/RAG 配置
-    EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"
+    EMBEDDING_MODEL: str = "paraphrase-multilingual-MiniLM-L12-v2"
     EMBEDDING_DEVICE: str = "cpu"
     EMBEDDING_CACHE_FOLDER: str = "data/memory/embeddings/models"
     EMBEDDING_LOCAL_FILES_ONLY: bool = True
@@ -101,21 +101,16 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
     MAX_WORKERS: int = 10
 
-    # 运行模式配置
-    # COMPANION_MODE: True=陪伴模式（情绪+价值观全开，工具只读，不开委托）
-    #                  False=工作模式（完整委托链，情绪/价值观关闭）
-    COMPANION_MODE: bool = False
-
-    # 安全审查模式: "llm"=安全专家LLM审批, "user"=用户手动审批, "auto"=LLM可用时用LLM否则拒绝
-    SECURITY_REVIEW_MODE: str = "auto"
-
-    # 执行模式（仅工作模式有效，陪伴模式强制 plan）
+    # 执行模式 — 控制安全门控行为
     # "plan":    只读 — 禁止所有写操作
     # "edit":    确认 — 写操作前需用户确认（LLM + 用户）
     # "yolo":    宽松 — 仅安全专家检测，跳过用户确认
     # "control": 用户完全控制 — MEDIUM+工具需用户单独确认，无LLM参与
-    # "learn":   自我进化 — 模型自编排 UI 学习流程，只能通过工具切换
+    # 注意：身份/工具/人格/风格等由激活的 Skill 控制，执行模式仅决定安全门控策略
     EXECUTION_MODE: str = "edit"
+
+    # 安全审查模式: "llm"=安全专家LLM审批, "user"=用户手动审批, "auto"=LLM可用时用LLM否则拒绝
+    SECURITY_REVIEW_MODE: str = "auto"
 
     # 上下文窗口配置
     # CONTEXT_WINDOW_SIZE: 大模型上下文窗口大小（token 数）
@@ -138,9 +133,7 @@ class Settings(BaseSettings):
 
     @property
     def effective_execution_mode(self) -> str:
-        """实际执行模式（陪伴模式强制 plan）"""
-        if self.COMPANION_MODE:
-            return "plan"
+        """实际执行模式"""
         return self.EXECUTION_MODE
 
     @property
@@ -152,23 +145,8 @@ class Settings(BaseSettings):
 
     @property
     def is_delegation_available(self) -> bool:
-        """委托是否可用（陪伴模式下强制关闭）"""
-        return not self.COMPANION_MODE
-
-    @property
-    def effective_emotion_enabled(self) -> bool:
-        """情绪是否启用（陪伴模式下开启）"""
-        return self.COMPANION_MODE
-
-    @property
-    def effective_values_enabled(self) -> bool:
-        """价值观是否启用（陪伴模式下开启）"""
-        return self.COMPANION_MODE
-
-    @property
-    def is_expert_pipeline_enabled(self) -> bool:
-        """专家流水线是否需要运行"""
-        return self.COMPANION_MODE
+        """委托是否可用（始终可用，由 Skill ToolRules 控制可见性）"""
+        return True
 
     @property
     def effective_vision_api_url(self) -> str:
@@ -212,9 +190,9 @@ class Settings(BaseSettings):
     @field_validator("EXECUTION_MODE")
     @classmethod
     def validate_execution_mode(cls, v: str) -> str:
-        allowed = {"plan", "edit", "yolo", "control", "learn"}
+        allowed = {"plan", "edit", "yolo", "control"}
         if v.lower() not in allowed:
-            raise ValueError(f"EXECUTION_MODE must be one of plan/edit/yolo/control/learn, got '{v}'")
+            raise ValueError(f"EXECUTION_MODE must be one of plan/edit/yolo/control, got '{v}'")
         return v.lower()
 
     def validate_production(self) -> None:

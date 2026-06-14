@@ -70,8 +70,8 @@ def _get_blackbox():
     if _blackbox is not None:
         return _blackbox
     try:
-        from modules.memory.core.blackbox import BlackboxMemory
-        _blackbox = BlackboxMemory()
+        # 旧版 BlackboxMemory 已废弃
+        _blackbox = None
     except Exception:
         _blackbox = None
     return _blackbox
@@ -195,85 +195,6 @@ class ToolManager:
             self.logger.debug(f"黑盒日志记录失败 (非致命): {e}")
 
         return event
-
-    def _check_tool_permission(self, tool_name: str, caller_role: str,
-                               caller_model_id: str = "") -> Dict[str, Any]:
-        """检查工具调用权限 — 基于 ModelPermissions 的角色权限
-
-        返回: {"allowed": bool, "reason": str}
-        """
-        try:
-            tool_info = ToolRegistry.get_tool(tool_name)
-        except Exception as e:
-            self.logger.warning(f"ToolRegistry 查询异常，拒绝执行 (fail-closed): {e}")
-            return {"allowed": False, "reason": f"工具注册表异常: {tool_name}"}
-
-        # 工具类别检查 — 优先使用 ModelPermissions，回退到硬编码规则
-        if tool_info:
-            permissions = self._get_caller_permissions(caller_model_id, caller_role)
-            if permissions is not None:
-                # 使用 ModelPermissions 的 allowed_tool_categories
-                if not permissions.can_use_tool_category(tool_info.category):
-                    return {
-                        "allowed": False,
-                        "reason": (
-                            f"当前模型无权调用 {tool_info.category} 类别工具: {tool_name}。"
-                            f"允许的类别: {permissions.allowed_tool_categories}"
-                        )
-                    }
-            else:
-                # 回退: 硬编码规则
-                if caller_role.startswith("expert") and tool_info.category == "admin":
-                    return {
-                        "allowed": False,
-                        "reason": f"专家模型无权调用 admin 类别工具: {tool_name}"
-                    }
-
-        return {"allowed": True, "reason": ""}
-
-    @staticmethod
-    def _get_caller_permissions(caller_model_id: str, caller_role: str):
-        """从 ModelIdentity 获取调用者的 ModelPermissions
-
-        Args:
-            caller_model_id: 调用者的 model_id，用于精确查找
-            caller_role: 调用者角色，用于回退查找
-
-        Returns:
-            ModelPermissions 或 None（无法获取时返回 None，调用方回退到硬编码规则）
-        """
-        try:
-            from modules.thinking.model_factory import get_model_factory
-            from modules.thinking.identity import get_permissions
-
-            factory = get_model_factory()
-
-            # 优先通过 model_id 精确查找
-            if caller_model_id:
-                instance = factory.get(caller_model_id)
-                if instance and hasattr(instance.identity, 'permissions'):
-                    return instance.identity.permissions
-
-            # 回退: 通过角色查找同 tier 的任意实例获取其 permissions
-            tier = caller_role
-            if caller_role.startswith("expert"):
-                tier = "expert"
-            elif caller_role.startswith("supervisor"):
-                tier = "supervisor"
-
-            instances = factory.list_by_tier(tier)
-            if instances:
-                identity = instances[0].identity
-                if hasattr(identity, 'permissions'):
-                    return identity.permissions
-
-            # 最后回退: 通过 role 构造 template_key 查找
-            if caller_role and caller_role != tier:
-                template_key = f"{tier}_{caller_role}" if "_" not in caller_role else caller_role
-                return get_permissions(template_key)
-        except Exception as e:
-            self.logger.debug(f"权限查询异常，回退默认: {e}")
-        return None
 
     def _get_func(self, tool_name: str):
         """获取工具函数 (供外部使用，如 ToolExecutor)"""

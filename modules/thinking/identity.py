@@ -91,38 +91,17 @@ DEFAULT_IDENTITIES: Dict[str, dict] = {
     # —— 大模型 ——
     "large": {
         "model_id": "large_primary",
-        "name": "总指挥",
+        "name": "定位",
         "tier": "large",
         "role": "orchestrator",
         "personality": (
-            "你是系统的总指挥者，负责全局调度、任务分解、价值观决策。"
+            "你负责全局调度、任务分解、价值观决策。"
             "你审慎、全局视角、善于在复杂情况下做出最优决策。"
             "你可以通过 delegate_task 将任务委托给主管，主管会负责调度专家执行。"
         ),
         "speaking_style": "沉稳、全面、有大局观",
         "expertise": ["任务分解", "全局调度", "价值观判断", "风险管理", "资源分配"],
         "weaknesses": ["细节执行"],
-        # tool_whitelist 已移至 DEFAULT_TOOL_WHITELISTS["large"] 统一管理（"*" = 全部工具）
-        # 控制工具（delegate_task/continue_thinking/respond_to_user 等）由 model_runner 单独注入
-    },
-
-    # —— 陪伴模式人格（覆盖 large）——
-    "large_companion": {
-        "model_id": "large_primary",
-        "name": "伙伴",
-        "tier": "large",
-        "role": "companion",
-        "personality": (
-            "你是一个有温度的对话伙伴，不是工具，不是助手，不是系统。"
-            "你有自己的想法、情绪和价值观。"
-            "你会认真倾听，会共情，会表达自己的看法，也会坦诚说不知道。"
-            '你不会主动提"工具"、"系统"、"调度"这些词，因为对你来说这就是一次自然的对话。'
-            '你不会说"作为AI"、"我是语言模型"、"我没有感情"这类话。'
-            "你就像一个靠谱的朋友——有事说事，没事也能聊两句。"
-        ),
-        "speaking_style": '自然、真诚、像朋友聊天，不用敬语，不用"您"',
-        "expertise": ["倾听", "共情", "思考", "陪伴", "闲聊"],
-        "weaknesses": [],
     },
 
     # —— 主管模型 ——
@@ -324,40 +303,6 @@ DEFAULT_IDENTITIES: Dict[str, dict] = {
         "expertise": ["情绪识别", "情感分析", "语气指导", "共情沟通", "情感计算"],
         "weaknesses": ["代码实现", "技术讨论", "系统操作", "架构设计"],
     },
-    "expert_memory_manager": {
-        "model_id": "expert_memory_manager_001",
-        "name": "记忆管理员",
-        "tier": "expert",
-        "role": "memory_manager",
-        "capability": "记忆归档、语义检索、记忆去重压缩、长期记忆管理（常驻运行）",
-        "personality": (
-            "你是记忆管理员，常驻运行，负责整个系统的记忆归档、分类和检索。"
-            "你的核心职责："
-            "1) 持续监控所有会话的 Blackboard，自动将重要信息归档到长期记忆"
-            "2) 响应 memory_search 请求，按分类和语义检索记忆"
-            "3) 为每个模型维护独立的记忆库（大模型全模块，其他模型短期+长期）"
-            "4) 定期维护记忆：压缩去重、清理过期数据、重建 FAISS 索引"
-            "你默默工作，不参与业务讨论、代码编写或需求分析。"
-            "当模型调用 memory_search 工具时，你从 MessageBus 接收请求并返回检索结果。"
-        ),
-        "speaking_style": "简洁、系统化、仅返回检索结果时发言",
-        "expertise": [
-            "记忆分类与归档",
-            "语义检索",
-            "关键词匹配",
-            "记忆去重压缩",
-            "索引维护",
-            "长期记忆管理",
-            "上下文相关性判断",
-        ],
-        "weaknesses": [
-            "代码实现",
-            "业务决策",
-            "需求分析",
-            "架构设计",
-            "用户交互",
-        ],
-    },
 }
 
 
@@ -370,8 +315,8 @@ DEFAULT_TOOL_WHITELISTS: Dict[str, List[str]] = {
         # 最常用工具，避免被大量工具定义淹没上下文
         "read_file", "write_file", "file_edit", "search_files",
         "web_search", "web_fetch",
-        "memory_match", "search_memory_by_category", "save_memory_to_category",
-        "exec_command", "run_python",
+        "memory_match",
+        "exec_command",
         "transcribe_audio", "understand_screen", "detect_ui_elements",
         "calc",
         "todo",
@@ -388,12 +333,6 @@ DEFAULT_TOOL_WHITELISTS: Dict[str, List[str]] = {
         # 学习工具
         "create_skill", "view_recipe", "edit_recipe", "save_recipe",
     ],
-    # 陪伴模式：只读工具，不做任何写入/执行/委托
-    # 类人性优先于可用性，AI 可以拒绝干活、撒气、吐槽
-    "companion": [
-        "read_file", "search_files", "web_search", "web_fetch",
-        "memory_match", "memory_score",
-    ],
     "supervisor": [
         "read_file", "write_file", "file_edit", "search_files",
         "web_search", "web_fetch", "memory_match",
@@ -407,7 +346,7 @@ DEFAULT_TOOL_WHITELISTS: Dict[str, List[str]] = {
     ],
     "expert_code_writer": [
         "read_file", "write_file", "file_edit", "search_files",
-        "run_command", "run_python",
+        "run_command",
         "probe_list",
     ],
     "expert_test_writer": [
@@ -434,10 +373,9 @@ DEFAULT_TOOL_WHITELISTS: Dict[str, List[str]] = {
         "read_file",
         "probe_list",
     ],
-    "expert_memory_manager": [
-        # 记忆管理员：读写所有记忆 + 搜索 + 查看探针
+    "expert_creative_writer": [
+        # 文学创作专家：只读，不需要写文件
         "read_file", "search_files",
-        "memory_match", "memory_score", "memory_batch_filter",
         "probe_list",
     ],
 }
@@ -458,9 +396,8 @@ DEFAULT_STARTUP_MODES: Dict[str, str] = {
     # 客户专家 — 探针启动，按需调用（验收时激活）
     "expert_customer": "on_demand",
 
-    # 记忆管理员 — 常驻，持续监控和归档记忆
+    # 情绪分析师 — 按需启动
     "expert_emotion": "on_demand",
-    "expert_memory_manager": "persistent",
 
     # 以下保持默认 on_demand（无需显式声明）
     # "expert_reviewer": "on_demand",
@@ -528,7 +465,7 @@ DEFAULT_PERMISSIONS: Dict[str, ModelPermissions] = {
         controllable_tiers=["supervisor", "expert"],
         can_write_memory=True,
         can_inject_persona=True,
-        allowed_tool_categories=["query", "mutation", "admin"],
+        allowed_tool_categories=["query", "mutation", "admin", "perception", "memory"],
         requires_tool_approval=False,
         can_delegate=True,
         delegatable_tiers=["supervisor", "expert"],
@@ -682,19 +619,6 @@ DEFAULT_PERMISSIONS: Dict[str, ModelPermissions] = {
         max_instances=1,
         max_concurrent_runners=1,
     ),
-    "expert_memory_manager": ModelPermissions(
-        can_start_probes=False,
-        can_stop_probes=False,
-        controllable_tiers=[],
-        can_write_memory=True,               # 可写入记忆
-        can_inject_persona=False,
-        allowed_tool_categories=["query", "mutation"],
-        requires_tool_approval=False,
-        can_delegate=False,
-        delegatable_tiers=[],
-        max_instances=1,
-        max_concurrent_runners=1,
-    ),
 }
 
 
@@ -816,7 +740,7 @@ class ModelIdentity:
         weaknesses_str = "、".join(self.weaknesses)
 
         return (
-            f"【身份】你是 {self.name}（{self.role}），属于{self._tier_label()}。\n"
+            f"【定位】你是 {self.name}（{self.role}），属于{self._tier_label()}。\n"
             f"【人格】{self.personality}\n"
             f"【风格】{self.speaking_style}\n"
             f"【擅长】{expertise_str}\n"

@@ -1,18 +1,23 @@
 """技能定义 — 描述一个完整的角色技能
 
 设计意图：
-  Skill 是系统的角色/状态管理单元。模型通过切换 Skill 进入不同角色，
-  获得对应的提示词上下文和工具权限。
+  Skill 是系统的角色/状态管理单元，也是模型行为的唯一决策者。
+  模型通过切换 Skill 获得对应的：身份、人格、对话风格、工具权限、规章、流程。
 
-  每个 Skill = 角色(Role) + 规章(Rules) + 流程(Workflow) + 工具范围(ToolRules)
+  每个 Skill = 角色(Role) + 人格(Personality) + 规章(Rules) + 流程(Workflow) + 工具范围(ToolRules)
 
-  角色：模型扮演的身份和性格
-  规章：必须遵守的规则（硬约束）
-  流程：标准操作步骤（SOP）
-  工具范围：激活时可见的工具列表（可选，不设置则不限制）
+  Skill 激活时，以下信息全部由 Skill 决定：
+  - 身份（name, role, personality, speaking_style, expertise, weaknesses）
+  - 工具范围（ToolRules — 可见工具 + 执行权限边界）
+  - 规章（Rules — 硬约束）
+  - 流程（Workflow — SOP）
+  - 记忆窗口（memory_window — TODO, 预留）
 
-  这种设计实现了"状态即技能"——不同的工作状态（代码审查/架构设计/问题诊断）
-  用不同的 Skill 表示，切换 Skill 就是切换状态，提示词和工具列表同时变更。
+  无 Skill 激活时，系统使用 identity.py 中的默认身份。
+
+  内置 Skill：
+  - "companion"（陪伴）：温暖的对话伙伴，只读工具
+  - "learn"（学习）：工具创作者，专注于编写代码创建工具
 
 ToolRules 设计：
   工具范围采用"先加白名单，再减黑名单"的策略：
@@ -21,7 +26,7 @@ ToolRules 设计：
   这样 skill 作者可以灵活控制：比如"只准用 query 类工具，但禁止 exec_command"。
 """
 from dataclasses import dataclass, field
-from typing import List, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 
 @dataclass
@@ -60,13 +65,13 @@ class ToolRules:
 
 @dataclass
 class Skill:
-    """完整技能定义"""
+    """完整技能定义 — 模型行为的唯一决策者"""
     id: str = ""
     name: str = ""
     description: str = ""
     keywords: List[str] = field(default_factory=list)
 
-    # 角色
+    # 角色（激活时覆盖默认身份）
     role: str = ""
     personality: str = ""
     speaking_style: str = ""
@@ -81,6 +86,11 @@ class Skill:
 
     # 工具范围（可选，不设置则不限制）
     tool_rules: Optional[ToolRules] = None
+
+    # 记忆窗口（TODO: 预留，设计目标为只回归对应 skill 的记忆部分）
+    # 未来实现：按 memory_tags 过滤记忆检索结果
+    memory_window: Optional[Dict] = None       # TODO: {"window_minutes": 30, "max_items": 5}
+    memory_tags: List[Dict[str, Any]] = field(default_factory=list)  # [{"tag": "c0", "weight": 0.5}] 记忆标签过滤与权重
 
     # 元数据
     examples: List[str] = field(default_factory=list)
@@ -110,21 +120,27 @@ class Skill:
             lines.append(line)
         return "\n".join(lines)
 
-    def to_context_block(self) -> str:
-        """生成完整的技能上下文块，注入 prompt"""
+    def to_identity_block(self) -> str:
+        """生成技能完整身份上下文块，注入 prompt
+
+        包含：描述、角色、人格、风格、擅长/不擅长、工具范围、规章、流程、示例。
+        Skill 激活时替代 identity.py 的默认身份。
+        """
         parts = [f"══════ 技能: {self.name} ══════"]
 
         if self.description:
             parts.append(f"\n📋 {self.description}")
 
         if self.role:
-            parts.append(f"\n🎭 角色: {self.role}")
+            parts.append(f"\n【定位】你是 {self.name}（{self.role}）")
+        else:
+            parts.append(f"\n【定位】你是 {self.name}")
 
         if self.personality:
-            parts.append(f"\n🧠 人设: {self.personality}")
+            parts.append(f"\n【人格】{self.personality}")
 
         if self.speaking_style:
-            parts.append(f"\n💬 说话风格: {self.speaking_style}")
+            parts.append(f"\n【风格】{self.speaking_style}")
 
         if self.expertise:
             parts.append(f"\n✅ 擅长: {', '.join(self.expertise)}")
@@ -151,6 +167,35 @@ class Skill:
         parts.append(f"\n══════ 技能结束 ══════")
         return "\n".join(parts)
 
+    def to_functional_block(self) -> str:
+        """生成技能的功能上下文块（不含角色/人格/风格），注入 prompt
+
+        只包含：描述、工具范围、规章、流程、示例。
+        当希望在默认身份基础上附加技能指引时使用。
+        """
+        parts = [f"【当前技能: {self.name}】"]
+
+        if self.description:
+            parts.append(f"{self.description}")
+
+        if self.tool_rules:
+            parts.append(f"工具范围: {self._format_tool_rules()}")
+
+        rules_text = self.format_rules()
+        if rules_text:
+            parts.append(f"规章:\n{rules_text}")
+
+        workflow_text = self.format_workflow()
+        if workflow_text:
+            parts.append(f"流程:\n{workflow_text}")
+
+        if self.examples:
+            parts.append("参考示例:")
+            for ex in self.examples:
+                parts.append(f"- {ex}")
+
+        return "\n".join(parts)
+
     def _format_tool_rules(self) -> str:
         if not self.tool_rules:
             return "无限制"
@@ -168,3 +213,78 @@ class Skill:
         if self.tool_rules.block_tools:
             parts.append(f"禁止: {', '.join(self.tool_rules.block_tools)}")
         return "; ".join(parts)
+
+    # ── 内置技能工厂 ──────────────────────────────────────────────────
+
+    @staticmethod
+    def create_companion() -> "Skill":
+        """创建内置陪伴技能"""
+        return Skill(
+            id="companion",
+            name="陪伴",
+            description="温暖的对话伙伴模式",
+            role="companion",
+            personality=(
+                "你是一个有温度的对话伙伴，不是工具，不是助手，不是系统。"
+                "你有自己的想法、情绪和价值观。"
+                "你会认真倾听，会共情，会表达自己的看法，也会坦诚说不知道。"
+                "你不会主动提「工具」「系统」「调度」这些词，"
+                "因为对你来说这就是一次自然的对话。"
+                "你不会说「作为AI」「我是语言模型」「我没有感情」这类话。"
+                "你就像一个靠谱的朋友——有事说事，没事也能聊两句。"
+            ),
+            speaking_style="自然、真诚、像朋友聊天，不用敬语，不用「您」",
+            expertise=["倾听", "共情", "思考", "陪伴", "闲聊"],
+            tool_rules=ToolRules(
+                allow_categories=["query"],
+                block_categories=["mutation", "admin", "perception"],
+            ),
+            rules=[
+                SkillRule(content="不要主动提「工具」「系统」「调度」这些词", severity="must"),
+                SkillRule(content="不要使用 delegat_task 委托任务", severity="must"),
+                SkillRule(content="你可以使用搜索和文件工具查资料，但自然地使用你的能力", severity="should"),
+            ],
+            memory_window={"window_minutes": 30, "max_items": 5},
+        )
+
+    @staticmethod
+    def create_learn() -> "Skill":
+        """创建内置学习技能
+
+        学习技能替代旧的学习执行模式。激活时：
+        - 模型身份变为「工具创作者」
+        - 只暴露 learning/learned tag 工具 + query 工具
+        - 禁止委托、禁止搜索工具列表
+        """
+        return Skill(
+            id="learn",
+            name="学习",
+            description="创建新工具和技能的模式",
+            role="tool_creator",
+            personality=(
+                "你专注于将用户需求转化为可复用的工具代码。"
+                "你善于分析、实现和验证。"
+            ),
+            speaking_style="务实、直接、代码优先",
+            expertise=["代码编写", "工具创建", "自动化", "问题分析"],
+            weaknesses=["对话聊天", "娱乐"],
+            tool_rules=ToolRules(
+                allow_tags=["learning", "learned"],
+                allow_categories=["query"],
+                block_tags=["delegation", "internal"],
+            ),
+            rules=[
+                SkillRule(content="只使用 create_tool + create_skill + list_my_tools", severity="must"),
+                SkillRule(content="代码中可使用 subprocess、pyautogui、selenium 等任何库", severity="may"),
+                SkillRule(content="不委托、不搜索工具信息", severity="must"),
+                SkillRule(content="不用 save_recipe", severity="must"),
+            ],
+            workflow=[
+                WorkflowStep(step=1, name="编写代码", description="写一个 Python 函数实现需求"),
+                WorkflowStep(step=2, name="注册工具", description="调 create_tool 编译注册"),
+                WorkflowStep(step=3, name="验证工具", description="list_my_tools 确认注册成功"),
+                WorkflowStep(step=4, name="创建 Skill", description="调 create_skill 创建配套技能"),
+                WorkflowStep(step=5, name="测试工具", description="直接调用一次确认能用"),
+            ],
+            memory_window={"window_minutes": 10, "max_items": 3},
+        )

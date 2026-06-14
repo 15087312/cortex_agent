@@ -301,16 +301,13 @@ class MultiModelOrchestrator:
             logger.debug(f"[上下文] 控制器失败 (非致命): {e}")
 
         # ---- 3. 专家引导 (情绪 + 价值观) ----
-        from config.settings import settings as _settings
-        if _settings.is_expert_pipeline_enabled:
-            expert_guidance = await self._run_expert_pipeline(
-                user_input, memory_context_text
-            )
-        else:
-            expert_guidance = {}
+        # 由激活的 Skill 决定是否运行，目前默认始终运行
+        expert_guidance = await self._run_expert_pipeline(
+            user_input, memory_context_text
+        )
 
-        # ---- 3.5 技能匹配 ----
-        skill_id = self._match_skill(user_input)
+        # ---- 3.5 技能匹配（已移除自动匹配，技能仅通过 request_skill 工具手动激活） ----
+        skill_id = ""
 
         # ---- 4. 多模型思考 (核心) ----
         thinking_result = await self._execute_multi_model_thinking(
@@ -855,32 +852,6 @@ class MultiModelOrchestrator:
 
     @staticmethod
     def _format_expert_guidance(guidance: Dict[str, Any]) -> str:
-        from config.settings import settings as _cfg
-
-        if _cfg.COMPANION_MODE:
-            # 陪伴模式：第一人称心理活动，无内部实现细节
-            parts = []
-            principle = guidance.get("principle", "")
-            reflection = guidance.get("reflection", "")
-            if principle and reflection:
-                parts.append(f"【准则】{principle}\n【反思】{reflection}")
-            risk_level = guidance.get("risk_level", "")
-            if risk_level and risk_level not in ("none", ""):
-                safety_guidance = guidance.get("safety_guidance", "")
-                if safety_guidance:
-                    parts.append(f"【注意】{safety_guidance}")
-            emotion = guidance.get("emotion", "")
-            if emotion and emotion != "neutral":
-                ai_mood = guidance.get("ai_mood", "")
-                emotion_guidance = guidance.get("emotion_guidance", "")
-                if ai_mood:
-                    parts.append(f"【心理状态】{ai_mood}")
-                if emotion_guidance:
-                    parts.append(emotion_guidance)
-            if not parts:
-                return ""
-            return "\n".join(parts)
-
         # 工作模式：保留完整信息
         parts = ["[专家系统引导]"]
         principle = guidance.get("principle", "")

@@ -369,45 +369,21 @@ def test_format_expert_guidance_with_emotion():
         "ai_mood": "有点不爽",
     }
 
-    # 工作模式：保留完整信息
+    # 格式验证
     with patch("config.settings.settings") as mock_s:
-        mock_s.COMPANION_MODE = False
         text = MultiModelOrchestrator._format_expert_guidance(guidance)
         assert "价值观准则: 共情, 谦逊" in text, f"缺少价值观: {text}"
         assert "行为指导:" in text
 
-    # 陪伴模式：第一人称，无内部细节
-    with patch("config.settings.settings") as mock_s:
-        mock_s.COMPANION_MODE = True
-        text = MultiModelOrchestrator._format_expert_guidance(guidance)
-        assert "【准则】" in text, f"陪伴模式应有准则: {text}"
-        assert "【心理状态】" in text
-
-    print(f"  ✅ format_expert_guidance: 工作/陪伴模式格式正确")
+    print(f"  ✅ format_expert_guidance: 格式正确")
 
 
 # ============================================================================
 # 12. 运行模式配置
 # ============================================================================
 def test_companion_mode_config():
-    """陪伴模式配置验证"""
-    from config.settings import Settings
-
-    # 工作模式
-    s = Settings(COMPANION_MODE=False)
-    assert s.is_delegation_available is True
-    assert s.effective_emotion_enabled is False
-    assert s.effective_values_enabled is False
-    assert s.is_expert_pipeline_enabled is False
-
-    # 陪伴模式：委托关闭，情绪/价值观开启
-    s2 = Settings(COMPANION_MODE=True)
-    assert s2.is_delegation_available is False
-    assert s2.effective_emotion_enabled is True
-    assert s2.effective_values_enabled is True
-    assert s2.is_expert_pipeline_enabled is True
-
-    print(f"  ✅ 运行模式配置: COMPANION_MODE 一个开关控制全部")
+    """陪伴模式配置验证 - COMPANION_MODE no longer exists"""
+    pass
 
 
 # ============================================================================
@@ -426,7 +402,6 @@ if __name__ == "__main__":
         ("EmotionExpert 降级关键词", test_emotion_expert_fallback),
         ("PreGenExpertPipeline 情绪字段", test_pre_gen_pipeline_includes_emotion),
         ("format_expert_guidance 情绪格式化", test_format_expert_guidance_with_emotion),
-        ("运行模式配置", test_companion_mode_config),
     ]
 
     print("=" * 60)

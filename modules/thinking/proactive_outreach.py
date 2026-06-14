@@ -168,7 +168,7 @@ class ProactiveOutreachHandler:
 
         # 2. 加载模型身份和风格
         from config.settings import settings
-        is_companion = settings.COMPANION_MODE
+        is_companion = False  # 陪伴模式改为 Skill 激活，不再使用 COMPANION_MODE 标志
 
         # 3. 构建 prompt（传入完整对话上下文）
         prompt = self._build_prompt(
@@ -243,7 +243,7 @@ class ProactiveOutreachHandler:
                 )
 
             # 获取最近对话消息（用户 + 助手），构造可读的对话上下文
-            messages = system.get_context(best_session_id)
+            messages = []  # 对话历史存根，不再使用记忆系统
             recent = [
                 m for m in messages
                 if m.get("role") in ("user", "assistant") and m.get("content", "").strip()
@@ -504,6 +504,119 @@ class ProactiveOutreachHandler:
                 pool.submit(_do).result(timeout=5)
         except Exception as e:
             logger.debug(f"[主动搭话] 写入会话历史失败: {e}")
+
+
+# ---------------------------------------------------------------------------
+# 全局单例
+# ---------------------------------------------------------------------------
+
+class PerceptionThinkTriggerPort:
+    """感知→思考触发器端口 — ThinkTriggerPort 协议实现
+
+    当 PerceptionThinkTrigger 收到高强度感知差异时，
+    通过此端口发起一次单次模型思考并将结果推送到 WebSocket。
+
+    与 ProactiveOutreachHandler 的区别：
+    - ProactiveOutreachHandler: 注册在 DifferenceDetector 上，处理空闲时间
+    - PerceptionThinkTriggerPort: 注册在 PerceptionThinkTrigger 上，处理感知差异
+    """
+
+    async def trigger_think(self, context: str, differences: list) -> dict:
+        """触发单次模型思考
+
+        Args:
+            context: 差异描述文本（供模型理解）
+            differences: 差异列表
+
+        Returns:
+            包含 duration_ms 的字典
+        """
+        start_ts = time.time()
+
+        if not context:
+            return {"duration_ms": 0}
+
+        logger.info(f"[感知→思考] 触发: {context[:80]}...")
+
+        # 1. 构建 prompt，分析环境变化
+        prompt = (
+            "你注意到环境发生了变化。\n\n"
+            f"{context}\n\n"
+            "【要求】\n"
+            "- 分析这个变化是否值得关注\n"
+            "- 如果值得关注，简短注明（1-2句）\n"
+            "- 如果不值得，忽略即可\n"
+            "- 不要编造细节，只说观察到的情况\n"
+            "现在："
+        )
+
+        # 2. 调用大模型
+        response_text = await self._call_large_model(prompt)
+
+        if not response_text:
+            logger.debug("[感知→思考] 模型返回空，跳过推送")
+            duration = (time.time() - start_ts) * 1000
+            return {"duration_ms": duration}
+
+        # 3. 推送到活跃 WebSocket session
+        self._push_to_websocket(response_text)
+
+        duration = (time.time() - start_ts) * 1000
+        logger.info(f"[感知→思考] 完成: {duration:.0f}ms")
+        return {"duration_ms": duration}
+
+    async def _call_large_model(self, prompt: str) -> str:
+        """单次大模型调用"""
+        try:
+            from infra.model.large_model_client import LargeModelClient
+            from config.settings import settings
+
+            client = LargeModelClient(
+                api_key=settings.LARGE_MODEL_API_KEY,
+                api_url=settings.LARGE_MODEL_API_URL,
+                timeout=15,
+            )
+            client.max_tokens = 150
+            client.temperature = 0.5
+
+            result = await client.generate(prompt, max_retries=1)
+            try:
+                await client.close()
+            except Exception:
+                pass
+            return result if isinstance(result, str) else str(result)
+        except Exception as e:
+            logger.debug(f"[感知→思考] 模型调用失败: {e}")
+            return ""
+
+    def _push_to_websocket(self, content: str) -> None:
+        """通过 WebSocket connection_manager 推送消息"""
+        try:
+            from modules.thinking.api_stream import (
+                connection_manager,
+                _build_event,
+            )
+
+            # 找活跃的 session
+            session_ids = list(connection_manager.active_connections.keys())
+            if not session_ids:
+                logger.debug("[感知→思考] 无活跃 WebSocket 连接，跳过推送")
+                return
+
+            for sid in session_ids[:1]:  # 只推第一个活跃 session
+                envelope = _build_event(
+                    session_id=sid,
+                    msg_type="message",
+                    event="difference_detected",
+                    content=content,
+                    role="main",
+                    data={
+                        "source": "perception_think_trigger",
+                    },
+                )
+                connection_manager.send_json_from_thread(sid, envelope)
+        except Exception as e:
+            logger.debug(f"[感知→思考] WebSocket 推送失败: {e}")
 
 
 # ---------------------------------------------------------------------------

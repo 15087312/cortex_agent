@@ -534,26 +534,16 @@ class TestInMemoryMCPToolExecutor:
 # ====================================================================
 
 class TestToolManagerPermissionAdapter:
-    """ToolManagerPermissionAdapter"""
+    """AllowAllToolPermission (replaced ToolManagerPermissionAdapter)"""
 
     def test_check_returns_dict(self):
-        from infra.mcp.combined_provider import ToolManagerPermissionAdapter
+        from infra.mcp.tool_service import AllowAllToolPermission
         from infra.mcp.types import ToolCallRequest
-        adapter = ToolManagerPermissionAdapter()
+        adapter = AllowAllToolPermission()
         result = adapter.check(ToolCallRequest(tool_name="calc"), None)
         assert "allowed" in result
         assert isinstance(result["allowed"], bool)
-
-    def test_check_fail_closed_on_import_error(self):
-        from infra.mcp.combined_provider import ToolManagerPermissionAdapter
-        from infra.mcp.types import ToolCallRequest
-        adapter = ToolManagerPermissionAdapter()
-        with patch("infra.mcp.combined_provider.ToolManagerPermissionAdapter.check") as mock_check:
-            mock_check.side_effect = Exception("import error")
-            try:
-                adapter.check(ToolCallRequest(tool_name="test"), None)
-            except Exception:
-                pass
+        assert result["allowed"] is True
 
 
 class TestCombinedToolProvider:

@@ -28,8 +28,6 @@ from modules.difference_detector.intensity import IntensityAssigner
 from modules.difference_detector.repository import DifferenceRepository
 from modules.difference_detector.sources.base import DifferenceSourceRegistry
 from modules.difference_detector.sources.time_source import TimeDifferenceSource
-from modules.difference_detector.sources.internal_source import InternalStateDifferenceSource
-from modules.difference_detector.sources.behavioral_source import BehavioralDifferenceSource
 from modules.difference_detector.sources.expectation_source import ExpectationDifferenceSource
 from utils.logger import setup_logger
 
@@ -62,8 +60,6 @@ class DifferenceDetector:
     def _register_default_sources(self) -> None:
         """注册默认差异源"""
         self.registry.register(TimeDifferenceSource())
-        self.registry.register(InternalStateDifferenceSource())
-        self.registry.register(BehavioralDifferenceSource())
         self.registry.register(ExpectationDifferenceSource())
         logger.info(f"已注册 {len(self.registry.registered_types)} 个差异源: {self.registry.registered_types}")
 

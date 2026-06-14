@@ -27,11 +27,16 @@ from typing import List, Dict, Tuple, Optional, Any
 from dataclasses import dataclass, field
 from datetime import datetime
 from utils.logger import setup_logger
-from modules.memory.utils.importance_scorer import ImportanceScorer
 from modules.perception.interface import PerceptionPort, get_perception_port
 from config.attention_config import get_attention_config
 
 logger = setup_logger("attention_core")
+
+# 延迟导入重要性评分器（旧版 memory 存根兼容）
+try:
+    from modules.memory.utils.importance_scorer import ImportanceScorer
+except ImportError:
+    ImportanceScorer = None
 
 try:
     from sklearn.feature_extraction.text import TfidfVectorizer
@@ -65,7 +70,10 @@ class AttentionCore:
         self._last_focus = ""
         self._relevance_threshold = 0.5
         self._cfg = get_attention_config()
-        self._importance_scorer = ImportanceScorer()
+        try:
+            self._importance_scorer = ImportanceScorer() if ImportanceScorer else None
+        except Exception:
+            self._importance_scorer = None
 
     def analyze(
         self,
@@ -117,7 +125,12 @@ class AttentionCore:
             "emotion_intensity": 0.8 if any(k in text for k in urgent_keywords) else 0.3,
         }
 
-        score = ImportanceScorer.score_rule_based(text, score_context)
+        score = 0.5
+        try:
+            if ImportanceScorer is not None:
+                score = ImportanceScorer.score_rule_based(text, score_context)
+        except Exception:
+            pass
         reasons: List[str] = []
         hit_urgent = [k for k in urgent_keywords if k in text]
         hit_task = [k for k in task_keywords if k in text]

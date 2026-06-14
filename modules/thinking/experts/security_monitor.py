@@ -370,7 +370,7 @@ class SecurityMonitor(RuntimeExpert):
         write_tool_patterns = [
             (r'write_file|file_edit|append_file', "文件写入"),
             (r'delete_file', "文件删除"),
-            (r'exec_command|run_command|run_python', "命令执行"),
+            (r'exec_command|run_command', "命令执行"),
             (r'git_push|git_commit', "代码提交"),
             (r'install_dependency', "依赖安装"),
             (r'create_plugin|uninstall_plugin', "插件操作"),

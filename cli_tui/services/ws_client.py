@@ -161,12 +161,12 @@ class WSClient:
         except asyncio.CancelledError:
             pass
 
-    async def send_input(self, content: str) -> bool:
-        """发送用户输入"""
+    async def send_input(self, content: str, execution_mode: str = "edit") -> bool:
+        """发送用户输入（附带当前执行模式）"""
         if not self._ws or self._ws.closed:
             return False
         try:
-            await self._ws.send_json({"type": "input", "content": content})
+            await self._ws.send_json({"type": "input", "content": content, "execution_mode": execution_mode})
             return True
         except Exception as e:
             logger.warning("send_input failed: %s", e)
@@ -480,9 +480,10 @@ class WSClient:
 
         while True:  # 外层重试循环
             # ── 发送 ──
-            if not await self.send_input(user_input):
+            mode = state.execution_mode if state else "edit"
+            if not await self.send_input(user_input, mode):
                 if await self.connect():
-                    if not await self.send_input(user_input):
+                    if not await self.send_input(user_input, mode):
                         await self._emit({"type": "error", "content": "发送失败"})
                         return
                 else:

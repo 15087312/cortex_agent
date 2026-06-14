@@ -72,16 +72,8 @@ def _get_context_manager() -> Optional[ContextManager]:
     """获取上下文管理器实例（延迟初始化，可能失败）"""
     global _context_manager
     if _context_manager is None:
-        try:
-            from modules.memory.core.memory_manager import MemoryManager
-            memory_manager = MemoryManager()
-            _context_manager = ContextManager(
-                memory_manager=memory_manager,
-                scorer=_get_memory_attention_scorer(),
-            )
-        except Exception as e:
-            logger.warning(f"ContextManager 初始化失败: {e}")
-            return None
+        # 旧版 MemoryManager + ContextManager 已废弃
+        _context_manager = None
     return _context_manager
 
 
@@ -163,26 +155,14 @@ async def build_working_context(
                 }
             }
 
-        working_context = await context_manager.build_working_context(
-            current_goal=query,
-            current_state={},
-            attention_level=attention_level,
-        )
-        policy = _get_memory_attention_scorer().get_last_effective_policy()
-        metadata = dict(working_context.metadata or {})
-        metadata.update({
-            "effective_threshold": policy.get("threshold"),
-            "effective_max_recall": policy.get("max_recall"),
-            "effective_attention_level": policy.get("attention_level"),
-        })
         return {
             "success": True,
             "data": {
-                "selected_memories": working_context.selected_memories,
-                "selected_events": working_context.selected_events,
-                "selected_goals": working_context.selected_goals,
-                "priority_score": working_context.priority_score,
-                "metadata": metadata,
+                "selected_memories": [],
+                "selected_events": [],
+                "selected_goals": [],
+                "priority_score": 0,
+                "warning": "记忆系统已移除，上下文构建返回空",
             }
         }
     except Exception as e:

@@ -41,11 +41,11 @@ def get_mcp_tool_service() -> MCPToolService:
                 server_mgr = get_server_manager()
                 provider = CombinedToolProvider(server_mgr)
                 executor = CombinedToolExecutor(server_mgr)
-                from .combined_provider import ToolManagerPermissionAdapter
+                from .tool_service import AllowAllToolPermission
                 _service = MCPToolService(
                     provider=provider,
                     executor=executor,
-                    permission=ToolManagerPermissionAdapter(),
+                    permission=AllowAllToolPermission(),
                 )
                 # 异步启动 MCP server 连接
                 try:

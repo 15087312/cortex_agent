@@ -40,58 +40,59 @@ class TimeDifferenceSource(DifferenceSource):
         super().__init__()
         self._last_activity: float = time.time()
         self._last_hour_check: int = -1
+        self._last_reported_category: str | None = None
 
     @property
     def source_type(self) -> str:
         return "time"
 
+    def _idle_level(self, idle_duration: float) -> str | None:
+        """返回当前空闲级别，None 表示正常"""
+        if idle_duration >= IDLE_CRITICAL_SECONDS:
+            return "idle_critical"
+        if idle_duration >= _get_idle_alert_seconds():
+            return "idle_alert"
+        if idle_duration >= IDLE_WARNING_SECONDS:
+            return "idle_warning"
+        return None
+
     def notify_activity(self) -> None:
         """外部调用：通知有活动发生，重置空闲计时"""
         self._last_activity = time.time()
+        self._last_reported_category = None
 
     def detect(self) -> List[Difference]:
         differences = []
         now = time.time()
         idle_duration = now - self._last_activity
 
-        # 空闲检测
-        if idle_duration >= IDLE_CRITICAL_SECONDS:
-            differences.append(Difference(
-                source_type="time",
-                category="idle_critical",
-                intensity=55.0,
-                ttl=IDLE_TTL,
-                payload={
-                    "idle_seconds": round(idle_duration, 1),
-                    "idle_minutes": round(idle_duration / 60, 1),
-                    "threshold": IDLE_CRITICAL_SECONDS,
-                },
-            ))
-        elif idle_duration >= _get_idle_alert_seconds():
-            alert_seconds = _get_idle_alert_seconds()
-            differences.append(Difference(
-                source_type="time",
-                category="idle_alert",
-                intensity=50.0,
-                ttl=IDLE_TTL,
-                payload={
-                    "idle_seconds": round(idle_duration, 1),
-                    "idle_minutes": round(idle_duration / 60, 1),
-                    "threshold": alert_seconds,
-                },
-            ))
-        elif idle_duration >= IDLE_WARNING_SECONDS:
-            differences.append(Difference(
-                source_type="time",
-                category="idle_warning",
-                intensity=30.0,
-                ttl=IDLE_TTL,
-                payload={
-                    "idle_seconds": round(idle_duration, 1),
-                    "idle_minutes": round(idle_duration / 60, 1),
-                    "threshold": IDLE_WARNING_SECONDS,
-                },
-            ))
+        current_level = self._idle_level(idle_duration)
+
+        # 只在状态发生跃迁时生成差异（避免每秒重复触发）
+        if current_level != self._last_reported_category:
+            self._last_reported_category = current_level
+            if current_level is not None:
+                intensity_map = {
+                    "idle_critical": 55.0,
+                    "idle_alert": 50.0,
+                    "idle_warning": 30.0,
+                }
+                threshold_map = {
+                    "idle_critical": IDLE_CRITICAL_SECONDS,
+                    "idle_alert": _get_idle_alert_seconds(),
+                    "idle_warning": IDLE_WARNING_SECONDS,
+                }
+                differences.append(Difference(
+                    source_type="time",
+                    category=current_level,
+                    intensity=intensity_map[current_level],
+                    ttl=IDLE_TTL,
+                    payload={
+                        "idle_seconds": round(idle_duration, 1),
+                        "idle_minutes": round(idle_duration / 60, 1),
+                        "threshold": threshold_map[current_level],
+                    },
+                ))
 
         return differences
 

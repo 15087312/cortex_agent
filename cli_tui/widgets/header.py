@@ -44,15 +44,38 @@ class Header(Static):
                 f"([green]{s.tool_stats['success']}✓[/green]/"
                 f"[red]{s.tool_stats['failed']}✗[/red])"
             )
+        # 大模型身份
+        if s.large_model_identity.get("name"):
+            identity_name = s.large_model_identity["name"]
+            parts.append(f"[bold]🧠 {identity_name}[/bold]")
+        # 激活的 skill
+        if s.active_skill:
+            parts.append(f"[magenta]🎯 {s.active_skill}[/magenta]")
+
         if s.processing:
             parts.append("[yellow]处理中…[/yellow]")
 
-        # 活跃专家/主管
+        # 活跃主管
+        if s.active_supervisors:
+            sv_names = ", ".join(sv.get("name", "") for sv in s.active_supervisors[:2])
+            if len(s.active_supervisors) > 2:
+                sv_names += f" +{len(s.active_supervisors) - 2}"
+            parts.append(f"[cyan]主管: {sv_names}[/cyan]")
+
+        # 活跃专家（带所属主管）
         if s.active_experts:
-            experts_str = ", ".join(s.active_experts[:3])
-            if len(s.active_experts) > 3:
-                experts_str += f" +{len(s.active_experts) - 3}"
-            parts.append(f"[cyan]👥 {experts_str}[/cyan]")
+            expert_items = []
+            for exp in s.active_experts[:4]:
+                name = exp.get("name", "")
+                sup = exp.get("supervisor", "")
+                if sup:
+                    expert_items.append(f"{name}({sup})")
+                else:
+                    expert_items.append(name)
+            experts_str = ", ".join(expert_items)
+            if len(s.active_experts) > 4:
+                experts_str += f" +{len(s.active_experts) - 4}"
+            parts.append(f"[dim]👥 {experts_str}[/dim]")
 
         # 上下文窗口占用
         if s.context_tokens > 0:

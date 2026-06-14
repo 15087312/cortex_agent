@@ -195,86 +195,54 @@ async def refresh_module(
 @router.get("/memory")
 async def get_memory_full():
     """获取记忆模块完整信息"""
-    try:
-        from modules.memory.core.memory_manager import MemoryManager
-        mm = MemoryManager()
-        
-        status = mm.get_status()
-        tool_skills = mm.get_tool_skills()
-        top_tools = mm.get_top_tools(limit=5)
-        
-        return {
-            "success": True,
-            "data": {
-                "short_term": status.get("short_term", {}),
-                "long_term": status.get("long_term", {}),
-                "personality": status.get("personality", {}),
-                "blackbox": status.get("blackbox", {}),
-                "notebook": status.get("notebook", {}),
-                "tool_skills": {
-                    "all": tool_skills,
-                    "top": top_tools
-                },
-                "preference_prompt": mm.get_tool_preference_prompt()
-            }
+    # 旧版 MemoryManager 已废弃，事件记忆由 EventStore 管理
+    from modules.memory import EventStore
+    store = EventStore.get_instance()
+    return {
+        "success": True,
+        "data": {
+            "event_system": "active",
+            "event_count": store.count_events(),
+            "faiss_vectors": store._faiss_index.ntotal if store._faiss_index else 0,
+            "type": "事件驱动记忆 (EventReducer + EventStore + EventRetrieval)",
+            "note": "旧版 short_term/long_term/personality/blackbox 已移除",
         }
-    except Exception as e:
-        raise AppError(ErrorCode.INTERNAL_ERROR, "管理操作失败")
+    }
 
 
 @router.get("/memory/tool-skills")
 async def get_tool_skills():
-    """获取工具熟练度"""
-    try:
-        from modules.memory.core.memory_manager import MemoryManager
-        mm = MemoryManager()
-        
-        return {
-            "success": True,
-            "data": {
-                "skills": mm.get_tool_skills(),
-                "top_tools": mm.get_top_tools(limit=10),
-                "preference_prompt": mm.get_tool_preference_prompt()
-            }
+    """获取工具熟练度（旧版 MemoryManager 已废弃）"""
+    return {
+        "success": True,
+        "data": {
+            "skills": [],
+            "top_tools": [],
+            "note": "旧版 tool_skills 已移除，事件记忆替代",
         }
-    except Exception as e:
-        raise AppError(ErrorCode.INTERNAL_ERROR, "管理操作失败")
+    }
 
 
 @router.post("/memory/tool-skills/{tool_name}/success")
 async def record_tool_success(
     tool_name: str = Path(..., description="工具名称")
 ):
-    """记录工具使用成功"""
-    try:
-        from modules.memory.core.memory_manager import MemoryManager
-        mm = MemoryManager()
-        
-        result = mm.record_tool_success(tool_name)
-        return {
-            "success": True,
-            "data": result
-        }
-    except Exception as e:
-        raise AppError(ErrorCode.INTERNAL_ERROR, "管理操作失败")
+    """记录工具使用成功（旧版 MemoryManager 已废弃）"""
+    return {
+        "success": True,
+        "data": {"message": f"旧版 MemoryManager 已废弃", "tool": tool_name}
+    }
 
 
 @router.post("/memory/tool-skills/{tool_name}/failure")
 async def record_tool_failure(
     tool_name: str = Path(..., description="工具名称")
 ):
-    """记录工具使用失败"""
-    try:
-        from modules.memory.core.memory_manager import MemoryManager
-        mm = MemoryManager()
-        
-        result = mm.record_tool_failure(tool_name)
-        return {
-            "success": True,
-            "data": result
-        }
-    except Exception as e:
-        raise AppError(ErrorCode.INTERNAL_ERROR, "管理操作失败")
+    """记录工具使用失败（旧版 MemoryManager 已废弃）"""
+    return {
+        "success": True,
+        "data": {"message": f"旧版 MemoryManager 已废弃", "tool": tool_name}
+    }
 
 
 @router.post("/memory/clear")
@@ -282,19 +250,13 @@ async def clear_memory(
     scope: str = Query("short_term", description="清理范围: short_term / long_term / all")
 ):
     """清空记忆"""
-    try:
-        from modules.memory.core.memory_manager import MemoryManager
-        mm = MemoryManager()
-        
-        if scope in ("short_term", "all"):
-            mm.clear_short_term()
-        
-        return {
-            "success": True,
-            "data": {"message": f"已清空 {scope} 记忆"}
-        }
-    except Exception as e:
-        raise AppError(ErrorCode.INTERNAL_ERROR, "管理操作失败")
+    from modules.memory import EventStore
+    store = EventStore.get_instance()
+    store.clear_all()
+    return {
+        "success": True,
+        "data": {"message": f"事件记忆已清空"}
+    }
 
 
 # ==============================================================================

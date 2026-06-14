@@ -8,9 +8,8 @@ from infra.tool_manager.tool_registry import ToolRegistry
 
 
 def _get_memory():
-    """延迟创建 MemoryManager，避免模块导入时的 I/O 开销"""
-    from modules.memory.core.memory_manager import MemoryManager
-    return MemoryManager()
+    """旧版 MemoryManager 已废弃，事件记忆由 EventReducer 处理"""
+    return None
 
 
 ops = {

@@ -1,0 +1,9 @@
+{
+  "name": "chrome_search",
+  "description": "在 Chrome 浏览器中打开 Google 搜索指定关键词。自动检测系统类型（macOS/Windows/Linux）并打开 Chrome。",
+  "source_code": "def chrome_search(query: str, **kwargs) -> str:\n    import urllib.parse\n    import subprocess\n    import platform\n    \n    encoded_query = urllib.parse.quote(query)\n    url = f\"https://www.google.com/search?q={encoded_query}\"\n    \n    try:\n        system = platform.system()\n        if system == \"Darwin\":  # macOS\n            subprocess.run([\"open\", \"-a\", \"Google Chrome\", url], timeout=5)\n        elif system == \"Windows\":\n            subprocess.run([\"start\", \"chrome\", url], shell=True, timeout=5)\n        else:  # Linux\n            subprocess.run([\"google-chrome\", url], timeout=5)\n        \n        return f\"✅ 已在 Chrome 中搜索: {query}\"\n    except Exception as e:\n        return f\"❌ 搜索失败: {str(e)}\"",
+  "risk_level": "LOW",
+  "category": "query",
+  "created_at": "2026-06-12T08:09:58.350783+00:00",
+  "updated_at": "2026-06-12T08:09:58.350783+00:00"
+}

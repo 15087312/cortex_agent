@@ -28,6 +28,13 @@ YAML 格式:
     memory_config:                    # 可选：覆盖 tier 默认记忆配置
       enable_personality: true
       enable_notebook: true
+    tool_whitelist:                    # 可选：覆盖 DEFAULT_TOOL_WHITELISTS
+      - read_file
+      - search_files
+    permissions:                       # 可选：覆盖 DEFAULT_PERMISSIONS
+      allowed_tool_categories:
+        - query
+        - mutation
 """
 from __future__ import annotations
 
@@ -45,7 +52,7 @@ _VALID_FIELDS = {
     "identity_key", "model_id", "name", "tier", "role",
     "personality", "speaking_style", "expertise", "weaknesses",
     "tool_whitelist", "model_name", "max_tokens", "temperature",
-    "memory_config", "api_key", "api_url",
+    "memory_config", "api_key", "api_url", "permissions",
 }
 
 

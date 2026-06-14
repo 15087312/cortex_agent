@@ -264,14 +264,6 @@ async def save_recipe(
         except Exception as e:
             logger.warning(f"生成 Skill 失败 (非致命): {e}")
 
-        # 退出学习模式
-        try:
-            from config.settings import settings as _cfg
-            if _cfg.effective_execution_mode == "learn":
-                object.__setattr__(_cfg, "EXECUTION_MODE", "edit")
-        except Exception:
-            pass
-
         return {
             "status": "success",
             "tool_name": tool_name,
@@ -497,6 +489,7 @@ async def edit_recipe(tool_name: str, app_name: str = "", step_edits: list = Non
     risk_level="LOW",
     category="mutation",
     core=True,
+    tags=["learning"],
 )
 async def create_skill(
     skill_id: str,
@@ -548,6 +541,18 @@ async def create_skill(
         data["tool_rules"] = tool_rules
 
     skill_path.write_text(yaml.dump(data, allow_unicode=True, default_flow_style=False, sort_keys=False), encoding="utf-8")
+
+    # 同步保存到 data/plugins/learned/（统一存储）
+    try:
+        plugins_learned_dir = Path(__file__).parent.parent.parent.parent / "data" / "plugins" / "learned"
+        plugins_learned_dir.mkdir(parents=True, exist_ok=True)
+        copy_path = plugins_learned_dir / f"{skill_id}.yaml"
+        copy_path.write_text(
+            yaml.dump(data, allow_unicode=True, default_flow_style=False, sort_keys=False),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
 
     # 重载 SkillManager
     try:

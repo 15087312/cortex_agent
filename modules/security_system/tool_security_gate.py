@@ -151,7 +151,7 @@ def _check_extreme_danger(tool_name: str, tool_params: Dict[str, Any]) -> Option
         cmd = tool_params.get("command", "")
         if cmd:
             texts.append(cmd)
-    elif tool_name in ("run_script", "run_python"):
+    elif tool_name in ("run_script",):
         code = tool_params.get("code", "")
         if code:
             texts.append(code)
@@ -208,8 +208,8 @@ class ToolSecurityGate:
         dialog_context: str = "",
     ) -> Tuple[bool, str]:
         """审查工具调用请求（带相同调用缓存）"""
-        # 相同调用缓存：完全相同的 tool_name + params 跳过重复审批
-        cache_key = f"{tool_name}|{json.dumps(tool_params, sort_keys=True, ensure_ascii=False)}"
+        # 相同调用缓存：完全相同的 tool_name + params + 执行模式 跳过重复审批
+        cache_key = f"{self._execution_mode}|{tool_name}|{json.dumps(tool_params, sort_keys=True, ensure_ascii=False)}"
         cached = self._check_cache.get(cache_key)
         if cached is not None:
             return cached
@@ -242,6 +242,27 @@ class ToolSecurityGate:
             except Exception as audit_err:
                 logger.error(f"[审计] 写入失败: {audit_err}")
             return False, extreme_reason
+
+        # ── 角色类别权限检查 — 基于 ModelPermissions（large/supervisor/expert 各模型允许的工具类别） ──
+        try:
+            from modules.security_system.tool_permission_controller import get_tool_permission_controller
+            perm_ctrl = get_tool_permission_controller()
+            perm_allowed, perm_reason = perm_ctrl.check_execution_permission(
+                tool_name, caller_tier, caller_model_id,
+            )
+            if not perm_allowed:
+                _emit_security_event("角色类别拦截", tool_name, caller_model_id, False, perm_reason)
+                try:
+                    self._audit.log(
+                        event_type="tool_blocked", level="HIGH",
+                        content=tool_name, result=False,
+                        metadata={"caller_model_id": caller_model_id, "reason": perm_reason},
+                    )
+                except Exception:
+                    pass
+                return False, perm_reason
+        except Exception:
+            pass
 
         # ── 安全最高指示：Blackboard 有安全拦截信号时，拒绝所有写操作 ──
         if tool_name in _get_mutation_tools():
@@ -413,10 +434,6 @@ class ToolSecurityGate:
                 )
             else:
                 return False, "yolo 模式下安全专家不可用，拒绝 HIGH 风险操作"
-
-        # learn 模式：用户已同意进入学习模式，学习相关工具自动放行
-        if exec_mode == "learn":
-            return True, "学习模式自动批准"
 
         # edit 模式：先 LLM 审批，通过后再用户确认（AND 逻辑）
         if exec_mode == "edit":

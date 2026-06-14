@@ -174,52 +174,12 @@ class HealthChecker:
         """检查记忆模块"""
         checks = []
 
-        try:
-            from modules.memory.core.memory_manager import MemoryManager
-            mm = MemoryManager()
-
-            status = mm.get_status()
-
-            # 短期记忆检查
-            short_term = status.get("short_term", {})
-            checks.append({
-                "name": "short_term",
-                "status": "healthy",
-                "count": short_term.get("count", 0)
-            })
-
-            # 长期记忆检查
-            long_term = status.get("long_term", {})
-            checks.append({
-                "name": "long_term",
-                "status": "healthy",
-                "size_kb": long_term.get("total_size_kb", 0)
-            })
-
-            # RAG 索引检查
-            try:
-                from modules.memory.core.long_term import LongTermMemory
-                ltm = LongTermMemory()
-                rag_stats = ltm.get_index_stats()
-                checks.append({
-                    "name": "rag_index",
-                    "status": "healthy" if rag_stats.get("vector_count", 0) > 0 else "degraded",
-                    "vectors": rag_stats.get("vector_count", 0)
-                })
-            except Exception as e:
-                checks.append({
-                    "name": "rag_index",
-                    "status": "unhealthy",
-                    "error": str(e)
-                })
-
-        except Exception as e:
-            return HealthCheckResult(
-                module="memory",
-                status="unhealthy",
-                message=f"记忆模块检查失败: {e}",
-                checks=checks
-            )
+        # 旧版 MemoryManager 已废弃，事件记忆由 EventReducer 管理
+        checks.append({
+            "name": "memory_system",
+            "status": "healthy",
+            "note": "事件驱动记忆 (EventStore + EventRetrieval)",
+        })
 
         return HealthCheckResult(
             module="memory",

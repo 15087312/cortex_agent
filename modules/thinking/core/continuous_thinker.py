@@ -13,8 +13,6 @@ import asyncio
 import time
 import uuid
 from utils.logger import setup_logger
-from modules.memory.core.memory_manager import MemoryManager
-from modules.memory.utils.task_notebook import TaskNotebook
 from modules.thinking.context import ContextManager
 from modules.thinking.context.compression import CompressionEngine
 from modules.thinking.core.control_tools import (
@@ -47,7 +45,7 @@ class ContinuousThinker:
         max_rounds: int = 30,
         min_rounds: int = 1,
         interval: float = 3.0,
-        memory_manager: Optional[MemoryManager] = None,
+        memory_manager: Optional[Any] = None,
         session_id: Optional[str] = None,
         tool_validator: Optional[Callable[[Dict[str, Any], str], Awaitable[Any]]] = None,
         gcm_pool: Optional[Any] = None,
@@ -85,7 +83,8 @@ class ContinuousThinker:
         self.max_rounds = max_rounds
         self.min_rounds = min_rounds
         self.interval = interval
-        self.memory = memory_manager or MemoryManager()
+        # memory — 旧版 MemoryManager 已废弃，设为 None
+        self.memory = memory_manager
         # 分类外部提示词：持久引导每轮都注入，临时引导仅下一轮有效
         self._persistent_prompts: List[str] = []
         self._transient_prompts: List[str] = []
@@ -93,7 +92,12 @@ class ContinuousThinker:
         self._running = False
         self._session_id: str = session_id or str(uuid.uuid4())
         self.history_thoughts: List[str] = []  # 本地缓存用于去重校验
-        self.notebook = TaskNotebook(self._session_id)  # 初始化记事本
+        # 记事本 — 延迟导入
+        try:
+            from modules.memory.utils.task_notebook import TaskNotebook
+            self.notebook = TaskNotebook(self._session_id)
+        except Exception:
+            self.notebook = None
         self._tool_validator = tool_validator  # 工具调用安全验证器（由输出系统注入）
         self.gcm_pool = gcm_pool  # 全局上下文池（可选注入）
         self._blackboard = blackboard  # CognitiveBlackboard
@@ -113,8 +117,12 @@ class ContinuousThinker:
         self._last_sd_read_count: int = 0  # Blackboard dialog 读取位置
         self._consecutive_new_delegation_rounds: int = 0  # 连续新建委托轮次计数器
 
-        # 设置记忆管理器的 session_id，实现按会话隔离
-        self.memory.set_session_id(self._session_id)
+        # 设置记忆管理器的 session_id（兼容旧版传入的 memory_manager）
+        if self.memory is not None:
+            try:
+                self.memory.set_session_id(self._session_id)
+            except Exception:
+                pass
 
         # 上下文操作系统：检索、注意力排序、prompt 构建都由 ContextManager 统一负责
         self.context_manager = ContextManager(memory_manager=self.memory)
@@ -585,66 +593,94 @@ class ContinuousThinker:
             )
 
     async def _build_prompt(self, initial_question: str, round_num: int = 0) -> str:
-        """构建当前轮 prompt — 委托 ContextManager 统一管理上下文。"""
+        """构建当前轮 prompt — 委托 ContextController 统一管理上下文。"""
         external_guidance = self._consume_external_guidance()
         notebook_status = self.notebook.get_status()
-        # 记事本内容为默认值时（未实际更新），不注入 prompt，防止未完成草稿回灌
         _default_notebook = "任务刚开始，请制定初步计划。"
         if self.notebook.content.strip() == _default_notebook:
             notebook_status = ""
-        current_state = {
-            "notebook_status": notebook_status,
-            "history_output": "\n".join(self.history_thoughts[:-1]) if len(self.history_thoughts) > 1 else "",
-            "available_tools": self._build_tool_prompt_section(),
-            "expert_context": self._build_expert_context_section(),
-            "delegation_status": self._build_delegation_status_section(),
-            "external_guidance": external_guidance,
-            "tier": self._tier,
-            "has_skill": bool(getattr(self._runner_ref, '_active_skill', None)),
-        }
+
+        history_output = "\n".join(self.history_thoughts[:-1]) if len(self.history_thoughts) > 1 else ""
+        available_tools = self._build_tool_prompt_section()
+        expert_ctx = self._build_expert_context_section()
+        dlg_status = self._build_delegation_status_section()
 
         attention_level = 0.6
         attention_vector = None
-        allocation = None
         try:
             short_memories = []
             try:
                 short_items = self.memory.get_context(limit=20)
-                short_memories = [
-                    str(item.get("text", ""))
-                    for item in short_items
-                    if isinstance(item, dict) and item.get("text")
-                ]
+                short_memories = [str(item.get("text", "")) for item in short_items if isinstance(item, dict) and item.get("text")]
             except Exception:
                 short_memories = []
-
             attention_decision = self.attention.analyze(
-                user_input=initial_question,
-                context=[],
-                short_term_memory=short_memories,
+                user_input=initial_question, context=[], short_term_memory=short_memories,
             )
             attention_level = getattr(attention_decision, "attention_level", 0.6)
             attention_vector = getattr(attention_decision, "attention_vector", None)
-            allocation = getattr(attention_decision, "allocation", None)
-            
-            # V2可解释性日志
-            explanation = getattr(attention_decision, "explanation", None)
-            if explanation and explanation.get("summary"):
-                self.logger.debug(f"[Attention V2] {explanation['summary']}")
+        except Exception:
+            pass
+
+        v2_text = ""
+        if attention_vector is not None:
+            try:
+                from modules.attention.core.v2.attention_vector import AttentionVector
+                if isinstance(attention_vector, AttentionVector):
+                    v2_parts = [
+                        f"语义相关性: {attention_vector.semantic:.2f}",
+                        f"时间敏感性: {attention_vector.temporal:.2f}",
+                        f"任务重要性: {attention_vector.task:.2f}",
+                        f"情感强度: {attention_vector.emotion:.2f}",
+                        f"模态权重: {attention_vector.modality:.2f}",
+                    ]
+                    v2_text = "【注意力状态】" + ", ".join(v2_parts)
+            except Exception:
+                pass
+
+        # 记忆上下文 — 事件记忆系统检索（按遗忘曲线 × 强化 × 重要性排序）
+        memory_recent = memory_related = memory_long = ""
+        try:
+            from modules.memory.event_retrieval import get_event_retrieval
+            from modules.memory.event_strategy import EventStrategy, format_strategy_for_prompt
+            from infra.model.lite_model_client import LiteModelClient
+
+            retrieval = get_event_retrieval()
+            events = await retrieval.retrieve(query=initial_question, top_k=5)
+
+            if events:
+                parts = []
+                for i, ev in enumerate(events, 1):
+                    parts.append(f"[历史事件 {i}] (类型={ev.type}, 重要性={ev.importance:.1f})")
+                    parts.append(f"  事实: {ev.fact}")
+                    if ev.lesson:
+                        parts.append(f"  经验: {ev.lesson}")
+                    if ev.keywords:
+                        parts.append(f"  标签: {', '.join(ev.keywords)}")
+                memory_recent = "\n".join(parts)
+
+                # 策略生成
+                try:
+                    client = await LiteModelClient.get_instance()
+                    strategy_gen = EventStrategy(model_client=client)
+                    strategy = await strategy_gen.generate_strategy(initial_question, events)
+                    strategy_text = format_strategy_for_prompt(strategy)
+                    memory_recent = f"{memory_recent}\n\n{strategy_text}"
+                except Exception:
+                    pass
         except Exception as e:
-            self.logger.debug(f"[Attention] 动态注意力计算失败，回退默认值: {e}")
-            attention_level = 0.6
+            self.logger.debug(f"[事件检索] 失败: {e}")
 
-        prompt = await self.context_manager.build_prompt(
-            current_goal=initial_question,
-            current_state=current_state,
-            attention_level=attention_level,
-            attention_vector=attention_vector,
-        )
+        # ValueSystem 规则
+        values_text = ""
+        try:
+            from modules.thinking.evolution.value_system import value_system
+            values_text = value_system.get_active_rules()
+        except Exception:
+            pass
 
-        prompt = await self._compress_prompt_if_needed(prompt)
-
-        # 调用外部 prompt builder（如果存在），注入 ModelRunner 的上下文（如消息检查）
+        # 外部 prompt builder（ModelRunner._build_runner_prompt）
+        external_section = ""
         if self._external_prompt_builder is not None:
             try:
                 import inspect
@@ -652,23 +688,33 @@ class ContinuousThinker:
                     external_section = await self._external_prompt_builder(round_num=round_num)
                 else:
                     external_section = self._external_prompt_builder(round_num=round_num)
-                if external_section and str(external_section).strip():
-                    prompt = prompt + "\n\n" + str(external_section).strip()
-            except Exception as e:
-                self.logger.debug(f"[_build_prompt] 外部 prompt builder 调用失败: {e}")
+                external_section = str(external_section).strip() if external_section else ""
+            except Exception:
+                pass
 
-        if self._tier == "supervisor":
-            phases = {
-                1: "【阶段：目标分析】理解任务需求，明确目标范围和约束条件。仅分析，不执行任何操作。",
-                2: "【阶段：规划与委托】制定执行计划，识别需要的专家角色，然后用 delegate_task 委托给对应专家。",
-                3: "【阶段：等待结果】已委托任务，使用 continue_thinking(continue=false) 结束当前思考循环。系统自动等待专家结果后唤醒你。",
-            }
-            phase = phases.get(round_num)
-            if phase:
-                prompt = prompt + "\n\n" + phase
+        from modules.thinking.context.controller import get_context_controller
+        ctrl = get_context_controller()
+        prompt = ctrl.build_round_context(
+            current_goal=initial_question,
+            tier=self._tier,
+            notebook_status=notebook_status,
+            history_output=history_output,
+            available_tools=available_tools,
+            expert_context=expert_ctx,
+            delegation_status=dlg_status,
+            external_guidance=external_guidance,
+            blackboard_context=external_section,
+            v2_attention_text=v2_text,
+            memory_recent=memory_recent,
+            memory_related=memory_related,
+            memory_long_term=memory_long,
+            values_text=values_text,
+            round_num=round_num,
+            has_skill=bool(getattr(self._runner_ref, '_active_skill', None)),
+        )
 
+        prompt = await self._compress_prompt_if_needed(prompt)
         return prompt
-
     def _consume_external_guidance(self) -> str:
         """消费外部引导文本。委托 ContextManager。"""
         from modules.thinking.context.manager import ContextManager

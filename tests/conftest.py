@@ -46,6 +46,5 @@ def app_state():
 
 @pytest.fixture
 def memory_manager():
-    """提供测试用 MemoryManager 实例"""
-    from modules.memory.core.memory_manager import MemoryManager
-    return MemoryManager()
+    """提供测试用 MemoryManager 实例（新系统暂存根）"""
+    return None

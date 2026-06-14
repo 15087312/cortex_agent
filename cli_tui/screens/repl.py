@@ -247,10 +247,21 @@ class REPL(Screen):
             if len(self.state.debug_events) > self.state.max_debug_events:
                 self.state.debug_events = self.state.debug_events[-self.state.max_debug_events:]
 
-            # 解析活跃专家信息（更新状态，顶栏 Header 会显示）
+            # 解析活跃专家/主管/大模型身份（更新状态，顶栏 Header 会显示）
             active_experts = data.get("active_experts", [])
             if active_experts:
                 self.state.active_experts = active_experts
+            active_supervisors = data.get("active_supervisors", [])
+            if active_supervisors:
+                self.state.active_supervisors = active_supervisors
+            large_model = data.get("large_model", {})
+            if large_model:
+                self.state.large_model_identity = large_model
+                # 如果大模型有激活的 skill，同步显示
+                if large_model.get("active_skill"):
+                    self.state.active_skill = large_model["active_skill"]
+                else:
+                    self.state.active_skill = ""
             # 上下文窗口占用（始终更新，即使为 0）
             if "context_tokens" in data:
                 self.state.context_tokens = data["context_tokens"]
@@ -526,7 +537,7 @@ class REPL(Screen):
             mode = value.split(":", 1)[1]
             if ml:
                 ml.write(f"[bold green]✅ 同意切换到 {mode} 模式[/bold green]")
-            self._set_execution_mode(mode)
+            asyncio.create_task(self._set_execution_mode(mode))
             response_data = {"approved": True, "mode": mode}
             self._send_interactive_response(request_id, response_data)
         else:
@@ -861,13 +872,16 @@ class REPL(Screen):
         elif cmd.action == "stop":
             self._pause_thinking()
         elif cmd.action == "mode":
-            # 支持 /mode on/off (陪伴模式) 或 /mode plan/edit/yolo (执行模式)
+            # 支持 /mode plan/edit/yolo/control (执行模式) 或 /mode skill:<skill_id> (激活技能)
             parts = text.split(" ", 1)
             toggle_value = parts[1].strip().lower() if len(parts) > 1 else None
             if toggle_value in ("plan", "edit", "yolo", "control"):
-                self._set_execution_mode(toggle_value)
+                asyncio.create_task(self._set_execution_mode(toggle_value))
+            elif toggle_value and toggle_value.startswith("skill:"):
+                skill_id = toggle_value[6:]
+                self.notify(f"技能激活请求: {skill_id}（通过 WebSocket 发送）", severity="information", timeout=2)
             else:
-                self._toggle_companion_mode(toggle_value)
+                self.notify(f"用法: /mode plan/edit/yolo/control", severity="information", timeout=2)
         elif cmd.action == "config":
             # 支持 /config 查看或 /config KEY VALUE 修改
             parts = text.split(" ", 1)
@@ -1116,36 +1130,11 @@ class REPL(Screen):
         else:
             self.notify("✗ 暂停失败，请重试", severity="error", timeout=2)
 
-    @work
-    async def _toggle_companion_mode(self, toggle_value: Optional[str] = None):
-        """切换或设置陪伴模式"""
-        if toggle_value in ["on", "off"]:
-            # 设置具体的值
-            success = await self.api.update_config("COMPANION_MODE", toggle_value == "on")
-            if success:
-                mode_str = "开启" if toggle_value == "on" else "关闭"
-                self.notify(f"✓ 陪伴模式: {mode_str}", severity="information", timeout=2)
-                self.state.companion_mode = toggle_value == "on"
-                self._sync_execution_mode()
-            else:
-                self.notify("✗ 设置失败", severity="error", timeout=2)
-        else:
-            # 切换
-            result = await self.api.toggle_companion_mode()
-            if result is not None:
-                mode_str = "开启 (完全AI引导)" if result else "关闭 (工作模式)"
-                self.notify(f"✓ 陪伴模式: {mode_str}", severity="information", timeout=2)
-                self.state.companion_mode = result
-                self._sync_execution_mode()
-            else:
-                self.notify("✗ 切换失败", severity="error", timeout=2)
-
-    def _sync_execution_mode(self):
+    async def _sync_execution_mode(self):
         """从后端同步执行模式到本地状态"""
         try:
             from config.settings import settings
             self.state.execution_mode = settings.effective_execution_mode
-            self.state.companion_mode = settings.COMPANION_MODE
         except Exception:
             pass
         self._fetch_execution_mode()
@@ -1157,38 +1146,32 @@ class REPL(Screen):
         if config:
             if "EXECUTION_MODE" in config:
                 self.state.execution_mode = config["EXECUTION_MODE"]
-            if "COMPANION_MODE" in config:
-                self.state.companion_mode = config["COMPANION_MODE"]
-            if self.state.companion_mode:
-                self.state.execution_mode = "plan"
 
-    def _set_execution_mode(self, mode: str):
+    async def _set_execution_mode(self, mode: str):
         """设置执行模式（本地 + 后端）"""
-        if self.state.companion_mode:
-            self.notify("陪伴模式下执行模式固定为 plan，无法切换", severity="warning", timeout=3)
-            return
-
         _MODE_CYCLE = ["plan", "edit", "yolo", "control"]
         if mode not in _MODE_CYCLE:
             self.notify(f"未知模式: {mode}，可选: plan/edit/yolo/control", severity="warning", timeout=3)
             return
 
         self.state.execution_mode = mode
-        self.api.update_config("EXECUTION_MODE", mode)
+        # 同步发送到后端
+        try:
+            await asyncio.wait_for(self.api.update_config("EXECUTION_MODE", mode), timeout=5.0)
+        except asyncio.TimeoutError:
+            self.notify(f"模式切换超时（后端无响应），本地已切换", severity="warning", timeout=3)
+        except Exception as e:
+            self.notify(f"模式切换失败: {e}", severity="error", timeout=3)
         _LABELS = {"plan": "📋 Plan (只读)", "edit": "✏️ Edit (确认)", "yolo": "🚀 YOLO (宽松)", "control": "🎛️ Control (审批)"}
         self.notify(f"✓ 执行模式: {_LABELS[mode]}", severity="information", timeout=2)
 
-    def action_cycle_execution_mode(self):
+    async def action_cycle_execution_mode(self):
         """Shift+Tab 循环切换执行模式: plan → edit → yolo → control → plan"""
-        if self.state.companion_mode:
-            self.notify("陪伴模式下执行模式固定为 plan", severity="warning", timeout=2)
-            return
-
         _MODE_CYCLE = ["plan", "edit", "yolo", "control"]
         current = self.state.execution_mode
         idx = _MODE_CYCLE.index(current) if current in _MODE_CYCLE else 1
         next_mode = _MODE_CYCLE[(idx + 1) % len(_MODE_CYCLE)]
-        self._set_execution_mode(next_mode)
+        await self._set_execution_mode(next_mode)
 
     @work
     async def _show_config(self):
@@ -1202,7 +1185,7 @@ class REPL(Screen):
             ml.write("[bold cyan]⚙️  当前配置:[/bold cyan]")
             # 只显示重要配置
             important_keys = [
-                "COMPANION_MODE",
+                "EXECUTION_MODE",
                 "PERCEPTION_ENABLED",
                 "DIFFERENCE_DETECTOR_ENABLED",
                 "APP_ENV",
@@ -1225,7 +1208,7 @@ class REPL(Screen):
         if len(parts) == 1:
             # 只提供了KEY，不知道怎么处理
             self.notify(
-                "用法: /config KEY VALUE\n示例: /config COMPANION_MODE true",
+                "用法: /config KEY VALUE\n示例: /config EXECUTION_MODE plan",
                 severity="warning", timeout=3
             )
             return

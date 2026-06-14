@@ -132,13 +132,6 @@ class APIClient:
             logger.warning("update_config(%s) failed: %s", key, e)
         return False
 
-    async def toggle_companion_mode(self) -> Optional[bool]:
-        """切换陪伴模式"""
-        try:
-            resp = await self._post("/config/toggle-companion-mode", timeout=3)
-            if resp and resp.status == 200:
-                data = await resp.json()
-                return data.get("data", {}).get("companion_mode")
-        except Exception as e:
-            logger.warning("toggle_companion_mode request failed: %s", e)
+    async def toggle_companion_mode(self) -> None:
+        """切换陪伴模式 - no-op since companion mode is now a skill"""
         return None

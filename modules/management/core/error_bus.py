@@ -41,7 +41,7 @@ import sys
 import traceback
 import threading
 import asyncio
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Callable
 from dataclasses import dataclass
 import logging
 
@@ -73,7 +73,22 @@ class GlobalErrorBus:
 
     def __init__(self):
         self.logger = _setup_global_logger()
+        self._ws_callback: Optional[Callable[[str, str, dict], None]] = None
         self._init_hooks()
+
+    # ── WebSocket 桥接（供前端 TUI 显示错误） ──
+
+    def set_ws_callback(self, callback: Callable[[str, str, dict], None]) -> None:
+        """设置 WebSocket 推送回调，由 api_stream.py 在初始化时注入"""
+        self._ws_callback = callback
+
+    def _push_to_ws(self, error_type: str, error_msg: str, ctx: dict) -> None:
+        """如果有 WebSocket 回调，推送错误事件"""
+        if self._ws_callback:
+            try:
+                self._ws_callback(error_type, error_msg, ctx)
+            except Exception:
+                pass
     
     def _init_hooks(self):
         """初始化所有全局错误钩子"""
@@ -103,6 +118,12 @@ class GlobalErrorBus:
         """
         error_info = self._format_error(error, context)
         self.logger.error(error_info)
+
+        # 推送错误到 WebSocket（前端 TUI 显示）
+        ctx_dict = context.extra if context and context.extra else {}
+        ctx_dict["module"] = context.module if context else ""
+        ctx_dict["function"] = context.function if context else ""
+        self._push_to_ws(type(error).__name__, str(error), ctx_dict)
 
         try:
             from .error_reporter import report_exception

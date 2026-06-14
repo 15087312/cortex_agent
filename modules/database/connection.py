@@ -68,7 +68,7 @@ class DatabaseManager:
             cursor.execute("PRAGMA busy_timeout=5000")
             cursor.close()
         
-        logger.info(f"SQLite 数据库初始化 (WAL模式): {config.sqlite_path}")
+        logger.debug(f"SQLite 数据库初始化 (WAL模式): {config.sqlite_path}")
         
         self._session_factory = sessionmaker(
             bind=self._engine,

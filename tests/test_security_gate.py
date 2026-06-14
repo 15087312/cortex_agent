@@ -8,8 +8,8 @@ from unittest.mock import MagicMock, patch, AsyncMock
 from modules.security_system.tool_security_gate import (
     ToolSecurityGate,
     get_tool_security_gate,
-    HIGH_RISK_TOOLS,
-    MEDIUM_RISK_TOOLS,
+    _get_high_risk_tools,
+    _get_medium_risk_tools,
     _emit_security_event,
     set_security_event_callback,
 )
@@ -20,7 +20,6 @@ def gate():
     """ToolSecurityGate with no LLM model."""
     from config.settings import settings
     object.__setattr__(settings, 'EXECUTION_MODE', 'yolo')
-    object.__setattr__(settings, 'COMPANION_MODE', False)
     g = ToolSecurityGate(lite_model=None)
     yield g
     object.__setattr__(settings, 'EXECUTION_MODE', 'edit')
@@ -31,7 +30,6 @@ def mock_audit_gate():
     """ToolSecurityGate with a mocked audit logger."""
     from config.settings import settings
     object.__setattr__(settings, 'EXECUTION_MODE', 'yolo')
-    object.__setattr__(settings, 'COMPANION_MODE', False)
     g = ToolSecurityGate(lite_model=None)
     g._audit = MagicMock()
     yield g

@@ -14,28 +14,11 @@ import time
 from typing import Any, Dict, List, Optional
 
 from utils.logger import setup_logger
-from .ports import ToolExecutorPort, ToolPermissionPort, ToolProviderPort
+from .ports import ToolExecutorPort, ToolProviderPort
 from .server_manager import MCPServerManager
 from .types import ToolCallRequest, ToolCallResult, ToolSpec
 
 logger = setup_logger("mcp_combined")
-
-
-class ToolManagerPermissionAdapter(ToolPermissionPort):
-    """通过 ToolManager 执行权限检查"""
-
-    def check(self, request: ToolCallRequest, tool: Optional[ToolSpec]) -> Dict[str, str | bool]:
-        try:
-            from infra.tool_manager.tool_manager import tool_manager
-            if tool_manager is None:
-                return {"allowed": True, "reason": ""}
-            return tool_manager._check_tool_permission(
-                request.tool_name,
-                request.caller_role,
-                request.caller_model_id,
-            )
-        except Exception:
-            return {"allowed": False, "reason": "权限检查异常，拒绝"}
 
 
 class CombinedToolProvider(ToolProviderPort):

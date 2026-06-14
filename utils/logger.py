@@ -50,6 +50,31 @@ def _make_file_formatter(use_json: bool) -> logging.Formatter:
     )
 
 
+# 第三方库日志配置（只执行一次）
+_third_party_configured = False
+
+def _configure_third_party_loggers():
+    """配置第三方库的日志级别（只执行一次）"""
+    global _third_party_configured
+    if _third_party_configured:
+        return
+    _third_party_configured = True
+    
+    # 第三方库降级为 WARNING
+    noisy_loggers = [
+        "diskcache",
+        "sentence_transformers",
+        "faiss",
+        "urllib3",
+        "httpx",
+        "httpcore",
+        "aiohttp",
+        "asyncio",
+    ]
+    for logger_name in noisy_loggers:
+        logging.getLogger(logger_name).setLevel(logging.WARNING)
+
+
 def setup_logger(
     name: str,
     log_level: str = "INFO",
@@ -67,6 +92,9 @@ def setup_logger(
         logger.addHandler(logging.NullHandler())
         logger.propagate = False
         return logger
+
+    # 设置第三方库日志级别（减少噪音）
+    _configure_third_party_loggers()
 
     # 正常创建日志目录
     os.makedirs(log_dir, exist_ok=True)

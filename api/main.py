@@ -20,7 +20,7 @@ from modules.management import report_exception
 from cortex.version import __version__ as _CORTEX_VERSION
 from infra.data_process.api import router as data_process_router
 from infra.tool_manager.api import router as tool_router
-from modules.memory.api import router as memory_router
+# 记忆 API 已迁移至新系统，旧版 memory/api.py 已删除
 from modules.thinking.api_stream import router as stream_router
 from modules.attention.api import router as attention_router
 from modules.management.api import router as management_router
@@ -74,6 +74,35 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"✗ 全局错误总线初始化失败: {e}")
 
+    # 注册错误总线 WebSocket 回调 — 错误推送到前端 TUI
+    try:
+        from modules.management.core.error_bus import error_bus
+        from modules.thinking.api_stream import connection_manager
+
+        def _on_error(error_type: str, error_msg: str, ctx: dict):
+            """错误回调：推送到所有活跃 WebSocket session"""
+            from modules.thinking.api_stream import _build_event
+            for session_id in list(connection_manager.active_connections.keys()):
+                envelope = _build_event(
+                    session_id=session_id,
+                    msg_type="error",
+                    event="system_error",
+                    content=error_msg,
+                    role="system",
+                    data={
+                        "error_type": error_type,
+                        "error_message": f"[{error_type}] {error_msg}",
+                        "module": ctx.get("module", ""),
+                        "function": ctx.get("function", ""),
+                        "phase": "error",
+                    },
+                )
+                connection_manager.send_json_from_thread(session_id, envelope)
+        error_bus.set_ws_callback(_on_error)
+        logger.info("✓ 错误总线 WebSocket 回调已注册")
+    except Exception as e:
+        logger.debug(f"错误总线 WebSocket 回调注册失败 (非致命): {e}")
+
     # 启动感知系统（统一由 PerceptionSystem 管理：屏幕/文件/对话/语音）
     if settings.PERCEPTION_ENABLED:
         try:
@@ -87,11 +116,20 @@ async def lifespan(app: FastAPI):
             from modules.perception.integration import get_perception_integrator
             get_perception_integrator().start()
 
-            # 注册感知差异源到差异检测器
-            if settings.DIFFERENCE_DETECTOR_ENABLED and ps.perception_source:
-                from modules.difference_detector import get_detector
-                get_detector().registry.register(ps.perception_source)
-                logger.info("✓ 感知差异源已注册到差异检测器")
+            # 注：感知差异源和 DetectorEventBridge 已在 setup() 中注册到 DifferenceDetector
+            # - PerceptionDifferenceSource: 感知事件 → scan() 消费 → 强度打分
+            # - DetectorEventBridge: 高强度差异 → DIFFERENCE_DETECTED 事件 → EventBus
+            #   → PerceptionIntegrator 自动注入模型上下文
+            #   → PerceptionThinkTrigger 可选触发主动思考
+
+            # 注入思考触发器端口 — 高强度感知差异触发单次模型调用
+            if settings.PERCEPTION_TRIGGER_THINK and ps.think_trigger:
+                try:
+                    from modules.thinking.proactive_outreach import PerceptionThinkTriggerPort
+                    ps.think_trigger.set_trigger_port(PerceptionThinkTriggerPort())
+                    logger.info("✓ 感知→思考触发器端口已注入")
+                except Exception as e:
+                    logger.debug(f"注入思考触发器端口失败 (非致命): {e}")
         except Exception as e:
             logger.error(f"✗ 感知系统启动失败: {e}")
 
@@ -333,7 +371,7 @@ def register_module_routers(app: FastAPI) -> None:
     """挂载所有业务模块路由"""
     app.include_router(data_process_router)
     app.include_router(tool_router)
-    app.include_router(memory_router)
+    # 记忆 API 已迁移，不再挂载旧路由
     app.include_router(stream_router)
     app.include_router(attention_router)
     app.include_router(management_router)
@@ -488,14 +526,12 @@ async def get_config():
 
 @app.post("/config/toggle-companion-mode")
 async def toggle_companion_mode():
-    """切换陪伴模式"""
-    current = settings.COMPANION_MODE
-    new_val = not current
-    object.__setattr__(settings, "COMPANION_MODE", new_val)
-    if new_val:
-        object.__setattr__(settings, "EXECUTION_MODE", "plan")
-    logger.info(f"陪伴模式: {current} → {new_val}")
-    return {"data": {"COMPANION_MODE": new_val, "EXECUTION_MODE": settings.EXECUTION_MODE}}
+    """切换陪伴模式（沿用 API 端点，内部改为激活 companion skill）"""
+    from modules.thinking.skills.manager import skill_manager
+    companion = skill_manager.get_skill("companion")
+    if companion:
+        return {"data": {"skill": "companion", "name": companion.name, "message": "Companion skill ready"}}
+    return {"data": {"message": "Companion skill not found"}}
 
 
 @app.put("/config/{key}")

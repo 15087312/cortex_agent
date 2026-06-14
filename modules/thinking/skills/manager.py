@@ -31,6 +31,28 @@ class SkillManager:
         self._skills: Dict[str, Skill] = {}
         self._loaded = False
 
+    def register_builtin_skills(self) -> int:
+        """注册内置技能（companion + learn）
+
+        内置 skill 可被 YAML 文件覆盖（同名 id 的 YAML 会替换内置版本）。
+        """
+        count = 0
+        companion = Skill.create_companion()
+        if companion.id not in self._skills:
+            self._skills[companion.id] = companion
+            count += 1
+            logger.info(f"[技能] 注册内置: {companion.id} ({companion.name})")
+
+        learn = Skill.create_learn()
+        if learn.id not in self._skills:
+            self._skills[learn.id] = learn
+            count += 1
+            logger.info(f"[技能] 注册内置: {learn.id} ({learn.name})")
+
+        if count > 0:
+            logger.info(f"[技能] 注册 {count} 个内置技能")
+        return count
+
     def load_skills(self, directory: Optional[str] = None) -> int:
         """从目录加载所有 YAML 技能文件
 
@@ -47,6 +69,8 @@ class SkillManager:
 
         if not skills_dir.exists():
             logger.warning(f"[技能] 目录不存在: {skills_dir}")
+            # 仍注册内置技能
+            self.register_builtin_skills()
             return 0
 
         count = 0
@@ -82,6 +106,28 @@ class SkillManager:
                         logger.info(f"[技能] 加载 learned: {skill.id} ({skill.name})")
                 except Exception as e:
                     logger.warning(f"[技能] 加载失败 {file_path.name}: {e}")
+
+        # 扫描 data/plugins/learned/ 子目录（统一存储的已学工具 Skill）
+        try:
+            plugins_learned = Path(__file__).parent.parent.parent.parent / "data" / "plugins" / "learned"
+            if plugins_learned.exists():
+                for file_path in sorted(plugins_learned.glob("*.yaml")):
+                    if skill_id := file_path.stem:  # 不重复加载
+                        if skill_id in self._skills:
+                            continue
+                    try:
+                        skill = self._load_yaml(file_path)
+                        if skill:
+                            self._skills[skill.id] = skill
+                            count += 1
+                            logger.info(f"[技能] 加载 plugins learned: {skill.id} ({skill.name})")
+                    except Exception as e:
+                        logger.warning(f"[技能] 加载失败 {file_path.name}: {e}")
+        except Exception:
+            pass
+
+        # 注册内置技能（YAML 加载之后，同名 YAML 优先）
+        self.register_builtin_skills()
 
         self._loaded = True
         logger.info(f"[技能] 共加载 {count} 个技能")

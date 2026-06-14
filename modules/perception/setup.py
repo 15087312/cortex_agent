@@ -110,6 +110,26 @@ class PerceptionSystem:
         # 5. 感知差异源
         self.perception_source = PerceptionDifferenceSource(event_bus=self.event_bus)
 
+        # 5.1 注册感知差异源到 DifferenceDetector — 使 scan() 能消费感知事件
+        try:
+            from modules.difference_detector.detector import get_detector
+            detector = get_detector()
+            detector.registry.register(self.perception_source)
+            logger.info("感知差异源已注册到 DifferenceDetector")
+        except Exception as e:
+            logger.debug(f"注册感知差异源到 DifferenceDetector 失败 (非致命): {e}")
+
+        # 5.2 注册差异检测器→事件总线桥接 — 高强度感知差异发布为 DIFFERENCE_DETECTED
+        try:
+            from modules.difference_detector.detector import get_detector as get_diff_detector
+            from modules.perception.state.detector_bridge import DetectorEventBridge
+            self.detector_bridge = DetectorEventBridge(event_bus=self.event_bus)
+            get_diff_detector().on_high_intensity(self.detector_bridge.handle)
+            logger.info("DetectorEventBridge 已注册到 DifferenceDetector")
+        except Exception as e:
+            logger.debug(f"注册 DetectorEventBridge 失败 (非致命): {e}")
+            self.detector_bridge = None
+
         # 6. 差异→思考触发器（根据配置）
         if cfg["trigger_enabled"]:
             from modules.perception.state.think_trigger import PerceptionThinkTrigger

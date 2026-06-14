@@ -174,19 +174,8 @@ class StreamThinkingSystem:
         asyncio.create_task(self._preload_session_memories(session_id))
 
     async def _preload_session_memories(self, session_id: str):
-        """T1: 预加载用户偏好、最近任务、全局经验"""
-        try:
-            from modules.memory.core.session_memory_preloader import SessionMemoryPreloader
-            from modules.memory.core.memory_manager import MemoryManager
-
-            mm = MemoryManager()
-            mm.set_session_id(session_id)
-
-            # GCM 已移除，gcm_pool 始终为 None
-            preloader = SessionMemoryPreloader(mm, None)
-            await preloader.preload(session_id)
-        except Exception as e:
-            logger.debug(f"[T1] 会话预加载失败 (非致命): {e}")
+        """T1: 会话记忆由 EventReducer 在结束后处理，无需预加载"""
+        pass
 
     async def stop(self, session_id: str = ""):
         async with self._lock:
@@ -434,6 +423,8 @@ class StreamThinkingSystem:
 
                     # 收集活跃专家名称 + 上下文窗口占用
                     active_experts = []
+                    active_supervisors = []
+                    large_model_info = {}
                     context_tokens = 0
                     context_window_size = 128000
                     try:
@@ -442,14 +433,39 @@ class StreamThinkingSystem:
                             rm = _runner_managers.get(session_id)
                         if rm:
                             for runner_info in rm.list_runners():
-                                if runner_info.get("running") and runner_info.get("tier") != "large":
-                                    name = runner_info.get("name") or runner_info.get("role", "")
-                                    if name:
-                                        active_experts.append(name)
-                                # 取大模型的上下文窗口信息
-                                if runner_info.get("tier") == "large" and runner_info.get("running"):
-                                    context_tokens = runner_info.get("context_tokens", 0)
-                                    context_window_size = runner_info.get("context_window_size", 128000)
+                                tier = runner_info.get("tier", "")
+                                running = runner_info.get("running", False)
+                                name = runner_info.get("name") or runner_info.get("role", "")
+                                role = runner_info.get("role", "")
+                                model_id = runner_info.get("model_id", "")
+                                # 大模型身份
+                                if tier == "large":
+                                    if running:
+                                        context_tokens = runner_info.get("context_tokens", 0)
+                                        context_window_size = runner_info.get("context_window_size", 128000)
+                                    large_model_info = {
+                                        "name": name,
+                                        "role": role,
+                                        "model_id": model_id,
+                                        "active_skill": runner_info.get("active_skill", ""),
+                                    }
+                                # 主管
+                                elif tier == "supervisor" and running:
+                                    active_supervisors.append({
+                                        "name": name,
+                                        "role": role,
+                                        "model_id": model_id,
+                                    })
+                                # 专家（带上所属主管）
+                                elif tier == "expert" and running:
+                                    # 从 runner 的 supervisor_chain 获取所属主管
+                                    supervisor = runner_info.get("supervisor", "")
+                                    active_experts.append({
+                                        "name": name,
+                                        "role": role,
+                                        "model_id": model_id,
+                                        "supervisor": supervisor,
+                                    })
                     except Exception as e:
                         logger.debug(f"[活跃专家] 收集状态失败 (非致命): {e}")
 
@@ -471,6 +487,8 @@ class StreamThinkingSystem:
                                 "queue_size": stage_queue.qsize(),
                                 "running": not scheduler_task.done(),
                                 "active_experts": active_experts,
+                                "active_supervisors": active_supervisors,
+                                "large_model": large_model_info,
                                 "context_tokens": context_tokens,
                                 "context_window_size": context_window_size,
                             },
@@ -692,19 +710,7 @@ class StreamThinkingSystem:
                 self._post_task_extraction(session_id, user_input, final_response)
             )
 
-            # ===== 新增：自动提取用户记忆 =====
-            try:
-                from modules.memory.core.memory_extractor import get_memory_extractor
-                from modules.memory.core.memory_manager import MemoryManager
-
-                mm = MemoryManager()
-                mm.set_session_id(session_id)
-                extractor = get_memory_extractor(mm)
-                extractor.extract_from_dialog(user_input, final_response)
-            except Exception as e:
-                logger.debug(f"自动记忆提取失败: {e}")
-            # ==================================
-
+            # 事件记忆由 _post_task_extraction 在会话结束后处理
             return final_response
 
         except Exception as e:
@@ -737,30 +743,51 @@ class StreamThinkingSystem:
     async def _post_task_extraction(
             self, session_id: str, user_input: str, final_response: str
     ):
-        """T5: 任务完成后提取偏好/教训/状态变更并写入记忆 (不阻塞)"""
-        await asyncio.sleep(30)
+        """会话结束后生成记忆事件（不阻塞）"""
+        await asyncio.sleep(30)  # 延迟 30 秒，确保所有流式输出已刷入
         try:
-            from modules.memory.core.post_task_memory_extractor import PostTaskMemoryExtractor
-            from modules.memory.core.memory_manager import MemoryManager
-
-            mm = MemoryManager()
-            mm.set_session_id(session_id)
-            extractor = PostTaskMemoryExtractor(mm)
-
-            conversation = self.get_context(session_id)
-            if not conversation:
+            # 构造完整对话文本
+            conversation_text = (
+                f"用户: {user_input}\n"
+                f"助手: {final_response}"
+            )
+            if len(conversation_text.strip()) < 50:
+                logger.debug(f"[事件记忆] 会话 {session_id} 太短，跳过")
                 return
 
-            written = await extractor.extract_and_write(
-                conversation=conversation,
-                user_input=user_input,
-                final_response=final_response,
-                session_id=session_id,
-            )
-            if written:
-                logger.info(f"[T5] 任务后记忆已写入: {written}")
+            # 获取 EventReducer
+            from modules.memory import get_reducer
+            reducer = get_reducer()
+
+            # 尝试注入 LiteModelClient
+            try:
+                from infra.model.lite_model_client import LiteModelClient
+                client = await LiteModelClient.get_instance()
+                if client:
+                    reducer.set_model(client)
+            except Exception as e:
+                logger.debug(f"[事件记忆] 模型注入失败 (非致命): {e}")
+
+            # 还原完整对话（从 session 中获取更完整的上下文）
+            session = self.sessions.get(session_id)
+            if session:
+                messages = session.get("messages", [])
+                parts = []
+                for msg in messages[-20:]:  # 最近 20 条
+                    role = msg.get("role", "unknown")
+                    content = msg.get("content", "")
+                    if content and isinstance(content, str):
+                        parts.append(f"{role}: {content}")
+                if parts:
+                    conversation_text = "\n".join(parts)
+
+            events = await reducer.reduce(session_id, conversation_text)
+            if events:
+                logger.info(f"[事件记忆] 会话 {session_id} 生成 {len(events)} 个事件")
+            else:
+                logger.debug(f"[事件记忆] 会话 {session_id} 无事件生成")
         except Exception as e:
-            logger.debug(f"[T5] 任务后记忆提取失败 (非致命): {e}")
+            logger.debug(f"[事件记忆] 后处理失败 (非致命): {e}")
 
     def get_context(self, session_id: str) -> List[Dict[str, Any]]:
         session = self.sessions.get(session_id)
@@ -841,6 +868,18 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
             if msg_type == "input":
                 user_content = msg_data.get("content", "")
                 if user_content:
+                    # 如果消息中带了执行模式，同步设置
+                    exec_mode = msg_data.get("execution_mode", "")
+                    if exec_mode in ("plan", "edit", "yolo", "control"):
+                        try:
+                            from config.settings import settings
+                            if settings.EXECUTION_MODE != exec_mode:
+                                object.__setattr__(settings, "EXECUTION_MODE", exec_mode)
+                                from modules.thinking.context.controller import get_context_controller
+                                get_context_controller().set_mode(exec_mode)
+                                logger.info(f"[API] WebSocket 消息设置模式: {exec_mode}")
+                        except Exception:
+                            pass
                     asyncio.create_task(system.think(session_id, user_content))
 
             elif msg_type == "stop":

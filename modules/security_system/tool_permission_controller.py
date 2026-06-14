@@ -13,18 +13,14 @@
 
 用法：
   ctrl = get_tool_permission_controller()
-  
+
   # 可见性：模型能看到哪些工具
   visible = ctrl.get_visible_tools(tier="large", mode="edit")
-  
-  # 可执行性：某个工具能否执行
-  allowed, reason = ctrl.check_executable(
-      tier="large", role="large_primary",
-      tool_name="exec_command", tool_params={...},
-      mode="learn"
-  )
+
+  # 可执行性：由 tool_security_gate.py 统一处理（参数级危险检测 + 风险等级审批）
+  # 不再在此类中重复实现
 """
-from typing import Dict, List, Any, Tuple, Optional, Set
+from typing import Dict, List, Any, Optional, Tuple
 from utils.logger import setup_logger
 import threading
 
@@ -41,42 +37,53 @@ class ToolPermissionController:
     # ── 可见性 ──────────────────────────────────────────────────────────
 
     def get_visible_tools(self, tier: str, mode: str, role: str = "",
-                          skill_tool_rules: Any = None,
-                          companion_mode: bool = False) -> List[str]:
+                          skill_tool_rules: Any = None) -> List[str]:
         """返回模型可见的工具列表
 
-        按模式+tier 组合策略过滤：
-        - learn: 只显示 query + 学习相关工具
-        - plan: 只显示 query 工具
-        - control/edit/yolo: 全量（按 tier 裁剪）
+        权限决定策略：
+        1. 从 identity.py 获取基础白名单
+        2. 展开 tag: 前缀
+        3. 按 tier 风险过滤（专家不能看 HIGH 工具）
+        4. 技能工具规则（激活的 Skill ToolRules 重排/排除）
         """
         from infra.tool_manager.tool_registry import ToolRegistry
 
         # 1. 从 identity.py 获取基础白名单
-        whitelist = self._get_base_whitelist(tier, companion_mode)
+        whitelist = self._get_base_whitelist(tier)
 
         # 2. 展开 tag:
         expanded = self._expand_tags(whitelist)
 
-        # 3. 按模式过滤
-        mode_filtered = self._apply_mode_filter(expanded, mode, tier, ToolRegistry)
+        # 3. 按 tier 风险过滤（专家不能看 HIGH 工具）
+        tier_filtered = self._apply_tier_filter(expanded, tier, ToolRegistry)
 
-        # 4. 按 tier 风险过滤（专家不能看 HIGH 工具）
-        tier_filtered = self._apply_tier_filter(mode_filtered, tier, ToolRegistry)
-
-        # 5. 技能工具规则（重排/排除）
+        # 4. 技能工具规则（重排/排除 — 当技能激活时作为主要过滤源）
         if skill_tool_rules:
             tier_filtered = self._apply_skill_rules(tier_filtered, skill_tool_rules, ToolRegistry)
 
         return tier_filtered
 
-    def _get_base_whitelist(self, tier: str, companion: bool) -> List[str]:
-        """获取基础白名单"""
+    def _get_base_whitelist(self, tier: str, role: str = "") -> List[str]:
+        """获取基础白名单
+
+        优先从 YAML 配置的 identity.tool_whitelist 读取，
+        再回退到 DEFAULT_TOOL_WHITELISTS。
+        """
         from modules.thinking.identity import DEFAULT_TOOL_WHITELISTS
 
-        if companion and tier == "large":
-            return list(DEFAULT_TOOL_WHITELISTS.get("companion", []))
+        # 尝试从外部 YAML 配置获取
+        try:
+            from modules.thinking.identity import get_identities
+            all_ids = get_identities()
+            for key, idata in all_ids.items():
+                wt = idata.get("tool_whitelist")
+                if wt and isinstance(wt, list) and len(wt) > 0:
+                    if idata.get("tier") == tier:
+                        return list(wt)
+        except Exception:
+            pass
 
+        # 回退：硬编码默认
         if tier == "large":
             return list(DEFAULT_TOOL_WHITELISTS.get("large", []))
         elif tier == "supervisor":
@@ -99,27 +106,6 @@ class ToolPermissionController:
             else:
                 result.append(item)
         return result
-
-    def _apply_mode_filter(self, tools: List[str], mode: str,
-                           tier: str, registry) -> List[str]:
-        """按模式过滤工具"""
-        if mode == "learn":
-            # 学习模式：只保留 query 类 + 学习相关工具
-            return [
-                t for t in tools
-                if registry.get_tool(t) and (
-                    registry.get_tool(t).category == "query"
-                    or "learned" in registry.get_tool(t).tags
-                    or "toolbuilder" in registry.get_tool(t).tags
-                )
-            ]
-        elif mode == "plan":
-            # plan 模式：只保留 query 类
-            return [
-                t for t in tools
-                if registry.get_tool(t) and registry.get_tool(t).category == "query"
-            ]
-        return tools  # edit/yolo/control: 不额外过滤
 
     def _apply_tier_filter(self, tools: List[str], tier: str,
                            registry) -> List[str]:
@@ -159,59 +145,119 @@ class ToolPermissionController:
             prioritized = [t for t in prioritized if t not in blocked]
         return prioritized
 
-    # ── 可执行性 ─────────────────────────────────────────────────────────
+    # ── 执行权限检查（角色类别权限）────────────────────────────────────
 
-    def check_executable(
-        self, tier: str, role: str,
-        tool_name: str, tool_params: Dict[str, Any],
-        mode: str,
-    ) -> Tuple[bool, str]:
-        """检查工具是否可以执行
+    def check_execution_permission(self, tool_name: str, caller_tier: str,
+                                    caller_model_id: str = "",
+                                    caller_role: str = "") -> Tuple[bool, str]:
+        """检查调用者是否有权限执行指定工具
 
-        综合判断：
-        - 模式策略（learn 自动放行）
-        - 风险等级（HIGH 需要审批）
-        - 角色匹配（专家不能调 admin 工具）
-        - 极端危险（rm -rf / 等硬阻断）
+        基于 ModelPermissions.allowed_tool_categories 判断：
+        - large: 允许 query/mutation/admin
+        - supervisor: 允许 query/mutation
+        - expert: 通常只允许 query
+
+        Args:
+            tool_name: 工具名
+            caller_tier: 调用者层级 (large/supervisor/expert)
+            caller_model_id: 调用者 model_id（用于精确查找）
+            caller_role: 调用者角色（回退查找用）
+
+        Returns:
+            (allowed, reason)
         """
         from infra.tool_manager.tool_registry import ToolRegistry
 
-        info = ToolRegistry.get_tool(tool_name)
-        if not info:
-            # 控制工具（delegate_task 等）不在 registry 中，默认允许
-            return True, ""
+        tool_info = ToolRegistry.get_tool(tool_name)
+        if not tool_info:
+            return True, ""  # 控制工具（delegate_task 等）不在 registry 中，默认允许
 
-        # 1. 极端危险阻断
-        if tool_name in self._get_extreme_danger_tools():
-            return False, "极端危险操作被永久禁止"
-
-        # 2. 学习模式自动放行
-        if mode == "learn":
-            return True, "学习模式自动批准"
-
-        # 3. plan 模式拦截写操作
-        if mode == "plan" and info.category in ("mutation", "admin"):
-            return False, "plan 模式禁止写操作"
-
-        # 4. 角色匹配：专家不能调 admin 工具
-        if tier == "expert" and info.category == "admin":
-            return False, f"当前角色无权调用 {info.category} 类别工具"
-
-        # 5. 高风险工具标记为待审批
-        if info.risk_level == "HIGH":
-            return True, "需要审批"  # 调用方自行走审批流程
+        permissions = self._get_caller_permissions(caller_model_id, caller_tier, caller_role)
+        if permissions is not None:
+            if not permissions.can_use_tool_category(tool_info.category):
+                return False, (
+                    f"当前模型无权调用 {tool_info.category} 类别工具: {tool_name}。"
+                    f"允许的类别: {permissions.allowed_tool_categories}"
+                )
 
         return True, ""
 
-    def _get_extreme_danger_tools(self) -> Set[str]:
-        """极端危险工具名列表"""
-        return {"exec_command"}  # 实际危险判断在安全门控的参数级别
+    @staticmethod
+    def _get_caller_permissions(caller_model_id: str, caller_tier: str,
+                                 caller_role: str = ""):
+        """获取调用者的 ModelPermissions
+
+        从旧 tool_manager._get_caller_permissions 迁移而来。
+        查找顺序: model_id 精确查找 → tier 回退查找 → template_key 回退。
+        """
+        try:
+            from modules.thinking.model_factory import get_model_factory
+            from modules.thinking.identity import get_permissions
+
+            factory = get_model_factory()
+
+            # 优先通过 model_id 精确查找
+            if caller_model_id:
+                instance = factory.get(caller_model_id)
+                if instance and hasattr(instance.identity, 'permissions'):
+                    return instance.identity.permissions
+
+            # 回退: 通过 tier 查找同层级的任意实例
+            tier = caller_tier
+            if caller_role and (caller_role.startswith("expert")
+                                 or caller_role.startswith("supervisor")):
+                tier = caller_role.split("_")[0]
+            else:
+                tier = caller_tier if caller_tier in ("large", "supervisor", "expert") else ""
+
+            if tier:
+                instances = factory.list_by_tier(tier)
+                if instances:
+                    identity = instances[0].identity
+                    if hasattr(identity, 'permissions'):
+                        return identity.permissions
+
+            # 尝试从 YAML 配置的 identity.permissions 读取
+            try:
+                from modules.thinking.identity import get_identities
+                from modules.thinking.identity import ModelPermissions
+                all_ids = get_identities()
+                for key, idata in all_ids.items():
+                    perm_dict = idata.get("permissions")
+                    if perm_dict and isinstance(perm_dict, dict):
+                        cats = perm_dict.get("allowed_tool_categories", [])
+                        if cats and isinstance(cats, list):
+                            # 按 tier/key 匹配
+                            if caller_role and (key == caller_role or key.endswith(f"_{caller_role}")):
+                                return ModelPermissions(allowed_tool_categories=cats)
+                            if caller_tier and idata.get("tier") == caller_tier:
+                                return ModelPermissions(allowed_tool_categories=cats)
+            except Exception:
+                pass
+
+            # 最后回退: 通过 template_key 查找 DEFAULT_PERMISSIONS
+            if caller_role:
+                permissions = get_permissions(caller_role)
+                if permissions.allowed_tool_categories:
+                    return permissions
+
+            if caller_tier:
+                permissions = get_permissions(caller_tier)
+                if permissions.allowed_tool_categories:
+                    return permissions
+
+        except Exception:
+            pass
+        return None
 
     # ── 控制工具可见性 ──────────────────────────────────────────────────
 
     def get_control_tools(self, tier: str, mode: str,
                           delegation_available: bool) -> List[str]:
-        """返回该 tier+mode 可用的控制工具名列表"""
+        """返回该 tier+mode 可用的控制工具名列表
+
+        由激活的 Skill 的 ToolRules 控制 delegate_task 等工具的可见性。
+        """
         from modules.thinking.core.control_tools import (
             CONTINUE_THINKING_TOOL, QUERY_TOOL_DETAILS_TOOL,
             DELEGATE_TASK_TOOL, CREATE_SUPERVISOR_TOOL,
@@ -223,11 +269,9 @@ class ToolPermissionController:
         tools = [CONTINUE_THINKING_TOOL, QUERY_TOOL_DETAILS_TOOL]
 
         if delegation_available and tier in ("large", "supervisor"):
-            if mode != "learn":
-                tools.append(DELEGATE_TASK_TOOL)
+            tools.append(DELEGATE_TASK_TOOL)
         if delegation_available and tier == "large":
-            if mode != "learn":
-                tools.append(CREATE_SUPERVISOR_TOOL)
+            tools.append(CREATE_SUPERVISOR_TOOL)
         if tier == "large":
             tools.extend([
                 RESPOND_TO_USER_TOOL, REQUEST_SKILL_TOOL,

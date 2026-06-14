@@ -28,6 +28,8 @@ from typing import Dict, Any, List, Optional
 
 from utils.logger import setup_logger
 
+logger = setup_logger("runtime_expert")
+
 
 class RuntimeExpert(ABC):
     """常驻型专家基类 — 生命周期: init → start → run_cli_mode → stop
@@ -124,15 +126,8 @@ class RuntimeExpert(ABC):
         return ModelIdentity.from_template(self.template_key)
 
     def _init_expert_memory(self) -> str:
-        """初始化专家专属记忆目录"""
-        try:
-            from modules.memory.core.long_term import LongTermMemory
-            ltm = LongTermMemory()
-            expert_dir = ltm.get_expert_dir(expert_name=self.identity.role)
-            return str(expert_dir) if expert_dir else ""
-        except Exception:
-            # logger 可能尚未初始化（在 __init__ 早期调用），静默降级
-            return ""
+        """初始化专家专属记忆目录（旧版 LongTermMemory 已废弃，使用事件记忆 EventStore）"""
+        return ""
 
     def add_memory(self, category: str, content: str, importance: float = 0.5) -> None:
         """添加一条专属记忆"""
@@ -161,63 +156,15 @@ class RuntimeExpert(ABC):
         return [e for _, e in scored[:top_k]]
 
     def _create_memory_manager(self):
-        """创建 expert 专属的 MemoryManager（延迟创建，避免在 imports 阶段触发）"""
-        try:
-            from modules.memory.core.memory_manager import MemoryManager
-            mm = MemoryManager(model_id=self.model_id)
-            mm.set_session_id(self.session_id)
-            mm.set_owner(self.model_id)
-            return mm
-        except Exception as e:
-            self.logger.debug(f"创建 MemoryManager 失败: {e}")
-            return None
+        """旧版 MemoryManager 已废弃，返回 None"""
+        return None
 
     async def _load_private_context(self, request_text: str) -> str:
-        """加载当前专家可见的 private/global 记忆上下文。"""
-        if not self.model_id:
-            return ""
-        try:
-            from modules.thinking.context import ContextManager
-
-            private_context, _ = await ContextManager.load_private_context(
-                user_input=request_text,
-                model_id=self.model_id,
-                session_id=self.session_id,
-                model_role=self.identity.role,
-                memory_manager=self._mm,
-            )
-            return private_context or ""
-        except Exception as e:
-            self.logger.debug(f"加载私有记忆上下文失败: {e}")
-            return ""
+        """加载当前专家可见的 private/global 记忆上下文（已存根，不再使用记忆系统）。"""
+        return ""
 
     def _save_private_memory(self, content: str, source: str = "runtime_expert_response") -> None:
-        """保存当前专家私有记忆，不写入共享会话窗口。"""
-        if not content or not self.model_id:
-            return
-        try:
-            mm = self._mm
-            if mm is None:
-                from modules.memory.core.memory_manager import MemoryManager
-                mm = MemoryManager(model_id=self.model_id)
-                mm.set_session_id(self.session_id)
-                mm.set_owner(self.model_id)
-            mm.save_dialog_turn(
-                user_input=f"RuntimeExpert:{self.identity.role}",
-                assistant_response=str(content),
-                metadata={
-                    "scope": "private",
-                    "owner": self.model_id,
-                    "visible_to": [self.model_id],
-                    "model_id": self.model_id,
-                    "tier": self.identity.tier,
-                    "role": self.identity.role,
-                    "source": source,
-                },
-                scope="private",
-            )
-        except Exception as e:
-            self.logger.debug(f"保存私有记忆失败: {e}")
+        """保存当前专家私有记忆（已存根，不再使用记忆系统）。"""
 
     # ------------------------------------------------------------------
     # Blackboard 通信

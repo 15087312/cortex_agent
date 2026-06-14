@@ -31,7 +31,7 @@ _LEARNED_TOOLS_DIR = None
 def _get_learned_dir() -> Path:
     global _LEARNED_TOOLS_DIR
     if _LEARNED_TOOLS_DIR is None:
-        _LEARNED_TOOLS_DIR = Path(__file__).parent.parent.parent.parent / "data" / "learned_tools"
+        _LEARNED_TOOLS_DIR = Path(__file__).parent.parent.parent.parent / "data" / "plugins" / "learned"
     return _LEARNED_TOOLS_DIR
 
 
@@ -129,6 +129,7 @@ def _import_tool_from_source(tool_name: str, source_code: str) -> Optional[calla
     risk_level="MEDIUM",
     category="admin",
     core=True,
+    tags=["learning"],
 )
 async def create_tool(
     tool_name: str,
@@ -223,6 +224,7 @@ def list_my_tools() -> Dict[str, Any]:
     risk_level="MEDIUM",
     category="admin",
     core=True,
+    tags=["learning"],
 )
 async def delete_tool(tool_name: str) -> Dict[str, Any]:
     """删除自创工具"""
@@ -259,6 +261,23 @@ async def delete_tool(tool_name: str) -> Dict[str, Any]:
         encoding="utf-8",
     )
 
+    # 清理旧的 save_recipe 索引 data/plugins/_index.json
+    try:
+        old_index_path = Path(__file__).parent.parent.parent.parent / "data" / "plugins" / "_index.json"
+        if old_index_path.exists():
+            old_index = json.loads(old_index_path.read_text(encoding="utf-8"))
+            tools_dict = old_index.get("tools", {})
+            changed = False
+            for key in list(tools_dict.keys()):
+                if tools_dict[key].get("tool_name") == safe_name:
+                    del tools_dict[key]
+                    changed = True
+            if changed:
+                old_index["tools"] = tools_dict
+                old_index_path.write_text(json.dumps(old_index, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
     logger.info(f"自创工具已删除: {safe_name}")
     return {"success": True, "message": f"工具「{safe_name}」已删除"}
 
@@ -274,6 +293,7 @@ async def delete_tool(tool_name: str) -> Dict[str, Any]:
     risk_level="MEDIUM",
     category="admin",
     core=True,
+    tags=["learning"],
 )
 async def edit_tool(tool_name: str, source_code: str, description: str = "") -> Dict[str, Any]:
     """修改已注册的自创工具"""

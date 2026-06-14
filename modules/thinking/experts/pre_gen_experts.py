@@ -676,26 +676,18 @@ class PreGenExpertPipeline:
         Returns:
             expert_guidance dict，包含已启用专家的引导信息
         """
-        from config.settings import settings as _settings
-
         context = {
             "memory_context": memory_context,
         }
 
-        # 按配置决定启用哪些专家
-        tasks = []
-        task_names = []
-        if _settings.effective_values_enabled:
-            tasks.append(self.values_expert.analyze(user_input, context))
-            task_names.append("values")
-        tasks.append(self.security_expert.analyze(user_input, context))
-        task_names.append("security")
-        if _settings.effective_emotion_enabled:
-            tasks.append(self.emotion_expert.analyze(user_input, context))
-            task_names.append("emotion")
-
-        if not tasks:
-            return {}
+        # 运行所有预生成专家（价值观、安全、情绪）
+        # 由激活的 Skill 决定模型行为，预生成专家始终提供分析支持
+        tasks = [
+            self.values_expert.analyze(user_input, context),
+            self.security_expert.analyze(user_input, context),
+            self.emotion_expert.analyze(user_input, context),
+        ]
+        task_names = ["values", "security", "emotion"]
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
 

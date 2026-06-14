@@ -1,0 +1,7 @@
+{
+  "chrome_search": {
+    "name": "chrome_search",
+    "description": "在 Chrome 浏览器中打开 Google 搜索指定关键词。自动检测系统类型（macOS/Windows/Linux）并打开 Chrome。",
+    "created_at": "2026-06-12T08:09:58.350783+00:00"
+  }
+}

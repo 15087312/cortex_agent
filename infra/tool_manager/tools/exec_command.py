@@ -3,7 +3,7 @@
 
 - exec_command: 通用 shell 执行（高权限）— 带危险命令检测 + 执行前快照
 - run_command: 白名单管控的命令执行（仅允许安全命令）
-- run_python: Python 代码沙箱执行（AST 验证 + 资源限制）
+- run_script: 任意语言脚本执行（真机模式，无沙箱）
 - kill_process: 杀死进程
 - rollback_snapshot: 回滚到命令执行前的快照
 - list_command_snapshots: 列出可用快照
@@ -309,7 +309,7 @@ def _prune_old_snapshots():
     },
     risk_level="HIGH",
     category="admin",
-    tags=["mutation"],
+    tags=["mutation", "learning"],
     core=True,
 )
 def exec_command(command: str, timeout: Optional[int] = None, workdir: Optional[str] = None) -> Dict[str, Any]:
@@ -512,22 +512,10 @@ def run_script(code: str, language: str = "python", timeout: Optional[int] = 30)
             pass
 
 
-# 向后兼容：run_python 映射到 run_script
-@ToolRegistry.register(
-    "run_python",
-    description="向后兼容 — 等同于 run_script(language='python')",
-    params={
-        "code": "要执行的 Python 代码",
-        "timeout": "可选，超时秒数（默认30）",
-    },
-    risk_level="HIGH",
-    category="admin",
-    tags=["mutation"],
-    core=True,
-)
-def run_python(code: str, timeout: Optional[int] = 30) -> Dict[str, Any]:
-    """向后兼容 — 调用 run_script(language='python')"""
-    return run_script(code, language="python", timeout=timeout)
+
+
+
+
 
 
 @ToolRegistry.register(

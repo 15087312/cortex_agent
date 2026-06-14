@@ -15,9 +15,8 @@ class AppState:
     session_id: str = ""
     processing: bool = False
 
-    # 执行模式: "plan" / "edit" / "yolo"
+    # 执行模式: "plan" / "edit" / "yolo" / "control"
     execution_mode: str = "edit"
-    companion_mode: bool = False  # 陪伴模式状态（陪伴模式下强制 plan）
 
     # 对话数据
     dialog_entries: List[Dict[str, Any]] = field(default_factory=list)
@@ -49,8 +48,14 @@ class AppState:
     max_debug_events: int = 200
     last_error: str = ""
 
-    # 活跃专家追踪
-    active_experts: List[str] = field(default_factory=list)  # ["代码审查", "安全检测"]
+    # 活跃专家/主管/大模型身份追踪
+    active_experts: List[Dict[str, Any]] = field(default_factory=list)
+    # 每个元素: {"name": "代码审查", "role": "code_reviewer", "model_id": "...", "supervisor": "代码主管"}
+    active_supervisors: List[Dict[str, Any]] = field(default_factory=list)
+    # 每个元素: {"name": "代码主管", "role": "code_supervisor", "model_id": "..."}
+    large_model_identity: Dict[str, Any] = field(default_factory=dict)
+    # {"name": "总指挥", "role": "orchestrator", "model_id": "large_primary", "active_skill": "代码审查"}
+    active_skill: str = ""  # 当前激活的 skill 名称
     error_chain: List[Dict[str, Any]] = field(default_factory=list)  # 错误链：专家→主管→大模型→CLI
 
     # 上下文窗口追踪
@@ -89,6 +94,9 @@ class AppState:
         self.debug_events = []
         self.last_error = ""
         self.active_experts = []
+        self.active_supervisors = []
+        self.large_model_identity = {}
+        self.active_skill = ""
         self.error_chain = []
         self.context_tokens = 0
         self.context_window_size = 0

@@ -9,9 +9,9 @@ from modules.security_system.tool_security_gate import (
     ToolSecurityGate,
     _check_extreme_danger,
     _EXTREME_DANGER_PATTERNS_RAW,
-    HIGH_RISK_TOOLS,
-    MEDIUM_RISK_TOOLS,
-    _MUTATION_TOOLS,
+    _get_high_risk_tools,
+    _get_medium_risk_tools,
+    _get_mutation_tools,
 )
 
 
@@ -37,7 +37,6 @@ def _set_mode(gate, mode):
     """设置执行模式"""
     from config.settings import settings
     object.__setattr__(settings, 'EXECUTION_MODE', mode)
-    object.__setattr__(settings, 'COMPANION_MODE', False)
 
 
 # =========================================================================
@@ -416,18 +415,19 @@ class TestRiskClassification:
     """验证工具分类正确"""
 
     def test_exec_command_is_high(self):
-        assert "exec_command" in HIGH_RISK_TOOLS
+        assert "exec_command" in _get_high_risk_tools()
 
     def test_run_script_is_high(self):
-        assert "run_script" in HIGH_RISK_TOOLS
+        assert "run_script" in _get_high_risk_tools()
 
     def test_write_file_is_medium(self):
-        assert "write_file" in MEDIUM_RISK_TOOLS
+        assert "write_file" in _get_medium_risk_tools()
 
     def test_read_file_is_low(self):
-        assert "read_file" not in HIGH_RISK_TOOLS
-        assert "read_file" not in MEDIUM_RISK_TOOLS
+        assert "read_file" not in _get_high_risk_tools()
+        assert "read_file" not in _get_medium_risk_tools()
 
     def test_mutation_tools_include_all_writes(self):
+        mutation = _get_mutation_tools()
         for t in ["write_file", "exec_command", "run_script", "run_python", "delete_file", "git_push"]:
-            assert t in _MUTATION_TOOLS, f"{t} should be in _MUTATION_TOOLS"
+            assert t in mutation, f"{t} should be in mutation tools"

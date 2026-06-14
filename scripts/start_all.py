@@ -31,15 +31,8 @@ def main():
 
     print("Starting Humanoid AGI server...")
 
-    # 启动后台记忆管理 daemon
-    try:
-        from modules.memory.core.memory_scheduler import MemoryScheduler
-        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        _memory_scheduler = MemoryScheduler(data_dir=os.path.join(project_root, "data", "memory"))
-        _memory_scheduler.start()
-        print("记忆管理调度器已启动 ")
-    except Exception as e:
-        print(f"[WARNING] 记忆调度器启动失败: {e}")
+    # 后台记忆由 EventReducer 在每次会话结束后自动处理，无需独立调度器
+    print("记忆系统: 事件驱动 (EventReducer + EventStore)")
 
     import uvicorn
     workers = int(os.environ.get("MAX_WORKERS", "1"))

@@ -140,24 +140,12 @@ class StatusCollector:
         }
     
     def _collect_memory(self) -> Dict[str, Any]:
-        """收集记忆模块状态"""
-        try:
-            from modules.memory.core.memory_manager import MemoryManager
-            mm = MemoryManager()
-            
-            status = mm.get_status()
-            
-            return {
-                "status": "healthy",
-                "short_term": status.get("short_term", {}),
-                "long_term_size_kb": status.get("long_term", {}).get("total_size_kb", 0),
-                "personality": status.get("personality", {}).get("name", "未设置"),
-                "tool_skills": mm.get_tool_skills(),
-                "blackbox_count": status.get("blackbox", {}).get("total_size_kb", 0),
-                "notebook_lines": status.get("notebook", {}).get("total_lines", 0)
-            }
-        except Exception as e:
-            return {"status": "error", "error": "Resource collection failed"}
+        """收集记忆模块状态（旧版 MemoryManager 已废弃）"""
+        return {
+            "status": "healthy",
+            "note": "事件驱动记忆 (EventReducer + EventStore + EventRetrieval)",
+            "event_count": 0,
+        }
     
     def _collect_resource(self) -> Dict[str, Any]:
         """收集资源模块状态"""

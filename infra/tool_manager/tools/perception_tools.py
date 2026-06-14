@@ -72,6 +72,7 @@ async def transcribe_audio(
     risk_level="LOW",
     category="perception",
     core=True,
+    tags=["learning"],
 )
 async def understand_screen(focus: str = "") -> Dict[str, Any]:
     """截图 + 视觉理解（Qwen-VL）+ OCR 兜底"""
@@ -303,6 +304,7 @@ def _simple_summarize(ocr_text: str, window_info: str) -> str:
     risk_level="LOW",
     category="perception",
     core=True,
+    tags=["learning"],
 )
 async def detect_ui_elements(focus: str = "") -> Dict[str, Any]:
     """检测当前屏幕 UI 元素并返回坐标"""

@@ -213,8 +213,7 @@ REQUEST_MODE_CHANGE_TOOL = {
         "name": "request_mode_change",
         "description": (
             "请求切换执行模式。\n"
-            "- plan/edit/yolo/control: 切换工作模式，需用户确认。\n"
-            "- learn: 进入学习模式。用户说「学习怎么用XXX」时直接调这个，不用先查工具。"
+            "- plan/edit/yolo/control: 切换工作模式，需用户确认。"
         ),
         "parameters": {
             "type": "object",
@@ -226,7 +225,7 @@ REQUEST_MODE_CHANGE_TOOL = {
                 "suggested_mode": {
                     "type": "string",
                     "description": "建议的目标模式",
-                    "enum": ["edit", "yolo", "control", "learn"],
+                    "enum": ["plan", "edit", "yolo", "control"],
                 },
             },
             "required": ["reason", "suggested_mode"],
