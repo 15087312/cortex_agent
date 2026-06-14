@@ -52,22 +52,23 @@ COMPONENTS = {
 
 
 def check_huggingface_cli():
-    """检查 huggingface-cli 是否可用"""
+    """检查 hf CLI 是否可用"""
     try:
         subprocess.run(
-            ["huggingface-cli", "--version"],
+            ["hf", "--version"],
             capture_output=True, check=True,
         )
-        return True
+        return "hf"
     except (FileNotFoundError, subprocess.CalledProcessError):
-        return False
+        pass
+    return None
 
 
 def install_huggingface_cli():
-    """安装 huggingface-hub CLI"""
+    """安装 huggingface-hub（含 hf CLI）"""
     print("正在安装 huggingface-hub...")
     subprocess.run(
-        [sys.executable, "-m", "pip", "install", "-q", "huggingface_hub[cli]"],
+        [sys.executable, "-m", "pip", "install", "-q", "huggingface_hub"],
         check=True,
     )
 
@@ -84,14 +85,16 @@ def download_component(key: str, project_root: str):
     print(f"目标: {target}")
     print(f"{'='*50}")
 
-    cmd = ["huggingface-cli", "download", comp["repo"]]
+    cli = check_huggingface_cli()
+    if not cli:
+        print("  ✗ hf CLI 不可用，请运行: pip install huggingface_hub")
+        return False
+
+    cmd = [cli, "download", comp["repo"]]
 
     if comp["files"]:
-        for f in comp["files"]:
-            cmd.append(f)
-        cmd.extend(["--local-dir", target])
-    else:
-        cmd.extend(["--local-dir", target])
+        cmd.extend(comp["files"])
+    cmd.extend(["--local-dir", target])
 
     try:
         subprocess.run(cmd, check=True)
@@ -172,13 +175,13 @@ def main():
 
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-    # 确保 huggingface-cli 可用
+    # 确保 hf CLI 可用
     if not check_huggingface_cli():
         try:
             install_huggingface_cli()
         except Exception as e:
             print(f"安装 huggingface-hub 失败: {e}")
-            print(f"请手动运行: pip install 'huggingface_hub[cli]'")
+            print(f"请手动运行: pip install huggingface_hub")
             sys.exit(1)
 
     # 确定要下载的组件
