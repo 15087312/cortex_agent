@@ -11,7 +11,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from utils.logger import setup_logger
 from modules.perception.events.types import PerceptionEvent, PerceptionEventType
-from infra.mcp.perception_client import MCPPerceptionClientManager
+
 
 logger = setup_logger("mcp_detector")
 
@@ -23,8 +23,7 @@ class MCPResourceDetector:
     通过 MCPPerceptionClientManager 管理多个 MCP 连接。
     """
 
-    def __init__(self, manager: MCPPerceptionClientManager):
-        self._manager = manager
+    def __init__(self):
         self._event_callback: Optional[Callable[[PerceptionEvent], None]] = None
         self._connected = False
 

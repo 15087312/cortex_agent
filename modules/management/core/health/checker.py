@@ -170,23 +170,7 @@ class HealthChecker:
             checks=checks
         )
 
-    async def _check_memory(self) -> HealthCheckResult:
-        """检查记忆模块"""
-        checks = []
 
-        # 旧版 MemoryManager 已废弃，事件记忆由 EventReducer 管理
-        checks.append({
-            "name": "memory_system",
-            "status": "healthy",
-            "note": "事件驱动记忆 (EventStore + EventRetrieval)",
-        })
-
-        return HealthCheckResult(
-            module="memory",
-            status="healthy",
-            message="记忆模块健康",
-            checks=checks
-        )
 
     async def _check_thinking(self) -> HealthCheckResult:
         """检查思维模块"""

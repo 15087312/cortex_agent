@@ -131,7 +131,3 @@ class APIClient:
         except Exception as e:
             logger.warning("update_config(%s) failed: %s", key, e)
         return False
-
-    async def toggle_companion_mode(self) -> None:
-        """切换陪伴模式 - no-op since companion mode is now a skill"""
-        return None

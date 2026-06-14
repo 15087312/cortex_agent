@@ -44,6 +44,3 @@ class PerceptionDetector(ABC):
     def is_available(self) -> bool:
         """检测器是否可用（依赖是否安装）"""
 
-    def reset(self) -> None:
-        """重置检测器状态（可选实现）"""
-        pass

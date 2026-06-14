@@ -210,14 +210,6 @@ class PerceptionSystem:
             fps=cfg["fps"],
         )
 
-    def _setup_file_monitoring(self, cfg: dict):
-        """组装文件监控（从旧 PerceptionManager 合并）"""
-        from modules.perception.file_perception import FilePerception
-        from config.settings import settings
-
-        watch_paths = ["./", "data/"]
-        self.file_perception = FilePerception(watch_paths, enabled=True)
-        logger.info("文件监控已初始化 (watchdog)")
 
     def _setup_dialog_monitoring(self):
         """组装对话监控（从旧 PerceptionManager 合并）"""
@@ -265,43 +257,6 @@ class PerceptionSystem:
         self._started = True
         logger.info("感知系统已启动")
 
-    def _file_monitor_loop(self):
-        """文件监控后台循环"""
-        import time
-        while self._file_monitor_running:
-            try:
-                changes = self.file_perception.check_changes()
-                if changes and self.event_bus:
-                    from modules.perception.events.types import PerceptionEvent, PerceptionEventType
-                    for change in changes:
-                        event = PerceptionEvent(
-                            event_type=PerceptionEventType.FILE_CHANGE,
-                            data={"change": change.to_prompt(), "path": change.target},
-                        )
-                        self.event_bus.publish(event)
-            except Exception as e:
-                logger.debug(f"文件监控循环异常: {e}")
-            time.sleep(2.0)
-
-    def stop(self) -> None:
-        if not self._started:
-            return
-        if self.pipeline:
-            self.pipeline.stop()
-        if self.voice_detector:
-            self.voice_detector.stop()
-        if self.world_state and self.event_bus:
-            self.world_state.stop(self.event_bus)
-        if self.perception_source:
-            self.perception_source.stop()
-        if self.think_trigger and self.event_bus:
-            self.think_trigger.stop(self.event_bus)
-        # 停止文件监控
-        self._file_monitor_running = False
-        if self.file_perception:
-            self.file_perception.stop()
-        self._started = False
-        logger.info("感知系统已停止")
 
     def get_status(self) -> dict:
         status = {
@@ -316,53 +271,6 @@ class PerceptionSystem:
         }
         return status
 
-    def _setup_mcp_detector(self, cfg: dict):
-        """初始化 MCP 资源感知"""
-        try:
-            import asyncio
-            from modules.perception.detectors.mcp_detector import MCPResourceDetector
-            from infra.mcp.perception_client import MCPPerceptionClientManager, MCPPerceptionClient
-            from config.settings import settings
-            from infra.mcp.server_registry import parse_mcp_servers
-
-            manager = MCPPerceptionClientManager()
-
-            servers = parse_mcp_servers(settings.MCP_SERVERS)
-            for srv in servers:
-                if not srv.enabled:
-                    continue
-                if srv.command:
-                    client = MCPPerceptionClient(
-                        server_name=srv.name, command=srv.command,
-                        args=srv.args, env=srv.env, timeout=srv.timeout_seconds,
-                    )
-                elif srv.env.get("url"):
-                    client = MCPPerceptionClient(
-                        server_name=srv.name, url=srv.env["url"],
-                        timeout=srv.timeout_seconds,
-                    )
-                else:
-                    continue
-                manager.add_client(client)
-
-            if not manager.get_status():
-                logger.info("MCP 资源感知: 无可用 server 配置，跳过")
-                return
-
-            detector = MCPResourceDetector(manager)
-            if self.event_bus:
-                detector.set_event_callback(lambda ev: self.event_bus.publish(ev))
-            self.mcp_detector = detector
-
-            try:
-                asyncio.create_task(detector.start())
-            except RuntimeError:
-                logger.info("MCP 资源感知: 无事件循环，延迟启动")
-
-            logger.info(f"MCP 资源感知已初始化: {len(servers)} server(s)")
-        except Exception as e:
-            logger.warning(f"MCP 资源感知初始化失败 (非致命): {e}")
-            self.mcp_detector = None
 
 
 _system: Optional[PerceptionSystem] = None

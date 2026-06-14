@@ -116,6 +116,22 @@ install_deps() {
     ok "依赖安装完成"
 }
 
+# ── 下载 OmniParser UI 检测模型 ──
+setup_omniparser() {
+    if [[ -d "OmniParser" && -f "OmniParser/README.md" ]]; then
+        ok "OmniParser 已存在，跳过下载"
+        return
+    fi
+    info "下载 OmniParser UI 检测模型（约 500MB）..."
+    git clone --depth 1 https://github.com/microsoft/OmniParser.git OmniParser 2>&1 | tail -1
+    if [[ -d "OmniParser" ]]; then
+        ok "OmniParser 下载完成"
+        warn "OmniParser 权重需单独下载，详见 OmniParser/README.md"
+    else
+        warn "OmniParser 下载失败，可稍后手动安装"
+    fi
+}
+
 # ── 配置 ──
 setup_env() {
     if [[ -f ".env" ]]; then
@@ -202,6 +218,7 @@ main() {
     echo ""
     clone_or_update
     install_deps
+    setup_omniparser
     setup_env
     print_done
 }

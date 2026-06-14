@@ -20,7 +20,6 @@ from modules.management import report_exception
 from cortex.version import __version__ as _CORTEX_VERSION
 from infra.data_process.api import router as data_process_router
 from infra.tool_manager.api import router as tool_router
-# 记忆 API 已迁移至新系统，旧版 memory/api.py 已删除
 from modules.thinking.api_stream import router as stream_router
 from modules.attention.api import router as attention_router
 from modules.management.api import router as management_router

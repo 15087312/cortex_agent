@@ -42,6 +42,10 @@ def capture_screen(max_width: int = 1280) -> Optional[str]:
     return base64.b64encode(buf.getvalue()).decode()
 
 
+# 兼容别名
+capture_screen_base64 = capture_screen
+
+
 def _try_mss():
     """mss 捕获"""
     try:

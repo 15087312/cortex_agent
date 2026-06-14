@@ -7,10 +7,6 @@ from typing import Union, List
 from infra.tool_manager.tool_registry import ToolRegistry
 
 
-def _get_memory():
-    """旧版 MemoryManager 已废弃，事件记忆由 EventReducer 处理"""
-    return None
-
 
 ops = {
     "+": operator.add,

@@ -225,9 +225,7 @@ async def _vision_understand(
     window_info: str,
     focus: str,
 ) -> Dict[str, Any]:
-    """视觉理解：优先 Qwen-VL（看图），降级到 OCR + 文本 LLM（看文字）"""
-
-    # ── 尝试 Qwen-VL 真正的视觉理解 ──
+    """视觉理解：使用 ImageAnalyzer 调用本地或云端视觉模型"""
     try:
         from infra.data_process.core.image_analyzer import ImageAnalyzer
         import base64 as b64
@@ -235,7 +233,7 @@ async def _vision_understand(
         analyzer = ImageAnalyzer(model_type="auto")
         await analyzer.initialize()
 
-        if analyzer.model_type in ("qwen_vl", "mlx_vlm"):
+        if analyzer.model_type in ("qwen_vl", "mlx_vlm", "openai"):
             prompt = "请详细描述这个屏幕截图的内容。包括：当前应用、界面布局、可见的文字、按钮、错误信息等。"
             if focus:
                 prompt += f"\n特别关注：{focus}"
@@ -245,36 +243,9 @@ async def _vision_understand(
             if understanding:
                 return {"understanding": understanding, "method": analyzer.model_type, "ocr_text": ""}
     except Exception as e:
-        logger.debug(f"Qwen-VL 视觉理解失败，降级: {e}")
+        logger.error(f"视觉理解失败: {e}")
 
-    # ── 降级：OCR + 文本 LLM ──
-    import asyncio
-    ocr_text = await asyncio.to_thread(_ocr_screenshot, screenshot_b64)
-    try:
-        from modules.thinking.experts.pre_gen_experts import _get_lite_model
-        model = _get_lite_model()
-        if model:
-            prompt = (
-                f"你是一个屏幕内容分析专家。请对以下屏幕信息进行结构化总结。\n\n"
-                f"当前应用: {window_info}\n"
-                f"OCR 识别文字:\n{ocr_text[:2000]}\n\n"
-            )
-            if focus:
-                prompt += f"用户关注重点: {focus}\n\n"
-            prompt += (
-                "请用简洁的结构化格式总结：\n"
-                "1. 当前在做什么（一句话）\n"
-                "2. 关键信息（列表）\n"
-                "3. 可能需要的操作建议（如有）\n"
-                "用中文回答，总共不超过 200 字。"
-            )
-            result = await model.generate(prompt, max_tokens=300, temperature=0.3)
-            return {"understanding": result.strip(), "method": "ocr+llm", "ocr_text": ocr_text[:3000]}
-    except Exception as e:
-        logger.debug(f"文本 LLM 理解失败: {e}")
-
-    # ── 最终兜底：简单总结 ──
-    return {"understanding": _simple_summarize(ocr_text, window_info), "method": "ocr_only", "ocr_text": ocr_text[:3000]}
+    return {"error": f"视觉理解失败，请检查 VISION_BACKEND 配置（当前: {analyzer.model_type if 'analyzer' in dir() else '未初始化'}）"}
 
 
 def _simple_summarize(ocr_text: str, window_info: str) -> str:

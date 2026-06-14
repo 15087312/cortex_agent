@@ -89,6 +89,21 @@ function Install-Dependencies {
     Write-OK "Dependencies installed"
 }
 
+function Setup-OmniParser {
+    if (Test-Path "OmniParser/README.md") {
+        Write-OK "OmniParser already exists, skipping"
+        return
+    }
+    Write-Info "Downloading OmniParser UI detection model (~500MB)..."
+    git clone --depth 1 https://github.com/microsoft/OmniParser.git OmniParser 2>&1 | Select-Object -Last 1
+    if (Test-Path "OmniParser") {
+        Write-OK "OmniParser downloaded"
+        Write-Warn "OmniParser weights need separate download, see OmniParser/README.md"
+    } else {
+        Write-Warn "OmniParser download failed"
+    }
+}
+
 function Setup-Env {
     if (Test-Path ".env") {
         Write-OK ".env already exists, skipping"
@@ -164,6 +179,7 @@ try {
     Check-Prerequisites
     Clone-Or-Update
     Install-Dependencies
+    Setup-OmniParser
     Setup-Env
     Print-Done
 } catch {
