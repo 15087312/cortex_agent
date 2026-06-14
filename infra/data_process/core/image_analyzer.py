@@ -69,7 +69,7 @@ class ImageAnalyzer:
         logger.info(f"图像分析器初始化完成 (类型: {self.model_type})")
 
     def _detect_available_model(self) -> str:
-        """根据配置和平台自动选择视觉后端（不可用返回 unavailable，不降级 mock）"""
+        """根据配置和平台自动选择视觉后端（优先本地模型，无则用云端API）"""
         from config.settings import settings
 
         backend = settings.VISION_BACKEND.lower().strip()
@@ -91,35 +91,36 @@ class ImageAnalyzer:
                 logger.error(f"未知 VISION_BACKEND: {backend}")
                 return "unavailable"
 
-        # auto 模式: api > mlx > transformers > unavailable
-        # 1) 云端 API（有 API Key 即可用）
-        if settings.effective_vision_api_key:
-            logger.info("视觉后端: 云端 API")
-            return "openai"
-
-        # 2) Apple Silicon: mlx-vlm
+        # auto 模式: 优先本地模型 > 云端 API (改为本地优先)
+        # 1) Apple Silicon: mlx-vlm
         if _IS_APPLE_SILICON:
             try:
                 from mlx_vlm import generate, load
-                logger.info("视觉后端: MLX-VLM (Apple Silicon)")
+                logger.info("视觉后端: MLX-VLM (Apple Silicon - 本地优先)")
                 return "mlx_vlm"
             except ImportError:
                 logger.debug("mlx-vlm 未安装，尝试 transformers")
 
-        # 3) transformers + Qwen2-VL (CUDA/MPS/CPU)
+        # 2) transformers + Qwen2-VL (CUDA/MPS/CPU - 本地优先)
         try:
             from transformers import Qwen2VLForConditionalGeneration
             from qwen_vl_utils import process_vision_info
-            logger.info("视觉后端: transformers (本地模型)")
+            logger.info("视觉后端: transformers (本地模型 - 优先)")
             return "qwen_vl"
         except ImportError:
             pass
 
         try:
             import llava
+            logger.info("视觉后端: LLaVA (本地模型)")
             return "llava"
         except ImportError:
             pass
+
+        # 3) 本地模型都不可用，回退到云端 API
+        if settings.effective_vision_api_key:
+            logger.info("视觉后端: 云端 API (本地模型不可用)")
+            return "openai"
 
         logger.error("无可用视觉后端（未安装 mlx-vlm / transformers / 无 API Key）")
         return "unavailable"
