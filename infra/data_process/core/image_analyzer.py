@@ -31,7 +31,15 @@ _MODEL_CACHE = {
 
 
 class ImageAnalyzer:
-    """图像分析器"""
+    """图像分析器 - 单例模式避免重复初始化"""
+
+    _instance: 'ImageAnalyzer' = None  # 单例实例
+
+    def __new__(cls, model_type: str = "auto", local_model: str = None):
+        """单例工厂"""
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
 
     def __init__(
         self,
@@ -39,17 +47,22 @@ class ImageAnalyzer:
         local_model: str = None
     ):
         """
-        初始化图像分析器
-        
+        初始化图像分析器（单例模式，只初始化一次）
+
         Args:
             model_type: auto/qwen_vl/llava/openai/mock
             local_model: 本地模型名称
         """
+        # 避免重复初始化
+        if hasattr(self, '_init_done'):
+            return
+
         self.model_type = model_type
         self.local_model = local_model
         self.model = None
         self.processor = None
         self._initialized = False
+        self._init_done = True
 
     async def initialize(self):
         """初始化模型"""
