@@ -377,6 +377,7 @@ class ImageAnalyzer:
         """使用云端视觉 API 分析（OpenAI / DashScope / 兼容接口）"""
         from config.settings import settings
         import openai
+        import httpx
 
         image_b64 = base64.b64encode(image_data).decode()
 
@@ -384,26 +385,35 @@ class ImageAnalyzer:
         api_url = settings.effective_vision_api_url
         model = settings.effective_vision_api_model
 
-        client = openai.AsyncOpenAI(api_key=api_key, base_url=api_url, timeout=30.0)
-        response = await client.chat.completions.create(
-            model=model,
-            messages=[{
-                "role": "user",
-                "content": [
-                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}},
-                    {"type": "text", "text": prompt}
-                ]
-            }]
+        # 创建自定义 httpx client，避免 openai 库的 proxies 参数错误
+        http_client = httpx.AsyncClient(timeout=30.0, trust_env=True)
+        client = openai.AsyncOpenAI(
+            api_key=api_key,
+            base_url=api_url,
+            http_client=http_client
         )
-        await client.close()
 
-        return {
-            "description": response.choices[0].message.content,
-            "objects": [],
-            "scene": "unknown",
-            "colors": [],
-            "format": "openai"
-        }
+        try:
+            response = await client.chat.completions.create(
+                model=model,
+                messages=[{
+                    "role": "user",
+                    "content": [
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}},
+                        {"type": "text", "text": prompt}
+                    ]
+                }]
+            )
+
+            return {
+                "description": response.choices[0].message.content,
+                "objects": [],
+                "scene": "unknown",
+                "colors": [],
+                "format": "openai"
+            }
+        finally:
+            await client.close()
 
     async def _analyze_mock(
         self,
@@ -545,12 +555,16 @@ class ImageAnalyzer:
 
         from config.settings import settings
         import openai
+        import httpx
 
+        # 创建自定义 httpx client，避免 openai 库的 proxies 参数错误
+        http_client = httpx.AsyncClient(timeout=30.0, trust_env=True)
         client = openai.AsyncOpenAI(
             api_key=settings.OPENAI_API_KEY,
             base_url=settings.OPENAI_API_BASE_URL,
-            timeout=30.0,
+            http_client=http_client,
         )
+
         prompt = """分析这张截图，找出所有UI元素。输出JSON格式：
 {"elements": [
   {"type":"button","text":"确定","bounds":[100,200,180,230],"colors":{"bg":"#2196F3","text":"#FFFFFF"}},
@@ -559,22 +573,24 @@ class ImageAnalyzer:
 
 每行一个元素，bounds为[x1,y1,x2,y2]像素坐标。"""
 
-        response = await client.chat.completions.create(
-            model=settings.IMAGE_MODEL_NAME,
-            messages=[{
-                "role": "user",
-                "content": [
-                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}},
-                    {"type": "text", "text": prompt}
-                ]
-            }]
-        )
-        await client.close()
-        
         try:
-            return json.loads(response.choices[0].message.content)
-        except Exception:
-            return await self._detect_ui_mock(image_data, element_types)
+            response = await client.chat.completions.create(
+                model=settings.IMAGE_MODEL_NAME,
+                messages=[{
+                    "role": "user",
+                    "content": [
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}},
+                        {"type": "text", "text": prompt}
+                    ]
+                }]
+            )
+
+            try:
+                return json.loads(response.choices[0].message.content)
+            except Exception:
+                return await self._detect_ui_mock(image_data, element_types)
+        finally:
+            await client.close()
 
     async def _detect_ui_mock(
         self,
