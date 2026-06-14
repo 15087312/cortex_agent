@@ -22,6 +22,13 @@ logger = setup_logger("image_analyzer")
 # 平台检测
 _IS_APPLE_SILICON = sys.platform == "darwin" and hasattr(__import__("platform"), "machine") and __import__("platform").machine() == "arm64"
 
+# 全局模型缓存（避免重复加载）
+_MODEL_CACHE = {
+    "mlx_vlm": None,
+    "qwen_vl": None,
+    "llava": None,
+}
+
 
 class ImageAnalyzer:
     """图像分析器"""
@@ -126,20 +133,41 @@ class ImageAnalyzer:
         return "unavailable"
 
     async def _load_mlx_vlm(self):
-        """加载 MLX-VLM 模型（Apple Silicon 优化，4-bit 量化）"""
+        """加载 MLX-VLM 模型（Apple Silicon 优化，4-bit 量化）- 使用全局缓存"""
+        global _MODEL_CACHE
+
         try:
             from mlx_vlm import load, generate
             from config.settings import settings
 
             model_name = self.local_model or settings.effective_vision_mlx_model
 
-            logger.info(f"MLX-VLM 加载中: {model_name}")
+            # 检查缓存
+            cache_key = f"mlx_vlm:{model_name}"
+            if _MODEL_CACHE.get("mlx_vlm") and _MODEL_CACHE["mlx_vlm"].get("name") == model_name:
+                logger.info(f"MLX-VLM 从缓存加载: {model_name}")
+                cached = _MODEL_CACHE["mlx_vlm"]
+                self.model = cached["model"]
+                self.processor = cached["processor"]
+                self._mlx_generate = cached["generate"]
+                self._mlx_model_name = model_name
+                return
+
+            logger.info(f"MLX-VLM 首次加载: {model_name}")
             model, processor = load(model_name)
             self.model = model
             self.processor = processor
             self._mlx_generate = generate
             self._mlx_model_name = model_name
-            logger.info(f"MLX-VLM 模型加载成功: {model_name}")
+
+            # 保存到缓存
+            _MODEL_CACHE["mlx_vlm"] = {
+                "name": model_name,
+                "model": model,
+                "processor": processor,
+                "generate": generate,
+            }
+            logger.info(f"MLX-VLM 模型加载成功并已缓存: {model_name}")
         except Exception as e:
             logger.error(f"MLX-VLM 加载失败: {e}")
             self.model_type = "unavailable"
