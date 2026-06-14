@@ -160,8 +160,26 @@ class Settings(BaseSettings):
 
     @property
     def effective_vision_api_model(self) -> str:
-        """视觉 API 模型名（VISION_API_MODEL → IMAGE_MODEL_NAME）"""
-        return self.VISION_API_MODEL or self.IMAGE_MODEL_NAME
+        """视觉 API 模型名（VISION_API_MODEL → IMAGE_MODEL_NAME）
+
+        根据 API URL 自动调整模型名：
+        - DeepSeek API → deepseek-v4-flash
+        - OpenAI API → gpt-4o
+        - 其他 → IMAGE_MODEL_NAME
+        """
+        if self.VISION_API_MODEL:
+            return self.VISION_API_MODEL
+
+        api_url = (self.VISION_API_URL or self.OPENAI_API_BASE_URL or "").lower()
+
+        # 根据 API URL 自动调整模型名
+        if "deepseek" in api_url:
+            return "deepseek-v4-flash"
+        elif "openai" in api_url or "openai" not in api_url:
+            # OpenAI 或未知 API 使用 gpt-4o
+            return self.IMAGE_MODEL_NAME
+
+        return self.IMAGE_MODEL_NAME
 
     @property
     def effective_vision_local_model(self) -> str:

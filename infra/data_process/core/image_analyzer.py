@@ -36,9 +36,16 @@ class ImageAnalyzer:
     _instance: 'ImageAnalyzer' = None  # 单例实例
 
     def __new__(cls, model_type: str = "auto", local_model: str = None):
-        """单例工厂"""
+        """单例工厂 — 返回已有实例，参数不匹配时记录警告"""
         if cls._instance is None:
             cls._instance = super().__new__(cls)
+        else:
+            # 已有实例但参数不同 → 记录警告（不阻止，调用方自行决定是否接受）
+            if model_type != cls._instance._init_model_type:
+                logger.warning(
+                    f"ImageAnalyzer 已存在（model_type={cls._instance._init_model_type}），"
+                    f"忽略新参数 model_type={model_type}；如需切换后端请调用 ensure_model_type()"
+                )
         return cls._instance
 
     def __init__(
@@ -58,6 +65,7 @@ class ImageAnalyzer:
             return
 
         self.model_type = model_type
+        self._init_model_type = model_type  # 记录初始化时的参数，用于检测参数不匹配
         self.local_model = local_model
         self.model = None
         self.processor = None
@@ -81,10 +89,11 @@ class ImageAnalyzer:
         elif self.model_type == "openai":
             await self._init_openai()
         elif self.model_type == "unavailable":
-            logger.error("视觉后端不可用")
+            logger.error("视觉后端不可用，跳过初始化（后续调用可重试）")
+            return
         else:
             logger.info("使用模拟模式")
-        
+
         self._initialized = True
         logger.info(f"图像分析器初始化完成 (类型: {self.model_type})")
 
@@ -416,7 +425,7 @@ class ImageAnalyzer:
         image_data: bytes,
         prompt: str
     ) -> Dict[str, Any]:
-        """使用云端视觉 API 分析（OpenAI / DashScope / 兼容接口）"""
+        """使用云端视觉 API 分析（OpenAI / DeepSeek / DashScope / 兼容接口）"""
         from config.settings import settings
         import openai
         import httpx
@@ -436,15 +445,28 @@ class ImageAnalyzer:
         )
 
         try:
-            response = await client.chat.completions.create(
-                model=model,
-                messages=[{
+            # 检测 API 类型：DeepSeek 不支持 image_url，需要使用 base64 内联格式
+            is_deepseek = "deepseek" in api_url.lower()
+
+            if is_deepseek:
+                # DeepSeek: 使用 base64 图片内联在 content 中
+                messages = [{
+                    "role": "user",
+                    "content": f"[image: data:image/jpeg;base64,{image_b64}]\n{prompt}"
+                }]
+            else:
+                # OpenAI/DashScope: 使用标准 image_url 格式
+                messages = [{
                     "role": "user",
                     "content": [
                         {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}},
                         {"type": "text", "text": prompt}
                     ]
                 }]
+
+            response = await client.chat.completions.create(
+                model=model,
+                messages=messages
             )
 
             return {
@@ -519,6 +541,21 @@ class ImageAnalyzer:
         if hasattr(self, '_mlx_generate'):
             self._mlx_generate = None
         self._initialized = False
+        self.model_type = self._init_model_type
+
+    async def ensure_model_type(self, model_type: str) -> None:
+        """确保使用指定后端，必要时重新初始化
+
+        允许在运行时切换视觉后端（例如：本地模型失败后切换到 API）。
+        如果当前后端与目标一致且已初始化，跳过。
+        如果不一致，关闭当前模型后重新初始化。
+        """
+        if self._initialized and self.model_type == model_type:
+            return
+        if self._initialized:
+            await self.close()
+        self.model_type = model_type
+        await self.initialize()
 
     async def detect_ui_elements(
         self,
@@ -592,7 +629,7 @@ class ImageAnalyzer:
         image_data: bytes,
         element_types: List[str]
     ) -> Dict[str, Any]:
-        """使用OpenAI检测UI元素"""
+        """使用 OpenAI/DeepSeek 检测 UI 元素"""
         image_b64 = base64.b64encode(image_data).decode()
 
         from config.settings import settings
@@ -616,15 +653,28 @@ class ImageAnalyzer:
 每行一个元素，bounds为[x1,y1,x2,y2]像素坐标。"""
 
         try:
-            response = await client.chat.completions.create(
-                model=settings.IMAGE_MODEL_NAME,
-                messages=[{
+            # 检测 API 类型：DeepSeek 不支持 image_url，需要使用 base64 内联格式
+            is_deepseek = "deepseek" in settings.OPENAI_API_BASE_URL.lower()
+
+            if is_deepseek:
+                # DeepSeek: 使用 base64 图片内联在 content 中
+                messages = [{
+                    "role": "user",
+                    "content": f"[image: data:image/jpeg;base64,{image_b64}]\n{prompt}"
+                }]
+            else:
+                # OpenAI/DashScope: 使用标准 image_url 格式
+                messages = [{
                     "role": "user",
                     "content": [
                         {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}},
                         {"type": "text", "text": prompt}
                     ]
                 }]
+
+            response = await client.chat.completions.create(
+                model=settings.IMAGE_MODEL_NAME,
+                messages=messages
             )
 
             try:

@@ -8,7 +8,6 @@ from .interface import PerceptionPort, create_perception_port, get_perception_po
 
 # 新的独立模块
 from .change_event import ChangeEvent
-from .file_perception import FilePerception
 from .dialog_perception import DialogPerception
 
 try:
@@ -45,7 +44,7 @@ def _get_compat_proxy():
 
         @property
         def file_perception(self):
-            return ps.file_perception
+            return None  # 功能暂未实现
 
         @property
         def dialog_perception(self):
@@ -73,7 +72,6 @@ __all__ = [
     "get_perception_port",
     "get_perception_system",
     "ChangeEvent",
-    "FilePerception",
     "DialogPerception",
     "PerceptionIntegrator",
     "RuleCompliancePerception",

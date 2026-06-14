@@ -1,11 +1,19 @@
 """OmniParser UI 结构化检测器 — 三级降级
 
 后端优先级：
-1. OmniParser HTTP 服务 (localhost:8765)
+1. OmniParser HTTP 服务 (localhost:8000)
 2. OmniParser 本地模型 (import omniparser)
 3. OCR 降级 (OCRDetector + WindowDetector 组合)
 
 同时实现 PerceptionDetector.detect() 接口，发出 SCREEN_UI 事件。
+
+启动 OmniParser 服务：
+  cd OmniParser && python -m omnitool.omniparserserver.omniparserserver \\
+    --som_model_path weights/icon_detect/model.pt \\
+    --caption_model_name florence2 \\
+    --caption_model_path weights/icon_caption_florence \\
+    --device cpu \\
+    --port 8000
 """
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -63,6 +71,7 @@ class OmniParserDetector(PerceptionDetector):
         self._local_parser = None
         self._ocr_engine = None
         self._prev_elements: Dict[str, List[UIElement]] = {}
+        self._process: Optional[Any] = None  # 自动启动的子进程
         self._detect_backend()
 
     def _detect_backend(self) -> None:
@@ -79,7 +88,22 @@ class OmniParserDetector(PerceptionDetector):
         except Exception as e:
             logger.debug(f"OmniParser HTTP 探测失败: {e}")
 
-        # 2. 本地模型
+        # 2. 尝试自动启动 OmniParser 服务
+        if self._try_auto_start():
+            try:
+                import urllib.request
+                import time
+                time.sleep(2)  # 等服务启动
+                req = urllib.request.Request(f"{self._api_url}/probe/", method="GET")
+                with urllib.request.urlopen(req, timeout=3) as resp:
+                    if resp.status == 200:
+                        self._backend = "omniparser_http"
+                        logger.info("OmniParser 后端: HTTP API（自动启动）")
+                        return
+            except Exception:
+                pass
+
+        # 3. 本地模型
         try:
             import importlib
             importlib.import_module("omniparser")
@@ -89,9 +113,48 @@ class OmniParserDetector(PerceptionDetector):
         except ImportError as e:
             logger.debug(f"OmniParser 本地模型不可用: {e}")
 
-        # 3. OCR 降级
+        # 4. OCR 降级
         self._backend = "ocr_fallback"
         logger.info("OmniParser 后端: OCR 降级")
+
+    def _try_auto_start(self) -> bool:
+        """尝试自动启动 OmniParser 服务（子进程）
+
+        Returns:
+            True 如果成功启动了服务进程
+        """
+        import os
+        import subprocess
+        import sys
+
+        # 检查 OmniParser 目录是否存在
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+        omniparser_dir = os.path.join(project_root, "OmniParser")
+        if not os.path.isdir(omniparser_dir):
+            logger.debug("OmniParser 目录不存在，跳过自动启动")
+            return False
+
+        # 检查权重文件是否存在
+        weights_dir = os.path.join(omniparser_dir, "weights")
+        if not os.path.isdir(weights_dir):
+            logger.debug("OmniParser 权重目录不存在，跳过自动启动")
+            return False
+
+        try:
+            port = self._api_url.rsplit(":", 1)[-1]
+            logger.info(f"自动启动 OmniParser 服务 (port={port})...")
+            self._process = subprocess.Popen(
+                [sys.executable, "-m", "omnitool.omniparserserver.omniparserserver",
+                 "--port", str(port), "--device", "cpu"],
+                cwd=omniparser_dir,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            logger.info(f"OmniParser 服务已启动 (PID={self._process.pid})")
+            return True
+        except Exception as e:
+            logger.warning(f"自动启动 OmniParser 失败: {e}")
+            return False
 
     @property
     def detector_type(self) -> str:
@@ -134,7 +197,7 @@ class OmniParserDetector(PerceptionDetector):
 
         event = PerceptionEvent(
             event_type=PerceptionEventType.SCREEN_UI,
-            source=f"omniparser_{self._backend}",
+            source=self._backend or "unknown",
             importance=0.7,
             roi_name=roi_name,
             payload={
@@ -344,7 +407,15 @@ class OmniParserDetector(PerceptionDetector):
         return ""
 
     def reset(self) -> None:
+        """重置状态，清理子进程"""
         self._prev_elements.clear()
+        if self._process is not None:
+            try:
+                self._process.terminate()
+                self._process.wait(timeout=5)
+            except Exception:
+                pass
+            self._process = None
 
 
 def _elements_equal(a: List[UIElement], b: List[UIElement]) -> bool:

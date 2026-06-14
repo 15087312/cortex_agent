@@ -200,12 +200,6 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.debug(f"感知系统停止失败 (非致命): {e}")
 
-    # 关闭插件引擎
-    try:
-        close_plugin_engine()
-        logger.info("✓ 插件引擎已关闭")
-    except Exception as e:
-        logger.debug(f"插件引擎关闭失败 (非致命): {e}")
 
     # 关闭数据库连接
     try:

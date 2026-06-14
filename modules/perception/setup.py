@@ -25,11 +25,8 @@ class PerceptionSystem:
         self.perception_source = None
         self.voice_detector = None
         self.think_trigger = None
-        self.file_perception = None
         self.dialog_perception = None
         self.mcp_detector = None
-        self._file_monitor_thread = None
-        self._file_monitor_running = False
         self._started = False
 
     def setup(self, **overrides) -> None:
@@ -79,9 +76,9 @@ class PerceptionSystem:
         else:
             logger.info("屏幕感知已禁用")
 
-        # 3. 文件监控（从旧 PerceptionManager 合并）
+        # 3. 文件监控（从旧 PerceptionManager 合并 — 暂未实现）
         if cfg["file_enabled"]:
-            self._setup_file_monitoring(cfg)
+            logger.info("文件感知已启用但功能尚未实现")
         else:
             logger.info("文件感知已禁用")
 
@@ -91,9 +88,9 @@ class PerceptionSystem:
         else:
             logger.info("对话感知已禁用")
 
-        # 4.5 MCP 资源感知
+        # 4.5 MCP 资源感知（暂未实现）
         if cfg["mcp_enabled"]:
-            self._setup_mcp_detector(cfg)
+            logger.info("MCP 资源感知已启用但功能尚未实现")
         else:
             logger.info("MCP 资源感知已禁用")
 
@@ -247,13 +244,6 @@ class PerceptionSystem:
             self.pipeline.start()
         if self.perception_source:
             self.perception_source.start()
-        # 文件监控后台线程
-        if self.file_perception:
-            self._file_monitor_running = True
-            self._file_monitor_thread = threading.Thread(
-                target=self._file_monitor_loop, daemon=True, name="file-perception"
-            )
-            self._file_monitor_thread.start()
         self._started = True
         logger.info("感知系统已启动")
 
@@ -265,6 +255,7 @@ class PerceptionSystem:
             "voice_available": self.voice_detector is not None,
             "voice_detector_type": self.voice_detector.detector_type if self.voice_detector else None,
             "mcp_available": self.mcp_detector is not None,
+            "dialog_available": self.dialog_perception is not None,
             "think_trigger": self.think_trigger.get_stats() if self.think_trigger else None,
             "world_state": self.world_state.get_state().to_dict() if self.world_state else None,
             "event_bus": self.event_bus.get_stats() if self.event_bus else None,
