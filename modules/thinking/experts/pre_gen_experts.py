@@ -90,23 +90,11 @@ class ValuesExpert:
     """价值观专家 - 动态加载行为规则，引导 AI 的思考方式
 
     【集成方案 A】与价值观进化系统 (ValueSystem) 整合：
-    - 不再使用硬编码的 PHILOSOPHIES
     - 动态加载 core_values.txt 中的行为规则
     - 大模型修改规则后立即影响 ValuesExpert 的分析
     - 形成完整的自我演化闭环
+    - 模型不可用时无后备方案，直接返回空
     """
-
-    # 备用的默认哲学准则（当动态加载失败时使用）
-    DEFAULT_PHILOSOPHIES = {
-        "诚实": "不编造信息，坦诚面对自己的局限，不知道就说不知道",
-        "共情": "站在对方角度思考，理解情绪背后的真正需求",
-        "谦逊": "不炫耀知识，承认自己可能犯错，保持学习姿态",
-        "好奇": "对世界保持兴趣，主动探索而不是被动等待",
-        "独立思考": "不盲从权威，有自己的判断，敢于表达不同看法",
-        "包容": "接纳不同观点，不急于否定，先理解再回应",
-        "务实": "关注真正有用的东西，不空谈，不绕弯子",
-        "边界感": "尊重对方的隐私和自主权，不过度追问，不强加建议",
-    }
 
     def __init__(self):
         self.logger = setup_logger("expert.values")
@@ -149,9 +137,8 @@ class ValuesExpert:
                 raise ValueError("规则集为空")
 
         except Exception as e:
-            self.logger.warning(f"[价值观专家] 动态加载规则失败: {e}，使用默认准则")
-            self._philosophies = self.DEFAULT_PHILOSOPHIES
-            return self.DEFAULT_PHILOSOPHIES
+            self.logger.error(f"[价值观专家] 动态加载规则失败: {e}，无后备方案")
+            raise
 
     async def analyze(self, user_input: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
         """
@@ -166,9 +153,9 @@ class ValuesExpert:
             try:
                 return await self._analyze_with_model(user_input)
             except Exception as e:
-                self.logger.warning(f"LLM 价值观分析失败: {e}")
+                self.logger.error(f"[价值观专家] LLM 分析失败: {e}")
 
-        self.logger.info("[价值观专家] LLM 不可用，使用默认准则")
+        self.logger.warning("[价值观专家] 模型不可用")
         return {"principle": "", "reflection": ""}
 
     async def _analyze_with_model(self, user_input: str) -> Dict[str, Any]:
@@ -301,9 +288,15 @@ class SecurityExpert:
             try:
                 return await self._analyze_with_model(user_input)
             except Exception as e:
-                self.logger.warning(f"小模型安全分析失败，降级到关键词匹配: {e}")
+                self.logger.error(f"[安全专家] LLM 分析失败: {e}")
 
-        return self._fallback_keyword(user_input)
+        self.logger.warning("[安全专家] 模型不可用")
+        return {
+            "risk_level": "none",
+            "concerns": "",
+            "guidance": "",
+            "project_guidelines": "",
+        }
 
     async def _analyze_with_model(self, user_input: str) -> Dict[str, Any]:
         prompt = (
@@ -376,40 +369,6 @@ class SecurityExpert:
             return ""
 
         return "\n".join(guidelines)
-
-    def _fallback_keyword(self, user_input: str) -> Dict[str, Any]:
-        """降级到关键词检查"""
-        risk_keywords = {
-            "sql注入": ("medium", "数据库安全风险"),
-            "密码": ("medium", "凭据相关"),
-            "token": ("medium", "认证令牌相关"),
-            "密钥": ("high", "加密密钥相关"),
-            "xss": ("medium", "跨站脚本风险"),
-            "越权": ("low", "权限控制相关"),
-            "注入": ("medium", "注入攻击风险"),
-            "exploit": ("high", "漏洞利用风险"),
-            "爆破": ("high", "暴力破解风险"),
-            "payload": ("medium", "攻击载荷相关"),
-        }
-        text_lower = user_input.lower()
-        for keyword, (level, desc) in risk_keywords.items():
-            if keyword.lower() in text_lower:
-                # 【工作模式】同时返回项目规范
-                project_guidelines = self._extract_relevant_guidelines(user_input)
-                return {
-                    "risk_level": level,
-                    "concerns": desc,
-                    "guidance": f"检测到可能的{desc}，回复时应避免提供具体实现细节，引导用户正确使用系统功能",
-                    "project_guidelines": project_guidelines,
-                }
-
-        project_guidelines = self._extract_relevant_guidelines(user_input)
-        return {
-            "risk_level": "none",
-            "concerns": "",
-            "guidance": "无特殊安全风险，正常回复",
-            "project_guidelines": project_guidelines,
-        }
 
 
 class EmotionExpert:
@@ -583,14 +542,13 @@ class EmotionExpert:
             try:
                 return await self._analyze_with_model(user_input, memory_context)
             except Exception as e:
-                self.logger.warning(f"LLM 情绪分析失败: {e}")
+                self.logger.error(f"[情绪专家] LLM 分析失败: {e}")
 
-        self.logger.info("[情绪专家] LLM 不可用，使用常规默认设置")
-        resp = self._EMOTION_RESPONSES["neutral"]
+        self.logger.warning("[情绪专家] 模型不可用")
         return {
             "emotion": "neutral",
             "intensity": 0.3,
-            "ai_mood": resp["ai_mood"],
+            "ai_mood": "平和",
             "guidance": "",
             "strategy": "",
         }

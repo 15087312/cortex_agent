@@ -14,6 +14,9 @@ from utils.logger import setup_logger
 
 logger = setup_logger("perception_tools")
 
+# 缓存 OmniParserDetector 实例，避免每次都重新加载模型（28-33 秒）
+_cached_detector = None
+
 
 @ToolRegistry.register(
     "transcribe_audio",
@@ -88,6 +91,13 @@ async def understand_screen(focus: str = "") -> Dict[str, Any]:
 
         # Step 3: 视觉理解（优先 Qwen-VL，降级到 OCR + 文本 LLM）
         vision_result = await _vision_understand(screenshot_b64, window_info, focus)
+
+        if "error" in vision_result:
+            return {
+                "success": False,
+                "error": vision_result["error"],
+                "window": window_info,
+            }
 
         return {
             "success": True,
@@ -289,9 +299,12 @@ async def detect_ui_elements(focus: str = "") -> Dict[str, Any]:
         import base64
         image_bytes = base64.b64decode(screenshot_b64)
 
-        # 2. OmniParser 检测
-        from modules.perception.detectors.omniparser_detector import OmniParserDetector
-        detector = OmniParserDetector()
+        # 2. OmniParser 检测（使用缓存实例）
+        global _cached_detector
+        if _cached_detector is None:
+            from modules.perception.detectors.omniparser_detector import OmniParserDetector
+            _cached_detector = OmniParserDetector()
+        detector = _cached_detector
         elements = detector.detect_elements(image_bytes)
 
         if not elements:
