@@ -16,11 +16,9 @@ import pytest
 from modules.perception.events.types import PerceptionEvent, PerceptionEventType
 from modules.perception.events.bus import PerceptionEventBus
 from modules.perception.pipeline.frame_diff import FrameDiffDetector
-from modules.perception.pipeline.roi_dispatcher import ROIDispatcher, ROIRegion
 from modules.perception.detectors.voice_detector import VoiceDetector
 from modules.perception.detectors.ocr_detector import OCRDetector
 from modules.perception.detectors.window_detector import WindowDetector
-from modules.perception.roi.manager import ROIManager
 from modules.perception.state.world_state import WorldState, WorldStateManager
 from modules.perception.state.perception_source import PerceptionDifferenceSource
 from modules.perception.state.think_trigger import PerceptionThinkTrigger
@@ -473,90 +471,7 @@ class TestFrameDiffDetectorAdvanced:
         assert result.has_changed is False
 
 
-# ====================================================================
-# ROI Manager — 边界测试
-# ====================================================================
 
-class TestROIManagerAdvanced:
-    def test_load_missing_file(self):
-        rm = ROIManager()
-        assert rm.load_from_file("/nonexistent/path.json") is False
-
-    def test_load_corrupt_json(self, tmp_path):
-        path = str(tmp_path / "bad.json")
-        with open(path, "w") as f:
-            f.write("not json{{{")
-        rm = ROIManager()
-        assert rm.load_from_file(path) is False
-
-    def test_load_empty_rois(self, tmp_path):
-        path = str(tmp_path / "empty.json")
-        with open(path, "w") as f:
-            json.dump({"rois": []}, f)
-        rm = ROIManager()
-        assert rm.load_from_file(path) is True
-        assert len(rm.get_all()) == 0
-
-    def test_save_no_path(self):
-        rm = ROIManager()
-        assert rm.save_to_file() is False
-
-    def test_roundtrip_all_fields(self, tmp_path):
-        path = str(tmp_path / "full.json")
-        rm = ROIManager(config_path=path)
-        rm.add(ROIRegion("test", (10, 20, 300, 400), "ocr", priority=5, overlap_threshold=0.2))
-        rm.save_to_file()
-
-        rm2 = ROIManager()
-        rm2.load_from_file(path)
-        roi = rm2.get("test")
-        assert roi.rect == (10, 20, 300, 400)
-        assert roi.detector_type == "ocr"
-        assert roi.priority == 5
-        assert roi.overlap_threshold == 0.2
-
-    def test_load_defaults(self):
-        rm = ROIManager()
-        rm.load_defaults()
-        # _DEFAULT_ROIS 目前为空
-        assert len(rm.get_all()) == 0
-
-
-# ====================================================================
-# ROIDispatcher — 边界测试
-# ====================================================================
-
-class TestROIDispatcherAdvanced:
-    def test_boundary_clipping(self):
-        rd = ROIDispatcher()
-        rd.register_roi(ROIRegion("test", (-10, -10, 200, 200), "ocr", overlap_threshold=0.01))
-        frame = np.zeros((100, 100, 3), dtype=np.uint8)
-        result = rd.dispatch([(0, 0, 50, 50)], frame)
-        assert "ocr" in result
-        # ROI 被裁剪到帧边界
-        _, roi_img = result["ocr"][0]
-        assert roi_img.shape[0] <= 100
-        assert roi_img.shape[1] <= 100
-
-    def test_multiple_rois_same_type(self):
-        rd = ROIDispatcher()
-        rd.register_roi(ROIRegion("a", (0, 0, 50, 100), "ocr"))
-        rd.register_roi(ROIRegion("b", (50, 0, 50, 100), "ocr"))
-        frame = np.zeros((100, 100, 3), dtype=np.uint8)
-        result = rd.dispatch([(0, 0, 100, 50)], frame)
-        assert "ocr" in result
-        assert len(result["ocr"]) == 2
-
-    def test_dispatch_empty_frame(self):
-        rd = ROIDispatcher()
-        result = rd.dispatch([(0, 0, 10, 10)], np.array([]))
-        assert result == {}
-
-    def test_clear(self):
-        rd = ROIDispatcher()
-        rd.register_roi(ROIRegion("test", (0, 0, 100, 100), "ocr"))
-        rd.clear()
-        assert len(rd.get_rois()) == 0
 
 
 # ====================================================================

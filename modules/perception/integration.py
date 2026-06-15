@@ -6,7 +6,7 @@
   才能被模型"看到"。这个模块就是做这个连接的。
 
   数据流：
-  感知事件（screen.diff / file.change / dialog.change / ...）
+  感知事件（screen.diff / file.change / ...）
     → PerceptionEventBus
       → PerceptionIntegrator 订阅并接收
         → _attention_items 累计（去重，最多 20 条）
@@ -66,9 +66,9 @@ class PerceptionIntegrator:
             # 订阅所有感知事件类型（屏幕、OCR、文件、差异等）
             for event_type in [
                 PerceptionEventType.SCREEN_DIFF,
+                PerceptionEventType.SCREEN_WINDOW,
                 PerceptionEventType.SCREEN_OCR,
                 PerceptionEventType.FILE_CHANGE,
-                PerceptionEventType.DIALOG_CHANGE,
                 PerceptionEventType.DIFFERENCE_DETECTED,
             ]:
                 try:
@@ -112,7 +112,14 @@ class PerceptionIntegrator:
     def _extract_description(self, event_type: str, payload: Dict[str, Any]) -> str:
         """根据事件类型提取具体描述"""
         try:
-            if event_type == "screen.window":
+            if event_type == "screen.diff":
+                ratio = payload.get("change_ratio", 0)
+                regions = payload.get("changed_regions", [])
+                intensity = "大幅" if ratio > 0.3 else "中等" if ratio > 0.1 else "小幅"
+                region_info = f"{len(regions)} 个区域" if regions else ""
+                return f"屏幕{intensity}变化 ({ratio*100:.0f}% 面积{', ' + region_info if region_info else ''})"
+
+            elif event_type == "screen.window":
                 # 窗口变化：返回具体窗口信息
                 app_name = payload.get("app_name", "")
                 window_title = payload.get("window_title", "")
@@ -145,12 +152,6 @@ class PerceptionIntegrator:
                 if change and path:
                     return f"文件{change}: {path}"
                 return f"文件变化: {change or path or '未知'}"
-            
-            elif event_type == "dialog.change":
-                # 对话变化：返回消息内容
-                change = payload.get("change", "")
-                if change:
-                    return f"对话变化: {change[:200]}"
             
             elif event_type == "speech.detected":
                 # 语音识别：返回识别文本
@@ -189,32 +190,13 @@ class PerceptionIntegrator:
         logger.info("感知监控已停止")
 
     def update_dialog(self, messages: List[Dict]) -> None:
-        """更新对话上下文（供感知系统追踪）"""
-        from modules.perception import get_perception_system
-        ps = get_perception_system()
-        if ps.dialog_perception:
-            ps.dialog_perception.update_snapshot(messages)
+        pass
 
     def add_dialog_change(self, role: str, content: str) -> None:
-        """添加对话变化到注意力池"""
-        from modules.perception.change_event import ChangeEvent
-        event = ChangeEvent(
-            change_type="created",
-            target_type="dialog",
-            target=f"[{role}] {content[:100]}",
-            details={"role": role}
-        )
-        self._add_to_attention(event, urgency=0.6)
+        pass
 
     def _add_to_attention(self, change, urgency: float = 0.5) -> None:
-        """添加到注意力池"""
-        self._attention_items.append({
-            "change": change,
-            "urgency": urgency,
-            "prompt": change.to_prompt(),
-        })
-        if len(self._attention_items) > self._max_attention:
-            self._attention_items = self._attention_items[-self._max_attention:]
+        pass
 
     def get_attention_prompt(self) -> str:
         """获取注意力提示（结构化输出）"""
@@ -228,7 +210,6 @@ class PerceptionIntegrator:
             "windows": [],   # 窗口变化
             "text": [],      # 文本/OCR变化
             "files": [],     # 文件变化
-            "dialog": [],    # 对话变化
             "other": [],     # 其他
         }
         
@@ -245,8 +226,6 @@ class PerceptionIntegrator:
                 grouped["text"].append(description)
             elif "file" in event_type:
                 grouped["files"].append(description)
-            elif "dialog" in event_type:
-                grouped["dialog"].append(description)
             else:
                 grouped["other"].append(description)
         
@@ -261,9 +240,6 @@ class PerceptionIntegrator:
         
         if grouped["files"]:
             sections.append("【文件变化】\n" + "\n".join(grouped["files"]))
-        
-        if grouped["dialog"]:
-            sections.append("【对话变化】\n" + "\n".join(grouped["dialog"]))
         
         if grouped["other"]:
             sections.append("【其他感知】\n" + "\n".join(grouped["other"]))
@@ -296,17 +272,14 @@ class PerceptionIntegrator:
         """获取感知上下文摘要（由编排层调用，注入到模型 prompt）"""
         attention_prompt = self.get_attention_prompt()
         if attention_prompt:
+            logger.info(
+                f"感知上下文注入 LLM prompt: {len(attention_prompt)} 字符, "
+                f"{len(self._attention_items)} 条注意力项: "
+                f"{[it['event_type'] for it in self._attention_items[-5:]]}"
+            )
             return attention_prompt
+        logger.debug("感知上下文为空（_attention_items 无事件）")
         return ""
-
-    def check_rule_compliance(self, content: str) -> List:
-        """检查输出是否符合规范"""
-        try:
-            from modules.perception.rule_compliance_perception import get_rule_compliance_perception
-            detector = get_rule_compliance_perception()
-            return detector.detect_violations(content)
-        except Exception:
-            return []
 
 
 _perception_integrator_instance = None

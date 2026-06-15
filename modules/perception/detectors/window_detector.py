@@ -124,7 +124,9 @@ class WindowDetector(PerceptionDetector):
         app = workspace.frontmostApplication()
         app_name = app.localizedName() if app else ""
 
-        # 尝试用 Quartz 获取窗口标题
+        # 获取前端应用的 PID，过滤出属于该应用的窗口
+        app_pid = app.processIdentifier() if app else None
+
         window_title = ""
         try:
             from Quartz import (
@@ -132,9 +134,22 @@ class WindowDetector(PerceptionDetector):
                 kCGNullWindowID,
                 kCGWindowListOptionOnScreenOnly,
             )
-            info = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly, kCGNullWindowID)
-            if info:
-                window_title = info[0].get("kCGWindowName", "") or ""
+            all_windows = CGWindowListCopyWindowInfo(
+                kCGWindowListOptionOnScreenOnly, kCGNullWindowID
+            )
+            if all_windows and app_pid is not None:
+                # 只查找属于前端应用的窗口
+                front_windows = [
+                    w for w in all_windows
+                    if w.get("kCGWindowOwnerPID") == app_pid
+                       and w.get("kCGWindowLayer", 0) == 0  # 忽略 dock/菜单栏
+                ]
+                # 按层级排序取最上层窗口
+                front_windows.sort(
+                    key=lambda w: w.get("kCGWindowLayer", 0), reverse=True
+                )
+                if front_windows:
+                    window_title = front_windows[0].get("kCGWindowName", "") or ""
         except Exception:
             pass
 

@@ -53,54 +53,91 @@ class UIElement:
 
 
 class OmniParserDetector(PerceptionDetector):
-    """OmniParser UI 结构化检测器
+    """OmniParser UI 结构化检测器（单例）
 
     二级降级：
     1. GET http://localhost:8000/probe/ → omniparser_http
     2. import omniparser → omniparser_local
     无可用后端时 is_available() 返回 False
+
+    后端探测使用惰性初始化（lazy initialization），
+    仅在首次调用 is_available() / detect() / detect_elements() 时执行。
+    避免在 __init__ 中阻塞 120+ 秒。
+
+    全局单例，所有调用方共享同一实例。
     """
 
+    _instance = None
+
+    def __new__(cls, *args, **kwargs):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
     PRECISION_HIGH = "high"
+    _AUTO_START_PROBE_RETRIES = 3
+    _AUTO_START_PROBE_INTERVAL = 5  # 秒
 
     def __init__(self, api_url: str = "http://localhost:8000"):
+        if hasattr(self, '_init_done'):
+            return
         self._api_url = api_url.rstrip("/")
         self._backend: Optional[str] = None
+        self._backend_initialized = False  # 惰性初始化标记
         self._local_parser = None
         self._prev_elements: Dict[str, List[UIElement]] = {}
         self._process: Optional[Any] = None  # 自动启动的子进程
+        self._log_dir: Optional[str] = None  # 子进程日志目录
+        self._init_done = True
+
+    def _ensure_backend(self) -> None:
+        """惰性初始化：首次调用时探测可用后端
+
+        线程安全：只执行一次，后续调用直接返回。
+        """
+        if self._backend_initialized:
+            return
+        self._backend_initialized = True
         self._detect_backend()
 
-    def _detect_backend(self) -> None:
-        """探测可用后端"""
-        # 1. HTTP API（OmniParser server: GET /probe/）
-        try:
-            import urllib.request
-            req = urllib.request.Request(f"{self._api_url}/probe/", method="GET")
-            with urllib.request.urlopen(req, timeout=3) as resp:
-                if resp.status == 200:
-                    self._backend = "omniparser_http"
-                    logger.info("OmniParser 后端: HTTP API")
-                    return
-        except Exception as e:
-            logger.debug(f"OmniParser HTTP 探测失败: {e}")
+    @staticmethod
+    def _port_open(host: str, port: int, timeout: float = 2.0) -> bool:
+        """TCP 端口检测 — 最可靠的服务器存活判断
 
-        # 2. 尝试自动启动 OmniParser 服务
+        比 HTTP GET /probe/ 更可靠，因为不依赖特定路由是否存在。
+        OmniParser 的 uvicorn 在模型加载完成后才开始监听端口，
+        所以端口开放 = 模型已就绪。
+        """
+        import socket
+        try:
+            with socket.create_connection((host, port), timeout=timeout):
+                return True
+        except (OSError, socket.timeout):
+            return False
+
+    def _detect_backend(self) -> None:
+        """探测可用后端（仅在 _ensure_backend 中调用一次）"""
+        host, port_str = self._api_url.rsplit(":", 1)
+        host = host.replace("http://", "").replace("https://", "")
+        port = int(port_str)
+
+        # 1. TCP 端口检测 — 服务器是否已在运行
+        if self._port_open(host, port, timeout=3):
+            self._backend = "omniparser_http"
+            logger.info(f"OmniParser 后端: HTTP API ({host}:{port})")
+            return
+
+        # 2. 尝试自动启动 OmniParser 服务（仅当端口未被占用）
         if self._try_auto_start():
-            # 等服务器启动后多次重试探测（Florence2 CPU 加载约 30s）
             import time
-            for attempt in range(12):
-                time.sleep(10)  # 每 10s 探测一次
-                try:
-                    import urllib.request
-                    req = urllib.request.Request(f"{self._api_url}/probe/", method="GET")
-                    with urllib.request.urlopen(req, timeout=5) as resp:
-                        if resp.status == 200:
-                            self._backend = "omniparser_http"
-                            logger.info("OmniParser 后端: HTTP API（自动启动）")
-                            return
-                except Exception:
-                    logger.debug(f"OmniParser 服务启动中... 尝试 {attempt + 1}/12")
+            # 等待端口开放（Florence2 MPS 加载约 10-20s）
+            for attempt in range(self._AUTO_START_PROBE_RETRIES):
+                time.sleep(self._AUTO_START_PROBE_INTERVAL)
+                if self._port_open(host, port, timeout=3):
+                    self._backend = "omniparser_http"
+                    logger.info(f"OmniParser 后端: HTTP API（自动启动, attempt={attempt + 1}）")
+                    return
+                logger.debug(f"OmniParser 服务启动中... 尝试 {attempt + 1}/{self._AUTO_START_PROBE_RETRIES}")
         else:
             logger.debug("自动启动失败")
 
@@ -121,9 +158,13 @@ class OmniParserDetector(PerceptionDetector):
     def _try_auto_start(self) -> bool:
         """尝试自动启动 OmniParser 服务（子进程）
 
+        使用 omniparser_launcher.py 作为包装，在子进程中运行时
+        应用 PaddleOCR/transformers 兼容性 monkey-patch，
+        不修改 OmniParser 源码或 HF 缓存文件。
+
         - 自动下载缺失的权重
-        - 设置 PYTHONPATH 使 omnitool 模块可导入
         - 启动后监控进程状态
+        - 子进程 stderr 写入日志文件供调试
 
         Returns:
             True 如果进程已成功启动（不保证 HTTP 已就绪）
@@ -132,6 +173,7 @@ class OmniParserDetector(PerceptionDetector):
         import subprocess
         import sys
         import time
+        import tempfile
 
         # 检查 OmniParser 目录是否存在
         project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -139,93 +181,6 @@ class OmniParserDetector(PerceptionDetector):
         if not os.path.isdir(omniparser_dir):
             logger.warning("OmniParser 目录不存在，无法自动启动（执行 install.sh 克隆）")
             return False
-
-        # 构建环境变量 — 将 OmniParser 目录加入 PYTHONPATH，使 omnitool 模块可找到
-        env = os.environ.copy()
-        old_pythonpath = env.get("PYTHONPATH", "")
-        env["PYTHONPATH"] = f"{omniparser_dir}:{old_pythonpath}" if old_pythonpath else omniparser_dir
-
-        # 自动修复 OmniParser util/utils.py 的 transformers 5.x 兼容性
-        utils_path = os.path.join(omniparser_dir, "util", "utils.py")
-        if os.path.isfile(utils_path):
-            try:
-                with open(utils_path) as f:
-                    src = f.read()
-                modified = False
-                # 1) 将多参数 PaddleOCR(...) 替换为兼容的极简调用
-                idx = src.find("PaddleOCR(")
-                if idx >= 0:
-                    depth = 0; end = idx
-                    for i in range(idx, len(src)):
-                        if src[i] == "(": depth += 1
-                        elif src[i] == ")":
-                            depth -= 1
-                            if depth == 0: end = i + 1; break
-                    old_call = src[idx:end]
-                    if old_call != "PaddleOCR(lang='en')":
-                        src = src[:idx] + "PaddleOCR(lang='en')" + src[end:]
-                        modified = True
-                # 2) florence2 段：替换 .to(device) 链式调用 + 移除 import torch 冲突
-                if "florence2" in src:
-                    old = 'trust_remote_code=True).to(device)'
-                    new = 'trust_remote_code=True)\n        has_meta = any(p.device.type == "meta" for p in model.parameters())\n        if has_meta:\n            model.to_empty(device="cpu")\n        model = model.to(device)'
-                    if old in src:
-                        src = src.replace(old, new)
-                        modified = True
-                if modified:
-                    with open(utils_path, "w") as f:
-                        f.write(src)
-                    logger.info("已自动修复 OmniParser utils.py 兼容性")
-            except Exception as e:
-                logger.debug(f"OmniParser utils.py 自动修复失败: {e}")
-
-        # 自动修复 omniparserserver.py — reload=True → False（解决 -m 模式下模块引用）
-        server_path = os.path.join(omniparser_dir, "omnitool", "omniparserserver", "omniparserserver.py")
-        if os.path.isfile(server_path):
-            try:
-                with open(server_path) as f:
-                    src = f.read()
-                modified = False
-                # 修正 app 引用路径
-                if '"omniparserserver:app"' in src:
-                    src = src.replace('"omniparserserver:app"', '"omnitool.omniparserserver.omniparserserver:app"')
-                    modified = True
-                if 'reload=True' in src:
-                    src = src.replace('reload=True', 'reload=False')
-                    modified = True
-                if modified:
-                    with open(server_path, "w") as f:
-                        f.write(src)
-                    logger.info("已自动修复 OmniParser uvicorn 启动参数")
-            except Exception as e:
-                logger.debug(f"OmniParser 兼容性自动修复失败: {e}")
-
-        # 自动修复 Florence2 + transformers 5.x 兼容性（list→dict _tied_weights_keys + model. 前缀）
-        # 定位 HF 缓存中的 Florence2 modeling 文件
-        import glob as _glob
-        florence_files = _glob.glob(
-            os.path.expanduser("~/.cache/huggingface/modules/transformers_modules/microsoft/*_hyphen_*/**/modeling_florence2.py"),
-            recursive=True,
-        )
-        for ff in florence_files:
-            try:
-                with open(ff) as f:
-                    src = f.read()
-                # 将 list 格式的 _tied_weights_keys 转为 dict 格式
-                import re as _re
-                pattern = r'_tied_weights_keys = \[([^\]]+)\]'
-                def _to_dict(m):
-                    items = [x.strip().strip('"').strip("'") for x in m.group(1).split(',')]
-                    items = [x for x in items if x]
-                    pairs = ', '.join(f'"{k}": "{k}"' for k in items)
-                    return f'_tied_weights_keys = {{{pairs}}}'
-                new_src = _re.sub(pattern, _to_dict, src)
-                if new_src != src:
-                    with open(ff, 'w') as f:
-                        f.write(new_src)
-                    logger.info(f"已自动修复 Florence2 兼容性: {os.path.basename(ff)}")
-            except Exception as e:
-                logger.debug(f"Florence2 自动修复失败: {e}")
 
         # 检查权重，缺失时尝试自动下载
         weights_dir = os.path.join(omniparser_dir, "weights")
@@ -248,47 +203,56 @@ class OmniParserDetector(PerceptionDetector):
             except Exception as e:
                 logger.warning(f"自动下载权重失败: {e}")
 
+        # 定位 launcher 脚本（与当前文件同目录）
+        launcher_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "omniparser_launcher.py")
+
         try:
             port = self._api_url.rsplit(":", 1)[-1]
-            abs_weights = os.path.join(omniparser_dir, "weights")
-            som_model = os.path.join(abs_weights, "icon_detect", "model.pt")
-            caption_model = os.path.join(abs_weights, "icon_caption_florence")
 
-            logger.info(f"自动启动 OmniParser 服务 (port={port})...")
+            # 创建日志文件用于捕获子进程 stderr
+            log_dir = os.path.join(tempfile.gettempdir(), "omniparser_logs")
+            os.makedirs(log_dir, exist_ok=True)
+            self._log_dir = log_dir
+            stderr_path = os.path.join(log_dir, f"omniparser_port{port}.log")
+            stderr_file = open(stderr_path, "w")
+
+            logger.info(f"自动启动 OmniParser 服务 (port={port}, log={stderr_path})...")
+            # OmniParser 需要在 omni 环境运行（torch 2.6、transformers 4.49）
+            _python = "/opt/anaconda3/envs/omni/bin/python"
+            if not os.path.isfile(_python):
+                _python = sys.executable  # 兜底用当前环境
             self._process = subprocess.Popen(
-                [sys.executable, "-m", "omnitool.omniparserserver.omniparserserver",
-                 "--port", str(port), "--device", "cpu",
-                 "--som_model_path", som_model,
-                 "--caption_model_path", caption_model],
-                cwd=omniparser_dir,
-                env=env,
+                [_python, launcher_path, omniparser_dir, str(port)],
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stderr=stderr_file,
             )
+            # 释放文件句柄，让子进程持有
+            stderr_file.close()
 
             # 等待几秒确认进程存活
             time.sleep(3)
             if self._process.poll() is not None:
-                # 进程已退出 — 捕获输出
-                stdout, stderr = self._process.communicate(timeout=5)
-                logger.error(
-                    f"OmniParser 服务启动后立即退出 (rc={self._process.returncode})\n"
-                    f"  stdout: {(stdout or b'').decode('utf-8', errors='replace')[-500:]}\n"
-                    f"  stderr: {(stderr or b'').decode('utf-8', errors='replace')[-500:]}"
-                )
+                # 进程已退出，读取日志
+                try:
+                    with open(stderr_path) as f:
+                        stderr_text = f.read()
+                    logger.error(
+                        f"OmniParser 服务启动后立即退出 (rc={self._process.returncode})\n"
+                        f"  stderr: {stderr_text[-500:]}"
+                    )
+                except Exception:
+                    logger.error(
+                        f"OmniParser 服务启动后立即退出 (rc={self._process.returncode})"
+                    )
                 self._process = None
                 return False
 
-            logger.info(f"OmniParser 服务已启动 (PID={self._process.pid})")
+            logger.info(f"OmniParser 服务已启动 (PID={self._process.pid}, log={stderr_path})")
             return True
 
         except Exception as e:
-            # 捕获子进程本身的异常
-            if self._process and self._process.poll() is not None:
-                stdout, stderr = self._process.communicate(timeout=3)
-                logger.error(f"自动启动异常后子进程输出: {(stderr or b'').decode('utf-8', errors='replace')[-300:]}")
-            self._process = None
             logger.warning(f"自动启动 OmniParser 失败: {e}")
+            self._process = None
             return False
 
     @property
@@ -296,15 +260,18 @@ class OmniParserDetector(PerceptionDetector):
         return "ui"
 
     def is_available(self) -> bool:
+        self._ensure_backend()
         return self._backend is not None
 
     @property
     def precision(self) -> str:
         """精度等级：有后端时 high，否则不可用"""
+        self._ensure_backend()
         return self.PRECISION_HIGH if self._backend else "unavailable"
 
     @property
     def backend(self) -> Optional[str]:
+        self._ensure_backend()
         return self._backend
 
     def detect(
@@ -314,6 +281,7 @@ class OmniParserDetector(PerceptionDetector):
         context: Optional[Dict[str, Any]] = None,
     ) -> List[PerceptionEvent]:
         """实现 PerceptionDetector 接口 — 发出 SCREEN_UI 事件"""
+        self._ensure_backend()
         if roi_image is None or roi_image.size == 0:
             return []
 
@@ -351,6 +319,7 @@ class OmniParserDetector(PerceptionDetector):
         Returns:
             UIElement 列表（无可用后端时返回空列表）
         """
+        self._ensure_backend()
         if not self._backend:
             return []
 
@@ -384,6 +353,12 @@ class OmniParserDetector(PerceptionDetector):
 
             img = Image.fromarray(image)
             w, h = img.size
+            # 限制最大边长，避免 Retina 屏高分辨率导致 PaddleOCR 过慢
+            max_dim = 1600
+            if max(w, h) > max_dim:
+                ratio = max_dim / max(w, h)
+                img = img.resize((int(w * ratio), int(h * ratio)), Image.LANCZOS)
+                w, h = img.size
             buf = io.BytesIO()
             img.save(buf, format="PNG")
             img_b64 = base64.b64encode(buf.getvalue()).decode()
@@ -395,7 +370,7 @@ class OmniParserDetector(PerceptionDetector):
                 headers={"Content-Type": "application/json"},
                 method="POST",
             )
-            with urllib.request.urlopen(req, timeout=60) as resp:
+            with urllib.request.urlopen(req, timeout=300) as resp:
                 result = json.loads(resp.read().decode())
 
             elements = []
@@ -467,6 +442,19 @@ class OmniParserDetector(PerceptionDetector):
         except Exception as e:
             logger.warning(f"OmniParser 本地模型调用失败: {e}")
             return []
+
+    def __del__(self):
+        """析构时清理子进程，防止孤儿进程"""
+        if self._process is not None:
+            try:
+                self._process.terminate()
+                self._process.wait(timeout=3)
+            except Exception:
+                try:
+                    self._process.kill()
+                except Exception:
+                    pass
+            self._process = None
 
     def reset(self) -> None:
         """重置状态，清理子进程"""

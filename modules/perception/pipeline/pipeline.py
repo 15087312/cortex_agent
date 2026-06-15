@@ -1,4 +1,4 @@
-"""感知流水线 — Capture → FrameDiff → ROI → Detectors → Events
+"""感知流水线 — Capture → FrameDiff → Detectors → Events
 
 核心编排器，驱动整个感知系统的运行。
 """
@@ -12,7 +12,6 @@ from modules.perception.events.types import PerceptionEvent, PerceptionEventType
 from modules.perception.events.bus import PerceptionEventBus, get_event_bus
 from modules.perception.pipeline.capture import CaptureBackend, create_capture_backend
 from modules.perception.pipeline.frame_diff import FrameDiffDetector, FrameDiffResult
-from modules.perception.pipeline.roi_dispatcher import ROIDispatcher, ROIRegion
 from modules.perception.detectors.base import PerceptionDetector
 from utils.logger import setup_logger
 
@@ -32,9 +31,8 @@ class PerceptionPipeline:
     运行流程:
     1. Capture: 从屏幕获取帧
     2. FrameDiff: 与上一帧比较，检测变化
-    3. ROI Dispatch: 将变化区域路由到对应检测器
-    4. Detectors: 各检测器处理 ROI，产出事件
-    5. Event Bus: 发布事件
+    3. Detectors: 各检测器处理完整帧，产出事件
+    4. Event Bus: 发布事件
 
     用法:
         pipeline = PerceptionPipeline()
@@ -47,17 +45,17 @@ class PerceptionPipeline:
         self,
         capture: Optional[CaptureBackend] = None,
         frame_diff: Optional[FrameDiffDetector] = None,
-        roi_dispatcher: Optional[ROIDispatcher] = None,
         detectors: Optional[Dict[str, PerceptionDetector]] = None,
         event_bus: Optional[PerceptionEventBus] = None,
         fps: int = 5,
+        diff_threshold_run_detectors: float = 0.03,
     ):
         self._capture = capture or create_capture_backend()
         self._frame_diff = frame_diff or FrameDiffDetector()
-        self._roi_dispatcher = roi_dispatcher or ROIDispatcher()
         self._detectors: Dict[str, PerceptionDetector] = detectors or {}
         self._event_bus = event_bus or get_event_bus()
         self._fps = fps
+        self._diff_threshold_run_detectors = diff_threshold_run_detectors
 
         self._running = False
         self._thread: Optional[threading.Thread] = None
@@ -68,7 +66,6 @@ class PerceptionPipeline:
             "frames_captured": 0,
             "frames_with_change": 0,
             "events_published": 0,
-            "roi_dispatches": 0,
             "detector_calls": {dt: 0 for dt in self._detectors},
             "start_time": 0.0,
             "errors": 0,
@@ -161,43 +158,44 @@ class PerceptionPipeline:
                 consecutive_no_change = 0
                 self._stats["frames_with_change"] += 1
 
-                # ROI 分发
-                has_rois = len(self._roi_dispatcher.get_rois()) > 0
-                if has_rois:
-                    dispatched = self._roi_dispatcher.dispatch(
-                        diff_result.changed_regions, frame
+                # 发布帧差事件到总线（供 PerceptionIntegrator 消费）
+                if diff_result.change_ratio > 0.01:
+                    diff_event = PerceptionEvent(
+                        event_type=PerceptionEventType.SCREEN_DIFF,
+                        source="frame_diff",
+                        importance=min(diff_result.change_ratio * 2, 1.0),
+                        payload={
+                            "change_ratio": round(diff_result.change_ratio, 4),
+                            "changed_regions": diff_result.changed_regions,
+                        },
                     )
-                else:
-                    # 无 ROI 定义，全帧发送到默认检测器
+                    self._event_bus.publish(diff_event)
+                    self._stats["events_published"] += 1
+
+                # 大幅变化才跑昂贵检测器（OCR / OmniParser）
+                if diff_result.change_ratio >= self._diff_threshold_run_detectors:
                     default_type = self._get_default_detector_type()
                     if default_type:
-                        dispatched = self._roi_dispatcher.dispatch_full_frame(
-                            frame, default_type
-                        )
-                    else:
-                        dispatched = {}
+                        dispatched = {default_type: [("_full_frame", frame)]}
 
-                self._stats["roi_dispatches"] += 1
+                        for detector_type, roi_items in dispatched.items():
+                            detector = self._detectors.get(detector_type)
+                            if not detector or not detector.is_available():
+                                continue
 
-                # 检测器处理
-                for detector_type, roi_items in dispatched.items():
-                    detector = self._detectors.get(detector_type)
-                    if not detector or not detector.is_available():
-                        continue
+                            for roi_name, roi_image in roi_items:
+                                try:
+                                    events = detector.detect(roi_image, roi_name)
+                                    self._stats["detector_calls"][detector_type] = \
+                                        self._stats["detector_calls"].get(detector_type, 0) + 1
 
-                    for roi_name, roi_image in roi_items:
-                        try:
-                            events = detector.detect(roi_image, roi_name)
-                            self._stats["detector_calls"][detector_type] = \
-                                self._stats["detector_calls"].get(detector_type, 0) + 1
-
-                            for event in events:
-                                event.platform = self._platform
-                                self._event_bus.publish(event)
-                                self._stats["events_published"] += 1
-                        except Exception as e:
-                            self._stats["errors"] += 1
-                            logger.warning(f"检测器 {detector_type} 异常: {e}")
+                                    for event in events:
+                                        event.platform = self._platform
+                                        self._event_bus.publish(event)
+                                        self._stats["events_published"] += 1
+                                except Exception as e:
+                                    self._stats["errors"] += 1
+                                    logger.warning(f"检测器 {detector_type} 异常: {e}")
 
                 time.sleep(interval)
 
@@ -231,7 +229,7 @@ class PerceptionPipeline:
                 logger.warning(f"非图像检测器 {det_type} 异常: {e}")
 
     def _get_default_detector_type(self) -> Optional[str]:
-        """获取默认检测器类型（无 ROI 时使用）"""
+        """获取默认检测器类型"""
         # 优先 OCR，其次 UI
         for dtype in ("ocr", "ui", "motion"):
             if dtype in self._detectors and self._detectors[dtype].is_available():

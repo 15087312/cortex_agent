@@ -157,6 +157,7 @@ class ImageAnalyzer:
     async def _load_mlx_vlm(self):
         """加载 MLX-VLM 模型（Apple Silicon 优化，4-bit 量化）- 使用全局缓存"""
         global _MODEL_CACHE
+        import asyncio
 
         try:
             from mlx_vlm import load, generate
@@ -176,7 +177,8 @@ class ImageAnalyzer:
                 return
 
             logger.info(f"MLX-VLM 首次加载: {model_name}")
-            model, processor = load(model_name)
+            # load() 是同步阻塞操作（加载 ~4GB 模型），放在线程池执行避免阻塞事件循环
+            model, processor = await asyncio.to_thread(lambda: load(model_name))
             self.model = model
             self.processor = processor
             self._mlx_generate = generate
@@ -200,6 +202,19 @@ class ImageAnalyzer:
         prompt: str,
     ) -> Dict[str, Any]:
         """使用 MLX-VLM 分析图像（Apple Silicon）"""
+        from PIL import Image as _PIL
+        import io as _io
+
+        # 限制最大边长，加速 ViT 推理
+        _img = _PIL.open(_io.BytesIO(image_data))
+        _max_dim = 1280
+        if max(_img.size) > _max_dim:
+            ratio = _max_dim / max(_img.size)
+            _img = _img.resize((int(_img.width * ratio), int(_img.height * ratio)), _PIL.LANCZOS)
+            buf = _io.BytesIO()
+            _img.save(buf, format="JPEG", quality=85)
+            image_data = buf.getvalue()
+
         with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as f:
             f.write(image_data)
             temp_path = f.name
@@ -228,7 +243,8 @@ class ImageAnalyzer:
                 self.processor,
                 formatted_prompt,
                 [temp_path],
-                max_tokens=256,
+                max_tokens=128,
+                temperature=0,
                 verbose=False,
             )
 
@@ -266,9 +282,10 @@ class ImageAnalyzer:
             logger.info(f"Qwen-VL 加载中: {model_name} (device={device})")
 
             self.processor = AutoProcessor.from_pretrained(model_name)
+            dtype = torch.float16 if device in ("cuda", "mps") else torch.float32
             self.model = Qwen2VLForConditionalGeneration.from_pretrained(
                 model_name,
-                torch_dtype=torch.float16 if device == "cuda" else torch.float32,
+                torch_dtype=dtype,
                 device_map=device if device != "mps" else None,
             )
             if device == "mps":
@@ -347,6 +364,16 @@ class ImageAnalyzer:
         import torch
         from qwen_vl_utils import process_vision_info
         
+        # 限制最大边长，加速 ViT 推理
+        _img = Image.open(io.BytesIO(image_data))
+        _max_dim = 1280
+        if max(_img.size) > _max_dim:
+            ratio = _max_dim / max(_img.size)
+            _img = _img.resize((int(_img.width * ratio), int(_img.height * ratio)), Image.LANCZOS)
+            buf = io.BytesIO()
+            _img.save(buf, format="JPEG", quality=85)
+            image_data = buf.getvalue()
+
         with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as f:
             f.write(image_data)
             temp_path = f.name

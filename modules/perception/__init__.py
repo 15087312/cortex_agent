@@ -8,24 +8,13 @@ from .interface import PerceptionPort, create_perception_port, get_perception_po
 
 # 新的独立模块
 from .change_event import ChangeEvent
-from .dialog_perception import DialogPerception
+
 
 try:
     from .integration import PerceptionIntegrator, perception_integrator
 except Exception:
     PerceptionIntegrator = None
     perception_integrator = None
-
-try:
-    from .rule_compliance_perception import (
-        RuleCompliancePerception,
-        ComplianceViolation,
-        get_rule_compliance_perception,
-    )
-except Exception:
-    RuleCompliancePerception = None
-    ComplianceViolation = None
-    get_rule_compliance_perception = None
 
 # 新系统（按需导入）
 def get_perception_system():
@@ -34,7 +23,7 @@ def get_perception_system():
 
 # 向后兼容：perception_manager 代理指向新系统
 def _get_compat_proxy():
-    """兼容旧代码：perception_manager.file_perception / .dialog_perception / .start_monitoring()"""
+    """兼容旧代码：perception_manager.file_perception / .start_monitoring()"""
     ps = get_perception_system()
 
     class _CompatProxy:
@@ -45,10 +34,6 @@ def _get_compat_proxy():
         @property
         def file_perception(self):
             return None  # 功能暂未实现
-
-        @property
-        def dialog_perception(self):
-            return ps.dialog_perception
 
         @property
         def screen_perception(self):
@@ -72,11 +57,7 @@ __all__ = [
     "get_perception_port",
     "get_perception_system",
     "ChangeEvent",
-    "DialogPerception",
     "PerceptionIntegrator",
-    "RuleCompliancePerception",
-    "ComplianceViolation",
     "perception_manager",
     "perception_integrator",
-    "get_rule_compliance_perception",
 ]

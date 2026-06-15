@@ -40,28 +40,14 @@ class OCRDetector(PerceptionDetector):
             self._init_ocr()
 
     def _init_ocr(self):
-        """初始化本地 OCR 引擎（按优先级尝试）"""
-        try:
-            from paddleocr import PaddleOCR
-            self._ocr_engine = PaddleOCR(lang="ch")
-            self._ocr_type = "paddleocr"
-            logger.info("OCR 引擎: PaddleOCR")
-            return
-        except ImportError:
-            pass
-
-        try:
-            from rapidocr_onnxruntime import RapidOCR
-            self._ocr_engine = RapidOCR()
-            self._ocr_type = "rapidocr"
-            logger.info("OCR 引擎: RapidOCR")
-            return
-        except ImportError:
-            pass
-
-        # 两个都没有时尝试 MCP 降级
-        self._mcp_mode = True
-        logger.info("OCR 引擎: 无本地 OCR，降级到 MCP OCR")
+        """初始化本地 OCR 引擎（共享全局单例）"""
+        from utils.ocr_utils import get_ocr_engine
+        self._ocr_engine, self._ocr_type = get_ocr_engine()
+        if self._ocr_engine is None:
+            self._mcp_mode = True
+            logger.info("OCR 引擎: 无本地 OCR，降级到 MCP OCR")
+        else:
+            logger.info(f"OCR 引擎: {self._ocr_type}（共享）")
 
     def is_available(self) -> bool:
         return self._ocr_engine is not None or self._mcp_mode
@@ -117,14 +103,14 @@ class OCRDetector(PerceptionDetector):
             return self._extract_text_mcp(image)
 
         try:
-            if self._ocr_type == "paddleocr":
+            if self._ocr_type == "paddle":
                 result = self._ocr_engine.ocr(image, cls=True)
                 if not result or not result[0]:
                     return ""
                 texts = result[0].get("rec_texts", [])
                 return "\n".join(t for t in texts if t)
 
-            elif self._ocr_type == "rapidocr":
+            elif self._ocr_type == "rapid":
                 result, _ = self._ocr_engine(image)
                 if not result:
                     return ""

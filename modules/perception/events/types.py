@@ -17,7 +17,6 @@ class PerceptionEventType:
     SCREEN_UI = "screen.ui"                 # UI 元素变化
     SCREEN_WINDOW = "screen.window"         # 窗口状态变化
     FILE_CHANGE = "file.change"             # 文件变化
-    DIALOG_CHANGE = "dialog.change"         # 对话变化
     SPEECH_DETECTED = "speech.detected"     # 语音识别结果
     MCP_RESOURCE_UPDATE = "mcp.resource.update"  # MCP 资源更新
 
@@ -42,7 +41,7 @@ class PerceptionEvent:
     event_type: str                          # PerceptionEventType.*
     timestamp: float = field(default_factory=time.time)
     platform: str = "unknown"                # "windows" / "macos" / "linux"
-    source: str = ""                         # "ocr" / "ui" / "window" / "file" / "dialog"
+    source: str = ""                         # "ocr" / "ui" / "window" / "file"
     importance: float = 0.5                  # 0.0-1.0
     payload: Dict[str, Any] = field(default_factory=dict)
     roi_name: Optional[str] = None           # 关联的 ROI 区域名

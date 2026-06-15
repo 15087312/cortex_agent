@@ -16,7 +16,6 @@ PERCEPTION_ENABLED: bool = False  # ← 改为默认 False（关闭主系统）
 
 # 子系统开关（始终保持 True，由主系统控制其是否生效）
 PERCEPTION_FILE_ENABLED: bool = True
-PERCEPTION_DIALOG_ENABLED: bool = True
 PERCEPTION_SCREEN_ENABLED: bool = True
 PERCEPTION_VOICE_ENABLED: bool = False
 PERCEPTION_INTERNAL_ENABLED: bool = True
@@ -48,7 +47,6 @@ class PerceptionManager:
         """停止时，禁用所有子系统"""
         self.enabled = False
         self.file_perception.enabled = False
-        self.dialog_perception.enabled = False
         self.screen_perception.enabled = False
 ```
 
@@ -58,10 +56,6 @@ class PerceptionManager:
 class FilePerception:
     def __init__(self, enabled: bool = True):
         self.enabled = enabled  # ← 子系统可独立启用/禁用
-
-class DialogPerception:
-    def __init__(self, enabled: bool = True):
-        self.enabled = enabled
 
 class ScreenPerception:
     def __init__(self, enabled: bool = True):
@@ -90,11 +84,11 @@ class ScreenPerception:
 ### 状态矩阵
 
 ```
-主系统状态     文件感知    对话感知    屏幕感知
+主系统状态     文件感知    屏幕感知
 ─────────────────────────────────────────────
-关闭（默认）   启用但不生效  启用但不生效  启用但不生效
-启动           启用        启用        启用
-停止           禁用        禁用        禁用
+关闭（默认）   启用但不生效  启用但不生效
+启动           启用        启用
+停止           禁用        禁用
 ```
 
 ---
@@ -113,14 +107,14 @@ print(f"子系统: {status['subsystems']}")
 # 输出：
 # 主系统: False
 # 运行中: False
-# 子系统: {'file_perception': True, 'dialog_perception': True, 'screen_perception': True}
+# 子系统: {'file_perception': True, 'screen_perception': True}
 ```
 
 ### 启动感知系统
 
 ```python
 perception_manager.start_monitoring()
-# 日志: 开始后台监控（启用的子系统: file, dialog, screen）
+# 日志: 开始后台监控（启用的子系统: file, screen）
 ```
 
 ### 停止感知系统
@@ -135,7 +129,7 @@ perception_manager.stop_monitoring()
 ```python
 # 如果需要禁用某个子系统
 perception_manager.set_subsystem_enabled("screen", False)
-perception_manager.start_monitoring()  # 启动时只有 file/dialog
+perception_manager.start_monitoring()  # 启动时只有 file
 ```
 
 ---
@@ -187,7 +181,6 @@ modules/perception/manager.py
 + PerceptionManager.set_subsystem_enabled(): 个别启用/禁用子系统
 
 + FilePerception.__init__: 添加 enabled=True 参数
-+ DialogPerception.__init__: 添加 enabled=True 参数
 + ScreenPerception.__init__: 添加 enabled=True 参数
 ```
 
@@ -201,7 +194,6 @@ modules/perception/manager.py
 pm = PerceptionManager()
 assert pm.enabled == False  # 主系统关闭
 assert pm.file_perception.enabled == True  # 子系统启用
-assert pm.dialog_perception.enabled == True
 assert pm.screen_perception.enabled == True
 ```
 
@@ -212,6 +204,7 @@ pm.start_monitoring()
 assert pm.enabled == True  # 主系统启动
 assert pm._running == True  # 监控线程运行
 assert pm.file_perception.enabled == True  # 子系统生效
+assert pm.screen_perception.enabled == True
 ```
 
 ### 停止流程验证
@@ -221,7 +214,6 @@ pm.stop_monitoring()
 assert pm.enabled == False  # 主系统关闭
 assert pm._running == False  # 监控线程停止
 assert pm.file_perception.enabled == False  # 子系统禁用
-assert pm.dialog_perception.enabled == False
 assert pm.screen_perception.enabled == False
 ```
 

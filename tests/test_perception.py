@@ -15,12 +15,10 @@ import pytest
 from modules.perception.events.types import PerceptionEvent, PerceptionEventType
 from modules.perception.events.bus import PerceptionEventBus
 from modules.perception.pipeline.frame_diff import FrameDiffDetector, FrameDiffResult
-from modules.perception.pipeline.roi_dispatcher import ROIDispatcher, ROIRegion
 from modules.perception.detectors.base import PerceptionDetector
 from modules.perception.detectors.ocr_detector import OCRDetector
 from modules.perception.detectors.ui_detector import UIDetector
 from modules.perception.detectors.window_detector import WindowDetector
-from modules.perception.roi.manager import ROIManager
 from modules.perception.state.world_state import WorldState, WorldStateManager
 from modules.perception.state.perception_source import PerceptionDifferenceSource
 from modules.perception.pipeline.capture import _NullBackend, create_capture_backend
@@ -234,63 +232,26 @@ class TestFrameDiffDetector:
 
 
 # ====================================================================
-# ROI Dispatcher
+# ROI Dispatcher (simplified — full-frame only)
 # ====================================================================
 
 class TestROIDispatcher:
-    def test_dispatch_to_matching_roi(self):
-        rd = ROIDispatcher()
-        rd.register_roi(ROIRegion("test", (0, 0, 100, 100), "ocr", overlap_threshold=0.05))
-        frame = np.zeros((100, 100, 3), dtype=np.uint8)
-        result = rd.dispatch([(0, 0, 50, 50)], frame)
-        assert "ocr" in result
-        assert len(result["ocr"]) == 1
-        assert result["ocr"][0][0] == "test"
-
-    def test_dispatch_no_overlap(self):
-        rd = ROIDispatcher()
-        rd.register_roi(ROIRegion("test", (0, 0, 50, 50), "ocr"))
-        frame = np.zeros((100, 100, 3), dtype=np.uint8)
-        result = rd.dispatch([(80, 80, 10, 10)], frame)
-        assert "ocr" not in result
-
-    def test_dispatch_ignore_type(self):
-        rd = ROIDispatcher()
-        rd.register_roi(ROIRegion("video", (0, 0, 100, 100), "ignore"))
-        frame = np.zeros((100, 100, 3), dtype=np.uint8)
-        result = rd.dispatch([(0, 0, 50, 50)], frame)
-        assert len(result) == 0
-
-    def test_dispatch_empty_regions(self):
-        rd = ROIDispatcher()
-        frame = np.zeros((100, 100, 3), dtype=np.uint8)
-        result = rd.dispatch([], frame)
-        assert len(result) == 0
-
     def test_dispatch_full_frame(self):
-        rd = ROIDispatcher()
+        from modules.perception.pipeline.roi_dispatcher import dispatch
         frame = np.zeros((100, 100, 3), dtype=np.uint8)
-        result = rd.dispatch_full_frame(frame, "ocr")
+        result = dispatch(frame, "ocr")
         assert "ocr" in result
         assert result["ocr"][0][0] == "_full_frame"
 
-    def test_unregister_roi(self):
-        rd = ROIDispatcher()
-        rd.register_roi(ROIRegion("test", (0, 0, 100, 100), "ocr"))
-        assert rd.unregister_roi("test") is True
-        assert rd.unregister_roi("test") is False
-        assert len(rd.get_rois()) == 0
+    def test_dispatch_empty_frame(self):
+        from modules.perception.pipeline.roi_dispatcher import dispatch
+        result = dispatch(np.array([]), "ocr")
+        assert result == {}
 
-    def test_overlap_calculation(self):
-        assert ROIDispatcher._calc_overlap((0, 0, 10, 10), (5, 5, 10, 10)) == 25
-        assert ROIDispatcher._calc_overlap((0, 0, 10, 10), (20, 20, 10, 10)) == 0
-
-    def test_priority_order(self):
-        rd = ROIDispatcher()
-        rd.register_roi(ROIRegion("low", (0, 0, 100, 100), "ocr", priority=1))
-        rd.register_roi(ROIRegion("high", (0, 0, 100, 100), "ui", priority=10))
-        rois = rd.get_rois()
-        assert rois[0].name == "high"
+    def test_dispatch_none_frame(self):
+        from modules.perception.pipeline.roi_dispatcher import dispatch
+        result = dispatch(None, "ocr")
+        assert result == {}
 
 
 # ====================================================================
@@ -434,47 +395,7 @@ class TestNullBackend:
         assert backend.platform_name == "null"
 
 
-# ====================================================================
-# ROI Manager
-# ====================================================================
 
-class TestROIManager:
-    def test_add_and_get(self):
-        rm = ROIManager()
-        rm.add(ROIRegion("test", (0, 0, 100, 100), "ocr"))
-        assert rm.get("test") is not None
-        assert rm.get("test").detector_type == "ocr"
-
-    def test_remove(self):
-        rm = ROIManager()
-        rm.add(ROIRegion("test", (0, 0, 100, 100), "ocr"))
-        assert rm.remove("test") is True
-        assert rm.get("test") is None
-        assert rm.remove("test") is False
-
-    def test_get_all(self):
-        rm = ROIManager()
-        rm.add(ROIRegion("a", (0, 0, 100, 100), "ocr"))
-        rm.add(ROIRegion("b", (0, 0, 100, 100), "ui"))
-        assert len(rm.get_all()) == 2
-
-    def test_apply_to_dispatcher(self):
-        rm = ROIManager()
-        rm.add(ROIRegion("test", (0, 0, 100, 100), "ocr"))
-        rd = ROIDispatcher()
-        rm.apply_to_dispatcher(rd)
-        assert len(rd.get_rois()) == 1
-
-    def test_save_and_load(self, tmp_path):
-        path = str(tmp_path / "rois.json")
-        rm = ROIManager(config_path=path)
-        rm.add(ROIRegion("test", (0, 0, 100, 100), "ocr", priority=5))
-        assert rm.save_to_file() is True
-
-        rm2 = ROIManager()
-        assert rm2.load_from_file(path) is True
-        assert len(rm2.get_all()) == 1
-        assert rm2.get("test").priority == 5
 
 
 # ====================================================================

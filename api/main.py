@@ -132,6 +132,15 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(f"✗ 感知系统启动失败: {e}")
 
+    # 预加载视觉模型（MLX-VLM），避免首次 tool call 时阻塞事件循环
+    if settings.VISION_BACKEND != "mock":
+        try:
+            from infra.data_process.core.image_analyzer import get_default_analyzer
+            await get_default_analyzer()
+            logger.info("✓ 视觉模型（ImageAnalyzer）已预加载")
+        except Exception as e:
+            logger.warning(f"视觉模型预加载失败（首次调用时会重试）: {e}")
+
     # 启动差异检测器心跳 (Stage 1: continuous perception)
     if settings.DIFFERENCE_DETECTOR_ENABLED:
         try:

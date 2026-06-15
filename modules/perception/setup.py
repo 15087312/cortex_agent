@@ -25,7 +25,6 @@ class PerceptionSystem:
         self.perception_source = None
         self.voice_detector = None
         self.think_trigger = None
-        self.dialog_perception = None
         self.mcp_detector = None
         self._started = False
 
@@ -52,7 +51,6 @@ class PerceptionSystem:
         cfg = {
             "screen_enabled": getattr(settings, "PERCEPTION_SCREEN_ENABLED", True),
             "file_enabled": getattr(settings, "PERCEPTION_FILE_ENABLED", True),
-            "dialog_enabled": getattr(settings, "PERCEPTION_DIALOG_ENABLED", True),
             "voice_enabled": getattr(settings, "PERCEPTION_VOICE_ENABLED", False),
             "trigger_enabled": getattr(settings, "PERCEPTION_TRIGGER_THINK", True),
             "trigger_min_intensity": getattr(settings, "PERCEPTION_TRIGGER_MIN_INTENSITY", 50.0),
@@ -76,23 +74,8 @@ class PerceptionSystem:
         else:
             logger.info("屏幕感知已禁用")
 
-        # 3. 文件监控（从旧 PerceptionManager 合并 — 暂未实现）
-        if cfg["file_enabled"]:
-            logger.info("文件感知已启用但功能尚未实现")
-        else:
-            logger.info("文件感知已禁用")
 
-        # 4. 对话监控（从旧 PerceptionManager 合并）
-        if cfg["dialog_enabled"]:
-            self._setup_dialog_monitoring()
-        else:
-            logger.info("对话感知已禁用")
 
-        # 4.5 MCP 资源感知（暂未实现）
-        if cfg["mcp_enabled"]:
-            logger.info("MCP 资源感知已启用但功能尚未实现")
-        else:
-            logger.info("MCP 资源感知已禁用")
 
         # 5. 语音检测器（根据配置）
         if cfg["voice_enabled"]:
@@ -100,7 +83,7 @@ class PerceptionSystem:
         else:
             logger.info("语音感知已禁用")
 
-        # 4. 世界状态
+        # 6. 世界状态
         self.world_state = WorldStateManager()
         self.world_state.start(self.event_bus)
 
@@ -148,19 +131,12 @@ class PerceptionSystem:
         """组装屏幕感知流水线"""
         from modules.perception.pipeline.capture import create_capture_backend
         from modules.perception.pipeline.frame_diff import FrameDiffDetector
-        from modules.perception.pipeline.roi_dispatcher import ROIDispatcher
         from modules.perception.pipeline.pipeline import PerceptionPipeline
-        from modules.perception.roi.manager import ROIManager
 
         capture = create_capture_backend()
         logger.info(f"捕获后端: {capture.platform_name} (available={capture.is_available()})")
 
         frame_diff = FrameDiffDetector()
-
-        roi_dispatcher = ROIDispatcher()
-        roi_manager = ROIManager()
-        roi_manager.load_defaults()
-        roi_manager.apply_to_dispatcher(roi_dispatcher)
 
         detectors = {}
 
@@ -188,31 +164,39 @@ class PerceptionSystem:
         except Exception:
             pass
 
-        # UI 检测器
+        # UI 检测器 — 优先 OmniParserDetector（结构化 UI 检测），兜底 UIDetector（模板匹配）
+        ui_detector_registered = False
         try:
-            from modules.perception.detectors.ui_detector import UIDetector
-            det = UIDetector()
+            from modules.perception.detectors.omniparser_detector import OmniParserDetector
+            det = OmniParserDetector()
+            # is_available() 触发惰性初始化，只做快速探测（3s timeout）
             if det.is_available():
                 detectors["ui"] = det
-                logger.info("UI 检测器: 已启用")
-        except Exception:
-            pass
+                logger.info(f"UI 检测器: OmniParserDetector (backend={det.backend})")
+                ui_detector_registered = True
+        except Exception as e:
+            logger.debug(f"OmniParserDetector 初始化失败 (非致命): {e}")
+
+        if not ui_detector_registered:
+            try:
+                from modules.perception.detectors.ui_detector import UIDetector
+                det = UIDetector()
+                if det.is_available():
+                    detectors["ui"] = det
+                    logger.info("UI 检测器: UIDetector（模板匹配，已降级）")
+            except Exception:
+                pass
 
         self.pipeline = PerceptionPipeline(
             capture=capture,
             frame_diff=frame_diff,
-            roi_dispatcher=roi_dispatcher,
             detectors=detectors,
             event_bus=self.event_bus,
             fps=cfg["fps"],
         )
 
 
-    def _setup_dialog_monitoring(self):
-        """组装对话监控（从旧 PerceptionManager 合并）"""
-        from modules.perception.dialog_perception import DialogPerception
-        self.dialog_perception = DialogPerception(enabled=True)
-        logger.info("对话监控已初始化")
+
 
     def _setup_voice_detector(self, cfg: dict):
         """组装语音检测器"""
@@ -255,7 +239,7 @@ class PerceptionSystem:
             "voice_available": self.voice_detector is not None,
             "voice_detector_type": self.voice_detector.detector_type if self.voice_detector else None,
             "mcp_available": self.mcp_detector is not None,
-            "dialog_available": self.dialog_perception is not None,
+
             "think_trigger": self.think_trigger.get_stats() if self.think_trigger else None,
             "world_state": self.world_state.get_state().to_dict() if self.world_state else None,
             "event_bus": self.event_bus.get_stats() if self.event_bus else None,

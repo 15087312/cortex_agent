@@ -24,8 +24,6 @@ class PerceptionStatusAdapter:
             "started": ps._started,
             "pipeline": ps.pipeline.get_stats() if ps.pipeline else None,
             "voice_available": ps.voice_detector is not None,
-            "file_perception": ps.file_perception is not None,
-            "dialog_perception": ps.dialog_perception is not None,
             "monitoring": ps._started,
         }
 

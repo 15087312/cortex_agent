@@ -1,4 +1,4 @@
-"""Perception module interface facade."""
+"""感知模块接口门面。"""
 from __future__ import annotations
 
 from typing import Any, List, Protocol, runtime_checkable
@@ -6,18 +6,18 @@ from typing import Any, List, Protocol, runtime_checkable
 
 @runtime_checkable
 class PerceptionPort(Protocol):
-    """Protocol for attention-relevant perception state."""
+    """注意力相关感知状态的协议。"""
 
     @property
     def is_running(self) -> bool:
-        """Whether perception collection is active."""
+        """感知收集是否处于活动状态。"""
 
     def get_attention_items(self, max_age_seconds: float = 10.0) -> List[Any]:
-        """Return recent attention-worthy perception items."""
+        """返回最近的值得注意的感知项。"""
 
 
 class PerceptionManagerAdapter:
-    """Adapter around the concrete perception manager singleton."""
+    """具体感知管理器单例的适配器。"""
 
     def __init__(self, manager: Any):
         self._manager = manager
@@ -31,12 +31,12 @@ class PerceptionManagerAdapter:
 
 
 def create_perception_port() -> PerceptionPort:
-    """Create the default perception port with delayed concrete import."""
+    """创建默认感知端口，延迟导入具体实现。"""
     from modules.perception import perception_manager
 
     return PerceptionManagerAdapter(perception_manager)
 
 
 def get_perception_port() -> PerceptionPort:
-    """Compatibility alias for callers that expect get_* naming."""
+    """为期望 get_* 命名方式的调用者提供的兼容性别名。"""
     return create_perception_port()

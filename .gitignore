@@ -80,8 +80,8 @@ models/
 *.bin
 *.onnx
 
-# OmniParser（外部仓库，单独克隆）
-OmniParser/
+# OmniParser 模型权重（运行时从 HuggingFace 下载）
+OmniParser/weights/
 
 # Database
 *.db

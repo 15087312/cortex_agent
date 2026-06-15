@@ -14,9 +14,6 @@ from utils.logger import setup_logger
 
 logger = setup_logger("perception_tools")
 
-# 缓存 OmniParserDetector 实例，避免每次都重新加载模型（28-33 秒）
-_cached_detector = None
-
 
 @ToolRegistry.register(
     "transcribe_audio",
@@ -116,12 +113,8 @@ def _capture_screen() -> str:
     return capture_screen() or ""
 
 
-_cached_ocr_engine = None
-
-
 def _ocr_screenshot(screenshot_b64: str) -> str:
-    """对截图做 OCR，返回识别文字（OCR 引擎缓存复用）"""
-    global _cached_ocr_engine
+    """对截图做 OCR，返回识别文字（共享全局 OCR 引擎）"""
     try:
         import base64 as b64
         from PIL import Image
@@ -130,21 +123,8 @@ def _ocr_screenshot(screenshot_b64: str) -> str:
         img_data = b64.b64decode(screenshot_b64)
         img = Image.open(io.BytesIO(img_data))
 
-        # 懒初始化 OCR 引擎（只创建一次）
-        if _cached_ocr_engine is None:
-            try:
-                from rapidocr_onnxruntime import RapidOCR
-                _cached_ocr_engine = ("rapid", RapidOCR())
-                logger.debug("OCR 引擎初始化: RapidOCR")
-            except ImportError:
-                try:
-                    from paddleocr import PaddleOCR
-                    _cached_ocr_engine = ("paddle", PaddleOCR(lang="ch"))
-                    logger.debug("OCR 引擎初始化: PaddleOCR")
-                except ImportError:
-                    _cached_ocr_engine = ("none", None)
-
-        engine_type, engine = _cached_ocr_engine
+        from utils.ocr_utils import get_ocr_engine
+        engine_type, engine = get_ocr_engine()
         if engine is None:
             return "(OCR 引擎不可用)"
 
@@ -171,7 +151,6 @@ def _ocr_screenshot(screenshot_b64: str) -> str:
                 return f"(PaddleOCR 内部错误: {ocr_err})"
             logger.debug("PaddleOCR result type=%s", type(result))
             if result and result[0]:
-                # PaddleOCR 3.6+ 返回 dict 格式
                 texts = result[0].get("rec_texts", [])
                 return "\n".join(t for t in texts if t)
 
@@ -264,9 +243,9 @@ async def _vision_understand(
             except Exception as api_err:
                 logger.error(f"[视觉理解] 云端 API 也失败: {api_err}")
 
-        prompt = "请详细描述这个屏幕截图的内容。包括：当前应用、界面布局、可见的文字、按钮、错误信息等。"
+        prompt = "描述这个屏幕截图：当前应用、界面布局、可见文字按钮。"
         if focus:
-            prompt += f"\n特别关注：{focus}"
+            prompt += f" 重点关注：{focus}"
 
         logger.info("[视觉理解] 开始分析图像...")
         start = time.time()
@@ -285,7 +264,7 @@ async def _vision_understand(
                 _loop.close()
 
         result = await asyncio.wait_for(
-            asyncio.to_thread(_do_analyze), timeout=30
+            asyncio.to_thread(_do_analyze), timeout=120
         )
         logger.info(f"[视觉理解] 分析完成 ({time.time()-start:.2f}s)")
 
@@ -356,13 +335,9 @@ async def detect_ui_elements(focus: str = "") -> Dict[str, Any]:
         import base64
         image_bytes = base64.b64decode(screenshot_b64)
 
-        # 2. OmniParser 检测（使用缓存实例，同步操作放到线程池）
-        global _cached_detector
-        if _cached_detector is None:
-            from modules.perception.detectors.omniparser_detector import OmniParserDetector
-            _cached_detector = OmniParserDetector()
-        detector = _cached_detector
-        # detect_elements 内部可能做 HTTP 请求或 OCR 推理，放到线程池执行
+        # 2. OmniParser 检测（全局单例，同步操作放到线程池）
+        from modules.perception.detectors.omniparser_detector import OmniParserDetector
+        detector = OmniParserDetector()
         elements = await asyncio.to_thread(detector.detect_elements, image_bytes)
 
         if not elements:
