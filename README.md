@@ -324,7 +324,7 @@ ai_backend/
 │   ├── perception/         # 感知系统（文件/对话/屏幕 + 规范违反检测）
 │   ├── attention/          # TF-IDF + 注意力评分
 │   ├── output_system/      # 输出管线（多通道分发、情感样式）
-│   ├── difference_detector/# 4 种差异源，SQLite 持久化
+│   │   └── difference/      # 差异检测（感知系统内）
 │   ├── management/         # GlobalMonitor、AlertEngine、HealthChecker
 │   ├── database/           # SQLAlchemy + SQLite WAL、DiskCache
 │   └── metrics/            # Prometheus 指标

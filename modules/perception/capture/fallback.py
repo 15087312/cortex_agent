@@ -68,6 +68,11 @@ class PILBackend(CaptureBackend):
         return None
 
     def _capture_loop(self):
+        """后台捕获循环 — PIL.ImageGrab 实现
+
+        PIL 返回 RGB 格式，需反转通道顺序转为 BGR 以保持与 OpenCV 兼容。
+        降级模式使用较低的帧率（2 FPS）。
+        """
         interval = 1.0 / self._fps
 
         while self._running:
@@ -82,7 +87,7 @@ class PILBackend(CaptureBackend):
                     img = ImageGrab.grab()
 
                 frame = np.array(img)
-                # PIL 返回 RGB，转换为 BGR
+                # PIL 返回 RGB，反转通道为 BGR（与 OpenCV 一致）
                 if len(frame.shape) == 3 and frame.shape[2] == 3:
                     frame = frame[:, :, ::-1].copy()
 

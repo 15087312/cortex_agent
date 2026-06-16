@@ -63,7 +63,7 @@ class WorldStateManager:
         self._sub_ids: List[str] = []
 
     def start(self, event_bus) -> None:
-        """订阅事件总线"""
+        """订阅事件总线（窗口、OCR、UI 三类事件）"""
         self._sub_ids.append(
             event_bus.subscribe(PerceptionEventType.SCREEN_WINDOW, self._on_window)
         )
@@ -96,6 +96,7 @@ class WorldStateManager:
             )
 
     def _on_window(self, event: PerceptionEvent):
+        """窗口事件回调 — 更新当前窗口/应用名"""
         with self._lock:
             self._state.active_window = event.payload.get("window_title", "")
             self._state.active_app = event.payload.get("app_name", "")
@@ -103,6 +104,7 @@ class WorldStateManager:
             self._add_event(event)
 
     def _on_ocr(self, event: PerceptionEvent):
+        """OCR 事件回调 — 追加新文本到 recent_ocr"""
         with self._lock:
             new_lines = event.payload.get("new_lines", [])
             if new_lines:
@@ -114,6 +116,7 @@ class WorldStateManager:
             self._add_event(event)
 
     def _on_ui(self, event: PerceptionEvent):
+        """UI 事件回调 — 追加 UI 元素列表"""
         with self._lock:
             self._state.ui_elements.append(event.payload)
             if len(self._state.ui_elements) > self._MAX_UI_ELEMENTS:
@@ -122,6 +125,8 @@ class WorldStateManager:
             self._add_event(event)
 
     def _add_event(self, event: PerceptionEvent):
+        """将事件加入 recent_events 环形缓冲区"""
+
         self._state.recent_events.append(event.to_dict())
         if len(self._state.recent_events) > self._MAX_RECENT_EVENTS:
             self._state.recent_events = self._state.recent_events[-self._MAX_RECENT_EVENTS:]

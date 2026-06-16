@@ -83,10 +83,12 @@ class VoiceDetector(PerceptionDetector):
 
             self._recognizer = sr.Recognizer()
             self._recognizer.energy_threshold = self._energy_threshold
+            # dynamic_energy_threshold 使引擎自适应环境噪音变化
             self._recognizer.dynamic_energy_threshold = True
             self._microphone = sr.Microphone(device_index=self._device_index)
 
             with self._microphone as source:
+                # 1 秒环境噪声校准
                 self._recognizer.adjust_for_ambient_noise(source, duration=1)
                 logger.info(f"麦克风校准: threshold={self._recognizer.energy_threshold:.0f}")
 
@@ -121,6 +123,12 @@ class VoiceDetector(PerceptionDetector):
         return events
 
     def _listen_loop(self):
+        """后台语音监听循环
+
+        使用 speech_recognition 的 listen() 方法阻塞等待语音，
+        adjust_for_ambient_noise 已在校准阶段完成。
+        phrase_time_limit=15 防止用户长时间说话卡住线程。
+        """
         import speech_recognition as sr
 
         while self._running:
@@ -140,15 +148,16 @@ class VoiceDetector(PerceptionDetector):
                         importance=0.8,
                         payload={"text": text, "language": self._language},
                     )
-                    # 缓存事件
+                    # 缓存事件（供 detect() 方法消费）
                     with self._events_lock:
                         self._events.append(event)
-                    # 直接发布到 Event Bus
+                    # 直接发布到 Event Bus（供其他模块消费）
                     if self._event_bus:
                         self._event_bus.publish(event)
                     logger.info(f"语音识别: {text[:80]}")
 
             except sr.WaitTimeoutError:
+                # listen 超时是正常现象，静默跳过
                 pass
             except OSError as e:
                 logger.warning(f"麦克风错误: {e}")
@@ -158,9 +167,12 @@ class VoiceDetector(PerceptionDetector):
                 time.sleep(1)
 
     def _recognize(self, audio) -> Optional[str]:
+        """语音识别：优先 Whisper（本地），不降级到云端服务
+
+        UnknownValueError 表示未识别到有效语音内容，属于正常情况。
+        """
         import speech_recognition as sr
 
-        # 优先 Whisper（本地）
         try:
             text = self._recognizer.recognize_whisper(
                 audio, model=self._model_size, language=self._language,
@@ -171,9 +183,10 @@ class VoiceDetector(PerceptionDetector):
         except Exception as e:
             logger.debug(f"Whisper 失败: {e}")
 
-        # 不降级到 Google STT（避免发送音频到外部服务器）
+        # 不降级到 Google STT（避免将用户音频发送到外部服务器）
         return None
 
     def reset(self) -> None:
+        """清空事件缓存"""
         with self._events_lock:
             self._events.clear()

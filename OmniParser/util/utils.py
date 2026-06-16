@@ -428,7 +428,10 @@ def get_som_labeled_img(image_source: Union[str, Image.Image], model=None, BOX_T
         print('no ocr bbox!!!')
         ocr_bbox = None
 
-    ocr_bbox_elem = [{'type': 'text', 'bbox':box, 'interactivity':False, 'content':txt, 'source': 'box_ocr_content_ocr'} for box, txt in zip(ocr_bbox, ocr_text) if int_box_area(box, w, h) > 0] 
+    if ocr_bbox and ocr_text:
+        ocr_bbox_elem = [{'type': 'text', 'bbox':box, 'interactivity':False, 'content':txt, 'source': 'box_ocr_content_ocr'} for box, txt in zip(ocr_bbox, ocr_text) if int_box_area(box, w, h) > 0]
+    else:
+        ocr_bbox_elem = [] 
     xyxy_elem = [{'type': 'icon', 'bbox':box, 'interactivity':True, 'content':None} for box in xyxy.tolist() if int_box_area(box, w, h) > 0]
     filtered_boxes = remove_overlap_new(boxes=xyxy_elem, iou_threshold=iou_threshold, ocr_bbox=ocr_bbox_elem)
     
@@ -447,7 +450,7 @@ def get_som_labeled_img(image_source: Union[str, Image.Image], model=None, BOX_T
             parsed_content_icon = get_parsed_content_icon_phi3v(filtered_boxes, ocr_bbox, image_source, caption_model_processor)
         else:
             parsed_content_icon = get_parsed_content_icon(filtered_boxes, starting_idx, image_source, caption_model_processor, prompt=prompt,batch_size=batch_size)
-        ocr_text = [f"Text Box ID {i}: {txt}" for i, txt in enumerate(ocr_text)]
+        ocr_text = [f"Text Box ID {i}: {txt}" for i, txt in enumerate(ocr_text)] if ocr_text else []
         icon_start = len(ocr_text)
         parsed_content_icon_ls = []
         # fill the filtered_boxes_elem None content with parsed_content_icon in order
@@ -462,6 +465,8 @@ def get_som_labeled_img(image_source: Union[str, Image.Image], model=None, BOX_T
         parsed_content_merged = ocr_text
     print('time to get parsed content:', time.time()-time1)
 
+    if len(filtered_boxes) == 0:
+        return "", {}, []
     filtered_boxes = box_convert(boxes=filtered_boxes, in_fmt="xyxy", out_fmt="cxcywh")
 
     phrases = [i for i in range(len(filtered_boxes))]

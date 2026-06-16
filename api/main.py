@@ -29,7 +29,7 @@ from config.settings import settings
 
 # 条件导入差异检测器路由
 if settings.DIFFERENCE_DETECTOR_ENABLED:
-    from modules.difference_detector.api import router as difference_router
+    from modules.perception.difference.api import router as difference_router
 from utils.logger import setup_logger
 
 logger = setup_logger("api_main")
@@ -102,33 +102,18 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.debug(f"错误总线 WebSocket 回调注册失败 (非致命): {e}")
 
-    # 启动感知系统（统一由 PerceptionSystem 管理：屏幕/文件/对话/语音）
+    # 启动感知系统（统一由 PerceptionSystem 管理：屏幕/文件/对话/语音+主动触发）
     if settings.PERCEPTION_ENABLED:
         try:
             from modules.perception.setup import get_perception_system
             ps = get_perception_system()
             ps.setup()
             ps.start()
-            logger.info("✓ 感知系统已启动 (屏幕/文件/对话监控)")
+            logger.info("✓ 感知系统已启动 (屏幕监控+主动触发)")
 
             # 启动感知集成器（订阅事件并注入模型上下文）
             from modules.perception.integration import get_perception_integrator
             get_perception_integrator().start()
-
-            # 注：感知差异源和 DetectorEventBridge 已在 setup() 中注册到 DifferenceDetector
-            # - PerceptionDifferenceSource: 感知事件 → scan() 消费 → 强度打分
-            # - DetectorEventBridge: 高强度差异 → DIFFERENCE_DETECTED 事件 → EventBus
-            #   → PerceptionIntegrator 自动注入模型上下文
-            #   → PerceptionThinkTrigger 可选触发主动思考
-
-            # 注入思考触发器端口 — 高强度感知差异触发单次模型调用
-            if settings.PERCEPTION_TRIGGER_THINK and ps.think_trigger:
-                try:
-                    from modules.thinking.proactive_outreach import PerceptionThinkTriggerPort
-                    ps.think_trigger.set_trigger_port(PerceptionThinkTriggerPort())
-                    logger.info("✓ 感知→思考触发器端口已注入")
-                except Exception as e:
-                    logger.debug(f"注入思考触发器端口失败 (非致命): {e}")
         except Exception as e:
             logger.error(f"✗ 感知系统启动失败: {e}")
 
@@ -141,31 +126,7 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"视觉模型预加载失败（首次调用时会重试）: {e}")
 
-    # 启动差异检测器心跳 (Stage 1: continuous perception)
-    if settings.DIFFERENCE_DETECTOR_ENABLED:
-        try:
-            from modules.difference_detector import get_heartbeat
-            get_heartbeat().start()
-            logger.info("✓ 差异检测器已启动 (Stage 1: continuous perception)")
-        except Exception as e:
-            logger.error(f"✗ 差异检测器启动失败: {e}")
-
-        # 注册主动搭话回调 — 检测到高强度差异时触发单次大模型搭话
-        if settings.PROACTIVE_OUTREACH_ENABLED:
-            try:
-                from modules.difference_detector import get_detector
-                from modules.thinking.proactive_outreach import get_proactive_outreach_handler
-                handler = get_proactive_outreach_handler()
-                get_detector().on_high_intensity(handler.handle)
-                logger.info(
-                    f"✓ 主动搭话回调已注册 "
-                    f"(cooldown={settings.PROACTIVE_OUTREACH_COOLDOWN_MINUTES}min, "
-                    f"idle={settings.PROACTIVE_OUTREACH_IDLE_MINUTES}min)"
-                )
-            except Exception as e:
-                logger.error(f"✗ 主动搭话回调注册失败: {e}")
-
-        # 初始化性能监控探针
+    # 初始化性能监控探针
     try:
         from modules.management.interface import get_perf_monitor, get_timeseries_db, get_alert_engine
         perf_monitor = get_perf_monitor()
@@ -193,7 +154,7 @@ async def lifespan(app: FastAPI):
     # 停止差异检测器心跳
     if settings.DIFFERENCE_DETECTOR_ENABLED:
         try:
-            from modules.difference_detector import get_heartbeat
+            from modules.perception.difference import get_heartbeat
             get_heartbeat().stop()
             logger.info("✓ 差异检测器心跳已停止")
         except Exception as e:

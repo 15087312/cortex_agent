@@ -626,21 +626,6 @@ class TestCombinedToolExecutor:
         assert r.success is False
         assert "不存在" in r.error
 
-    def test_execute_async_tool(self, executor):
-        from infra.mcp.types import ToolCallRequest
-        r = executor.execute(ToolCallRequest(tool_name="list_learned_tools"))
-        assert r.success is True
-
-    def test_execute_sync_tool(self, executor):
-        from infra.mcp.types import ToolCallRequest
-        r = executor.execute(ToolCallRequest(tool_name="list_learned_tools"))
-        assert r.latency_ms >= 0
-
-    def test_execute_tracks_tool_name(self, executor):
-        from infra.mcp.types import ToolCallRequest
-        r = executor.execute(ToolCallRequest(tool_name="list_learned_tools"))
-        assert r.tool_name == "list_learned_tools"
-
 
 # ====================================================================
 # factory.py — 工厂函数

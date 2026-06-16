@@ -15,7 +15,7 @@ logger = setup_logger("perception_capture")
 
 
 class CaptureBackend(ABC):
-    """屏幕捕获后端抽象
+    """屏幕捕获后端抽象 — 所有平台实现需遵守此接口
 
     实现要求:
     - start() 启动后台捕获线程

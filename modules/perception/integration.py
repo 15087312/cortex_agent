@@ -64,6 +64,7 @@ class PerceptionIntegrator:
             event_bus = get_event_bus()
 
             # 订阅所有感知事件类型（屏幕、OCR、文件、差异等）
+            # 订阅所有相关事件类型；每个订阅独立 try/except 防止单一失败阻塞其他
             for event_type in [
                 PerceptionEventType.SCREEN_DIFF,
                 PerceptionEventType.SCREEN_WINDOW,
@@ -110,7 +111,10 @@ class PerceptionIntegrator:
             logger.debug(f"处理感知事件异常 (非致命): {e}")
 
     def _extract_description(self, event_type: str, payload: Dict[str, Any]) -> str:
-        """根据事件类型提取具体描述"""
+        """根据事件类型提取自然语言描述
+
+        将结构化的 payload 转为人类可读的描述文本。
+        """
         try:
             if event_type == "screen.diff":
                 ratio = payload.get("change_ratio", 0)
@@ -190,12 +194,15 @@ class PerceptionIntegrator:
         logger.info("感知监控已停止")
 
     def update_dialog(self, messages: List[Dict]) -> None:
+        """更新对话记录（预留接口）"""
         pass
 
     def add_dialog_change(self, role: str, content: str) -> None:
+        """添加对话变化（预留接口）"""
         pass
 
     def _add_to_attention(self, change, urgency: float = 0.5) -> None:
+        """向注意力池添加项（预留接口）"""
         pass
 
     def get_attention_prompt(self) -> str:
@@ -269,7 +276,11 @@ class PerceptionIntegrator:
         return full_messages
 
     def get_context_summary(self) -> str:
-        """获取感知上下文摘要（由编排层调用，注入到模型 prompt）"""
+        """获取感知上下文摘要（由编排层调用，注入到模型 prompt）
+
+        Returns:
+            非空字符串表示有环境感知信息需要注入
+        """
         attention_prompt = self.get_attention_prompt()
         if attention_prompt:
             logger.info(
@@ -287,7 +298,7 @@ _perception_integrator_lock = threading.Lock()
 
 
 def get_perception_integrator() -> PerceptionIntegrator:
-    """Get or create perception integrator instance (thread-safe)"""
+    """获取感知集成器全局单例（线程安全，双重检查锁）"""
     global _perception_integrator_instance
     if _perception_integrator_instance is None:
         with _perception_integrator_lock:

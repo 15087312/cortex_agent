@@ -1,10 +1,12 @@
 """感知系统编排入口 — 根据配置组装所有模块
 
-这是唯一允许 import 所有感知子模块的地方。
 从 config.settings 读取配置，选择性启动各子系统。
+
+注意：旧版屏幕感知管道（capture/frame_diff/pipeline/detectors）已被移除。
+屏幕 UI 检测统一由 TouchpointDetector（检测工具）和 ScreenMonitorMCP（MCP server）处理。
 """
 import threading
-from typing import Optional, Tuple
+from typing import Optional
 
 from utils.logger import setup_logger
 
@@ -16,192 +18,72 @@ class PerceptionSystem:
 
     持有所有子模块实例，管理生命周期。
     从 config.settings 读取子系统开关。
+
+    当前子系统：
+    - 语音检测器（可选）
+    - 世界状态管理器
+    - 主动触发（基于差异检测事件）
     """
 
     def __init__(self):
         self.pipeline = None
         self.world_state = None
         self.event_bus = None
-        self.perception_source = None
         self.voice_detector = None
-        self.think_trigger = None
+        self.proactive_trigger = None
         self.mcp_detector = None
         self._started = False
 
     def setup(self, **overrides) -> None:
-        """根据配置组装感知系统
-
-        Args:
-            **overrides: 覆盖配置的参数（用于测试）
-        """
         if self._started:
             self.stop()
 
-        # 重置所有组件
         self.pipeline = None
         self.voice_detector = None
-        self.think_trigger = None
+        self.proactive_trigger = None
 
         from config.settings import settings
         from modules.perception.events.bus import get_event_bus
         from modules.perception.state.world_state import WorldStateManager
-        from modules.perception.state.perception_source import PerceptionDifferenceSource
 
-        # 读取配置（可被 overrides 覆盖）
         cfg = {
-            "screen_enabled": getattr(settings, "PERCEPTION_SCREEN_ENABLED", True),
-            "file_enabled": getattr(settings, "PERCEPTION_FILE_ENABLED", True),
             "voice_enabled": getattr(settings, "PERCEPTION_VOICE_ENABLED", False),
-            "trigger_enabled": getattr(settings, "PERCEPTION_TRIGGER_THINK", True),
-            "trigger_min_intensity": getattr(settings, "PERCEPTION_TRIGGER_MIN_INTENSITY", 50.0),
-            "trigger_cooldown": getattr(settings, "PERCEPTION_TRIGGER_COOLDOWN", 60),
+            "proactive_enabled": getattr(settings, "PROACTIVE_OUTREACH_ENABLED", False),
             "voice_device": getattr(settings, "PERCEPTION_VOICE_DEVICE", None),
             "voice_model": getattr(settings, "PERCEPTION_VOICE_MODEL", "tiny"),
             "voice_language": getattr(settings, "PERCEPTION_VOICE_LANGUAGE", "zh"),
             "voice_energy": getattr(settings, "PERCEPTION_VOICE_ENERGY_THRESHOLD", 300),
             "voice_timeout": getattr(settings, "PERCEPTION_VOICE_TIMEOUT", 10.0),
-            "mcp_enabled": getattr(settings, "PERCEPTION_MCP_ENABLED", False),
-            "fps": 5,
         }
         cfg.update(overrides)
 
         # 1. 事件总线
         self.event_bus = get_event_bus()
 
-        # 2. 屏幕流水线（根据配置）
-        if cfg["screen_enabled"]:
-            self._setup_screen_pipeline(cfg)
-        else:
-            logger.info("屏幕感知已禁用")
-
-
-
-
-        # 5. 语音检测器（根据配置）
+        # 2. 语音检测器
         if cfg["voice_enabled"]:
             self._setup_voice_detector(cfg)
         else:
             logger.info("语音感知已禁用")
 
-        # 6. 世界状态
+        # 3. 世界状态管理器
         self.world_state = WorldStateManager()
-        self.world_state.start(self.event_bus)
+        if self.event_bus:
+            self.world_state.start(self.event_bus)
 
-        # 5. 感知差异源
-        self.perception_source = PerceptionDifferenceSource(event_bus=self.event_bus)
-
-        # 5.1 注册感知差异源到 DifferenceDetector — 使 scan() 能消费感知事件
-        try:
-            from modules.difference_detector.detector import get_detector
-            detector = get_detector()
-            detector.registry.register(self.perception_source)
-            logger.info("感知差异源已注册到 DifferenceDetector")
-        except Exception as e:
-            logger.debug(f"注册感知差异源到 DifferenceDetector 失败 (非致命): {e}")
-
-        # 5.2 注册差异检测器→事件总线桥接 — 高强度感知差异发布为 DIFFERENCE_DETECTED
-        try:
-            from modules.difference_detector.detector import get_detector as get_diff_detector
-            from modules.perception.state.detector_bridge import DetectorEventBridge
-            self.detector_bridge = DetectorEventBridge(event_bus=self.event_bus)
-            get_diff_detector().on_high_intensity(self.detector_bridge.handle)
-            logger.info("DetectorEventBridge 已注册到 DifferenceDetector")
-        except Exception as e:
-            logger.debug(f"注册 DetectorEventBridge 失败 (非致命): {e}")
-            self.detector_bridge = None
-
-        # 6. 差异→思考触发器（根据配置）
-        if cfg["trigger_enabled"]:
-            from modules.perception.state.think_trigger import PerceptionThinkTrigger
-            self.think_trigger = PerceptionThinkTrigger(
-                min_intensity=cfg["trigger_min_intensity"],
-                cooldown_seconds=cfg["trigger_cooldown"],
-            )
-            self.think_trigger.start(self.event_bus)
-            logger.info(
-                f"差异→思考触发器: min_intensity={cfg['trigger_min_intensity']} "
-                f"cooldown={cfg['trigger_cooldown']}s"
-            )
+        # 4. 主动触发
+        if cfg["proactive_enabled"]:
+            from modules.perception.trigger import ProactiveTrigger
+            self.proactive_trigger = ProactiveTrigger()
+            self.proactive_trigger.start(self.event_bus)
+            logger.info("主动触发已启动")
         else:
-            logger.info("差异→思考触发器已禁用")
+            logger.info("主动触发已禁用")
 
-        logger.info("感知系统组装完成")
-
-    def _setup_screen_pipeline(self, cfg: dict):
-        """组装屏幕感知流水线"""
-        from modules.perception.pipeline.capture import create_capture_backend
-        from modules.perception.pipeline.frame_diff import FrameDiffDetector
-        from modules.perception.pipeline.pipeline import PerceptionPipeline
-
-        capture = create_capture_backend()
-        logger.info(f"捕获后端: {capture.platform_name} (available={capture.is_available()})")
-
-        frame_diff = FrameDiffDetector()
-
-        detectors = {}
-
-        # 窗口检测器
-        from modules.perception.detectors.window_detector import WindowDetector
-        det = WindowDetector()
-        detectors["window"] = det
-        logger.info(f"窗口检测器: available={det.is_available()}")
-
-        # OCR 检测器（如果有依赖或 MCP OCR 配置）
-        try:
-            mcp_ocr = False
-            try:
-                from config.settings import settings
-                mcp_servers = settings.MCP_SERVERS or ""
-                mcp_ocr = '"ocr"' in mcp_servers  # 配置了 MCP OCR server
-            except Exception:
-                pass
-
-            from modules.perception.detectors.ocr_detector import OCRDetector
-            det = OCRDetector(use_mcp=mcp_ocr)
-            if det.is_available():
-                detectors["ocr"] = det
-                logger.info(f"OCR 检测器: 已启用 (mode={'mcp' if mcp_ocr else 'local'})")
-        except Exception:
-            pass
-
-        # UI 检测器 — 优先 OmniParserDetector（结构化 UI 检测），兜底 UIDetector（模板匹配）
-        ui_detector_registered = False
-        try:
-            from modules.perception.detectors.omniparser_detector import OmniParserDetector
-            det = OmniParserDetector()
-            # is_available() 触发惰性初始化，只做快速探测（3s timeout）
-            if det.is_available():
-                detectors["ui"] = det
-                logger.info(f"UI 检测器: OmniParserDetector (backend={det.backend})")
-                ui_detector_registered = True
-        except Exception as e:
-            logger.debug(f"OmniParserDetector 初始化失败 (非致命): {e}")
-
-        if not ui_detector_registered:
-            try:
-                from modules.perception.detectors.ui_detector import UIDetector
-                det = UIDetector()
-                if det.is_available():
-                    detectors["ui"] = det
-                    logger.info("UI 检测器: UIDetector（模板匹配，已降级）")
-            except Exception:
-                pass
-
-        self.pipeline = PerceptionPipeline(
-            capture=capture,
-            frame_diff=frame_diff,
-            detectors=detectors,
-            event_bus=self.event_bus,
-            fps=cfg["fps"],
-        )
-
-
-
+        logger.info("感知系统组装完成（屏幕管道已移除，使用 Touchpoint + ScreenMonitorMCP）")
 
     def _setup_voice_detector(self, cfg: dict):
-        """组装语音检测器"""
         from modules.perception.detectors.voice_detector import VoiceDetector
-
         self.voice_detector = VoiceDetector(
             device_index=cfg["voice_device"],
             model_size=cfg["voice_model"],
@@ -209,42 +91,41 @@ class PerceptionSystem:
             energy_threshold=cfg["voice_energy"],
             timeout=cfg["voice_timeout"],
         )
-        if self.voice_detector.is_available():
+        if self.voice_detector and self.voice_detector.is_available():
             self.voice_detector.start()
             logger.info("语音检测器: 已启动")
         else:
-            logger.warning("语音检测器: 依赖不可用 (需要 SpeechRecognition + pyaudio + whisper)")
+            logger.warning("语音检测器: 依赖不可用")
             self.voice_detector = None
-
-    def set_think_trigger_port(self, port) -> None:
-        """注入思考触发实现（由编排层调用）"""
-        if self.think_trigger:
-            self.think_trigger.set_trigger_port(port)
 
     def start(self) -> None:
         if self._started:
             return
-        if self.pipeline:
-            self.pipeline.start()
-        if self.perception_source:
-            self.perception_source.start()
         self._started = True
         logger.info("感知系统已启动")
 
+    def stop(self) -> None:
+        if not self._started:
+            return
+        if self.proactive_trigger:
+            self.proactive_trigger.stop()
+        if self.world_state:
+            from modules.perception.events.bus import get_event_bus
+            self.world_state.stop(get_event_bus())
+        self._started = False
+        logger.info("感知系统已停止")
 
     def get_status(self) -> dict:
-        status = {
+        return {
             "started": self._started,
-            "pipeline": self.pipeline.get_stats() if self.pipeline else None,
+            "pipeline": None,
             "voice_available": self.voice_detector is not None,
             "voice_detector_type": self.voice_detector.detector_type if self.voice_detector else None,
             "mcp_available": self.mcp_detector is not None,
-
-            "think_trigger": self.think_trigger.get_stats() if self.think_trigger else None,
+            "proactive_trigger": self.proactive_trigger.get_stats() if self.proactive_trigger else None,
             "world_state": self.world_state.get_state().to_dict() if self.world_state else None,
             "event_bus": self.event_bus.get_stats() if self.event_bus else None,
         }
-        return status
 
 
 
@@ -253,6 +134,7 @@ _system_lock = threading.Lock()
 
 
 def get_perception_system() -> PerceptionSystem:
+    """获取感知系统全局单例（线程安全，双重检查锁）"""
     global _system
     if _system is None:
         with _system_lock:

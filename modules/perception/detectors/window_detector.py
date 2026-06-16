@@ -33,6 +33,11 @@ class WindowDetector(PerceptionDetector):
         self._init_backend()
 
     def _init_backend(self):
+        """根据平台初始化窗口检测后端
+
+        Windows: pywin32 (win32gui.GetForegroundWindow)
+        macOS: pyobjc (NSWorkspace.frontmostApplication)
+        """
         if self._platform == "Windows":
             try:
                 import win32gui  # noqa: F401
@@ -68,7 +73,7 @@ class WindowDetector(PerceptionDetector):
         if window_title is None:
             return []
 
-        # 检查是否有变化
+        # 窗口和应用均无变化时跳过，避免重复触发事件
         if window_title == self._last_window and app_name == self._last_app:
             return []
 
@@ -91,7 +96,10 @@ class WindowDetector(PerceptionDetector):
         return [event]
 
     def _get_active_window(self):
-        """获取当前活跃窗口标题和应用名"""
+        """获取当前活跃窗口标题和应用名
+
+        根据后端类型调用不同的系统 API。
+        """
         try:
             if self._backend == "win32":
                 return self._get_window_win32()
@@ -103,6 +111,7 @@ class WindowDetector(PerceptionDetector):
 
     @staticmethod
     def _get_window_win32():
+        """Windows 窗口信息获取（pywin32 + psutil）"""
         import win32gui
         import win32process
         import psutil
@@ -119,12 +128,16 @@ class WindowDetector(PerceptionDetector):
 
     @staticmethod
     def _get_window_appkit():
+        """macOS 窗口信息获取（NSWorkspace + Quartz）
+
+        使用 kCGWindowListOptionOnScreenOnly 获取屏幕上所有窗口，
+        按 PID 和窗口层级过滤出前端应用的顶层窗口。
+        """
         from AppKit import NSWorkspace
         workspace = NSWorkspace.sharedWorkspace()
         app = workspace.frontmostApplication()
         app_name = app.localizedName() if app else ""
 
-        # 获取前端应用的 PID，过滤出属于该应用的窗口
         app_pid = app.processIdentifier() if app else None
 
         window_title = ""
@@ -138,11 +151,11 @@ class WindowDetector(PerceptionDetector):
                 kCGWindowListOptionOnScreenOnly, kCGNullWindowID
             )
             if all_windows and app_pid is not None:
-                # 只查找属于前端应用的窗口
+                # 过滤出属于前端应用且层级为 0（非 dock/菜单栏）的窗口
                 front_windows = [
                     w for w in all_windows
                     if w.get("kCGWindowOwnerPID") == app_pid
-                       and w.get("kCGWindowLayer", 0) == 0  # 忽略 dock/菜单栏
+                       and w.get("kCGWindowLayer", 0) == 0
                 ]
                 # 按层级排序取最上层窗口
                 front_windows.sort(
@@ -156,5 +169,6 @@ class WindowDetector(PerceptionDetector):
         return window_title or app_name, app_name
 
     def reset(self) -> None:
+        """重置窗口状态缓存"""
         self._last_window = None
         self._last_app = None

@@ -1,15 +1,10 @@
 """
 Provider/Executor 实现 — 合并本地 ToolRegistry + 远程 MCP server
-
-CombinedToolProvider:
-  - list_tools(): 合并 ToolRegistry + MCP 的工具
-
-CombinedToolExecutor:
-  - execute(): 本地工具走本地函数，MCP 工具走 transport
-  权限检查通过 MCPToolService 层（self.permission.check）完成。
 """
 from __future__ import annotations
 
+import asyncio
+import concurrent.futures
 import time
 from typing import Any, Dict, List, Optional
 
@@ -19,6 +14,50 @@ from .server_manager import MCPServerManager
 from .types import ToolCallRequest, ToolCallResult, ToolSpec
 
 logger = setup_logger("mcp_combined")
+
+# 全局共享线程池 — 用于执行异步工具函数
+_ASYNC_TOOL_POOL: Optional[concurrent.futures.ThreadPoolExecutor] = None
+
+
+def _get_async_pool() -> concurrent.futures.ThreadPoolExecutor:
+    """获取全局共享线程池（最多 4 个并发异步工具）"""
+    global _ASYNC_TOOL_POOL
+    if _ASYNC_TOOL_POOL is None:
+        _ASYNC_TOOL_POOL = concurrent.futures.ThreadPoolExecutor(
+            max_workers=4, thread_name_prefix="async-tool"
+        )
+    return _ASYNC_TOOL_POOL
+
+
+def _run_async_in_thread(func, kwargs) -> Any:
+    """在独立线程 + 专用事件循环中运行异步工具函数。
+
+    替代 asyncio.run() + ThreadPoolExecutor(max_workers=1) 模式。
+    Python 3.12+ 的 loop.shutdown_default_executor(timeout=N) 允许设置超时，
+    避免 MLX 等推理框架的内部线程不响应时死等 → PyThreadState_Get crash。
+    """
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        return loop.run_until_complete(func(**kwargs))
+    finally:
+        # 官方推荐清理顺序（Python 3.12+）：
+        #   1. shutdown_asyncgens()
+        #   2. shutdown_default_executor(timeout=N) ← N 防止死等
+        #   3. loop.close()
+        try:
+            loop.run_until_complete(loop.shutdown_asyncgens())
+        except Exception:
+            pass
+        try:
+            loop.run_until_complete(loop.shutdown_default_executor(timeout=5.0))
+        except Exception:
+            pass
+        try:
+            loop.close()
+        except Exception:
+            pass
+        asyncio.set_event_loop(None)
 
 
 class CombinedToolProvider(ToolProviderPort):
@@ -145,10 +184,7 @@ class CombinedToolExecutor(ToolExecutorPort):
         return self._execute_local(request, start)
 
     def _execute_local(self, request: ToolCallRequest, start: float) -> ToolCallResult:
-        """执行本地工具（同步/异步函数自动处理）"""
-        import asyncio
-        import concurrent.futures
-        import inspect
+        """执行本地工具（全部提交到全局线程池，避免阻塞事件循环）"""
         from infra.tool_manager.tool_registry import ToolRegistry
 
         func = ToolRegistry.get_func(request.tool_name)
@@ -161,12 +197,9 @@ class CombinedToolExecutor(ToolExecutorPort):
             )
 
         try:
-            if inspect.iscoroutinefunction(func):
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                    future = pool.submit(asyncio.run, func(**request.params))
-                    result = future.result(timeout=120)
-            else:
-                result = func(**request.params)
+            pool = _get_async_pool()
+            future = pool.submit(func, **request.params)
+            result = future.result(timeout=120)
             latency = (time.time() - start) * 1000
             return ToolCallResult(
                 success=True,
@@ -186,16 +219,13 @@ class CombinedToolExecutor(ToolExecutorPort):
 
     def _execute_mcp(self, mcp_tool, request: ToolCallRequest, start: float) -> ToolCallResult:
         """执行 MCP 远程工具"""
-        import asyncio
-        import concurrent.futures
-
         async def _call():
             return await self._server_manager.call_tool(request.tool_name, request.params)
 
         try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                future = pool.submit(asyncio.run, _call())
-                result = future.result(timeout=30)
+            pool = _get_async_pool()
+            future = pool.submit(_run_async_in_thread, _call, {})
+            result = future.result(timeout=30)
         except Exception as e:
             latency_ms = (time.time() - start) * 1000
             return ToolCallResult(

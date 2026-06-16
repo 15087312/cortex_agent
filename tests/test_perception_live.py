@@ -258,7 +258,7 @@ def test_perception_to_difference():
     header("Test 5: 感知事件 → 差异检测器")
 
     try:
-        from modules.difference_detector import get_detector
+        from modules.perception.difference import get_detector
 
         detector = get_detector()
 

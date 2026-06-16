@@ -85,7 +85,7 @@
 | `perception/` | 4 | ⭐⭐⭐⭐ | 多维感知 |
 | `attention/` | 5 | ⭐⭐⭐⭐ | TF-IDF + 注意力评分 |
 | `output_system/` | 7 | ⭐⭐⭐⭐ | 输出管线 |
-| `difference_detector/` | 13 | ⭐⭐⭐⭐ | 4 种差异源 |
+| `perception/difference/` | 13 | ⭐⭐⭐⭐ | 4 种差异源 |
 | `management/` | 27 | ⭐⭐⭐⭐ | 监控、告警、健康检查 |
 | `database/` | 6 | ⭐⭐⭐⭐ | SQLAlchemy + SQLite WAL |
 | `metrics/` | 6 | ⭐⭐⭐⭐ | Prometheus 指标 |

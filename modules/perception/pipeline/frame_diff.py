@@ -32,13 +32,14 @@ class FrameDiffResult:
 
 
 class FrameDiffDetector:
-    """帧差检测器
+    """帧差检测器 — Cheap First, Expensive Last
 
     通过比较相邻两帧的像素差异，判断是否有显著变化。
-    变化面积低于阈值的帧被视为噪声（鼠标光标、闪烁等）。
+    变化面积低于阈值的帧被视为噪声（鼠标光标、闪烁等），
+    不进入后续检测器流程。
 
     Args:
-        threshold: 二值化阈值 (0-255)，默认 25
+        threshold: 二值化阈值 (0-255)，默认 25（经验值，可过滤弱噪声）
         change_area_threshold: 变化面积比例阈值，默认 0.01 (1%)
         min_region_area: 最小变化区域面积（像素），默认 200
         blur_kernel: 高斯模糊核大小（奇数），默认 5
@@ -129,7 +130,11 @@ class FrameDiffDetector:
         )
 
     def _find_regions(self, mask: np.ndarray) -> List[Tuple[int, int, int, int]]:
-        """从掩码中提取变化区域"""
+        """从二值掩码中提取变化区域
+
+        有 OpenCV 时使用 findContours 精确提取每个连通区域；
+        降级模式下只用 numpy 找出包含所有变化的整体区域。
+        """
         if HAS_CV2:
             contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             regions = []
@@ -140,8 +145,8 @@ class FrameDiffDetector:
                     regions.append((x, y, w, h))
             return regions
         else:
-            # numpy 降级: 简单的连通区域检测
-            # 只返回一个包含所有变化的大区域
+            # numpy 降级模式：简单的连通区域检测
+            # 只返回一个包含所有变化的大区域，精度较低但功能可用
             ys, xs = np.where(mask > 0)
             if len(ys) == 0:
                 return []
@@ -153,5 +158,5 @@ class FrameDiffDetector:
             return []
 
     def reset(self) -> None:
-        """重置（清除上一帧缓存）"""
+        """重置检测器（清除上一帧缓存，通常用于场景切换）"""
         self._prev_frame_gray = None

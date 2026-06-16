@@ -29,9 +29,11 @@ class MCPResourceDetector:
 
     def set_event_callback(self, callback: Callable[[PerceptionEvent], None]):
         """设置事件回调（由事件总线注入）"""
+        """设置事件回调（由事件总线注入）"""
         self._event_callback = callback
 
     def set_platform(self, platform: str):
+        """设置平台信息"""
         """设置平台信息"""
         self._platform = platform
 

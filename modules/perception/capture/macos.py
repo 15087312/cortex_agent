@@ -82,7 +82,11 @@ class MSSBackend(CaptureBackend):
         return None
 
     def _capture_loop(self):
-        """后台捕获循环"""
+        """后台捕获循环 — 以固定间隔截取屏幕
+
+        使用 mss 库的 grab() 方法截图，MSS 返回 BGRA 格式，
+        裁剪掉 Alpha 通道得到 BGR。
+        """
         interval = 1.0 / self._fps
 
         while self._running:
@@ -91,18 +95,10 @@ class MSSBackend(CaptureBackend):
                     x, y, w, h = self._roi
                     monitor = {"left": x, "top": y, "width": w, "height": h}
                 else:
-                    # 找第一个尺寸>0的监控器兜底
-                    for m in self._sct.monitors:
-                        if m["width"] > 0 and m["height"] > 0:
-                            monitor = m
-                            break
-                    else:
-                        logger.warning("MSS: 无可用监控器")
-                        time.sleep(interval)
-                        continue
+                    monitor = self._sct.monitors[1]  # 主显示器
 
                 screenshot = self._sct.grab(monitor)
-                # MSS 返回 BGRA，转换为 BGR
+                # MSS 返回 BGRA，取前 3 通道得到 BGR
                 frame = np.array(screenshot)[:, :, :3]
 
                 with self._frame_lock:

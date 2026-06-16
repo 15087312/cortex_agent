@@ -109,7 +109,11 @@ class PerceptionEventBus:
         return False
 
     def publish(self, event: PerceptionEvent) -> None:
-        """发布事件到总线"""
+        """发布事件到总线
+
+        同步 handler 在调用线程直接执行，异步 handler 投递到后台事件循环。
+        支持通配符订阅（PerceptionEventType.ALL = "*"）。
+        """
         with self._sub_lock:
             self._event_count += 1
             exact_subs = list(self._subscriptions.get(event.event_type, []))

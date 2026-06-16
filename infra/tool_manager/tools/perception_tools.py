@@ -4,6 +4,7 @@
 - transcribe_audio: 语音转文字（上传音频文件）
 - understand_screen: 截图 + OCR + LLM 抽象理解
 """
+import asyncio
 import base64
 import io
 import os
@@ -74,20 +75,14 @@ async def transcribe_audio(
     core=True,
     tags=["learning"],
 )
-async def understand_screen(focus: str = "") -> Dict[str, Any]:
+def understand_screen(focus: str = "") -> Dict[str, Any]:
     """截图 + 视觉理解（Qwen-VL）+ OCR 兜底"""
     try:
-        # Step 1: 截图（在线程池中执行，避免阻塞事件循环）
-        import asyncio
-        screenshot_b64 = await asyncio.to_thread(_capture_screen)
+        screenshot_b64 = _capture_screen()
         if not screenshot_b64:
             return {"error": "截图失败：无可用的屏幕捕获方式"}
-
-        # Step 2: 获取窗口信息
-        window_info = await asyncio.to_thread(_get_active_window)
-
-        # Step 3: 视觉理解（优先 Qwen-VL，降级到 OCR + 文本 LLM）
-        vision_result = await _vision_understand(screenshot_b64, window_info, focus)
+        window_info = _get_active_window()
+        vision_result = _vision_understand(screenshot_b64, window_info, focus)
 
         if "error" in vision_result:
             return {
@@ -209,39 +204,23 @@ def _get_active_window() -> str:
     return "未知"
 
 
-async def _vision_understand(
+def _vision_understand(
     screenshot_b64: str,
     window_info: str,
     focus: str,
 ) -> Dict[str, Any]:
-    """视觉理解：使用 ImageAnalyzer 调用本地或云端视觉模型"""
-    analyzer = None
+    """视觉理解（同步）：使用预加载的 ImageAnalyzer 调用本地 MLX-VLM"""
     try:
-        from infra.data_process.core.image_analyzer import ImageAnalyzer
-        import base64 as b64
         import asyncio
+        import base64 as b64
         import time
 
-        analyzer = ImageAnalyzer(model_type="auto")
+        from infra.data_process.core.image_analyzer import _default_analyzer
 
-        # 初始化时添加超时保护（避免卡在下载模型）
-        logger.info("[视觉理解] 初始化分析器...")
-        start = time.time()
-        try:
-            await asyncio.wait_for(analyzer.initialize(), timeout=30)
-            logger.info(f"[视觉理解] 分析器初始化成功 ({time.time()-start:.2f}s)")
-        except asyncio.TimeoutError:
-            logger.error("[视觉理解] 初始化超时（30s），可能在下载模型")
-            return {"error": "视觉理解初始化超时（模型下载可能太慢）"}
-
-        # 如果本地模型不可用，尝试切换到 API
-        if analyzer.model_type == "unavailable":
-            logger.info("[视觉理解] 本地模型不可用，尝试切换到云端 API...")
-            try:
-                await asyncio.wait_for(analyzer.ensure_model_type("openai"), timeout=15)
-                logger.info("[视觉理解] 已切换到云端 API")
-            except Exception as api_err:
-                logger.error(f"[视觉理解] 云端 API 也失败: {api_err}")
+        # 预加载的分析器（api/main.py lifespan 中初始化）
+        analyzer = _default_analyzer
+        if analyzer is None:
+            return {"error": "视觉分析器未初始化"}
 
         prompt = "描述这个屏幕截图：当前应用、界面布局、可见文字按钮。"
         if focus:
@@ -250,48 +229,23 @@ async def _vision_understand(
         logger.info("[视觉理解] 开始分析图像...")
         start = time.time()
 
-        # VLM 推理是同步阻塞操作，放到线程池执行
-        def _do_analyze():
-            import asyncio as _asyncio
-            # 新建事件循环在线程中运行 async analyze
-            _loop = _asyncio.new_event_loop()
-            _asyncio.set_event_loop(_loop)
-            try:
-                return _loop.run_until_complete(
-                    analyzer.analyze(b64.b64decode(screenshot_b64), prompt=prompt)
-                )
-            finally:
-                _loop.close()
-
-        result = await asyncio.wait_for(
-            asyncio.to_thread(_do_analyze), timeout=120
+        # 同步调用 async analyze：MLX-VLM 推理本质是同步的，
+        # asyncio.run() 创建临时事件循环，没有默认 executor 创建，安全关闭
+        result = asyncio.run(
+            analyzer.analyze(b64.b64decode(screenshot_b64), prompt=prompt)
         )
         logger.info(f"[视觉理解] 分析完成 ({time.time()-start:.2f}s)")
 
-        # 处理所有模型类型的返回（包括 mock、unavailable 等）
         understanding = result.get("description", "")
-
-        # 如果有理解内容，返回成功
         if understanding:
             return {"understanding": understanding, "method": analyzer.model_type, "ocr_text": ""}
-
-        # 有错误但没有理解内容
         if "error" in result:
             return {"error": result.get("error", "视觉理解失败")}
-
-        # 没有理解内容也没有错误字段（异常情况）
         return {"error": "视觉理解返回空内容"}
 
-    except asyncio.TimeoutError as e:
-        logger.error(f"视觉理解超时: {e}")
-        return {"error": f"视觉理解超时（API 或模型加载超过 30s）"}
     except Exception as e:
         logger.error(f"视觉理解失败: {e}")
         return {"error": f"视觉理解失败: {e}"}
-    finally:
-        # 确保诊断信息正确
-        if analyzer is None:
-            logger.warning("[视觉理解] 分析器未初始化")
 
 
 def _simple_summarize(ocr_text: str, window_info: str) -> str:
@@ -323,27 +277,16 @@ def _simple_summarize(ocr_text: str, window_info: str) -> str:
     core=True,
     tags=["learning"],
 )
-async def detect_ui_elements(focus: str = "") -> Dict[str, Any]:
+def detect_ui_elements(focus: str = "") -> Dict[str, Any]:
     """检测当前屏幕 UI 元素并返回坐标"""
     try:
-        # 1. 截图（在线程池中执行，避免阻塞事件循环）
-        import asyncio
-        screenshot_b64 = await asyncio.to_thread(_capture_screen)
-        if not screenshot_b64:
-            return {"success": False, "error": "截图失败"}
-
-        import base64
-        image_bytes = base64.b64decode(screenshot_b64)
-
-        # 2. OmniParser 检测（全局单例，同步操作放到线程池）
-        from modules.perception.detectors.omniparser_detector import OmniParserDetector
-        detector = OmniParserDetector()
-        elements = await asyncio.to_thread(detector.detect_elements, image_bytes)
+        from modules.perception.detectors.touchpoint_detector import TouchpointDetector
+        detector = TouchpointDetector(fallback_to_screenmonitor=True)
+        elements = detector.detect_elements()
 
         if not elements:
             return {"success": True, "elements": [], "message": "未检测到 UI 元素"}
 
-        # 3. 返回结构化元素列表
         result = []
         for elem in elements:
             result.append({
@@ -360,7 +303,7 @@ async def detect_ui_elements(focus: str = "") -> Dict[str, Any]:
             "success": True,
             "elements": result,
             "count": len(result),
-            "backend": detector.backend if hasattr(detector, 'backend') else detector._backend,
+            "backend": detector.backend,
             "precision": detector.precision,
             "hint": "使用 mouse_click(x=center_x, y=center_y) 点击对应元素",
         }

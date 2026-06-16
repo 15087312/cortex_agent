@@ -1,4 +1,7 @@
-"""感知模块接口门面。"""
+"""感知模块接口门面 — 定义 PerceptionPort 协议和适配器
+
+跨模块调用优先依赖此接口，降低耦合。
+"""
 from __future__ import annotations
 
 from typing import Any, List, Protocol, runtime_checkable
@@ -6,7 +9,12 @@ from typing import Any, List, Protocol, runtime_checkable
 
 @runtime_checkable
 class PerceptionPort(Protocol):
-    """注意力相关感知状态的协议。"""
+    """感知端口协议
+
+    定义跨模块调用的最小接口：
+    - is_running: 感知是否运行中
+    - get_attention_items: 获取值得注意的感知项
+    """
 
     @property
     def is_running(self) -> bool:
@@ -17,7 +25,10 @@ class PerceptionPort(Protocol):
 
 
 class PerceptionManagerAdapter:
-    """具体感知管理器单例的适配器。"""
+    """PerceptionPort 协议的适配器实现
+
+    将旧版 perception_manager 包装为 PerceptionPort 接口。
+    """
 
     def __init__(self, manager: Any):
         self._manager = manager

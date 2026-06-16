@@ -1,9 +1,7 @@
-"""
-存在心跳 — 1Hz daemon 线程驱动持续扫描
+"""存在心跳 — 周期性扫描差异源，驱动持续感知
 
-完全复用 ResourceManager 的后台 daemon thread 模式，改进点：
-- 使用 threading.Event 替代 time.sleep()，支持可中断等待
-- 1Hz 频率 = 每秒扫描一次
+以固定频率（默认 1Hz）调用 detector.scan()，
+确保差异检测器持续运行。
 """
 import time
 import threading
@@ -15,28 +13,30 @@ logger = setup_logger("existential_heartbeat")
 
 
 class ExistentialHeartbeat:
-    """存在心跳 — 持续感知的时钟源"""
+    """存在心跳
+
+    后台守护线程，以固定频率触发差异扫描。
+    用于维持持续感知（Stage 1: continuous perception）。
+    """
 
     def __init__(self):
-
         self._running = False
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
-        self._interval: float = 1.0  # 1Hz
+        self._interval: float = 1.0
         self._beat_count: int = 0
         self._started_at: float = 0.0
 
     def start(self, detector=None) -> None:
-        """启动心跳
+        """启动心跳线程
 
-        Args:
-            detector: DifferenceDetector 实例，若为 None 则延迟导入
+        如果不传 detector，使用全局单例。
         """
         if self._running:
             return
 
         if detector is None:
-            from modules.difference_detector.detector import get_detector
+            from modules.perception.difference.detector import get_detector
             detector = get_detector()
 
         self._detector = detector
@@ -50,7 +50,6 @@ class ExistentialHeartbeat:
         logger.info("✓ 存在心跳已启动 (Stage 1: continuous perception @ 1Hz)")
 
     def stop(self) -> None:
-        """停止心跳"""
         if not self._running:
             return
 
@@ -65,15 +64,13 @@ class ExistentialHeartbeat:
                      self._beat_count, time.time() - self._started_at)
 
     def _loop(self) -> None:
-        """主循环 — 1Hz 扫描"""
+        """心跳主循环 — 固定间隔调用 detector.scan()"""
         while self._running and not self._stop_event.is_set():
             try:
                 self._detector.scan()
                 self._beat_count += 1
             except Exception as e:
                 logger.error(f"心跳扫描异常: {type(e).__name__}: {e}")
-
-            # 可中断等待 (每秒一次)
             self._stop_event.wait(self._interval)
 
     @property
@@ -99,12 +96,12 @@ class ExistentialHeartbeat:
         }
 
 
-# Thread-safe lazy factory (consolidated from __init__.py)
 _heartbeat_instance = None
 _heartbeat_lock = threading.Lock()
 
+
 def get_heartbeat() -> ExistentialHeartbeat:
-    """Get or create ExistentialHeartbeat instance (lazy factory, thread-safe)"""
+    """获取存在心跳全局单例（线程安全）"""
     global _heartbeat_instance
     if _heartbeat_instance is None:
         with _heartbeat_lock:

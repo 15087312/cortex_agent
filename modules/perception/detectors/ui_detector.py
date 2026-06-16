@@ -35,7 +35,7 @@ class UIDetector(PerceptionDetector):
     def __init__(self, match_threshold: float = 0.8):
         self._templates: Dict[str, Tuple[np.ndarray, str]] = {}
         # {name: (template_image, detector_event_subtype)}
-        self._match_threshold = match_threshold
+        self._match_threshold = match_threshold  # 0.8 经验值，可平衡误报和漏报
         self._prev_matches: Dict[str, set] = {}  # roi_name → matched names
 
     def is_available(self) -> bool:
@@ -83,7 +83,11 @@ class UIDetector(PerceptionDetector):
         roi_name: str,
         context: Optional[Dict[str, Any]] = None,
     ) -> List[PerceptionEvent]:
-        """检测 ROI 中的 UI 元素"""
+        """检测 ROI 中的 UI 元素
+
+        使用 OpenCV 模板匹配 (TM_CCOEFF_NORMED)，只在新匹配到元素时
+        产出事件（避免重复触发）。
+        """
         if not HAS_CV2 or not self._templates or roi_image is None:
             return []
 
@@ -92,7 +96,7 @@ class UIDetector(PerceptionDetector):
 
         for name, (template, subtype) in self._templates.items():
             try:
-                # 模板不能大于 ROI 图像
+                # 模板不能大于 ROI 图像，否则 matchTemplate 会报错
                 if (template.shape[0] > roi_image.shape[0] or
                         template.shape[1] > roi_image.shape[1]):
                     continue
@@ -101,7 +105,7 @@ class UIDetector(PerceptionDetector):
 
                 if len(locations[0]) > 0:
                     current_matches.add(name)
-                    # 只在新出现时触发事件
+                    # 只在新出现时触发事件（非首次匹配）
                     prev = self._prev_matches.get(roi_name, set())
                     if name not in prev:
                         events.append(PerceptionEvent(
@@ -122,4 +126,5 @@ class UIDetector(PerceptionDetector):
         return events
 
     def reset(self) -> None:
+        """重置匹配历史（通常用于窗口/ROI 变化后）"""
         self._prev_matches.clear()

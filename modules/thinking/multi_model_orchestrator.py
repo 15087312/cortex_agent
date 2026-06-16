@@ -240,8 +240,10 @@ class MultiModelOrchestrator:
 
         # 重置主动搭话冷却（用户正在说话，不需要搭话）
         try:
-            from modules.thinking.proactive_outreach import get_proactive_outreach_handler
-            get_proactive_outreach_handler().reset_cooldown()
+            from modules.perception.setup import get_perception_system
+            ps = get_perception_system()
+            if ps.proactive_trigger:
+                ps.proactive_trigger.reset_cooldown()
         except Exception as e:
             logger.debug(f"[主动搭话] 重置冷却失败 (非致命): {e}")
 

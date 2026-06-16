@@ -351,7 +351,7 @@ print(log)
 ### 查看对齐度统计
 
 ```python
-from modules.difference_detector import get_detector
+from modules.perception.difference import get_detector
 
 detector = get_detector()
 differences = detector.get_recent_differences(source_type="value_alignment", limit=10)

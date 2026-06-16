@@ -79,6 +79,7 @@ class OmniParserDetector(PerceptionDetector):
     _AUTO_START_PROBE_INTERVAL = 5  # 秒
 
     def __init__(self, api_url: str = "http://localhost:8000"):
+        # 单例保护：已初始化过的实例跳过
         if hasattr(self, '_init_done'):
             return
         self._api_url = api_url.rstrip("/")
@@ -175,14 +176,13 @@ class OmniParserDetector(PerceptionDetector):
         import time
         import tempfile
 
-        # 检查 OmniParser 目录是否存在
+        # 向上找项目根目录（从 detectors/omniparser_detector.py 到项目根）
         project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
         omniparser_dir = os.path.join(project_root, "OmniParser")
         if not os.path.isdir(omniparser_dir):
             logger.warning("OmniParser 目录不存在，无法自动启动（执行 install.sh 克隆）")
             return False
 
-        # 检查权重，缺失时尝试自动下载
         weights_dir = os.path.join(omniparser_dir, "weights")
         weights_missing = not os.path.isdir(weights_dir) or not os.listdir(weights_dir)
 
@@ -323,7 +323,7 @@ class OmniParserDetector(PerceptionDetector):
         if not self._backend:
             return []
 
-        # 统一转为 numpy array
+        # 统一转为 numpy array（支持 bytes/PIL Image/numpy 三种输入）
         if isinstance(screenshot, bytes):
             import io
             from PIL import Image

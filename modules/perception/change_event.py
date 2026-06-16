@@ -6,7 +6,15 @@ from typing import Dict, Any
 
 @dataclass
 class ChangeEvent:
-    """变化事件"""
+    """变化事件 — 描述一个具体的环境变化（文件/对话/屏幕/语音）
+
+    Attributes:
+        change_type: 变化类型 (created/modified/deleted/moved)
+        target_type: 目标类型 (file/dialog/screen/speech)
+        target: 目标描述
+        details: 额外信息
+        timestamp: 发生时间
+    """
     change_type: str
     target_type: str
     target: str

@@ -1,22 +1,9 @@
-"""
-差异检测器 API — Stage 1: 持续感知接口
-
-端点:
-  GET  /differences/status       — 检测器状态
-  GET  /differences/active       — 活跃差异 (支持 source_type/min_intensity 过滤)
-  GET  /differences/history      — 历史差异
-  GET  /differences/{diff_id}    — 单条差异
-  POST /differences/sources/{type}/enable   — 启用源
-  POST /differences/sources/{type}/disable  — 禁用源
-  GET  /differences/sources      — 列出所有源
-  POST /differences/scan         — 手动触发扫描
-  GET  /differences/heartbeat    — 心跳状态
-"""
-from fastapi import Depends,  APIRouter, Query, Path
+"""差异检测 REST API — 通过 FastAPI 路由暴露差异查询/启停控制"""
+from fastapi import Depends, APIRouter, Query, Path
 from api.auth import require_api_key
 
 from api.errors import AppError, ErrorCode
-from modules.difference_detector import get_detector, get_heartbeat
+from modules.perception.difference import get_detector, get_heartbeat
 
 router = APIRouter(prefix="/differences", tags=["差异检测"],
     dependencies=[Depends(require_api_key)],
@@ -25,7 +12,7 @@ router = APIRouter(prefix="/differences", tags=["差异检测"],
 
 @router.get("/status")
 async def get_detector_status():
-    """获取差异检测器综合状态"""
+    """获取检测器 + 心跳的状态信息"""
     detector = get_detector()
     heartbeat = get_heartbeat()
     return {
@@ -39,11 +26,11 @@ async def get_detector_status():
 
 @router.get("/active")
 async def get_active_differences(
+    # 获取活跃差异列表（支持来源类型/强度过滤）
     source_type: str = Query(default=None, description="源类型过滤"),
     min_intensity: float = Query(default=0.0, ge=0, le=100, description="最低强度"),
     limit: int = Query(default=50, ge=1, le=200, description="返回数量限制"),
 ):
-    """获取活跃差异列表"""
     detector = get_detector()
     differences = detector.get_active(
         source_type=source_type,
@@ -61,9 +48,9 @@ async def get_active_differences(
 
 @router.get("/history")
 async def get_difference_history(
+    # 获取历史差异记录
     limit: int = Query(default=100, ge=1, le=500, description="返回数量限制"),
 ):
-    """获取差异历史"""
     detector = get_detector()
     history = detector.get_history(limit=limit)
     return {
@@ -77,7 +64,7 @@ async def get_difference_history(
 
 @router.get("/{diff_id}")
 async def get_difference(diff_id: str = Path(..., description="差异 ID")):
-    """获取单条差异详情"""
+    """根据 ID 获取单个差异详情"""
     detector = get_detector()
     diff = detector.repository.get_by_id(diff_id)
     if not diff:
@@ -87,7 +74,7 @@ async def get_difference(diff_id: str = Path(..., description="差异 ID")):
 
 @router.get("/sources/list")
 async def list_sources():
-    """列出所有差异源及其状态"""
+    """列出所有已注册的差异源"""
     detector = get_detector()
     return {
         "success": True,
@@ -119,7 +106,7 @@ async def disable_source(source_type: str = Path(..., description="源类型")):
 
 @router.post("/scan")
 async def trigger_scan():
-    """手动触发一次扫描"""
+    """手动触发一次差异扫描（用于调试）"""
     detector = get_detector()
     differences = detector.scan()
     return {
@@ -133,6 +120,6 @@ async def trigger_scan():
 
 @router.get("/heartbeat/status")
 async def get_heartbeat_status():
-    """获取心跳状态"""
+    """获取存在心跳的状态"""
     heartbeat = get_heartbeat()
     return {"success": True, "data": heartbeat.get_status()}

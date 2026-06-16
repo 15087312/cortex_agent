@@ -48,6 +48,7 @@ class PerceptionEvent:
     event_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
 
     def to_dict(self) -> Dict[str, Any]:
+        """转换为字典（用于序列化/日志）"""
         return {
             "event_id": self.event_id,
             "event_type": self.event_type,

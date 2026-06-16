@@ -37,13 +37,19 @@ class OCRDetector(PerceptionDetector):
         self._prev_texts: Dict[str, str] = {}  # roi_name → 上次完整文本
         self._mcp_mode = use_mcp
         if not use_mcp:
+            # 非 MCP 模式时立即初始化本地 OCR 引擎（共享全局单例）
             self._init_ocr()
 
     def _init_ocr(self):
-        """初始化本地 OCR 引擎（共享全局单例）"""
+        """初始化本地 OCR 引擎（共享全局单例）
+
+        本地 OCR 引擎由 utils.ocr_utils 管理全局单例，
+        避免每个检测器实例重复加载模型。
+        """
         from utils.ocr_utils import get_ocr_engine
         self._ocr_engine, self._ocr_type = get_ocr_engine()
         if self._ocr_engine is None:
+            # 本地 OCR 不可用时降级到 MCP OCR
             self._mcp_mode = True
             logger.info("OCR 引擎: 无本地 OCR，降级到 MCP OCR")
         else:
@@ -98,7 +104,10 @@ class OCRDetector(PerceptionDetector):
         return [event]
 
     def _extract_text(self, image: np.ndarray) -> Optional[str]:
-        """从图像提取文本"""
+        """从图像提取文本
+
+        根据 OCR 引擎类型（paddle / rapid）调用不同接口。
+        """
         if self._mcp_mode:
             return self._extract_text_mcp(image)
 
@@ -122,16 +131,18 @@ class OCRDetector(PerceptionDetector):
         return None
 
     def _extract_text_mcp(self, image: np.ndarray) -> Optional[str]:
-        """通过 MCP OCR server 提取文本"""
+        """通过 MCP OCR server 提取文本
+
+        MCP 模式需要将图像保存为临时文件供 MCP server 读取，
+        用完后清理临时文件。
+        """
         import cv2
         tmp_path = ""
         try:
-            # 保存 ROI 图像到临时文件
             fd, tmp_path = tempfile.mkstemp(suffix=".png")
             os.close(fd)
             cv2.imwrite(tmp_path, image)
 
-            # 调用 MCP OCR server
             from infra.mcp.factory import get_server_manager
             mgr = get_server_manager()
             result = self._run_async(mgr.call_tool("ocr_image", {"imagePath": tmp_path}))
@@ -158,7 +169,7 @@ class OCRDetector(PerceptionDetector):
 
     @staticmethod
     def _run_async(coro):
-        """同步运行异步 coroutine"""
+        """同步运行异步 coroutine（适配有/无运行中事件循环）"""
         import asyncio
         try:
             loop = asyncio.get_running_loop()
@@ -171,10 +182,11 @@ class OCRDetector(PerceptionDetector):
 
     @staticmethod
     def _diff_text(old_text: str, new_text: str) -> List[str]:
-        """计算新增文本行"""
+        """计算新增文本行（行级 diff，忽略空行和已有行）"""
         old_lines = set(old_text.split("\n")) if old_text else set()
         new_lines = new_text.split("\n")
         return [line for line in new_lines if line.strip() and line not in old_lines]
 
     def reset(self) -> None:
+        """重置 OCR 文本缓存"""
         self._prev_texts.clear()

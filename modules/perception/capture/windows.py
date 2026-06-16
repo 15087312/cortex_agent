@@ -90,7 +90,11 @@ class DXcamBackend(CaptureBackend):
         return None
 
     def _capture_loop(self):
-        """后台捕获循环"""
+        """后台捕获循环 — DXcam GPU 抓屏
+
+        DXcam 内部维护自己的捕获线程，get_latest_frame() 返回最新帧。
+        无新帧时 sleep 10ms 减少 CPU 空转。
+        """
         while self._running:
             try:
                 frame = self._camera.get_latest_frame()
@@ -99,6 +103,7 @@ class DXcamBackend(CaptureBackend):
                         self._latest_frame = frame
                     self._frame_count += 1
                 else:
+                    # 无新帧时短暂休眠，避免忙等待
                     time.sleep(0.01)
             except Exception as e:
                 logger.warning(f"DXcam 捕获异常: {e}")

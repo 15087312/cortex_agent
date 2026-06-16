@@ -9,15 +9,22 @@ logger = setup_logger("thinking_adapters")
 
 
 class DifferenceDetectorActivityNotifier:
-    """由可选差异检测器支持的活动通知器。"""
+    """由感知系统支持的活动通知器 — 通知 idle timer 用户正在活动"""
 
     def notify_activity(self) -> None:
         try:
-            from modules.difference_detector import get_detector
-
+            from modules.perception.difference import get_detector
             get_detector().notify_activity()
         except Exception as e:
             logger.debug(f"[活动通知] 差异检测器通知失败 (非致命): {e}")
+
+        try:
+            from modules.perception.setup import get_perception_system
+            ps = get_perception_system()
+            if ps.proactive_trigger:
+                ps.proactive_trigger.notify_activity()
+        except Exception as e:
+            logger.debug(f"[活动通知] 主动触发通知失败 (非致命): {e}")
 
 
 class SecurityApiAdapter:

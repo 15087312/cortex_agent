@@ -56,7 +56,14 @@ def _patch_paddleocr():
 
 
 def main():
-    """启动 OmniParser HTTP 服务"""
+    """启动 OmniParser HTTP 服务（子进程入口）
+
+    流程:
+    1. 应用 PaddleOCR 兼容性补丁
+    2. 设置路径和环境
+    3. 伪装 sys.argv 让 OmniParser 的 argparse 解析
+    4. 启动 uvicorn
+    """
     if len(sys.argv) < 3:
         print("usage: omniparser_launcher.py <omniparser_dir> <port>")
         sys.exit(1)
@@ -64,23 +71,20 @@ def main():
     omniparser_dir = sys.argv[1]
     port = int(sys.argv[2])
 
-    # 应用补丁
     _patch_paddleocr()
 
-    # 设置环境
     sys.path.insert(0, omniparser_dir)
     os.chdir(omniparser_dir)
 
-    # 清理 sys.argv，让 OmniParser 的 argparse 只看到端口参数
+    # 重置 sys.argv，使 OmniParser 的 argparse 只看到它自己的参数
     weights_dir = os.path.join(omniparser_dir, "weights")
     sys.argv = [
         "omniparserserver.py",
-        "--port", str(port), "--device", "mps",
+        "--port", str(port), "--device", "cpu",
         "--som_model_path", os.path.join(weights_dir, "icon_detect", "model.pt"),
         "--caption_model_path", os.path.join(weights_dir, "icon_caption_florence"),
     ]
 
-    # 导入并启动 OmniParser FastAPI 服务
     from omnitool.omniparserserver.omniparserserver import app
     import uvicorn
 

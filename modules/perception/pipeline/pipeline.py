@@ -128,7 +128,13 @@ class PerceptionPipeline:
         }
 
     def _run_loop(self):
-        """主循环"""
+        """主循环 — Capture → FrameDiff → Detectors → Events
+
+        性能优化:
+        - 无变化连续超过 10 帧，动态降低帧率（interval * 2）
+        - 昂贵检测器（OCR/OmniParser）仅在变化幅度 >= threshold 时运行
+        - 窗口/语音等非图像检测器每帧都运行，不受帧差结果影响
+        """
         interval = 1.0 / self._fps
         consecutive_no_change = 0
 
@@ -141,14 +147,14 @@ class PerceptionPipeline:
 
                 self._stats["frames_captured"] += 1
 
-                # 帧差检测
                 diff_result = self._frame_diff.detect(frame)
 
-                # ── 非图像检测器（独立于帧差，每帧都运行）──
+                # 非图像检测器（窗口、语音等）不依赖帧图像，每帧都运行
                 self._run_non_image_detectors()
 
                 if not diff_result.has_changed:
                     consecutive_no_change += 1
+                    # 连续无变化时降低帧率以减少 CPU 消耗
                     if consecutive_no_change > 10:
                         time.sleep(interval * 2)
                     else:
@@ -158,7 +164,7 @@ class PerceptionPipeline:
                 consecutive_no_change = 0
                 self._stats["frames_with_change"] += 1
 
-                # 发布帧差事件到总线（供 PerceptionIntegrator 消费）
+                # 发布帧差事件（仅供 PerceptionIntegrator 等订阅者消费）
                 if diff_result.change_ratio > 0.01:
                     diff_event = PerceptionEvent(
                         event_type=PerceptionEventType.SCREEN_DIFF,
@@ -172,7 +178,7 @@ class PerceptionPipeline:
                     self._event_bus.publish(diff_event)
                     self._stats["events_published"] += 1
 
-                # 大幅变化才跑昂贵检测器（OCR / OmniParser）
+                # 变化幅度 >= diff_threshold_run_detectors 时才运行昂贵检测器
                 if diff_result.change_ratio >= self._diff_threshold_run_detectors:
                     default_type = self._get_default_detector_type()
                     if default_type:
@@ -229,8 +235,7 @@ class PerceptionPipeline:
                 logger.warning(f"非图像检测器 {det_type} 异常: {e}")
 
     def _get_default_detector_type(self) -> Optional[str]:
-        """获取默认检测器类型"""
-        # 优先 OCR，其次 UI
+        """获取默认检测器类型（优先 OCR，其次 UI，最后 motion）"""
         for dtype in ("ocr", "ui", "motion"):
             if dtype in self._detectors and self._detectors[dtype].is_available():
                 return dtype

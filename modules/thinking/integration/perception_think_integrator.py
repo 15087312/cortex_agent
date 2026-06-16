@@ -10,7 +10,7 @@ from typing import List, Optional, TYPE_CHECKING
 from utils.logger import setup_logger
 
 if TYPE_CHECKING:
-    from modules.difference_detector.models import Difference
+    from modules.perception.difference.models import Difference
 
 
 class PerceptionThinkIntegrator:
@@ -43,7 +43,7 @@ class PerceptionThinkIntegrator:
             过滤后的 Difference 列表，按强度降序
         """
         try:
-            from modules.difference_detector import get_detector
+            from modules.perception.difference import get_detector
             differences = get_detector().get_active_differences(min_intensity=self.min_intensity)
         except Exception as e:
             self.logger.debug(f"获取活跃差异失败: {e}")

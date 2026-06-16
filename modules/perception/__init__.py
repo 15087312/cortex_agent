@@ -5,11 +5,14 @@
 跨模块调用优先依赖 PerceptionPort/create_perception_port。
 """
 from .interface import PerceptionPort, create_perception_port, get_perception_port
+from .difference.detector import get_detector
+from .difference.heartbeat import get_heartbeat
 
 # 新的独立模块
 from .change_event import ChangeEvent
 
 
+# integration.py 可能包含重型可选依赖，使用 try/except 确保不阻塞模块导入
 try:
     from .integration import PerceptionIntegrator, perception_integrator
 except Exception:
@@ -23,10 +26,14 @@ def get_perception_system():
 
 # 向后兼容：perception_manager 代理指向新系统
 def _get_compat_proxy():
-    """兼容旧代码：perception_manager.file_perception / .start_monitoring()"""
+    """向后兼容代理 — 将新系统的接口映射到旧版 perception_manager"""
+
     ps = get_perception_system()
 
     class _CompatProxy:
+        """旧版 perception_manager 兼容包装"""
+
+        @property
         @property
         def _running(self):
             return ps._started
@@ -40,11 +47,13 @@ def _get_compat_proxy():
             return None  # 已由新流水线接管
 
         def start_monitoring(self):
+            """启动监控（兼容旧接口）"""
             if not ps._started:
                 ps.setup()
                 ps.start()
 
         def stop_monitoring(self):
+            """停止监控（兼容旧接口）"""
             ps.stop()
 
     return _CompatProxy()
@@ -60,4 +69,6 @@ __all__ = [
     "PerceptionIntegrator",
     "perception_manager",
     "perception_integrator",
+    "get_detector",
+    "get_heartbeat",
 ]
