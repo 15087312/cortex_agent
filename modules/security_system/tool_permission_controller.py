@@ -124,8 +124,7 @@ class ToolPermissionController:
         # restrict_to: 限制到 allow_tools + 核心系统工具
         if rules.restrict_to and rules.allow_tools:
             # 核心系统工具（所有模式都必须保留）
-            core_system = {"read_file", "search_files", "list_my_tools",
-                           "tools_search", "query_tool_details",
+            core_system = {"tools_search",
                            "calc", "memory_match", "todo"}
             restricted = set(rules.allow_tools) | core_system
             prioritized = [t for t in prioritized if t in restricted]

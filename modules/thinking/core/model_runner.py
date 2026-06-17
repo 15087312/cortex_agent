@@ -1163,8 +1163,7 @@ class ModelRunner:
 
         # restrict_to: 限制到 allow_tools + 核心系统工具
         if getattr(rules, 'restrict_to', False) and rules.allow_tools:
-            core_system = {"read_file", "search_files", "list_my_tools",
-                           "tools_search", "query_tool_details",
+            core_system = {"tools_search",
                            "calc", "memory_match", "todo"}
             restricted = set(rules.allow_tools) | core_system
             prioritized = [t for t in prioritized if t in restricted]
@@ -1481,7 +1480,7 @@ class ModelRunner:
                                 content=(
                                     f"[系统拒绝 第{turn+1}次] 纯文本输出不被接受。\n"
                                     "你必须调用 delegate_task 或 continue_thinking 来继续。\n"
-                                    "不要调用其他普通工具（如 web_search、read_file 等）。\n"
+                                    "不要调用其他普通工具（如 web_search 等）。\n"
                                     "❌ 错误：输出纯文本或调用无关工具\n"
                                     "✅ 正确：delegate_task 或 continue_thinking"
                                 ),
@@ -1863,7 +1862,7 @@ class ModelRunner:
                                         result = (
                                             f"[安全门控拦截] {reason}\n"
                                             f"请调整你的工具调用参数或选择其他工具来完成任务。"
-                                            f"如果被拒绝的是写操作，请先用只读工具（read_file/search_files）确认目标。"
+                                            f"如果被拒绝的是写操作，请先用只读工具（tools_search）确认目标。"
                                         )
                                         logger.warning(
                                             f"[ModelRunner] 安全门控拦截: model={self.model_id} "
@@ -1896,20 +1895,7 @@ class ModelRunner:
                             if self.blackboard and tc.name not in ("continue_thinking", "respond_to_user", "delegate_task", "create_supervisor", "request_skill", "list_skills"):
                                 try:
                                     # 生成简洁摘要
-                                    if tc.name == "read_file":
-                                        path = args.get("path", "")
-                                        size = len(result) if result else 0
-                                        summary = f"read_file: {Path(path).name} ({size} chars)"
-                                    elif tc.name == "write_file" or tc.name == "file_edit":
-                                        path = args.get("path", "")
-                                        summary = f"{tc.name}: {Path(path).name}"
-                                    elif tc.name == "list_files":
-                                        count = result.count("'name':") if result else 0
-                                        summary = f"list_files: {count} items"
-                                    elif tc.name == "search_files":
-                                        count = result.count("'name':") if result else 0
-                                        summary = f"search_files: {count} matches"
-                                    elif tc.name == "web_search":
+                                    if tc.name == "web_search":
                                         count = result.count("'title':") if result else 0
                                         summary = f"web_search: {count} results"
                                     elif tc.name == "exec_command" or tc.name == "run_command":

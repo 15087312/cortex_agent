@@ -558,16 +558,16 @@ class TestCombinedToolProvider:
     def test_list_tools_has_local(self, provider):
         tools = provider.list_tools()
         assert len(tools) > 50
-        assert "read_file" in tools
+        assert "todo" in tools
 
     def test_list_tools_source_filter(self, provider):
         builtin = provider.list_tools(source="builtin")
         assert len(builtin) > 50
 
     def test_get_tool(self, provider):
-        t = provider.get_tool("read_file")
+        t = provider.get_tool("calc")
         assert t is not None
-        assert t.name == "read_file"
+        assert t.name == "calc"
         assert t.source == "builtin"
 
     def test_get_tool_nonexistent(self, provider):
@@ -587,11 +587,11 @@ class TestCombinedToolProvider:
 
     def test_get_tools_for_api_whitelist(self, provider):
         tools = provider.get_tools_for_api(
-            tool_whitelist=["read_file", "calc"],
+            tool_whitelist=["todo", "calc"],
             core_only=False,
         )
         names = [t["function"]["name"] for t in tools]
-        assert set(names) == {"read_file", "calc"}
+        assert set(names) == {"todo", "calc"}
 
     def test_get_tools_for_api_empty_whitelist(self, provider):
         tools = provider.get_tools_for_api(tool_whitelist=[], core_only=False)

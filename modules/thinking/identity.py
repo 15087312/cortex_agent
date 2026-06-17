@@ -291,7 +291,6 @@ DEFAULT_IDENTITIES: Dict[str, dict] = {
 DEFAULT_TOOL_WHITELISTS: Dict[str, List[str]] = {
     "large": [
         # 最常用工具，避免被大量工具定义淹没上下文
-        "read_file", "write_file", "file_edit", "search_files",
         "web_search", "web_fetch",
         "memory_match",
         "exec_command",
@@ -305,55 +304,45 @@ DEFAULT_TOOL_WHITELISTS: Dict[str, List[str]] = {
         # 鼠标键盘操作
         "mouse_click", "mouse_move", "mouse_double_click", "mouse_scroll", "mouse_drag",
         "keyboard_type", "keyboard_press", "keyboard_hotkey", "get_mouse_position",
-        # 工具详情查询 — 查询非核心工具的参数定义
-        "query_tool_details",
         # MCP 远程工具发现与调用
         "mcp_discover", "mcp_call_tool", "mcp_server_status", "mcp_register_server",
-        # AI 自创工具管理
-        "create_tool", "list_my_tools", "delete_tool", "edit_tool",
         # 技能
         "create_skill",
         # 全部可见 — 所有工具都出现在非核心列表，模型可查
         "*",
     ],
     "supervisor": [
-        "read_file", "write_file", "file_edit", "search_files",
         "web_search", "web_fetch", "memory_match",
         # 探针管理工具 — 主管可启动/停止专家探针
         "probe_start", "probe_stop", "probe_list",
         "persona_inject",
     ],
     "expert_code_reviewer": [
-        "read_file", "search_files", "memory_match",
+        "memory_match",
         "probe_list",  # 只读：查看活跃探针
     ],
     "expert_code_writer": [
-        "read_file", "write_file", "file_edit", "search_files",
         "run_command",
         "probe_list",
     ],
     "expert_test_writer": [
-        "read_file", "write_file", "search_files",
         "run_pytest", "run_command",
         "probe_list",
     ],
     "expert_data_analyzer": [
-        "read_file", "search_files", "web_search", "memory_match",
+        "web_search", "memory_match",
         "probe_list",
     ],
     "expert_customer": [
-        # 客户只需要只读权限：查看代码、阅读文件、查看探针
-        "read_file", "search_files",
+        # 客户只需要只读权限
         "probe_list",
     ],
     "expert_emotion": [
         # 情绪分析师：只读，不做修改
-        "read_file",
         "probe_list",
     ],
     "expert_creative_writer": [
-        # 文学创作专家：只读，不需要写文件
-        "read_file", "search_files",
+        # 文学创作专家：只读
         "probe_list",
     ],
 }
@@ -659,7 +648,7 @@ class ModelIdentity:
             else:
                 whitelist_key = f"expert_{role}"
                 whitelist = DEFAULT_TOOL_WHITELISTS.get(
-                    whitelist_key, ["read_file", "search_files"]
+                    whitelist_key, []
                 )
 
         # 自动设置模型名；优先使用模板中显式指定的 model_name，否则按 tier 默认
@@ -718,8 +707,8 @@ class ModelIdentity:
             f"【工具使用】你有多种工具可用于执行任务。注意：所有工具（包括 run_command）"
             f"都在用户本地电脑上执行，不是远程服务器。"
             f"例如 run_command('open -a 网易云音乐') 会在用户电脑上启动应用。"
-            f"其他可用工具包括：read_file（读文件）、write_file（写文件）、"
-            f"web_search（联网搜索）等。"
+            f"可用工具包括 web_search（联网搜索）、calc（计算器）、"
+            f"tools_search（搜索可用工具）等。"
             f"当用户要求你执行操作时，先思考是否有可用工具能完成，而不是直接说做不到。"
         )
         return "\n".join(parts)
