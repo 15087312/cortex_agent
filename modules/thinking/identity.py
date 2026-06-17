@@ -322,6 +322,11 @@ DEFAULT_TOOL_WHITELISTS: Dict[str, List[str]] = {
         "todo",
         # 工具搜索 — 按需查找其他可用工具
         "tools_search",
+        # 打开应用
+        "open_app",
+        # 鼠标键盘操作
+        "mouse_click", "mouse_move", "mouse_double_click", "mouse_scroll", "mouse_drag",
+        "keyboard_type", "keyboard_press", "keyboard_hotkey", "get_mouse_position",
         # 工具详情查询 — 查询非核心工具的参数定义
         "query_tool_details",
         # MCP 远程工具发现与调用
@@ -330,6 +335,8 @@ DEFAULT_TOOL_WHITELISTS: Dict[str, List[str]] = {
         "create_tool", "list_my_tools", "delete_tool", "edit_tool",
         # 技能
         "create_skill",
+        # 全部可见 — 所有工具都出现在非核心列表，模型可查
+        "*",
     ],
     "supervisor": [
         "read_file", "write_file", "file_edit", "search_files",

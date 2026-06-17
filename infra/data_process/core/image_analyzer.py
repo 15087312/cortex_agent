@@ -192,6 +192,7 @@ class ImageAnalyzer:
                 "generate": generate,
             }
             logger.info(f"MLX-VLM 模型加载成功并已缓存: {model_name}")
+            self._mlx_config = None  # 延迟加载，由 _analyze_mlx_vlm 缓存
         except Exception as e:
             logger.error(f"MLX-VLM 加载失败: {e}")
             self.model_type = "unavailable"
@@ -205,9 +206,9 @@ class ImageAnalyzer:
         from PIL import Image as _PIL
         import io as _io
 
-        # 限制最大边长，加速 ViT 推理
+        # 限制最大边长，加速 ViT 推理（屏幕理解不需要超高分辨率）
         _img = _PIL.open(_io.BytesIO(image_data))
-        _max_dim = 1280
+        _max_dim = 768
         if max(_img.size) > _max_dim:
             ratio = _max_dim / max(_img.size)
             _img = _img.resize((int(_img.width * ratio), int(_img.height * ratio)), _PIL.LANCZOS)
@@ -220,10 +221,12 @@ class ImageAnalyzer:
             temp_path = f.name
 
         try:
-            from mlx_vlm.prompt_utils import apply_chat_template
-            from mlx_vlm.utils import load_config
+            if self._mlx_config is None:
+                from mlx_vlm.utils import load_config
+                self._mlx_config = load_config(self._mlx_model_name)
+            config = self._mlx_config
 
-            config = load_config(self._mlx_model_name)
+            from mlx_vlm.prompt_utils import apply_chat_template
 
             messages = [
                 {
@@ -235,7 +238,7 @@ class ImageAnalyzer:
                 }
             ]
             formatted_prompt = apply_chat_template(
-                self.processor, config, prompt, num_images=1
+                self.processor, config, messages, num_images=1
             )
 
             output = self._mlx_generate(
@@ -243,7 +246,7 @@ class ImageAnalyzer:
                 self.processor,
                 formatted_prompt,
                 [temp_path],
-                max_tokens=128,
+                max_tokens=512,
                 temperature=0,
                 verbose=False,
             )
@@ -366,7 +369,7 @@ class ImageAnalyzer:
         
         # 限制最大边长，加速 ViT 推理
         _img = Image.open(io.BytesIO(image_data))
-        _max_dim = 1280
+        _max_dim = 768
         if max(_img.size) > _max_dim:
             ratio = _max_dim / max(_img.size)
             _img = _img.resize((int(_img.width * ratio), int(_img.height * ratio)), Image.LANCZOS)

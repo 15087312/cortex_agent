@@ -111,7 +111,24 @@ class SecurityMonitor(RuntimeExpert):
         messages: List[Dict[str, Any]],
         dialog_context: str,
     ) -> str:
-        """上下文触发审查 — 每次被触发时全量审查"""
+        """上下文触发审查 — 只在 Blackboard 触发时运行"""
+        # 检测是否有 Blackboard 发起的 review_request
+        has_review_request = any(
+            isinstance(m.get("content"), dict)
+            and m.get("content", {}).get("action") == "review_request"
+            for m in messages
+        )
+
+        # 第一轮或没有 review_request → 跳过，等 Blackboard 触发
+        if not has_review_request and self._round > 1:
+            return ""
+
+        # 检测大模型是否已完成 → 停止空转
+        if await self._large_model_done():
+            self._running = False
+            self.logger.info("[SecurityMonitor] 大模型已完成，停止监察")
+            return ""
+
         verdicts: List[SecurityVerdict] = []
 
         # 1. 规则引擎：审查最近 Blackboard 内容
@@ -605,6 +622,30 @@ class SecurityMonitor(RuntimeExpert):
     def _risk_weight(level: str) -> float:
         """风险级别 → 权重（累积计算会话风险分）"""
         return {"none": 0, "low": 0.05, "medium": 0.15, "high": 0.4, "critical": 1.0}.get(level, 0)
+
+    # ------------------------------------------------------------------
+    # 终止检测：监听大模型完成信号
+    # ------------------------------------------------------------------
+
+    async def _large_model_done(self) -> bool:
+        """检查大模型是否已发送 thinking_complete"""
+        try:
+            from modules.thinking.communication.message_bus import get_message_bus
+            bus = get_message_bus()
+            all_queues = await bus.peek_all()
+            for recipient_id, msgs in all_queues.items():
+                if "orchestrator_" in recipient_id:
+                    for m in msgs:
+                        content = m.content if hasattr(m, "content") else {}
+                        if (
+                            isinstance(content, dict)
+                            and content.get("action") == "thinking_complete"
+                            and content.get("tier") == "large"
+                        ):
+                            return True
+        except Exception:
+            pass
+        return False
 
     # ------------------------------------------------------------------
     # 专属安全规则记忆

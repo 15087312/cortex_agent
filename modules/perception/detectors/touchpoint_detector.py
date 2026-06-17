@@ -3,10 +3,19 @@
 使用 Touchpoint（macOS 无障碍 API）替代 OmniParser 做 UI 元素检测。
 零模型、零推理延迟，直接从系统读取原生 UI 控件树。
 
+CDP（Chrome DevTools Protocol）支持：
+对于 Electron/CEF 应用（如网易云音乐），如果应用以 --remote-debugging-port 启动，
+可通过 CDP 获取完整的 WebView 内部 AX 树，远多于原生 AX 仅暴露的菜单栏。
+
+配置方式：在 .env 中设置 CDP_PORTS 环境变量：
+  CDP_PORTS={"网易云音乐":9223,"微信":9224}
+
 降级：当 Touchpoint 不可用或返回空结果时，回退到 ScreenMonitorMCP（纯视觉方案）。
 """
 from __future__ import annotations
 
+import json
+import os
 import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -18,6 +27,80 @@ from modules.perception.events.types import PerceptionEvent, PerceptionEventType
 from utils.logger import setup_logger
 
 logger = setup_logger("touchpoint_detector")
+
+# ---------------------------------------------------------------------------
+# CEF 116 兼容补丁
+# CEF 116 的 /json/list 和 /json/version 用 Python urllib 请求返回 502，
+# 但用 http.client 正常。touchpoint 内部用的 urllib，这里打补丁绕过。
+# ---------------------------------------------------------------------------
+_CEF_PATCH_APPLIED = False
+
+
+def _apply_cef_patch():
+    """给 touchpoint CDP 后端打 CEF 116 兼容补丁"""
+    global _CEF_PATCH_APPLIED
+    if _CEF_PATCH_APPLIED:
+        return
+
+    try:
+        import http.client
+        import json as _json
+        import touchpoint.backends.cdp.cdp as cdp_mod
+
+        def _patched_list_targets(port):
+            try:
+                conn = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
+                conn.request("GET", "/json")
+                resp = conn.getresponse()
+                return _json.loads(resp.read())
+            except Exception:
+                return []
+
+        def _patched_get_browser_ws_url(port):
+            try:
+                conn = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
+                conn.request("GET", "/json/version")
+                resp = conn.getresponse()
+                data = _json.loads(resp.read())
+                return data.get("webSocketDebuggerUrl")
+            except Exception:
+                return None
+
+        cdp_mod._list_targets = _patched_list_targets
+        cdp_mod._get_browser_ws_url = _patched_get_browser_ws_url
+        _CEF_PATCH_APPLIED = True
+        logger.debug("CEF 116 CDP 兼容补丁已应用")
+    except ImportError:
+        pass
+    except Exception as e:
+        logger.debug(f"CEF 补丁应用失败: {e}")
+
+
+# ---------------------------------------------------------------------------
+# CDP 端口配置（从环境变量加载，格式同 MCP_SERVERS）
+#   CDP_PORTS={"网易云音乐":9223,"微信":9224}
+# ---------------------------------------------------------------------------
+_CDP_PORTS: Dict[str, int] = {}
+
+
+def _load_cdp_ports():
+    global _CDP_PORTS
+    raw = os.environ.get("CDP_PORTS", "").strip()
+    if not raw:
+        return
+    try:
+        _CDP_PORTS = json.loads(raw)
+        if not isinstance(_CDP_PORTS, dict):
+            _CDP_PORTS = {}
+            return
+        # 验证值都是 int
+        _CDP_PORTS = {k: int(v) for k, v in _CDP_PORTS.items()}
+        logger.info(f"CDP 端口配置: {_CDP_PORTS}")
+    except (json.JSONDecodeError, ValueError, TypeError):
+        logger.warning(f"CDP_PORTS 格式无效: {raw}")
+
+
+_load_cdp_ports()
 
 
 @dataclass
@@ -99,6 +182,10 @@ class TouchpointDetector(PerceptionDetector):
         if self._initialized:
             return
         self._initialized = True
+
+        # 应用 CEF 兼容补丁（全局一次）
+        _apply_cef_patch()
+
         self._available: Optional[bool] = None
         self._tp = None  # 延迟导入
         self._prev_elements: List[UIElement] = []
@@ -106,7 +193,7 @@ class TouchpointDetector(PerceptionDetector):
         self.precision = "element"
         self.backend = "touchpoint"
         self._fallback_to_screenmonitor = fallback_to_screenmonitor
-        self._ax_timeout_set = False
+        self._cdp_configured = False
 
     @property
     def detector_type(self) -> str:
@@ -124,6 +211,8 @@ class TouchpointDetector(PerceptionDetector):
             self._available = backend.get("available", False) and len(errs) == 0
             if self._available:
                 self._tp = tp
+                # 配置 CDP 端口（如配置了 CDP_PORTS）
+                self._configure_cdp()
                 logger.info(f"Touchpoint 可用: backend={backend.get('name')}")
             else:
                 logger.warning(f"Touchpoint 不可用: errors={errs}")
@@ -137,12 +226,23 @@ class TouchpointDetector(PerceptionDetector):
             self._available = False
             return False
 
-    def detect_elements(self, screenshot: Any = None, timeout: float = 8.0) -> List[UIElement]:
+    def _configure_cdp(self):
+        """配置 CDP 端口（从 _CDP_PORTS 全局配置加载）"""
+        if self._cdp_configured or not _CDP_PORTS:
+            return
+        try:
+            self._tp.configure(cdp_ports=_CDP_PORTS)
+            self._cdp_configured = True
+            logger.info(f"CDP 端口已配置: {_CDP_PORTS}")
+        except Exception as e:
+            logger.warning(f"CDP 配置失败: {e}")
+
+    def detect_elements(self, screenshot: Any = None, app: str = "") -> List[UIElement]:
         """主接口：截图（可选）→ UI 元素列表
 
         Args:
             screenshot: 兼容参数，Touchpoint 不需要（直接从系统读取 UI 树）
-            timeout: 超时秒数（保留参数签名兼容，内部不再使用线程包装）
+            app: 可选，指定应用名（如 "Safari"、"Edge"），为空则扫描全部活跃窗口
 
         Returns:
             UIElement 列表
@@ -153,72 +253,338 @@ class TouchpointDetector(PerceptionDetector):
             return []
 
         try:
-            return self._detect_internal()
+            return self._detect_internal(app=app)
         except Exception as e:
             logger.error(f"Touchpoint detect_elements 失败: {e}")
             if self._fallback_to_screenmonitor:
                 return self._fallback_detect(screenshot)
             return []
 
-    def _detect_internal(self) -> List[UIElement]:
-        """使用 Touchpoint flat 格式读取当前活跃窗口的 UI 元素
+    def _detect_internal(self, app: str = "") -> List[UIElement]:
+        """使用 Touchpoint 读取 UI 元素
 
-        用 flat 格式 + 正则解析，比 json 格式更可靠、更快。
+        对于有 CDP 端口配置的 Electron/CEF 应用，自动使用 CDP AX 源
+        （能穿透 WebView 获取内部元素），否则用原生 AX 源。
         """
         tp = self._tp
         if tp is None:
             return []
 
-        # 配置更快的 macOS AX 超时（避免卡在无响应的应用上）
-        if not self._ax_timeout_set:
-            tp.configure(ax_messaging_timeout=0.5)
-            self._ax_timeout_set = True
-
         elements: List[UIElement] = []
         self._element_counter = 0
 
-        windows = tp.windows()
-        if not windows:
+        # 指定了 app → 只扫这一个
+        if app:
+            app_names = [app]
+        else:
+            windows = tp.windows()
+            if not windows:
+                return []
+            targets = [w for w in windows if getattr(w, 'active', False)]
+            if not targets:
+                targets = windows[:1]
+            app_names = list(dict.fromkeys(w.app for w in targets))
+
+        for app_name in app_names:
+            detected = self._scan_app(app_name, tp)
+            elements.extend(detected)
+
+        if elements and not app:
+            logger.debug(f"Touchpoint 检测到 {len(elements)} 个 UI 元素，来自 {len(app_names)} 个应用")
+        return elements
+
+    def _scan_app(self, app_name: str, tp) -> List[UIElement]:
+        """扫描单个应用的 UI 元素
+
+        CDP 策略：
+        - 已有 CDP 端口配置 → 直接 cdp_ax 源
+        - 原生 AX 只返回 <10 个元素（仅菜单栏）→ 检测是否为 Electron，自动配 CDP 后重扫
+        """
+        elements: List[UIElement] = []
+
+        # 已有 CDP 端口配置 → 直接 CDP
+        if app_name in _CDP_PORTS:
+            return self._scan_with_cdp(app_name, tp)
+
+        # 先试原生 AX
+        try:
+            flat_text = tp.elements(
+                app=app_name,
+                named_only=True,
+                max_depth=20,
+                format="flat",
+                source="full",
+            )
+        except Exception as e:
+            logger.debug(f"Touchpoint 扫描 {app_name} 时出错: {e}")
             return []
 
-        # 只处理活跃窗口，没有活跃则取第一个
-        targets = [w for w in windows if getattr(w, 'active', False)]
-        if not targets:
-            targets = windows[:1]
+        if isinstance(flat_text, str) and flat_text.strip():
+            for line in flat_text.split("\n"):
+                line = line.strip()
+                if not line:
+                    continue
+                parsed = self._parse_flat_line(line, app_name)
+                if parsed:
+                    elements.append(parsed)
 
-        seen_apps = set()
-        for win in targets:
-            app_name = win.app
-            if app_name in seen_apps:
-                continue
-            seen_apps.add(app_name)
+        # 结果 ≥10 → native 够用，直接返回
+        if len(elements) >= 10:
+            return elements
 
+        # 结果 <10（大概率仅菜单栏）→ 尝试 Electron CDP 自动配置
+        logger.info(f"{app_name} 仅 {len(elements)} 个元素，检测是否为 Electron 应用...")
+        if self._auto_setup_cdp(app_name):
+            # CDP 配置成功，重新扫描
+            elements = self._scan_with_cdp(app_name, tp)
+            if len(elements) >= 5:
+                return elements
+
+        # Electron 也不管用 → 降级到 ScreenMonitorMCP 纯视觉
+        logger.info(f"{app_name} 降级到 ScreenMonitorMCP 视觉分析...")
+        visual = self._fallback_detect_visual(app_name)
+        if visual:
+            return visual
+
+        return elements
+
+    def _scan_with_cdp(self, app_name: str, tp) -> List[UIElement]:
+        """用 CDP 源扫描应用"""
+        elements: List[UIElement] = []
+
+        for source in ("cdp_ax", "full"):
             try:
                 flat_text = tp.elements(
                     app=app_name,
                     named_only=True,
-                    max_depth=2,  # depth=2 足够获取 UI 表层元素，避免深层 AX 遍历
+                    max_depth=20,
                     format="flat",
+                    source=source,
                 )
-                if not isinstance(flat_text, str):
-                    continue
-
-                lines = [l for l in flat_text.split("\n") if l.strip()]
-                for line in lines[:80]:  # 每 app 最多解析 80 行
-                    parsed = self._parse_flat_line(line, app_name)
-                    if parsed:
-                        elements.append(parsed)
-
-                if len(elements) >= 100:
-                    break
             except Exception as e:
-                logger.debug(f"Touchpoint 读取 {app_name} 时出错: {e}")
+                logger.debug(f"Touchpoint {source} 读取 {app_name} 时出错: {e}")
                 continue
 
-        # 注意：_prev_elements 由 detect() 方法统一管理，此处不设置
-        if elements:
-            logger.debug(f"Touchpoint 检测到 {len(elements)} 个 UI 元素，来自 {len(seen_apps)} 个应用")
+            if not isinstance(flat_text, str) or not flat_text.strip():
+                continue
+
+            for line in flat_text.split("\n"):
+                line = line.strip()
+                if not line:
+                    continue
+                parsed = self._parse_flat_line(line, app_name)
+                if parsed:
+                    elements.append(parsed)
+
+            # CDP 拿到了足够元素 → 不降级
+            if source == "cdp_ax" and len(elements) >= 5:
+                break
+            # CDP 结果太少 → 清空走 native 降级
+            if source == "cdp_ax":
+                logger.debug(
+                    f"CDP 扫描 {app_name} 仅 {len(elements)} 个元素，降级到 native AX"
+                )
+                elements = []
+
         return elements
+
+    def _auto_setup_cdp(self, app_name: str) -> bool:
+        """自动为 Electron 应用配置 CDP
+
+        1. 检测应用是否为 Electron/CEF
+        2. 查找可用端口
+        3. 杀掉现有进程，以 --remote-debugging-port=N 重启
+        4. 注册到 CDP 配置
+        """
+        import subprocess
+        import socket
+        import time
+
+        app_path = self._find_app_path(app_name)
+        if not app_path:
+            logger.debug(f"找不到 {app_name} 的路径")
+            return False
+
+        if not self._is_electron_app(app_path):
+            logger.debug(f"{app_name} 不是 Electron 应用")
+            return False
+
+        # 找可用端口
+        port = self._find_free_port(9223, 9245)
+        if not port:
+            logger.warning(f"没有可用端口用于 {app_name}")
+            return False
+
+        # 找到可执行文件
+        executable = self._find_electron_executable(app_path)
+        if not executable:
+            logger.warning(f"找不到 {app_name} 的可执行文件")
+            return False
+
+        # 优雅退出旧进程
+        logger.info(f"重启 {app_name} 以启用 CDP (端口 {port})...")
+        self._quit_app_gracefully(app_name)
+        time.sleep(1.5)
+
+        # 带 CDP 启动
+        try:
+            subprocess.Popen(
+                [executable, f"--remote-debugging-port={port}"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception as e:
+            logger.warning(f"启动 {app_name} 失败: {e}")
+            return False
+
+        # 等端口就绪
+        for _ in range(10):
+            time.sleep(0.5)
+            if self._check_port_open(port):
+                break
+        else:
+            logger.warning(f"{app_name} CDP 端口 {port} 未就绪")
+            return False
+
+        # 注册 CDP 端口
+        global _CDP_PORTS
+        _CDP_PORTS[app_name] = port
+        try:
+            self._tp.configure(cdp_ports=_CDP_PORTS)
+            self._cdp_configured = True
+            logger.info(f"{app_name} CDP 自动配置完成: 端口 {port}")
+            return True
+        except Exception as e:
+            logger.warning(f"{app_name} CDP 配置失败: {e}")
+            return False
+
+    # ------------------------------------------------------------------
+    # CDP 自动配置辅助方法
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _find_app_path(app_name: str) -> Optional[str]:
+        """查找 .app 路径（支持中文名、英文名、Bundle ID）"""
+        import subprocess
+
+        # 方法1: 通过 touchpoint window 拿 PID → lsappinfo 拿 bundle path
+        try:
+            import touchpoint as tp
+            for w in tp.windows():
+                if getattr(w, "app", "") == app_name:
+                    pid = getattr(w, "pid", 0)
+                    if pid:
+                        result = subprocess.run(
+                            ["lsappinfo", "info", "-only", "bundlepath",
+                             "-p", str(pid)],
+                            capture_output=True, text=True, timeout=5,
+                        )
+                        path = result.stdout.strip().strip('"')
+                        # lsappinfo 返回格式: "LSBundlePath"="/path/to/WeChat.app"
+                        if "=" in path:
+                            path = path.split("=", 1)[1].strip().strip('"')
+                        if path and path.endswith(".app") and os.path.isdir(path):
+                            return path
+        except Exception:
+            pass
+
+        # 方法2: 遍历标准目录 + 模糊匹配
+        app_lower = app_name.lower()
+        for base in ("/Applications", os.path.expanduser("~/Applications"),
+                     "/System/Applications", os.path.expanduser("~/Desktop")):
+            try:
+                for item in os.listdir(base):
+                    if not item.endswith(".app"):
+                        continue
+                    # 匹配：item不含.app后缀后与app_name忽略大小写比较
+                    base_name = item[:-4]  # 去掉 .app
+                    if base_name.lower() == app_lower:
+                        return os.path.join(base, item)
+                    # 也匹配包含关系（如 "WeChat" 包含 "微信" 的反向）
+                    if app_lower in base_name.lower() or base_name.lower() in app_lower:
+                        return os.path.join(base, item)
+            except PermissionError:
+                continue
+
+        return None
+
+    @staticmethod
+    def _is_electron_app(app_path: str) -> bool:
+        """检测 .app 是否为 Electron/CEF 应用
+
+        特征：Contents/Frameworks/ 下存在 Helper (Renderer).app
+        """
+        frameworks = os.path.join(app_path, "Contents", "Frameworks")
+        if not os.path.isdir(frameworks):
+            return False
+        try:
+            for item in os.listdir(frameworks):
+                if "Helper (Renderer).app" in item or " Helper" in item:
+                    return True
+        except PermissionError:
+            pass
+        return False
+
+    @staticmethod
+    def _find_electron_executable(app_path: str) -> Optional[str]:
+        """找 Electron 应用的可执行文件"""
+        macos_dir = os.path.join(app_path, "Contents", "MacOS")
+        if not os.path.isdir(macos_dir):
+            return None
+        try:
+            for item in os.listdir(macos_dir):
+                full = os.path.join(macos_dir, item)
+                if os.path.isfile(full) and os.access(full, os.X_OK):
+                    return full
+        except PermissionError:
+            pass
+        return None
+
+    @staticmethod
+    def _find_free_port(start: int = 9223, end: int = 9245) -> Optional[int]:
+        """找可用 TCP 端口"""
+        import socket
+        for port in range(start, end + 1):
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.bind(("127.0.0.1", port))
+                    return port
+            except OSError:
+                continue
+        return None
+
+    @staticmethod
+    def _check_port_open(port: int) -> bool:
+        """检查端口是否已打开"""
+        import http.client
+        try:
+            conn = http.client.HTTPConnection("127.0.0.1", port, timeout=1)
+            conn.request("GET", "/json/version")
+            resp = conn.getresponse()
+            return resp.status == 200
+        except Exception:
+            return False
+
+    @staticmethod
+    def _quit_app_gracefully(app_name: str):
+        """优雅退出应用"""
+        import subprocess
+        try:
+            subprocess.run(
+                ["osascript", "-e",
+                 f'tell application "{app_name}" to quit'],
+                capture_output=True, text=True, timeout=5,
+            )
+        except Exception:
+            pass
+        # 再补一刀 kill
+        try:
+            subprocess.run(
+                ["pkill", "-f", app_name],
+                capture_output=True, text=True, timeout=3,
+            )
+        except Exception:
+            pass
 
     def _parse_flat_line(self, line: str, app_name: str) -> Optional[UIElement]:
         """解析 flat 格式的一行到 UIElement"""
@@ -253,6 +619,64 @@ class TouchpointDetector(PerceptionDetector):
             confidence=1.0,
             source=f"touchpoint/{app_name}",
         )
+
+    def _fallback_detect_visual(self, app_name: str = "") -> List[UIElement]:
+        """视觉降级：对指定应用窗口截图 OCR
+
+        先用 touchpoint 截图指定窗口，再用 RapidOCR 识别文字。
+        比 AX 方案慢（~2-5s），但适用于无法通过 AX 获取 UI 的所有应用。
+        """
+        elements: List[UIElement] = []
+
+        # 1. 用 touchpoint 截取目标窗口
+        try:
+            import touchpoint as tp
+            img = tp.screenshot(app=app_name)
+            if img is None:
+                logger.warning(f"无法截图 {app_name}")
+                return []
+            logger.debug(f"{app_name} 截图: {img.size}")
+        except Exception as e:
+            logger.warning(f"touchpoint 截图失败: {e}")
+            return []
+
+        # 2. 转 OpenCV 格式
+        try:
+            import cv2
+            import numpy as np
+            img_cv = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+        except Exception as e:
+            logger.warning(f"图片格式转换失败: {e}")
+            return []
+
+        # 3. OCR 识别
+        try:
+            from infra.mcp.servers.screen_monitor_server import _detect_elements
+            raw = _detect_elements(img_cv, detect_buttons=True, extract_text=True)
+        except Exception as e:
+            logger.warning(f"ScreenMonitor OCR 失败: {e}")
+            return []
+
+        for item in raw:
+            label = str(item.get("label", "")).strip()
+            if not label:
+                continue
+            self._element_counter += 1
+            bbox = item.get("bbox", [0, 0, 0, 0])
+            elements.append(UIElement(
+                element_id=f"v{self._element_counter:03d}",
+                type=item.get("type", "text"),
+                label=label[:120],
+                bbox=bbox,
+                center_x=(bbox[0] + bbox[2]) // 2 if len(bbox) >= 4 else 0,
+                center_y=(bbox[1] + bbox[3]) // 2 if len(bbox) >= 4 else 0,
+                confidence=float(item.get("confidence", 0.5)),
+                source=f"screenmonitor/{app_name}" if app_name else "screenmonitor",
+            ))
+
+        if elements:
+            logger.info(f"ScreenMonitor 视觉降级成功: {len(elements)} 个元素 (via {app_name})")
+        return elements
 
     def _fallback_detect(self, screenshot: Any = None) -> List[UIElement]:
         """降级：通过 MCP 调用 ScreenMonitorMCP 做纯视觉分析"""

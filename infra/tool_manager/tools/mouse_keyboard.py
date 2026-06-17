@@ -14,7 +14,8 @@ _controller = PyAutoGUIController()
 @ToolRegistry.register(
     "mouse_move",
     description="移动鼠标到指定坐标",
-    params={"x": "X坐标", "y": "Y坐标", "duration": "移动持续时间(秒)"}
+    params={"x": "X坐标", "y": "Y坐标", "duration": "移动持续时间(秒)"},
+    core=True,
 )
 def mouse_move(x: int, y: int, duration: float = 0.3) -> str:
     """移动鼠标"""
@@ -26,13 +27,14 @@ def mouse_move(x: int, y: int, duration: float = 0.3) -> str:
 
 @ToolRegistry.register(
     "mouse_click",
-    description="点击鼠标",
+    description="点击鼠标。结合 detect_ui_elements 使用：先用 detect_ui_elements 获取元素坐标，再用 mouse_click(x=center_x, y=center_y) 点击",
     params={
-        "x": "X坐标(可选)", 
+        "x": "X坐标(可选)",
         "y": "Y坐标(可选)",
         "button": "按键(left/right/middle)",
         "clicks": "点击次数"
-    }
+    },
+    core=True,
 )
 def mouse_click(x: int = None, y: int = None, button: str = "left", clicks: int = 1) -> str:
     """鼠标点击"""
@@ -46,7 +48,8 @@ def mouse_click(x: int = None, y: int = None, button: str = "left", clicks: int 
 @ToolRegistry.register(
     "mouse_double_click",
     description="双击鼠标",
-    params={"x": "X坐标(可选)", "y": "Y坐标(可选)", "button": "按键(left/right)"}
+    params={"x": "X坐标(可选)", "y": "Y坐标(可选)", "button": "按键(left/right)"},
+    core=True,
 )
 def mouse_double_click(x: int = None, y: int = None, button: str = "left") -> str:
     """双击鼠标"""
@@ -60,7 +63,8 @@ def mouse_double_click(x: int = None, y: int = None, button: str = "left") -> st
 @ToolRegistry.register(
     "mouse_scroll",
     description="滚动鼠标滚轮",
-    params={"clicks": "滚动单位(正数向上，负数向下)", "x": "X坐标(可选)", "y": "Y坐标(可选)"}
+    params={"clicks": "滚动单位(正数向上，负数向下)", "x": "X坐标(可选)", "y": "Y坐标(可选)"},
+    core=True,
 )
 def mouse_scroll(clicks: int, x: int = None, y: int = None) -> str:
     """滚动鼠标"""
@@ -80,7 +84,8 @@ def mouse_scroll(clicks: int, x: int = None, y: int = None) -> str:
         "end_x": "结束X坐标",
         "end_y": "结束Y坐标",
         "duration": "拖拽持续时间(秒)"
-    }
+    },
+    core=True,
 )
 def mouse_drag(start_x: int, start_y: int, end_x: int, end_y: int, duration: float = 0.5) -> str:
     """拖拽鼠标"""
@@ -92,8 +97,9 @@ def mouse_drag(start_x: int, start_y: int, end_x: int, end_y: int, duration: flo
 
 @ToolRegistry.register(
     "keyboard_type",
-    description="输入文本",
-    params={"text": "要输入的文本", "interval": "字符间隔时间(秒)"}
+    description="输入文本。先用 mouse_click 聚焦输入框，再用此工具输入。中文自动使用剪贴板粘贴。",
+    params={"text": "要输入的文本", "interval": "字符间隔时间(秒)"},
+    core=True,
 )
 def keyboard_type(text: str, interval: float = 0.05) -> str:
     """键盘输入
@@ -147,8 +153,9 @@ def _type_via_clipboard(text: str) -> str:
 
 @ToolRegistry.register(
     "keyboard_press",
-    description="按下键盘按键",
-    params={"key": "按键名称(如 enter, tab, escape, ctrl, alt, shift等)"}
+    description="按下键盘按键，如 enter、tab、escape 等",
+    params={"key": "按键名称(如 enter, tab, escape, ctrl, alt, shift等)"},
+    core=True,
 )
 def keyboard_press(key: str = None, keys: list = None) -> str:
     """键盘按键
@@ -172,8 +179,9 @@ def keyboard_press(key: str = None, keys: list = None) -> str:
 
 @ToolRegistry.register(
     "keyboard_hotkey",
-    description="按下组合键",
-    params={"keys": "按键列表(如 ['ctrl', 'c']，或单个键如 'enter')"}
+    description="按下组合键，如 keyboard_hotkey(keys=['command', 'c']) 复制、['command', 'v'] 粘贴",
+    params={"keys": "按键列表(如 ['ctrl', 'c']，或单个键如 'enter')"},
+    core=True,
 )
 def keyboard_hotkey(keys: list = None, key: str = None) -> str:
     """组合键
@@ -197,7 +205,8 @@ def keyboard_hotkey(keys: list = None, key: str = None) -> str:
 @ToolRegistry.register(
     "get_mouse_position",
     description="获取当前鼠标位置",
-    params={}
+    params={},
+    core=True,
 )
 def get_mouse_position() -> str:
     """获取鼠标位置"""

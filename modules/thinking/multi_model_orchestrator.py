@@ -682,6 +682,7 @@ class MultiModelOrchestrator:
             bus = get_message_bus()
             done_event = asyncio.Event()
             orch_channel = f"orchestrator_{session_id[:12]}"
+            logger.info(f"[编排器] 等待 thinking_complete: channel={orch_channel} session={session_id}")
 
             async def _on_orchestrator_msg(_msg):
                 """消息到达时检查是否为 thinking_complete"""
@@ -704,6 +705,20 @@ class MultiModelOrchestrator:
             completed = False
             try:
                 await bus.subscribe(orch_channel, _on_orchestrator_msg)
+
+                # 订阅后立即检查队列中是否已有 thinking_complete 消息
+                # （模型可能在订阅前就完成了，避免漏检）
+                pre_msgs = await bus.peek(orch_channel, limit=5)
+                for m in pre_msgs:
+                    content = m.content if hasattr(m, 'content') else {}
+                    if (
+                        isinstance(content, dict)
+                        and content.get("action") == "thinking_complete"
+                        and content.get("tier") == "large"
+                        and content.get("session_id") == session_id
+                    ):
+                        done_event.set()
+                        break
 
                 try:
                     await asyncio.wait_for(done_event.wait(), timeout=LARGE_TIMEOUT)

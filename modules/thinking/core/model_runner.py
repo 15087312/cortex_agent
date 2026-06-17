@@ -101,6 +101,7 @@ class ModelRunner:
         self._task: Optional[asyncio.Task] = None
         self._task_description = ""
         self._task_id = ""
+        self._last_known_mode = ""  # 记录当前执行模式，用于检测外部变更
         self._return_to_model_id = ""
         self._return_to_session_id = ""
         self._pending_guidance: List[str] = []
@@ -843,7 +844,8 @@ class ModelRunner:
             )
             await bus.send(msg)
             logger.info(
-                f"[ModelRunner] thinking_complete 已发送: {self.model_id}"
+                f"[ModelRunner] thinking_complete 已发送: {self.model_id} "
+                f"→ orchestrator_{self.session_id[:12]}"
             )
         except Exception as e:
             logger.warning(
@@ -1385,6 +1387,24 @@ class ModelRunner:
         for attempt in range(self.GENERATE_RETRIES):
             try:
                 for turn in range(self.MAX_CHAT_TOOL_TURNS):
+                    # ── 每轮检查执行模式是否被外部变更 ──
+                    try:
+                        from config.settings import settings as _mode_settings
+                        current_mode = _mode_settings.effective_execution_mode
+                        if current_mode != getattr(self, "_last_known_mode", ""):
+                            if self._last_known_mode:
+                                logger.info(
+                                    f"[ModelRunner] {self.model_id} 执行模式变更: "
+                                    f"{self._last_known_mode} → {current_mode}"
+                                )
+                                # 注入模式变更通知到对话上下文
+                                messages.append({
+                                    "role": "system",
+                                    "content": f"[系统通知] 执行模式已从 {self._last_known_mode} 切换为 {current_mode}，请按新模式策略执行。",
+                                })
+                            self._last_known_mode = current_mode
+                    except Exception as e:
+                        logger.warning(f"[ModelRunner] 执行模式检查失败: {e}")
                     # 主管必须使用 delegate_task，但仅在不是整合阶段时
                     # 整合阶段（_pending_delegations 为空）允许自由输出 result_summary
                     kwargs = {
