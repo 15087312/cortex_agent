@@ -1064,6 +1064,9 @@ class ModelRunner:
                             f"[ModelRunner] {self.model_id} 模型调用失败，已达最大重试: {e}"
                         )
 
+            # 所有重试耗尽 — 构造用户可见的错误消息
+            if last_error and "503" in str(last_error):
+                return "[系统] 模型 API 服务暂时繁忙（503），请稍后重试。"
             return f"[模型调用失败: {last_error}]"
 
         try:
@@ -1397,7 +1400,6 @@ class ModelRunner:
                                     f"[ModelRunner] {self.model_id} 执行模式变更: "
                                     f"{self._last_known_mode} → {current_mode}"
                                 )
-                                # 注入模式变更通知到对话上下文
                                 messages.append({
                                     "role": "system",
                                     "content": f"[系统通知] 执行模式已从 {self._last_known_mode} 切换为 {current_mode}，请按新模式策略执行。",
@@ -1875,7 +1877,9 @@ class ModelRunner:
                                             caller_model_id=self.model_id,
                                             source="model_runner",
                                         )
-                                        mcp_result = mcp.execute(request)
+                                        # 同步 MCP execute 会阻塞事件循环（工具可能耗时 20-30s），
+                                        # 导致 WebSocket 无法处理 ping 而断开。用 to_thread 避免阻塞。
+                                        mcp_result = await asyncio.to_thread(mcp.execute, request)
                                         if mcp_result.success:
                                             result = str(mcp_result.result) if mcp_result.result is not None else "(无返回值)"
                                         else:
@@ -1929,6 +1933,9 @@ class ModelRunner:
                                         tier=self.tier,
                                         content=summary,
                                         round_num=turn,
+                                        metadata={
+                                            "return_to_model_id": self._return_to_model_id,
+                                        },
                                     )
                                 except Exception as e:
                                     logger.debug(f"[Blackboard] 工具结果写入失败 (非致命): {e}")
@@ -1966,6 +1973,8 @@ class ModelRunner:
                 else:
                     logger.error(f"[ModelRunner] {self.model_id} 工具调用失败: {e}")
 
+        if last_error and "503" in str(last_error):
+            return "[系统] 模型 API 服务暂时繁忙（503），请稍后重试。"
         return f"[模型调用失败: {last_error}]"
 
     @staticmethod

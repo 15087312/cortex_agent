@@ -217,28 +217,6 @@ DEFAULT_IDENTITIES: Dict[str, dict] = {
         "expertise": ["数据分析", "信息检索", "趋势分析", "报告生成"],
         "weaknesses": ["代码实现", "系统操作"],
     },
-    "expert_security_monitor": {
-        "model_id": "expert_security_monitor_001",
-        "name": "安全监察",
-        "tier": "expert",
-        "role": "security_monitor",
-        "capability": "安全威胁检测、注入攻击识别、敏感数据泄露防护、越权操作监控（常驻运行）",
-        "personality": (
-            "你是安全监察专家，常驻运行，实时审查多模型通信中的所有内容。"
-            "你冷峻、敏锐、零容忍安全风险，不放过任何可疑信号。"
-            "你的核心职责：监听 Blackboard 全流量 → 分层审查（规则+语义）→ 分级响应（警告/拦截/终止）。"
-            "你只做安全审查，不参与业务讨论、代码编写或需求分析。"
-        ),
-        "speaking_style": "简洁、权威、仅必要时发言",
-        "expertise": [
-            "安全威胁检测",
-            "注入攻击识别",
-            "敏感数据泄露防护",
-            "越权操作监控",
-            "多模型通信安全审计",
-        ],
-        "weaknesses": ["业务决策", "代码实现", "需求分析", "功能开发"],
-    },
     "expert_customer": {
         "model_id": "expert_customer_001",
         "name": "客户",
@@ -363,11 +341,6 @@ DEFAULT_TOOL_WHITELISTS: Dict[str, List[str]] = {
         "read_file", "search_files", "web_search", "memory_match",
         "probe_list",
     ],
-    "expert_security_monitor": [
-        # 安全监察需要只读监控权限：读取对话、搜索代码、但不能修改
-        "read_file", "search_files", "memory_match",
-        "probe_list",
-    ],
     "expert_customer": [
         # 客户只需要只读权限：查看代码、阅读文件、查看探针
         "read_file", "search_files",
@@ -394,9 +367,6 @@ DEFAULT_TOOL_WHITELISTS: Dict[str, List[str]] = {
 DEFAULT_STARTUP_MODES: Dict[str, str] = {
     # 大模型 — 编排器直接激活（用户输入后发送 probe_start）
     "large": "on_demand",
-
-    # 安全监察 — 常驻，实时审查所有通信
-    "expert_security_monitor": "persistent",
 
     # 客户专家 — 探针启动，按需调用（验收时激活）
     "expert_customer": "on_demand",
@@ -566,19 +536,6 @@ DEFAULT_PERMISSIONS: Dict[str, ModelPermissions] = {
         can_write_memory=False,
         can_inject_persona=False,
         allowed_tool_categories=["query"],
-        requires_tool_approval=False,
-        can_delegate=False,
-        delegatable_tiers=[],
-        max_instances=1,
-        max_concurrent_runners=1,
-    ),
-    "expert_security_monitor": ModelPermissions(
-        can_start_probes=False,
-        can_stop_probes=False,
-        controllable_tiers=[],
-        can_write_memory=True,               # 可写安全日志
-        can_inject_persona=False,
-        allowed_tool_categories=["query", "mutation"],
         requires_tool_approval=False,
         can_delegate=False,
         delegatable_tiers=[],

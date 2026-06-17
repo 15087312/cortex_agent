@@ -307,7 +307,7 @@ ModelIdentity:
   permissions: ModelPermissions  # 权限配置
 ```
 
-12 个内置身份模板：large、code_supervisor、query_supervisor、creative_supervisor、code_reviewer、code_implementer、test_writer、analyzer、security_monitor、customer_expert、creative_writer、emotion、memory_manager。
+12 个内置身份模板：large、code_supervisor、query_supervisor、creative_supervisor、code_reviewer、code_implementer、test_writer、analyzer、customer_expert、creative_writer、emotion、memory_manager。
 
 ### 6.2 权限模型（ModelPermissions）
 
@@ -402,7 +402,7 @@ ModelPermissions:
 输入 → [输入审查] → [执行审查] → [输出审查] → 响应
          │              │              │
          ▼              ▼              ▼
-    SecurityAPI    SecurityGate    SecurityMonitor
+    SecurityAPI    SecurityGate
     (意图识别)     (工具分级审批)   (双层:规则+LLM)
 ```
 

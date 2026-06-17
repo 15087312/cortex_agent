@@ -87,6 +87,33 @@ class ConnectionManager:
 
 connection_manager = ConnectionManager()
 
+# ── model_id 到显示名称的解析缓存 ──
+_identity_name_cache: Dict[str, str] = {}
+
+def _resolve_identity_name(model_id: str) -> str:
+    """从 model_id（如 supervisor_code_001）解析显示名称（如 代码主管）"""
+    import re
+    if not model_id:
+        return ""
+    if model_id in _identity_name_cache:
+        return _identity_name_cache[model_id]
+
+    # 去除尾部 _number（如 _001、_002）
+    base = model_id.rsplit("_", 1)[0] if re.match(r".*_\d+$", model_id) else model_id
+
+    try:
+        from modules.thinking.identity import get_identities
+        identities = get_identities()
+        identity = identities.get(base)
+        if identity:
+            name = identity.get("name", "")
+            _identity_name_cache[model_id] = name
+            return name
+    except Exception:
+        pass
+    _identity_name_cache[model_id] = ""
+    return ""
+
 
 def _build_event(
         *,
@@ -270,7 +297,20 @@ class StreamThinkingSystem:
                     return None
                 tier_labels = {"large": "[总指挥]", "supervisor": "[主管]", "expert": "[专家]", "user": "[用户]"}
                 tier_icons = {"large": "🧠", "supervisor": "📊", "expert": "🔧", "user": "👤"}
-                label = tier_labels.get(dialog_tier, f"[{dialog_tier}]")
+                # model_id 和 metadata 在 raw_content（payload.content）里
+                model_id = raw_content.get("model_id", "") if isinstance(raw_content, dict) else ""
+                entry_meta = raw_content.get("metadata", {}) if isinstance(raw_content, dict) else {}
+                identity_name = _resolve_identity_name(model_id)
+                if identity_name:
+                    label = f"[{identity_name}]"
+                else:
+                    label = tier_labels.get(dialog_tier, f"[{dialog_tier}]")
+                # 如果有所属主管（expert 由 supervisor 委托），显示上级名称
+                return_to_model_id = entry_meta.get("return_to_model_id", "")
+                if return_to_model_id and dialog_tier == "expert":
+                    parent_name = _resolve_identity_name(return_to_model_id)
+                    if parent_name:
+                        label = f"[{parent_name}→{identity_name}]"
                 icon = tier_icons.get(dialog_tier, "")
                 # 专家输出截断：保留足够上下文供 TUI 展示
                 if dialog_tier == "expert" and len(dialog_text) > 2000:

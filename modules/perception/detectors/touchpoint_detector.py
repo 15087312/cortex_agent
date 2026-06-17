@@ -466,6 +466,8 @@ class TouchpointDetector(PerceptionDetector):
     def _find_app_path(app_name: str) -> Optional[str]:
         """查找 .app 路径（支持中文名、英文名、Bundle ID）"""
         import subprocess
+        import plistlib
+        import shlex
 
         # 方法1: 通过 touchpoint window 拿 PID → lsappinfo 拿 bundle path
         try:
@@ -480,7 +482,6 @@ class TouchpointDetector(PerceptionDetector):
                             capture_output=True, text=True, timeout=5,
                         )
                         path = result.stdout.strip().strip('"')
-                        # lsappinfo 返回格式: "LSBundlePath"="/path/to/WeChat.app"
                         if "=" in path:
                             path = path.split("=", 1)[1].strip().strip('"')
                         if path and path.endswith(".app") and os.path.isdir(path):
@@ -488,7 +489,20 @@ class TouchpointDetector(PerceptionDetector):
         except Exception:
             pass
 
-        # 方法2: 遍历标准目录 + 模糊匹配
+        # 方法2: mdfind 搜索显示名称（用 shell=True 避免 Python subprocess 中文编码问题）
+        try:
+            result = subprocess.run(
+                f'mdfind "kMDItemDisplayName == \'{app_name}\'"',
+                capture_output=True, text=True, timeout=5, shell=True,
+            )
+            for line in result.stdout.strip().split("\n"):
+                line = line.strip()
+                if line and line.endswith(".app") and os.path.isdir(line):
+                    return line
+        except Exception:
+            pass
+
+        # 方法3: 遍历 App 目录，检查 Info.plist + 文件名模糊匹配
         app_lower = app_name.lower()
         for base in ("/Applications", os.path.expanduser("~/Applications"),
                      "/System/Applications", os.path.expanduser("~/Desktop")):
@@ -496,13 +510,27 @@ class TouchpointDetector(PerceptionDetector):
                 for item in os.listdir(base):
                     if not item.endswith(".app"):
                         continue
-                    # 匹配：item不含.app后缀后与app_name忽略大小写比较
-                    base_name = item[:-4]  # 去掉 .app
-                    if base_name.lower() == app_lower:
-                        return os.path.join(base, item)
-                    # 也匹配包含关系（如 "WeChat" 包含 "微信" 的反向）
-                    if app_lower in base_name.lower() or base_name.lower() in app_lower:
-                        return os.path.join(base, item)
+                    full_path = os.path.join(base, item)
+                    base_name = item[:-4]
+                    base_lower = base_name.lower()
+
+                    # 文件名匹配
+                    if base_lower == app_lower or (app_lower in base_lower or base_lower in app_lower):
+                        return full_path
+
+                    # Info.plist 显示名称匹配
+                    try:
+                        plist_path = os.path.join(full_path, "Contents", "Info.plist")
+                        if not os.path.isfile(plist_path):
+                            continue
+                        with open(plist_path, "rb") as f:
+                            plist = plistlib.load(f)
+                        display_name = (plist.get("CFBundleDisplayName") or
+                                        plist.get("CFBundleName") or "").strip()
+                        if display_name and display_name.lower() == app_lower:
+                            return full_path
+                    except Exception:
+                        continue
             except PermissionError:
                 continue
 

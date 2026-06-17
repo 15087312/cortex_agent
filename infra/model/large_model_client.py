@@ -195,7 +195,12 @@ class LargeModelClient(BaseModelClient):
                 last_error = e
                 logger.error(f"[generate] Attempt {attempt} failed: {e}")
                 if attempt < max_retries:
-                    wait_time = 2 ** attempt
+                    # 503 服务繁忙：使用更长退避 (5s, 15s, 30s)，给服务恢复时间
+                    is_service_busy = "503" in str(e)
+                    if is_service_busy:
+                        wait_time = min(5 * (3 ** (attempt - 1)), 60)
+                    else:
+                        wait_time = 2 ** attempt
                     await asyncio.sleep(wait_time)
                     continue
                 break
@@ -348,7 +353,12 @@ class LargeModelClient(BaseModelClient):
             except Exception as e:
                 last_error = e
                 if attempt < max_retries:
-                    await asyncio.sleep(2 ** attempt)
+                    # 503 服务繁忙：使用更长退避 (5s, 15s, 30s)
+                    is_service_busy = "503" in str(e)
+                    if is_service_busy:
+                        await asyncio.sleep(min(5 * (3 ** (attempt - 1)), 60))
+                    else:
+                        await asyncio.sleep(2 ** attempt)
                     continue
                 break
 
@@ -489,7 +499,12 @@ class LargeModelClient(BaseModelClient):
             except Exception as e:
                 last_error = e
                 if attempt < max_retries:
-                    await asyncio.sleep(2 ** attempt)
+                    # 503 服务繁忙：使用更长退避 (5s, 15s, 30s)
+                    is_service_busy = "503" in str(e)
+                    if is_service_busy:
+                        await asyncio.sleep(min(5 * (3 ** (attempt - 1)), 60))
+                    else:
+                        await asyncio.sleep(2 ** attempt)
                     continue
                 break
 

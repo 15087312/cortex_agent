@@ -489,18 +489,8 @@ class MultiModelOrchestrator:
                 if blackboard:
                     blackboard.runtime_state["last_user_message_time"] = time.time()
 
-            # 注册 SecurityMonitor model_id 到 Blackboard（用于触发安全审查）
+            # 注入 Blackboard 到 ToolSecurityGate（用于安全拦截检查）
             if blackboard:
-                try:
-                    from modules.thinking.identity import get_identities
-                    identities = get_identities()
-                    sm_identity = identities.get("expert_security_monitor", {})
-                    sm_model_id = sm_identity.get("model_id", "expert_security_monitor_001")
-                    blackboard.set_security_monitor_id(sm_model_id)
-                except Exception:
-                    blackboard.set_security_monitor_id("expert_security_monitor_001")
-
-                # 注入 Blackboard 到 ToolSecurityGate（用于安全拦截检查）
                 try:
                     from modules.security_system.tool_security_gate import get_tool_security_gate
                     get_tool_security_gate().set_active_blackboard(blackboard)
@@ -638,33 +628,6 @@ class MultiModelOrchestrator:
             except Exception as e:
                 logger.warning(f"[编排器] 直接激活大模型失败 (非致命): {e}")
 
-            # ---- 启动 SecurityMonitor（持久运行时专家）----
-            try:
-                if runner_manager:
-                    from modules.thinking.communication.message_bus import Message, MessageType, get_message_bus
-                    bus = get_message_bus()
-                    sm_msg = Message(
-                        msg_type=MessageType.SYSTEM,
-                        sender="orchestrator",
-                        recipient=f"model_runner_manager_{str(session_id)[:8]}",
-                        content={
-                            "action": "probe_started",
-                            "probe_id": "probe_security_monitor",
-                            "target_tier": "expert",
-                            "identity_key": "expert_security_monitor",
-                            "task_description": "安全监察常驻任务：实时审查 CognitiveBlackboard 上下文",
-                            "return_to_model_id": "",
-                            "return_to_session_id": session_id or "",
-                            "priority": 10,
-                            "ttl_seconds": 3600,
-                            "caller_tier": "system",
-                        },
-                    )
-                    await bus.send(sm_msg)
-                    logger.info(f"[编排器] SecurityMonitor 已启动: session={str(session_id)[:8]}")
-            except Exception as e:
-                logger.warning(f"[编排器] SecurityMonitor 启动失败 (非致命): {e}")
-
             # 4. 用户输入（触发 probe_start → 大模型激活）
             turn_start_ts = time.time()
             if blackboard:
@@ -706,11 +669,11 @@ class MultiModelOrchestrator:
             try:
                 await bus.subscribe(orch_channel, _on_orchestrator_msg)
 
-                # 订阅后立即检查队列中是否已有 thinking_complete 消息
-                # （模型可能在订阅前就完成了，避免漏检）
-                pre_msgs = await bus.peek(orch_channel, limit=5)
-                for m in pre_msgs:
-                    content = m.content if hasattr(m, 'content') else {}
+                # 消费队列中已有的 thinking_complete 消息
+                # （模型可能在订阅前就发送了，用 receive 消费避免被旧消息干扰）
+                stale = await bus.receive(orch_channel)
+                while stale:
+                    content = stale.content if hasattr(stale, "content") else {}
                     if (
                         isinstance(content, dict)
                         and content.get("action") == "thinking_complete"
@@ -719,6 +682,7 @@ class MultiModelOrchestrator:
                     ):
                         done_event.set()
                         break
+                    stale = await bus.receive(orch_channel)
 
                 try:
                     await asyncio.wait_for(done_event.wait(), timeout=LARGE_TIMEOUT)

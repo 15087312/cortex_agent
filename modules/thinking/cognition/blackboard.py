@@ -133,12 +133,6 @@ class CognitiveBlackboard:
         # ── 安全拦截信号 ──
         self._security_block: Optional[Dict[str, Any]] = None
 
-        # ── 安全审查触发机制 ──
-        self._total_chars: int = 0           # 累计字符数
-        self._last_security_check_at: int = 0  # 上次触发时的字符数
-        self.SECURITY_CHECK_THRESHOLD: int = 3000  # 每 3000 字触发一次
-        self._security_monitor_id: str = ""  # SecurityMonitor 的 model_id
-
         # ── 增量读取追踪（替代 _last_sd_read_count）──
         self._write_cursors: Dict[str, int] = {}  # tier → 最后读取到的 index
 
@@ -297,49 +291,6 @@ class CognitiveBlackboard:
         with self._lock:
             self._security_block = None
 
-    def _check_trigger_security_review(self, content_len: int) -> None:
-        """每次写入 dialog entry 后检查是否触发安全审查"""
-        self._total_chars += content_len
-        if self._total_chars - self._last_security_check_at >= self.SECURITY_CHECK_THRESHOLD:
-            self._last_security_check_at = self._total_chars
-            self._trigger_security_review()
-
-    def _trigger_security_review(self) -> None:
-        """通过 MessageBus 异步触发 SecurityMonitor 审查"""
-        if not self._security_monitor_id:
-            return  # 未注册 SecurityMonitor，跳过
-        try:
-            import asyncio
-            from modules.thinking.communication.message_bus import (
-                Message, MessageType, get_message_bus,
-            )
-            bus = get_message_bus()
-            msg = Message(
-                msg_type=MessageType.SYSTEM,
-                sender="blackboard",
-                recipient=self._security_monitor_id,
-                content={
-                    "action": "review_request",
-                    "total_chars": self._total_chars,
-                    "session_id": self._session_id,
-                },
-            )
-            try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(bus.send(msg))
-            except RuntimeError:
-                pass
-            logger.info(
-                f"[CognitiveBlackboard] 触发安全审查: "
-                f"累计 {self._total_chars} 字 (阈值 {self.SECURITY_CHECK_THRESHOLD})"
-            )
-        except Exception as e:
-            logger.debug(f"[CognitiveBlackboard] 触发安全审查失败 (非致命): {e}")
-
-    def set_security_monitor_id(self, model_id: str) -> None:
-        """注册 SecurityMonitor 的 model_id（由编排层调用）"""
-        self._security_monitor_id = model_id
-
     # ── 对话框写入（替代 SharedDialog）──
 
     def on_change(self, callback: Callable[[str], None]) -> None:
@@ -373,6 +324,7 @@ class CognitiveBlackboard:
                     "content": entry.content,
                     "round": entry.round_num,
                     "timestamp": entry.timestamp,
+                    "metadata": entry.metadata,
                 },
                 metadata={"dialog_id": self._session_id, "tier": entry.tier},
             )
@@ -401,7 +353,6 @@ class CognitiveBlackboard:
             self._dialog_entries.append(entry)
         self._notify_change()
         self._broadcast(entry)
-        self._check_trigger_security_review(len(content_str))
         return entry
 
     def write_response(
@@ -418,7 +369,6 @@ class CognitiveBlackboard:
             self._dialog_entries.append(entry)
         self._notify_change()
         self._broadcast(entry)
-        self._check_trigger_security_review(len(content_str))
         return entry
 
     def write_user_input(self, content: str) -> DialogEntry:
@@ -432,7 +382,6 @@ class CognitiveBlackboard:
             self._dialog_entries.append(entry)
         self._notify_change()
         self._broadcast(entry)
-        self._check_trigger_security_review(len(content_str))
         return entry
 
     # ── 对话框读取（替代 SharedDialog）──

@@ -157,7 +157,7 @@ cortex --api-key your-secret-key
 | `run_loop()` | 被动等待消息驱动的长期监听 | MessageBus 事件 |
 | `run_cli_mode()` | 主动执行任务直到完成 | Supervisor/ModelRunner 调用 |
 
-内置专家角色：security_monitor（安全审计）、customer_expert（用户视角验收）、memory_manager（记忆管理）、memory_search（记忆搜索）、pre_gen_pipeline（价值观+安全+情感预生成分析）。
+内置专家角色：customer_expert（用户视角验收）、memory_manager（记忆管理）、memory_search（记忆搜索）、pre_gen_pipeline（价值观+情感预生成分析）。
 
 ### 探针驱动激活（Probe-Driven Activation）
 
@@ -206,7 +206,7 @@ cortex --api-key your-secret-key
 
 - **输入检查** → 内容审核、意图识别
 - **执行审查** → 工具调用前预检，分级审批（LOW/MEDIUM/HIGH/CRITICAL）
-- **输出审查** → 回复内容合规性校验（SecurityMonitor 双层：规则引擎 + LLM 语义分析）
+- **输出审查** → 回复内容合规性校验
 - **完整审计链** → JSONL 格式，SHA-256 哈希链，所有决策可追溯
 
 ### 安全门控（Security Gate）
@@ -215,12 +215,6 @@ cortex --api-key your-secret-key
 - **LOW** → 快速检查
 - **MEDIUM** → 路径/命令验证
 - **HIGH/CRITICAL** → LLM 审批或用户确认
-
-### SecurityMonitor（常驻专家）
-
-- 6 项规则检查：禁用命令、敏感数据、注入攻击、权限提升、输出操纵、写操作
-- 4 种响应动作：允许 / 警告 / 阻断 / 终止
-- 关键发现写入 Blackboard "最高指令"，强制影响后续所有推理
 
 ---
 

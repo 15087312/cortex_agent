@@ -1,6 +1,7 @@
 """In-memory MCP-compatible adapters for tests and local composition."""
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import Callable, Dict, List, Optional
 
@@ -56,6 +57,14 @@ class InMemoryMCPToolExecutor(ToolExecutorPort):
             )
         try:
             result = func(**(request.params or {}))
+            # 处理 async def 工具函数（同步调用时返回 coroutine）
+            if asyncio.iscoroutine(result):
+                # 已在事件循环中 → 在新线程跑独立事件循环，避免 deadlock
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    coro = result
+                    future = pool.submit(asyncio.run, coro)
+                    result = future.result(timeout=300)
             return ToolCallResult(
                 success=True,
                 result=result,

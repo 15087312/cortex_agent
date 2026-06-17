@@ -61,13 +61,6 @@ ROLE_TO_IDENTITY: Dict[str, Tuple[str, str]] = {
     "数据分析": ("expert", "expert_analyzer"),
     "analyst": ("expert", "expert_analyzer"),
 
-    # security_monitor
-    "security_monitor": ("expert", "expert_security_monitor"),  # ← delegate_task role 参数
-    "安全监察": ("expert", "expert_security_monitor"),
-    "安全审查": ("expert", "expert_security_monitor"),
-    "安全审核": ("expert", "expert_security_monitor"),
-    "安全专家": ("expert", "expert_security_monitor"),
-
     # customer
     "customer": ("expert", "expert_customer"),  # ← delegate_task role 参数
     "客户": ("expert", "expert_customer"),

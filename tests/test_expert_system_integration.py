@@ -58,7 +58,6 @@ def test_delegation_role_resolution():
         ("file_expert", "expert", "expert_implementer"),      # 新增别名
         ("文件专家", "expert", "expert_implementer"),          # 中文别名
         ("orchestrator", "large", "large"),
-        ("security_monitor", "expert", "expert_security_monitor"),
         ("customer", "expert", "expert_customer"),
     ]
     for role_name, expected_tier, expected_key in cases:

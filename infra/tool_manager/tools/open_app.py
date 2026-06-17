@@ -56,7 +56,16 @@ def open_app(app_name: str, activate_only: bool = False) -> dict:
     except Exception:
         pass
 
-    # 2. Touchpoint 找不到或未安装，用 open 命令
+    # 2. 用 TouchpointDetector 查找应用路径（支持中文名→英文路径映射）
+    app_path = ""
+    try:
+        from modules.perception.detectors.touchpoint_detector import TouchpointDetector
+        p = TouchpointDetector._find_app_path(app_name)
+        if p:
+            app_path = p
+    except Exception:
+        pass
+
     if activate_only:
         return {
             "success": False,
@@ -64,7 +73,22 @@ def open_app(app_name: str, activate_only: bool = False) -> dict:
         }
 
     try:
-        # 尝试用 open -a（支持应用名）
+        # 优先用完整路径启动（绕过 open -a 的中文名问题）
+        if app_path:
+            result = subprocess.run(
+                ["open", app_path],
+                capture_output=True, text=True, timeout=15,
+            )
+            if result.returncode == 0:
+                logger.info(f"open 路径启动成功: {app_path}")
+                return {
+                    "success": True,
+                    "action": "launched",
+                    "app": app_name,
+                    "message": f"已打开 {app_name}",
+                }
+
+        # 尝试用 open -a（支持英文应用名）
         result = subprocess.run(
             ["open", "-a", app_name],
             capture_output=True, text=True, timeout=15,
@@ -78,7 +102,6 @@ def open_app(app_name: str, activate_only: bool = False) -> dict:
                 "message": f"已打开 {app_name}",
             }
 
-        # 如果 open -a 失败，尝试 open 直接打开路径（或 open -b bundle_id）
         stderr = result.stderr or ""
         logger.warning(f"open -a '{app_name}' 失败: {stderr.strip()}")
     except subprocess.TimeoutExpired:

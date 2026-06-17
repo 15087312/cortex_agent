@@ -133,6 +133,7 @@ class REPL(Screen):
         self._ml = None
         self._suggestions: Optional[CommandSuggestions] = None
         self._paused_state = None  # ESC 暂停时保存的状态
+        self._suggestion_handled_enter = False  # 建议框已处理 Enter
 
     def compose(self) -> ComposeResult:
         with Vertical(id="header-container"):
@@ -648,6 +649,7 @@ class REPL(Screen):
             # 如果建议框有选中项，执行选中而不是提交输入
             if self._suggestions._filtered:
                 self._suggestions.action_select()
+                self._suggestion_handled_enter = True
                 event.prevent_default()
         elif event.key == "tab":
             # Tab 补全：将选中的命令名填入输入框
@@ -667,6 +669,9 @@ class REPL(Screen):
             event.prevent_default()
 
     def on_input_submitted(self, event: Input.Submitted):
+        if self._suggestion_handled_enter:
+            self._suggestion_handled_enter = False
+            return
         text = event.value.strip()
         if not text:
             return
