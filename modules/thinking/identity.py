@@ -306,6 +306,8 @@ DEFAULT_TOOL_WHITELISTS: Dict[str, List[str]] = {
         "keyboard_type", "keyboard_press", "keyboard_hotkey", "get_mouse_position",
         # MCP 远程工具发现与调用
         "mcp_discover", "mcp_call_tool", "mcp_server_status", "mcp_register_server",
+        # AI 自创工具管理
+        "create_tool", "list_my_tools", "delete_tool", "edit_tool",
         # 技能
         "create_skill",
         # 全部可见 — 所有工具都出现在非核心列表，模型可查

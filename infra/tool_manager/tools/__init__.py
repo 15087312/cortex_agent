@@ -24,4 +24,11 @@ try:
 except Exception:
     pass
 
+# 启动时恢复 AI 自创工具（从 data/ai_tools.json 持久化存储）
+try:
+    from .ai_tools import restore_ai_tools
+    restore_ai_tools()
+except Exception:
+    pass
+
 __all__ = _imported
