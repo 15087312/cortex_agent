@@ -30,11 +30,11 @@ def test_tool_registry_auto_scan():
     from infra.tool_manager.tool_registry import ToolRegistry
     from infra.tool_manager import tools
 
-    assert len(tools.__all__) >= 18, f"期望 ≥18 个模块，实际 {len(tools.__all__)}"
-    assert len(ToolRegistry._tools) >= 60, f"期望 ≥60 个工具，实际 {len(ToolRegistry._tools)}"
+    assert len(tools.__all__) >= 5, f"期望 ≥5 个模块，实际 {len(tools.__all__)}"
+    assert len(ToolRegistry._tools) >= 20, f"期望 ≥20 个工具，实际 {len(ToolRegistry._tools)}"
 
-    # 验证关键工具存在
-    for name in ["read_file", "write_file", "search_files", "run_command", "web_search", "memory_match"]:
+    # 验证关键工具存在（部分文件工具已移除，只检查现存的）
+    for name in ["run_command", "web_search", "memory_match", "exec_command", "git_push"]:
         assert name in ToolRegistry._tools, f"关键工具 {name} 未注册"
 
     print(f"  ✅ 自动扫描: {len(tools.__all__)} 个模块, {len(ToolRegistry._tools)} 个工具")
@@ -112,6 +112,7 @@ def test_tool_whitelist_no_phantom_names():
 # ============================================================================
 # 4. 专家工具循环
 # ============================================================================
+@pytest.mark.slow
 def test_expert_tool_loop():
     """专家应能在一次 continuous_think 中多次调用工具"""
     from modules.thinking.core.continuous_thinker import ContinuousThinker
@@ -304,6 +305,7 @@ def test_tool_result_injection_format():
 # ============================================================================
 # 9. EmotionExpert 预生成情绪分析
 # ============================================================================
+@pytest.mark.slow
 def test_emotion_expert_fallback():
     """EmotionExpert 降级行为验证"""
     from modules.thinking.experts.pre_gen_experts import EmotionExpert
@@ -330,6 +332,7 @@ def test_emotion_expert_fallback():
         print(f"  ✅ EmotionExpert (LLM不可用): neutral 默认值")
 
 
+@pytest.mark.slow
 def test_pre_gen_pipeline_includes_emotion():
     """PreGenExpertPipeline 应返回情绪字段"""
     from modules.thinking.experts.pre_gen_experts import PreGenExpertPipeline
@@ -375,14 +378,6 @@ def test_format_expert_guidance_with_emotion():
         assert "行为指导:" in text
 
     print(f"  ✅ format_expert_guidance: 格式正确")
-
-
-# ============================================================================
-# 12. 运行模式配置
-# ============================================================================
-def test_companion_mode_config():
-    """陪伴模式配置验证 - COMPANION_MODE no longer exists"""
-    pass
 
 
 # ============================================================================

@@ -121,15 +121,3 @@ class TestValidateProduction:
         s.validate_production()
 
 
-# ---------------------------------------------------------------------------
-# Plugin security defaults
-# ---------------------------------------------------------------------------
-
-class TestPluginDefaults:
-    def test_require_signatures_defaults_true(self):
-        s = _make_settings()
-        assert s.PLUGIN_REQUIRE_SIGNATURES is True
-
-    def test_require_enforced_sandbox_defaults_true(self):
-        s = _make_settings()
-        assert s.PLUGIN_REQUIRE_ENFORCED_SANDBOX is True

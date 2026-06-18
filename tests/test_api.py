@@ -24,12 +24,13 @@ from unittest.mock import patch, MagicMock, AsyncMock
 def _mock_lifespan():
     """Replace the app lifespan so tests do not initialise heavy subsystems."""
     import contextlib
+    from api.main import app
 
     @contextlib.asynccontextmanager
     async def _noop_lifespan(app):
         yield
 
-    with patch("api.main.app.router.lifespan_context", _noop_lifespan):
+    with patch.object(app.router, "lifespan_context", _noop_lifespan):
         yield
 
 
@@ -143,36 +144,6 @@ async def test_health_bypasses_auth(_mock_lifespan, _auth_key, _reset_rate_limit
         resp = await client.get("/health")
 
     assert resp.status_code == 200
-
-
-# ---------------------------------------------------------------------------
-# Metrics endpoint
-# ---------------------------------------------------------------------------
-
-@pytest.mark.asyncio
-async def test_metrics_returns_prometheus_format(_mock_lifespan, _no_auth, _reset_rate_limit):
-    """GET /metrics should return text/plain Prometheus exposition format."""
-    fake_metrics = "# TYPE test_counter gauge\ntest_counter 42\n"
-    with patch("modules.metrics.collector.MetricsExporter.to_prometheus", return_value=fake_metrics):
-        from api.main import app
-        async with _client(app) as client:
-            resp = await client.get("/metrics")
-
-    assert resp.status_code == 200
-    assert "text/plain" in resp.headers["content-type"]
-    assert "test_counter 42" in resp.text
-
-
-@pytest.mark.asyncio
-async def test_metrics_empty(_mock_lifespan, _no_auth, _reset_rate_limit):
-    """GET /metrics should handle an empty metric set gracefully."""
-    with patch("modules.metrics.collector.MetricsExporter.to_prometheus", return_value=""):
-        from api.main import app
-        async with _client(app) as client:
-            resp = await client.get("/metrics")
-
-    assert resp.status_code == 200
-    assert resp.text == ""
 
 
 # ---------------------------------------------------------------------------

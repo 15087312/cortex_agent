@@ -15,8 +15,7 @@ API 端点：
 9. /database - 数据库状态
 10. /resources - 资源状态
 """
-from fastapi import APIRouter, Query, Path, Body, Header, Depends, HTTPException
-from typing import Dict, Any, List, Optional
+from fastapi import APIRouter, Query, Path, Depends
 from datetime import datetime
 from pathlib import Path as FilePath
 import sqlite3
@@ -25,10 +24,8 @@ import os
 PROJECT_ROOT = FilePath(__file__).resolve().parents[2]
 import time
 
-from pydantic import BaseModel, Field
 from api.errors import AppError, ErrorCode
-from modules.management.core.collector import ModuleRegistry, StatusCollector, SystemInfo
-from modules.management.core.perf_monitor import perf_monitor
+from modules.management.core.collector import ModuleRegistry, StatusCollector
 from utils.logger import setup_logger
 
 logger = setup_logger("management_api")
@@ -51,10 +48,7 @@ _collector = StatusCollector(_registry)
 async def get_dashboard():
     """
     获取仪表盘核心数据
-    
-    返回：系统健康、资源摘要、模块状态、感知动态
     """
-    system_info = SystemInfo.get_full_info()
     module_statuses = _collector.collect_all()
     
     healthy_count = sum(1 for m in module_statuses.values() if m.get("status") == "healthy")
@@ -64,48 +58,16 @@ async def get_dashboard():
         "success": True,
         "data": {
             "timestamp": datetime.now().isoformat(),
-            "system": {
-                "status": "healthy" if healthy_count == total_count else "degraded",
-                "uptime_seconds": system_info["uptime"]["seconds"],
-                "platform": system_info["platform"]["system"]
-            },
             "health": {
                 "healthy_modules": healthy_count,
                 "total_modules": total_count,
                 "health_percent": round(healthy_count / total_count * 100) if total_count > 0 else 100
-            },
-            "resources": {
-                "cpu_percent": system_info["cpu"]["percent"],
-                "memory_percent": system_info["memory"]["percent"],
-                "disk_percent": system_info["disk"]["percent"]
             },
             "modules": {
                 name: info.get("status", "unknown")
                 for name, info in module_statuses.items()
             }
         }
-    }
-
-
-# ==============================================================================
-# 2. 系统信息 (System Information)
-# ==============================================================================
-
-@router.get("/system")
-async def get_system_info():
-    """获取完整系统信息"""
-    return {
-        "success": True,
-        "data": SystemInfo.get_full_info()
-    }
-
-
-@router.get("/system/process")
-async def get_process_info():
-    """获取当前进程信息"""
-    return {
-        "success": True,
-        "data": SystemInfo._get_process_info()
     }
 
 
@@ -394,48 +356,7 @@ async def get_database_info():
         raise AppError(ErrorCode.INTERNAL_ERROR, "管理操作失败")
 
 
-# ==============================================================================
-# 7. 资源 (Resources)
-# ==============================================================================
 
-@router.get("/resources")
-async def get_resources():
-    """获取资源使用情况"""
-    try:
-        import psutil
-        
-        cpu_percent = psutil.cpu_percent(interval=0.1)
-        memory = psutil.virtual_memory()
-        disk = psutil.disk_usage('/')
-        net_io = psutil.net_io_counters()
-        
-        return {
-            "success": True,
-            "data": {
-                "cpu": {
-                    "percent": cpu_percent,
-                    "count": psutil.cpu_count(),
-                    "count_logical": psutil.cpu_count(logical=True)
-                },
-                "memory": {
-                    "total_gb": round(memory.total / (1024**3), 2),
-                    "available_gb": round(memory.available / (1024**3), 2),
-                    "used_gb": round(memory.used / (1024**3), 2),
-                    "percent": memory.percent
-                },
-                "disk": {
-                    "total_gb": round(disk.total / (1024**3), 2),
-                    "free_gb": round(disk.free / (1024**3), 2),
-                    "percent": disk.percent
-                },
-                "network": {
-                    "bytes_sent_mb": round(net_io.bytes_sent / (1024 * 1024), 2),
-                    "bytes_recv_mb": round(net_io.bytes_recv / (1024 * 1024), 2)
-                }
-            }
-        }
-    except Exception as e:
-        raise AppError(ErrorCode.INTERNAL_ERROR, "管理操作失败")
 
 
 # ==============================================================================
@@ -607,304 +528,17 @@ async def root():
                 "memory": "/management/memory",
                 "perception": "/management/perception",
                 "database": "/management/database",
-                "resources": "/management/resources",
                 "info_process": "/management/info-process",
                 "thinking": "/management/thinking",
                 "attention": "/management/attention",
                 "security": "/management/security",
-                "health": "/management/health",
-                "probes": "/management/probes"
+                "health": "/management/health"
             }
         }
     }
 
 
-# ==============================================================================
-# 14. 性能监控 API (Probes / Performance Monitor)
-# ==============================================================================
 
-
-class ProbeRegisterRequest(BaseModel):
-    name: str = Field(..., description="探针名称")
-    metadata: Dict[str, Any] = Field(default={}, description="探针元数据")
-
-
-@router.get("/probes")
-async def get_all_probes():
-    """获取所有探针状态"""
-    probes = perf_monitor.get_all_probes()
-    summary = perf_monitor.get_probe_summary()
-    return {
-        "success": True,
-        "data": {
-            "probes": probes,
-            "summary": summary,
-        }
-    }
-
-
-@router.get("/probes/{probe_name}")
-async def get_probe_status(probe_name: str):
-    """获取单个探针状态"""
-    probe = perf_monitor.get_probe(probe_name)
-    if not probe:
-        raise AppError(ErrorCode.NOT_FOUND, f"探针 {probe_name} 不存在")
-    return {"success": True, "data": probe.to_dict()}
-
-
-@router.post("/probes/register")
-async def register_probe(request: ProbeRegisterRequest):
-    """注册探针"""
-    perf_monitor.register_probe(request.name, request.metadata)
-    return {"success": True, "data": {"message": f"探针 {request.name} 已注册"}}
-
-
-@router.post("/probes/{probe_name}/heartbeat")
-async def probe_heartbeat(
-    probe_name: str,
-    latency_ms: float = Body(0.0),
-    success: bool = Body(True),
-    metadata: Dict[str, Any] = Body(default={}),
-):
-    """探针心跳"""
-    perf_monitor.heartbeat(probe_name, latency_ms, success, metadata)
-    return {"success": True, "data": {"probe": probe_name, "status": "heartbeat_received"}}
-
-
-@router.post("/probes/{probe_name}/reset")
-async def reset_probe(probe_name: str):
-    """重置探针统计"""
-    perf_monitor.reset_probe(probe_name)
-    return {"success": True, "data": {"message": f"探针 {probe_name} 已重置"}}
-
-
-@router.post("/probes/reset-all")
-async def reset_all_probes():
-    """重置所有探针统计"""
-    perf_monitor.reset_all()
-    return {"success": True, "data": {"message": "所有探针已重置"}}
-
-
-# ==============================================================================
-# 11. 增强监控 API (metrics, alerts, health)
-# ==============================================================================
-
-@router.get("/metrics/live")
-async def get_live_metrics():
-    """
-    获取实时指标
-
-    返回当前所有活跃指标的实时值
-    """
-    try:
-        from modules.metrics.interface import get_metrics_collector
-        metrics_collector = get_metrics_collector()
-        metrics = metrics_collector.get_all()
-        return {"success": True, "data": metrics}
-    except Exception as e:
-        raise AppError(ErrorCode.INTERNAL_ERROR, "管理操作失败")
-
-
-@router.get("/metrics/history/{metric_name}")
-async def get_metric_history(
-    metric_name: str = Path(..., description="指标名称"),
-    start: float = Query(None, description="开始时间戳"),
-    end: float = Query(None, description="结束时间戳"),
-    limit: int = Query(100, ge=1, le=1000, description="返回数量")
-):
-    """
-    获取指标历史
-
-    返回指定指标的历史数据
-    """
-    try:
-        from modules.management.core.timeseries import timeseries_db
-
-        if not start:
-            start = time.time() - 3600  # 默认 1 小时
-        if not end:
-            end = time.time()
-
-        results = timeseries_db.query(metric_name, start, end, limit)
-        return {"success": True, "data": results}
-    except Exception as e:
-        raise AppError(ErrorCode.INTERNAL_ERROR, "管理操作失败")
-
-
-@router.get("/metrics/stats/{metric_name}")
-async def get_metric_stats(metric_name: str = Path(...)):
-    """
-    获取指标统计
-
-    返回直方图指标的统计信息 (avg, p50, p95, p99, max)
-    """
-    try:
-        from modules.metrics.interface import get_metrics_collector
-        metrics_collector = get_metrics_collector()
-        stats = metrics_collector.get_histogram_stats(metric_name)
-        return {"success": True, "data": stats}
-    except Exception as e:
-        raise AppError(ErrorCode.INTERNAL_ERROR, "管理操作失败")
-
-
-# ==============================================================================
-# 12. 告警 API
-# ==============================================================================
-
-class AlertRuleCreateRequest(BaseModel):
-    name: str = Field(..., description="规则名称")
-    metric: str = Field(..., description="监控指标")
-    condition: str = Field(..., description="告警条件")
-    threshold: float = Field(..., description="阈值")
-    severity: str = Field(default="warning", description="告警级别")
-    cooldown: int = Field(default=60, ge=0, description="冷却时间(秒)")
-    description: str = Field(default="", description="规则描述")
-
-@router.get("/alerts")
-async def get_alerts(
-    severity: str = Query(None, description="告警级别过滤"),
-    limit: int = Query(100, ge=1, le=500)
-):
-    """
-    获取告警列表
-
-    返回系统告警历史
-    """
-    try:
-        from modules.management.core.alert import alert_engine
-        alerts = alert_engine.get_alerts(severity, limit)
-        return {"success": True, "data": alerts}
-    except Exception as e:
-        raise AppError(ErrorCode.INTERNAL_ERROR, "管理操作失败")
-
-
-@router.get("/alerts/summary")
-async def get_alert_summary():
-    """
-    获取告警摘要
-
-    返回告警统计信息
-    """
-    try:
-        from modules.management.core.alert import alert_engine
-        summary = alert_engine.get_alert_summary()
-        return {"success": True, "data": summary}
-    except Exception as e:
-        raise AppError(ErrorCode.INTERNAL_ERROR, "管理操作失败")
-
-
-@router.get("/alerts/rules")
-async def get_alert_rules():
-    """
-    获取告警规则
-
-    返回所有告警规则
-    """
-    try:
-        from modules.management.core.alert import alert_engine
-        rules = alert_engine.get_rules()
-        return {"success": True, "data": rules}
-    except Exception as e:
-        raise AppError(ErrorCode.INTERNAL_ERROR, "管理操作失败")
-
-
-@router.post("/alerts/rules")
-async def create_alert_rule(request: AlertRuleCreateRequest):
-    """
-    创建告警规则
-    """
-    try:
-        from modules.management.core.alert import AlertRule, alert_engine
-
-        rule = AlertRule(
-            name=request.name,
-            metric=request.metric,
-            condition=request.condition,
-            threshold=request.threshold,
-            severity=request.severity,
-            cooldown=request.cooldown,
-            description=request.description
-        )
-
-        alert_engine.add_rule(rule)
-        return {"success": True, "data": {"message": f"告警规则 {rule.name} 已创建"}}
-    except Exception as e:
-        raise AppError(ErrorCode.INTERNAL_ERROR, "管理操作失败")
-
-
-@router.delete("/alerts/rules/{rule_name}")
-async def delete_alert_rule(rule_name: str):
-    """
-    删除告警规则
-
-    删除指定告警规则
-    """
-    try:
-        from modules.management.core.alert import alert_engine
-        alert_engine.remove_rule(rule_name)
-        return {"success": True, "data": {"message": f"告警规则 {rule_name} 已删除"}}
-    except Exception as e:
-        raise AppError(ErrorCode.INTERNAL_ERROR, "管理操作失败")
-
-
-@router.post("/alerts/clear")
-async def clear_alerts():
-    """
-    清除所有告警
-    """
-    try:
-        from modules.management.core.alert import alert_engine
-        alert_engine.clear_alerts()
-        return {"success": True, "data": {"message": "告警已清除"}}
-    except Exception as e:
-        raise AppError(ErrorCode.INTERNAL_ERROR, "管理操作失败")
-
-
-# ==============================================================================
-# 13. 健康检查 API
-# ==============================================================================
-
-@router.get("/health/detailed")
-async def detailed_health_check():
-    """
-    详细健康检查
-
-    执行完整系统健康检查
-    """
-    try:
-        from modules.management.core.health import health_checker
-        result = await health_checker.check_all()
-        return {"success": True, "data": result}
-    except Exception as e:
-        raise AppError(ErrorCode.INTERNAL_ERROR, "管理操作失败")
-
-
-@router.get("/health/{module}")
-async def check_module_health(module: str):
-    """
-    检查指定模块健康状态
-    """
-    try:
-        from modules.management.core.health import health_checker
-        result = await health_checker.check(module)
-        return {"success": True, "data": result}
-    except Exception as e:
-        raise AppError(ErrorCode.INTERNAL_ERROR, "管理操作失败")
-
-
-@router.post("/health/{module}/repair")
-async def repair_module(module: str):
-    """
-    自动修复模块
-
-    尝试自动修复指定模块
-    """
-    try:
-        from modules.management.core.health import health_checker
-        result = await health_checker.auto_repair(module)
-        return {"success": True, "data": result}
-    except Exception as e:
-        raise AppError(ErrorCode.INTERNAL_ERROR, "管理操作失败")
 
 
 # ==============================================================================
@@ -934,53 +568,6 @@ async def get_context_warnings(limit: int = Query(20, ge=1, le=100)):
 async def clear_context_warnings():
     """清除上下文审计警告 — GCM 已移除"""
     return {"success": True, "data": {"message": "GCM 已移除，无警告"}}
-
-
-# 15. 时序数据库 API
-# ==============================================================================
-
-@router.get("/timeseries/stats")
-async def get_timeseries_stats():
-    """
-    获取时序数据库统计
-    """
-    try:
-        from modules.management.core.timeseries import timeseries_db
-        stats = timeseries_db.get_stats()
-        return {"success": True, "data": stats}
-    except Exception as e:
-        raise AppError(ErrorCode.INTERNAL_ERROR, "管理操作失败")
-
-
-@router.get("/timeseries/events")
-async def get_events(
-    event_type: str = Query(None),
-    limit: int = Query(100, ge=1, le=500)
-):
-    """
-    获取事件列表
-    """
-    try:
-        from modules.management.core.timeseries import timeseries_db
-        events = timeseries_db.query_events(event_type, limit=limit)
-        return {"success": True, "data": events}
-    except Exception as e:
-        raise AppError(ErrorCode.INTERNAL_ERROR, "管理操作失败")
-
-
-@router.post("/timeseries/cleanup")
-async def cleanup_timeseries(days: int = Query(7, ge=1, le=90)):
-    """
-    清理过期数据
-
-    清理指定天数之前的时序数据
-    """
-    try:
-        from modules.management.core.timeseries import timeseries_db
-        result = timeseries_db.cleanup(days)
-        return {"success": True, "data": result}
-    except Exception as e:
-        raise AppError(ErrorCode.INTERNAL_ERROR, "管理操作失败")
 
 
 # ==============================================================================

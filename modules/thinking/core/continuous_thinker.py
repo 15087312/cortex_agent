@@ -14,7 +14,6 @@ import time
 import uuid
 from utils.logger import setup_logger
 from modules.thinking.context import ContextManager
-from modules.thinking.context.compression import CompressionEngine
 from modules.thinking.core.control_tools import (
     ThinkingControlDecision,
     ThinkingTaskContext,
@@ -724,8 +723,18 @@ class ContinuousThinker:
             has_skill=bool(getattr(self._runner_ref, '_active_skill', None)),
         )
 
-        prompt = await self._compress_prompt_if_needed(prompt)
+        try:
+            from config.settings import settings as _cfg
+            self._context_window_size = _cfg.CONTEXT_WINDOW_SIZE
+        except Exception:
+            self._context_window_size = 128000
+        try:
+            from modules.thinking.context.compression import get_compression_engine
+            self._context_tokens = get_compression_engine().estimate_tokens(prompt)
+        except Exception:
+            self._context_tokens = 0
         return prompt
+
     def _consume_external_guidance(self) -> str:
         """消费外部引导文本。委托 ContextManager。"""
         from modules.thinking.context.manager import ContextManager
@@ -735,43 +744,6 @@ class ContinuousThinker:
         )
         self._transient_prompts.clear()
         return result
-
-    async def _compress_prompt_if_needed(self, prompt: str) -> str:
-        """水位线上下文压缩检查 — 超出上下文窗口时压缩到指定比例。"""
-        if not prompt:
-            return prompt
-
-        try:
-            from config.settings import settings
-            window_size = settings.CONTEXT_WINDOW_SIZE
-            compress_ratio = settings.CONTEXT_COMPRESS_RATIO
-        except Exception:
-            window_size = 128000
-            compress_ratio = 0.2
-
-        self._context_window_size = window_size
-
-        try:
-            from modules.thinking.context.compression import get_compression_engine
-            engine = get_compression_engine()
-            estimated_tokens = engine.estimate_tokens(prompt)
-            self._context_tokens = estimated_tokens
-
-            # 未超出窗口，不压缩
-            if estimated_tokens <= window_size:
-                return prompt
-            # 超出窗口，压缩到窗口的 compress_ratio
-            target_tokens = int(window_size * compress_ratio)
-            self.logger.info(
-                f"[压缩] prompt ~{estimated_tokens} tokens > 窗口 {window_size}，"
-                f"压缩到 {target_tokens} tokens ({compress_ratio:.0%})"
-            )
-            compressed = await engine.compress(prompt, max_tokens=target_tokens)
-            self._context_tokens = engine.estimate_tokens(compressed)
-            return compressed
-        except Exception as e:
-            self.logger.debug(f"[压缩] 上下文压缩失败（非致命）: {e}")
-            return prompt
 
     def _build_expert_context_section(self) -> str:
         """构建可用主管和专家上下文（大模型关键信息）"""

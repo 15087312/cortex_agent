@@ -3,7 +3,7 @@ from fastapi import Depends, APIRouter, Query, Path
 from api.auth import require_api_key
 
 from api.errors import AppError, ErrorCode
-from modules.perception.difference import get_detector, get_heartbeat
+from modules.perception.difference import get_detector, get_heartbeat, get_screen_diff_source
 
 router = APIRouter(prefix="/differences", tags=["差异检测"],
     dependencies=[Depends(require_api_key)],
@@ -123,3 +123,63 @@ async def get_heartbeat_status():
     """获取存在心跳的状态"""
     heartbeat = get_heartbeat()
     return {"success": True, "data": heartbeat.get_status()}
+
+
+# ── MCP 屏幕差异源 ──
+
+
+@router.get("/screen-diff/status")
+async def get_screen_diff_source_status():
+    """获取 MCP 屏幕差异源的状态和统计"""
+    source = get_screen_diff_source()
+    return {"success": True, "data": source.get_stats()}
+
+
+@router.post("/screen-diff/start")
+async def start_screen_diff_source():
+    """启动屏幕差异检测"""
+    source = get_screen_diff_source()
+    source.start()
+    return {"success": True, "data": {"message": "屏幕差异源已启动", "stats": source.get_stats()}}
+
+
+@router.post("/screen-diff/stop")
+async def stop_screen_diff_source():
+    """停止屏幕差异检测"""
+    source = get_screen_diff_source()
+    source.stop()
+    return {"success": True, "data": {"message": "屏幕差异源已停止"}}
+
+
+@router.post("/screen-diff/restart")
+async def restart_screen_diff_source():
+    """重启屏幕差异检测"""
+    source = get_screen_diff_source()
+    source.stop()
+    source.start()
+    return {"success": True, "data": {"message": "屏幕差异源已重启", "stats": source.get_stats()}}
+
+
+@router.post("/screen-diff/capture")
+async def capture_screen_snapshot():
+    """手动截取当前屏幕，返回帧差检测结果"""
+    source = get_screen_diff_source()
+    data = source.capture()
+    return {
+        "success": True,
+        "data": {
+            "result": data,
+            "stats": source.get_stats(),
+        },
+    }
+
+
+@router.post("/screen-diff/screenshot")
+async def get_screen_screenshot():
+    """截取当前屏幕并返回 base64 编码的图像"""
+    source = get_screen_diff_source()
+    data = source.capture_screenshot()
+    return {
+        "success": True,
+        "data": data,
+    }

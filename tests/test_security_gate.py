@@ -118,7 +118,7 @@ class TestHighRiskReview:
     async def test_high_risk_no_model_rejected(self, mock_audit_gate):
         """HIGH risk tool with no LLM model is rejected in auto mode."""
         allowed, reason = await mock_audit_gate.check(
-            "exec_command", {"command": "ls"}, "expert", "m1"
+            "exec_command", {"command": "ls"}, "large", "m1"
         )
         assert allowed is False
         assert "不可用" in reason or "拒绝" in reason
@@ -137,7 +137,7 @@ class TestHighRiskReview:
         mock_settings.SECURITY_REVIEW_MODE = "llm"
         with patch("config.settings.settings", mock_settings):
             allowed, reason = await gate.check(
-                "exec_command", {"command": "ls"}, "expert", "m1"
+                "exec_command", {"command": "ls"}, "large", "m1"
             )
         assert allowed is True
         assert "操作安全" in reason
@@ -156,7 +156,7 @@ class TestHighRiskReview:
         mock_settings.SECURITY_REVIEW_MODE = "llm"
         with patch("config.settings.settings", mock_settings):
             allowed, reason = await gate.check(
-                "delete_file", {"path": "/etc/passwd"}, "expert", "m1"
+                "git_push", {"branch": "main"}, "large", "m1"
             )
         assert allowed is False
         assert "拒绝" in reason
@@ -214,67 +214,6 @@ class TestAuditLogging:
         mock_audit_gate._audit.log.side_effect = IOError("disk full")
         allowed, reason = await mock_audit_gate.check(
             "read_file", {}, "expert", "m1"
-        )
-        assert allowed is True
-
-
-# ------------------------------------------------------------------ #
-# _is_path_allowed — blocks forbidden paths
-# ------------------------------------------------------------------ #
-
-class TestIsPathAllowed:
-    def test_project_root_allowed(self):
-        """Project root directory is in the allowed list."""
-        from pathlib import Path
-        from infra.tool_manager.tools.file_manager import _is_path_allowed
-        project_root = Path(__file__).resolve().parents[1]
-        assert _is_path_allowed(project_root / "some_file.py") is True
-
-    def test_tmp_symlink_resolves_to_allowed(self):
-        """On macOS /tmp is a symlink to /private/tmp. The allowed list uses
-        unresolved Path('/tmp'), so we verify both forms against the actual
-        behavior of _is_path_allowed (which resolves the target)."""
-        from pathlib import Path
-        from infra.tool_manager.tools.file_manager import _is_path_allowed
-        # The unresolved /tmp form works (Path('/tmp') is in ALLOWED_BASE_DIRS
-        # and Path('/tmp/x').resolve() -> /private/tmp/x, then
-        # /private/tmp/x.relative_to(Path('/tmp')) fails).
-        # So the actual behavior depends on OS: on Linux it works, on macOS
-        # it does not because of symlink resolution mismatch.
-        # We just verify the function doesn't crash and returns a bool.
-        result = _is_path_allowed(Path("/tmp/somefile"))
-        assert isinstance(result, bool)
-
-    def test_etc_allowed(self):
-        """真机模式：/etc 路径也允许访问。"""
-        from pathlib import Path
-        from infra.tool_manager.tools.file_manager import _is_path_allowed
-        assert _is_path_allowed(Path("/etc/passwd")) is True
-
-    def test_root_etc_shadow_allowed(self):
-        """真机模式：/etc/shadow 也允许访问。"""
-        from pathlib import Path
-        from infra.tool_manager.tools.file_manager import _is_path_allowed
-        assert _is_path_allowed(Path("/etc/shadow")) is True
-
-    def test_var_tmp_returns_bool(self):
-        """/var/tmp behavior depends on OS symlink resolution; verify no crash."""
-        from pathlib import Path
-        from infra.tool_manager.tools.file_manager import _is_path_allowed
-        result = _is_path_allowed(Path("/var/tmp/test.txt"))
-        assert isinstance(result, bool)
-
-    def test_home_allowed(self):
-        """真机模式：用户目录允许访问。"""
-        from pathlib import Path
-        from infra.tool_manager.tools.file_manager import _is_path_allowed
-        assert _is_path_allowed(Path("/Users/other_user/secret.txt")) is True
-
-    @pytest.mark.asyncio
-    async def test_write_file_allowed(self, mock_audit_gate):
-        """真机模式：write_file 不再检查路径，直接通过 MEDIUM 检查。"""
-        allowed, reason = await mock_audit_gate.check(
-            "write_file", {"path": "/etc/shadow"}, "expert", "m1"
         )
         assert allowed is True
 

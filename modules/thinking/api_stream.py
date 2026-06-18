@@ -237,6 +237,41 @@ class StreamThinkingSystem:
             except Exception as e:
                 logger.debug(f"[SessionRepo] 保存消息失败: {e}")
 
+    async def _proactive_context_trim(self, session_id: str):
+        """水位线渐进裁剪 — 消息超窗口 80% 时丢弃最旧的 50%"""
+        session = self.sessions.get(session_id)
+        if not session:
+            return
+        messages = session.get("messages", [])
+        if len(messages) < 4:
+            return
+        try:
+            from config.settings import settings
+            window_size = settings.CONTEXT_WINDOW_SIZE
+        except Exception:
+            window_size = 128000
+        threshold = int(window_size * 0.8)
+
+        total_content = "\n".join(
+            m.get("content", "") for m in messages
+        )
+        from modules.thinking.context.compression import get_compression_engine
+        engine = get_compression_engine()
+        estimated = engine.estimate_tokens(total_content)
+
+        if estimated <= threshold:
+            return
+
+        keep_count = max(len(messages) // 2, 2)
+        kept = messages[-keep_count:]
+        dropped = len(messages) - keep_count
+        async with self._lock:
+            session["messages"] = kept
+        logger.info(
+            f"[上下文] 消息水位 {estimated} tokens > {threshold} (80%)，"
+            f"丢弃最旧 {dropped} 条，保留最新 {keep_count} 条"
+        )
+
     async def _emit(
             self,
             session_id: str,
@@ -410,6 +445,7 @@ class StreamThinkingSystem:
                 callback,
             )
 
+            await self._proactive_context_trim(session_id)
             context_messages = self.get_context(session_id)
             short_term_memory = [m.get("content", "") for m in context_messages[-6:]]
             scheduler_context = [

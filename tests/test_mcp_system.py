@@ -631,8 +631,9 @@ class TestCombinedToolExecutor:
 # factory.py — 工厂函数
 # ====================================================================
 
+@pytest.mark.slow
 class TestMCPFactory:
-    """工厂函数"""
+    """工厂函数（创建 CombinedToolProvider，加载全部工具，较慢）"""
 
     def setup_method(self):
         from infra.mcp.factory import reset_mcp_tool_service

@@ -13,18 +13,17 @@ class ModuleStatusPort(Protocol):
 class PerceptionStatusAdapter:
     def get_status(self) -> Dict[str, Any]:
         import platform
-        from modules.perception.interface import get_perception_port
         from modules.perception import get_perception_system
 
         ps = get_perception_system()
-        perception = get_perception_port()
         return {
             "status": "healthy",
             "platform": platform.system(),
             "started": ps._started,
-            "pipeline": ps.pipeline.get_stats() if ps.pipeline else None,
-            "voice_available": ps.voice_detector is not None,
-            "monitoring": ps._started,
+            "voice_detector": ps.voice_detector is not None,
+            "voice_llm_handler": ps.voice_llm_handler.is_active if ps.voice_llm_handler else False,
+            "proactive_trigger": ps.proactive_trigger is not None,
+            "world_state": ps.world_state is not None,
         }
 
 
@@ -40,14 +39,6 @@ class SecurityStatusAdapter:
         }
 
 
-class PluginStatusAdapter:
-    def get_status(self) -> Dict[str, Any]:
-        return {
-            "status": "healthy",
-            "available": True,
-        }
-
-
 def get_perception_status_port() -> ModuleStatusPort:
     return PerceptionStatusAdapter()
 
@@ -56,13 +47,8 @@ def get_security_status_port() -> ModuleStatusPort:
     return SecurityStatusAdapter()
 
 
-def get_plugin_status_port() -> ModuleStatusPort:
-    return PluginStatusAdapter()
-
-
 __all__ = [
     "ModuleStatusPort",
     "get_perception_status_port",
     "get_security_status_port",
-    "get_plugin_status_port",
 ]

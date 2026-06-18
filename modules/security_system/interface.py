@@ -1,4 +1,4 @@
-"""Security system interface facade."""
+"""安全系统接口门面。"""
 from __future__ import annotations
 
 from typing import Dict, Tuple, Protocol, runtime_checkable
@@ -13,7 +13,7 @@ class SecurityPort(Protocol):
 
 
 class SecurityApiAdapter:
-    """Adapter around the concrete SecurityAPI facade."""
+    """具体安全API门面的适配器。"""
 
     def __init__(self):
         from modules.security_system.api import get_security_api
@@ -36,7 +36,7 @@ _security_port: SecurityPort | None = None
 
 
 def get_security_port() -> SecurityPort:
-    """Return the default security port."""
+    """返回默认安全端口。"""
     global _security_port
     if _security_port is None:
         _security_port = SecurityApiAdapter()
@@ -44,7 +44,7 @@ def get_security_port() -> SecurityPort:
 
 
 def set_security_port(port: SecurityPort | None) -> None:
-    """Override the security port, primarily for integration/tests."""
+    """覆盖安全端口，主要用于集成测试。"""
     global _security_port
     _security_port = port or SecurityApiAdapter()
 

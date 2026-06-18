@@ -151,7 +151,7 @@ def _check_extreme_danger(tool_name: str, tool_params: Dict[str, Any]) -> Option
         cmd = tool_params.get("command", "")
         if cmd:
             texts.append(cmd)
-    elif tool_name in ("run_script",):
+    elif tool_name in ("run_script", "run_python"):
         code = tool_params.get("code", "")
         if code:
             texts.append(code)

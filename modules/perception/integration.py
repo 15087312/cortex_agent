@@ -70,6 +70,7 @@ class PerceptionIntegrator:
                 PerceptionEventType.SCREEN_WINDOW,
                 PerceptionEventType.SCREEN_OCR,
                 PerceptionEventType.FILE_CHANGE,
+                PerceptionEventType.SPEECH_DETECTED,
                 PerceptionEventType.DIFFERENCE_DETECTED,
             ]:
                 try:
@@ -92,10 +93,10 @@ class PerceptionIntegrator:
             intensity = payload.get('intensity', 0.5)
 
             if isinstance(description, str) and description:
-                # 去重：相同描述的最近事件不再重复添加
-                for item in self._attention_items[-3:]:
+                # 去重：仅对完全相同的描述去重（避免截断匹配误杀）
+                for item in self._attention_items[-5:]:
                     existing = item.get("description", "")
-                    if existing == description[:100]:
+                    if existing == description:
                         return
 
                 self._attention_items.append({

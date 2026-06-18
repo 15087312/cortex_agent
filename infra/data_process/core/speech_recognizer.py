@@ -40,13 +40,13 @@ class SpeechRecognizer:
         if self._initialized:
             return
         
-        if self.use_local:
-            await self._load_whisper()
-        else:
-            await self._init_cloud_asr()
+        if not self.use_local:
+            raise ValueError("当前仅支持本地Whisper模型，请设置 use_local=True")
+        
+        await self._load_whisper()
         
         self._initialized = True
-        logger.info(f"语音识别器初始化完成 (模型: {self.model_name}, 本地: {self.use_local})")
+        logger.info(f"语音识别器初始化完成 (模型: {self.model_name})")
 
     async def _load_whisper(self):
         """加载本地Whisper模型"""
@@ -55,12 +55,10 @@ class SpeechRecognizer:
             self.model = whisper.load_model(self.model_name)
             logger.info(f"Whisper模型加载成功: {self.model_name}")
         except ImportError:
-            logger.warning("Whisper未安装，将使用模拟模式")
-            self.model = None
+            raise ImportError(
+                "Whisper未安装。请运行 'pip install openai-whisper' 安装语音识别依赖"
+            )
 
-    async def _init_cloud_asr(self):
-        """初始化云端ASR"""
-        pass
 
     async def recognize(
         self,

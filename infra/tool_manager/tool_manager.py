@@ -49,20 +49,7 @@ def extract_json(raw_output: str) -> Dict[str, Any]:
         return {"tool": "none", "params": {}}
 
 
-_timeseries_db = None
 _blackbox = None
-
-
-def _get_timeseries_db():
-    global _timeseries_db
-    if _timeseries_db is not None:
-        return _timeseries_db
-    try:
-        from modules.management.interface import get_timeseries_db
-        _timeseries_db = get_timeseries_db()
-    except Exception:
-        _timeseries_db = None
-    return _timeseries_db
 
 
 def _get_blackbox():
@@ -156,26 +143,6 @@ class ToolManager:
             )
         except Exception as e:
             self.logger.warning(f"监控事件记录失败: {e}")
-
-        try:
-            tsdb = _get_timeseries_db()
-            if tsdb:
-                tsdb.write_event(
-                    event_type="tool_call",
-                    message=f"{tool_name} {'success' if success else 'failed'}",
-                    details={
-                        "tool": tool_name,
-                        "params": params or {},
-                        "success": success,
-                        "error": error,
-                        "latency_ms": round(latency_ms, 2),
-                        "source": source,
-                        "result_preview": event["result_preview"],
-                    },
-                    severity="info" if success else "warning"
-                )
-        except Exception as e:
-            self.logger.debug(f"时序数据库记录失败 (非致命): {e}")
 
         try:
             blackbox = _get_blackbox()

@@ -2,7 +2,7 @@
 
 覆盖: Event Bus, Event Types, Frame Diff, ROI Dispatcher,
       Detectors (OCR/UI/Window), ROI Manager, WorldState,
-      PerceptionDifferenceSource, Pipeline, Setup
+      Pipeline, Setup
 """
 import asyncio
 import threading
@@ -14,14 +14,11 @@ import pytest
 
 from modules.perception.events.types import PerceptionEvent, PerceptionEventType
 from modules.perception.events.bus import PerceptionEventBus
-from modules.perception.pipeline.frame_diff import FrameDiffDetector, FrameDiffResult
 from modules.perception.detectors.base import PerceptionDetector
 from modules.perception.detectors.ocr_detector import OCRDetector
 from modules.perception.detectors.ui_detector import UIDetector
 from modules.perception.detectors.window_detector import WindowDetector
 from modules.perception.state.world_state import WorldState, WorldStateManager
-from modules.perception.state.perception_source import PerceptionDifferenceSource
-from modules.perception.pipeline.capture import _NullBackend, create_capture_backend
 
 
 # ====================================================================
@@ -237,19 +234,16 @@ class TestFrameDiffDetector:
 
 class TestROIDispatcher:
     def test_dispatch_full_frame(self):
-        from modules.perception.pipeline.roi_dispatcher import dispatch
         frame = np.zeros((100, 100, 3), dtype=np.uint8)
         result = dispatch(frame, "ocr")
         assert "ocr" in result
         assert result["ocr"][0][0] == "_full_frame"
 
     def test_dispatch_empty_frame(self):
-        from modules.perception.pipeline.roi_dispatcher import dispatch
         result = dispatch(np.array([]), "ocr")
         assert result == {}
 
     def test_dispatch_none_frame(self):
-        from modules.perception.pipeline.roi_dispatcher import dispatch
         result = dispatch(None, "ocr")
         assert result == {}
 
@@ -259,12 +253,13 @@ class TestROIDispatcher:
 # ====================================================================
 
 class TestOCRDetector:
-    def test_not_available_without_engine(self):
-        """无 OCR 引擎时应该不可用"""
-        with patch.dict("sys.modules", {"rapidocr_onnxruntime": None, "paddleocr": None}):
-            det = OCRDetector()
-            assert det.is_available() is False
-            assert det.detect(np.zeros((50, 50, 3), dtype=np.uint8), "test") == []
+    def test_fallback_to_mcp_when_no_engine(self):
+        """无本地 OCR 引擎时降级到 MCP"""
+        det = OCRDetector()
+        if det._ocr_engine is not None:
+            pytest.skip("本地 OCR 引擎可用")
+        assert det._mcp_mode is True
+        assert det.is_available() is True
 
     def test_available_with_engine(self):
         """有 OCR 引擎时应该可用并能提取文本"""
@@ -315,7 +310,7 @@ class TestOCRDetector:
 
         det = OCRDetector()
         # 模拟 PaddleOCR 3.6 dict 格式
-        det._ocr_type = "paddleocr"
+        det._ocr_type = "paddle"
         det._ocr_engine = MagicMock()
         det._ocr_engine.ocr.return_value = [{
             "rec_texts": ["Hello World", "def test():", "print('hi')"],
@@ -333,7 +328,7 @@ class TestOCRDetector:
         from unittest.mock import MagicMock
 
         det = OCRDetector()
-        det._ocr_type = "paddleocr"
+        det._ocr_type = "paddle"
         det._ocr_engine = MagicMock()
         det._ocr_engine.ocr.return_value = [{
             "rec_texts": [],
@@ -465,69 +460,6 @@ class TestWorldStateManager:
 
 
 # ====================================================================
-# PerceptionDifferenceSource
-# ====================================================================
-
-class TestPerceptionDifferenceSource:
-    def test_convert_events_to_differences(self):
-        bus = PerceptionEventBus()
-        src = PerceptionDifferenceSource(event_bus=bus)
-        src.start(bus)
-
-        event = PerceptionEvent(
-            event_type=PerceptionEventType.SCREEN_OCR,
-            source="ocr",
-            payload={"text": "hello"},
-        )
-        bus.publish(event)
-
-        diffs = src.detect()
-        assert len(diffs) == 1
-        assert diffs[0].source_type == "perception"
-        assert diffs[0].category == "screen_ocr"
-
-        src.stop(bus)
-
-    def test_non_mapped_event_ignored(self):
-        bus = PerceptionEventBus()
-        src = PerceptionDifferenceSource(event_bus=bus)
-        src.start(bus)
-
-        bus.publish(PerceptionEvent(event_type="unknown.type"))
-        diffs = src.detect()
-        assert len(diffs) == 0
-
-        src.stop(bus)
-
-    def test_queue_full_drops_oldest(self):
-        bus = PerceptionEventBus()
-        src = PerceptionDifferenceSource(event_bus=bus)
-        # 缩小队列
-        import queue
-        src._event_queue = queue.Queue(maxsize=2)
-        src.start(bus)
-
-        for i in range(5):
-            bus.publish(PerceptionEvent(
-                event_type=PerceptionEventType.SCREEN_OCR,
-                payload={"i": i},
-            ))
-
-        diffs = src.detect()
-        assert len(diffs) == 2, f"队列应恰好 2 个: {len(diffs)}"
-
-        src.stop(bus)
-
-    def test_start_stop_idempotent(self):
-        bus = PerceptionEventBus()
-        src = PerceptionDifferenceSource(event_bus=bus)
-        src.start(bus)
-        src.start(bus)  # 不应重复订阅
-        src.stop(bus)
-        src.stop(bus)  # 不应报错
-
-
-# ====================================================================
 # Capture Backend Factory
 # ====================================================================
 
@@ -553,14 +485,12 @@ class TestCaptureFactory:
 
 class TestPerceptionPipeline:
     def test_stats_initial(self):
-        from modules.perception.pipeline.pipeline import PerceptionPipeline
         pipeline = PerceptionPipeline()
         stats = pipeline.get_stats()
         assert stats["frames_captured"] == 0
         assert stats["events_published"] == 0
 
     def test_register_detector(self):
-        from modules.perception.pipeline.pipeline import PerceptionPipeline
         pipeline = PerceptionPipeline()
         det = MagicMock(spec=PerceptionDetector)
         det.detector_type = "test"

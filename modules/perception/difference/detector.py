@@ -139,7 +139,7 @@ class DifferenceDetector:
         ("file", "moved"):    ("file_moved", 20.0),
         ("dialog", "created"):  ("dialog_new_message", 20.0),
         ("dialog", "modified"): ("dialog_edited", 15.0),
-        ("screen", "changed"): ("screen_changed", 15.0),
+        ("screen", "changed"): ("screen_changed", 30.0),
     }
 
     def ingest(self, target_type: str, change_type: str,

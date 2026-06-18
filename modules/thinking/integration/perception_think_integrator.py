@@ -24,7 +24,7 @@ class PerceptionThinkIntegrator:
     def __init__(
         self,
         model_manager=None,
-        min_intensity: float = 40.0,
+        min_intensity: float = 25.0,
     ):
         self.logger = setup_logger("perception_think_integrator")
         self.model_manager = model_manager

@@ -2,8 +2,7 @@
 
 从 config.settings 读取配置，选择性启动各子系统。
 
-注意：旧版屏幕感知管道（capture/frame_diff/pipeline/detectors）已被移除。
-屏幕 UI 检测统一由 TouchpointDetector（检测工具）和 ScreenMonitorMCP（MCP server）处理。
+屏幕 UI 检测由 TouchpointDetector（检测工具）和 ScreenMonitorMCP（MCP server）处理。
 """
 import threading
 from typing import Optional
@@ -26,10 +25,10 @@ class PerceptionSystem:
     """
 
     def __init__(self):
-        self.pipeline = None
         self.world_state = None
         self.event_bus = None
         self.voice_detector = None
+        self.voice_llm_handler = None
         self.proactive_trigger = None
         self.mcp_detector = None
         self._started = False
@@ -38,8 +37,8 @@ class PerceptionSystem:
         if self._started:
             self.stop()
 
-        self.pipeline = None
         self.voice_detector = None
+        self.voice_llm_handler = None
         self.proactive_trigger = None
 
         from config.settings import settings
@@ -48,6 +47,9 @@ class PerceptionSystem:
 
         cfg = {
             "voice_enabled": getattr(settings, "PERCEPTION_VOICE_ENABLED", False),
+            "voice_llm_trigger_enabled": getattr(settings, "PERCEPTION_VOICE_LLM_TRIGGER_ENABLED", False),
+            "voice_wake_prefix": getattr(settings, "PERCEPTION_VOICE_WAKE_PREFIX", "科特"),
+            "voice_wake_suffix": getattr(settings, "PERCEPTION_VOICE_WAKE_SUFFIX", "完毕"),
             "proactive_enabled": getattr(settings, "PROACTIVE_OUTREACH_ENABLED", False),
             "voice_device": getattr(settings, "PERCEPTION_VOICE_DEVICE", None),
             "voice_model": getattr(settings, "PERCEPTION_VOICE_MODEL", "tiny"),
@@ -66,12 +68,18 @@ class PerceptionSystem:
         else:
             logger.info("语音感知已禁用")
 
-        # 3. 世界状态管理器
+        # 3. 语音 LLM 指令处理器（语音识别后自动触发大模型）
+        if cfg.get("voice_llm_trigger_enabled", False):
+            self._setup_voice_llm_handler()
+        else:
+            logger.info("语音 LLM 触发已禁用")
+
+        # 4. 世界状态管理器
         self.world_state = WorldStateManager()
         if self.event_bus:
             self.world_state.start(self.event_bus)
 
-        # 4. 主动触发
+        # 5. 主动触发
         if cfg["proactive_enabled"]:
             from modules.perception.trigger import ProactiveTrigger
             self.proactive_trigger = ProactiveTrigger()
@@ -98,6 +106,13 @@ class PerceptionSystem:
             logger.warning("语音检测器: 依赖不可用")
             self.voice_detector = None
 
+    def _setup_voice_llm_handler(self):
+        """设置语音 LLM 指令处理器"""
+        from modules.perception.voice_llm_handler import VoiceLLMHandler
+        self.voice_llm_handler = VoiceLLMHandler(event_bus=self.event_bus)
+        self.voice_llm_handler.start()
+        logger.info("语音 LLM 处理器: 已启动")
+
     def start(self) -> None:
         if self._started:
             return
@@ -107,6 +122,8 @@ class PerceptionSystem:
     def stop(self) -> None:
         if not self._started:
             return
+        if self.voice_llm_handler:
+            self.voice_llm_handler.stop()
         if self.proactive_trigger:
             self.proactive_trigger.stop()
         if self.world_state:
@@ -118,9 +135,9 @@ class PerceptionSystem:
     def get_status(self) -> dict:
         return {
             "started": self._started,
-            "pipeline": None,
             "voice_available": self.voice_detector is not None,
             "voice_detector_type": self.voice_detector.detector_type if self.voice_detector else None,
+            "voice_llm_handler_active": self.voice_llm_handler.is_active if self.voice_llm_handler else False,
             "mcp_available": self.mcp_detector is not None,
             "proactive_trigger": self.proactive_trigger.get_stats() if self.proactive_trigger else None,
             "world_state": self.world_state.get_state().to_dict() if self.world_state else None,

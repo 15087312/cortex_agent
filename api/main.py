@@ -109,13 +109,25 @@ async def lifespan(app: FastAPI):
             ps = get_perception_system()
             ps.setup()
             ps.start()
-            logger.info("✓ 感知系统已启动 (屏幕监控+主动触发)")
+            logger.info("✓ 感知系统已启动")
 
             # 启动感知集成器（订阅事件并注入模型上下文）
             from modules.perception.integration import get_perception_integrator
             get_perception_integrator().start()
         except Exception as e:
             logger.error(f"✗ 感知系统启动失败: {e}")
+
+    # MCP 屏幕差异检测（独立子进程，像素级帧差）
+    if settings.SCREEN_DIFF_ENABLED and settings.DIFFERENCE_DETECTOR_ENABLED:
+        try:
+            from modules.perception.difference.sources.mcp_screen_source import get_screen_diff_source
+            src = get_screen_diff_source()
+            # 从 settings 读取配置（interval 在运行时可通过 REST API 调整）
+            src.interval = settings.SCREEN_DIFF_INTERVAL
+            src.start()
+            logger.info("✓ MCP 屏幕差异检测已启动 (screen_diff_server)")
+        except Exception as e:
+            logger.warning(f"MCP 屏幕差异检测启动失败: {e}")
 
     # 预加载视觉模型（MLX-VLM），避免首次 tool call 时阻塞事件循环
     if settings.VISION_BACKEND != "mock":
@@ -125,20 +137,6 @@ async def lifespan(app: FastAPI):
             logger.info("✓ 视觉模型（ImageAnalyzer）已预加载")
         except Exception as e:
             logger.warning(f"视觉模型预加载失败（首次调用时会重试）: {e}")
-
-    # 初始化性能监控探针
-    try:
-        from modules.management.interface import get_perf_monitor, get_timeseries_db, get_alert_engine
-        perf_monitor = get_perf_monitor()
-        timeseries_db = get_timeseries_db()
-        alert_engine = get_alert_engine()
-        perf_monitor.set_timeseries_db(timeseries_db)
-        perf_monitor.set_alert_engine(alert_engine)
-        perf_monitor.register_probe("thinking_engine", {"type": "core"})
-        perf_monitor.register_probe("memory_short_term", {"type": "storage"})
-        logger.info("✓ 性能监控器已初始化")
-    except Exception as e:
-        logger.debug(f"性能监控器初始化失败 (非致命): {e}")
 
     yield
     logger.info("Shutting down Humanoid AGI...")
@@ -150,6 +148,15 @@ async def lifespan(app: FastAPI):
         logger.info("✓ 模型调度管理器已关闭")
     except Exception as e:
         logger.debug(f"模型调度管理器关闭失败 (非致命): {e}")
+
+    # 停止 MCP 屏幕差异检测
+    if settings.SCREEN_DIFF_ENABLED and settings.DIFFERENCE_DETECTOR_ENABLED:
+        try:
+            from modules.perception.difference.sources.mcp_screen_source import get_screen_diff_source
+            get_screen_diff_source().stop()
+            logger.info("✓ MCP 屏幕差异检测已停止")
+        except Exception as e:
+            logger.debug(f"MCP 屏幕差异检测停止失败 (非致命): {e}")
 
     # 停止差异检测器心跳
     if settings.DIFFERENCE_DETECTOR_ENABLED:
@@ -455,17 +462,6 @@ async def health_check():
         "success": True,
         "data": {"status": status, "checks": checks},
     }
-
-
-@app.get("/metrics")
-async def prometheus_metrics():
-    """Prometheus 指标端点"""
-    from modules.metrics.collector import MetricsExporter
-    from fastapi.responses import PlainTextResponse
-    return PlainTextResponse(
-        content=MetricsExporter.to_prometheus(),
-        media_type="text/plain; version=0.0.4; charset=utf-8",
-    )
 
 
 # ---------------------------------------------------------------------------

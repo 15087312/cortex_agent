@@ -1,6 +1,6 @@
 """Touchpoint UI 结构化检测器（首选）
 
-使用 Touchpoint（macOS 无障碍 API）替代 OmniParser 做 UI 元素检测。
+使用 Touchpoint（macOS 无障碍 API）做 UI 元素检测。
 零模型、零推理延迟，直接从系统读取原生 UI 控件树。
 
 CDP（Chrome DevTools Protocol）支持：
@@ -707,24 +707,49 @@ class TouchpointDetector(PerceptionDetector):
         return elements
 
     def _fallback_detect(self, screenshot: Any = None) -> List[UIElement]:
-        """降级：通过 MCP 调用 ScreenMonitorMCP 做纯视觉分析"""
+        """降级：截图 + 纯视觉分析（无需 Touchpoint）"""
         try:
-            from infra.tool_manager.tool_manager import ToolManager
-            tm = ToolManager()
-            result = tm.execute_tool(
-                "analyze_ui_elements",
-                params={"detect_buttons": True, "extract_text": True},
-            )
-            if result and result.get("success"):
-                raw = result.get("result", "")
-                # 解析 ScreenMonitorMCP 返回的文本
-                elements = self._parse_screenmonitor_result(raw)
-                if elements:
-                    logger.info(f"ScreenMonitorMCP 降级成功: {len(elements)} 个元素")
-                    return elements
-            logger.warning(f"ScreenMonitorMCP 降级返回空: {result}")
+            from utils.screen_capture import capture_screen
+            import base64
+            import cv2
+            import numpy as np
+            from infra.mcp.servers.screen_monitor_server import _detect_elements
+
+            b64 = capture_screen()
+            if not b64:
+                logger.warning("降级截图失败")
+                return []
+
+            buf = np.frombuffer(base64.b64decode(b64), dtype=np.uint8)
+            img = cv2.imdecode(buf, cv2.IMREAD_COLOR)
+            if img is None:
+                logger.warning("降级截图解码失败")
+                return []
+
+            raw = _detect_elements(img, detect_buttons=True, extract_text=True)
+            elements = []
+            for item in raw:
+                label = str(item.get("label", "")).strip()
+                if not label:
+                    continue
+                self._element_counter += 1
+                bbox = item.get("bbox", [0, 0, 0, 0])
+                elements.append(UIElement(
+                    element_id=f"v{self._element_counter:03d}",
+                    type=item.get("type", "text"),
+                    label=label[:120],
+                    bbox=bbox,
+                    center_x=(bbox[0] + bbox[2]) // 2 if len(bbox) >= 4 else 0,
+                    center_y=(bbox[1] + bbox[3]) // 2 if len(bbox) >= 4 else 0,
+                    confidence=float(item.get("confidence", 0.5)),
+                    source="screenmonitor/fallback",
+                ))
+
+            if elements:
+                logger.info(f"ScreenMonitor 视觉降级成功: {len(elements)} 个元素")
+            return elements
         except Exception as e:
-            logger.warning(f"ScreenMonitorMCP 降级失败: {e}")
+            logger.warning(f"ScreenMonitor 视觉降级失败: {e}")
         return []
 
     def _parse_screenmonitor_result(self, raw_text: str) -> List[UIElement]:

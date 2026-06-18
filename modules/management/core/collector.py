@@ -7,19 +7,12 @@
 3. 健康检查 - 检查各模块运行状态
 """
 import time
-import psutil
-import platform
 import os
-import sqlite3
-from pathlib import Path
 from typing import Dict, Any, List, Optional, Callable
 from dataclasses import dataclass, field
-from datetime import datetime
 from utils.logger import setup_logger
 
 logger = setup_logger("management_core")
-
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
 @dataclass
@@ -27,10 +20,10 @@ class ModuleInfo:
     """模块信息"""
     name: str
     module_path: str
-    has_api: bool
-    has_core: bool
-    status: str = "unknown"
-    last_check: float = 0
+    has_api: bool = False
+    has_core: bool = False
+    status: str = "discovered"
+    last_check: float = 0.0
     info: Dict[str, Any] = field(default_factory=dict)
     capabilities: List[str] = field(default_factory=list)
 
@@ -106,7 +99,7 @@ class StatusCollector:
     def _register_collectors(self) -> None:
         """注册各模块的收集器"""
         self._collectors["memory"] = self._collect_memory
-        self._collectors["resource"] = self._collect_resource
+
         self._collectors["thinking"] = self._collect_thinking
         self._collectors["attention"] = self._collect_attention
         self._collectors["info_process"] = self._collect_info_process
@@ -146,36 +139,6 @@ class StatusCollector:
             "note": "事件驱动记忆 (EventReducer + EventStore + EventRetrieval)",
             "event_count": 0,
         }
-    
-    def _collect_resource(self) -> Dict[str, Any]:
-        """收集资源模块状态"""
-        try:
-            import psutil
-            
-            cpu_percent = psutil.cpu_percent(interval=0.1)
-            memory = psutil.virtual_memory()
-            disk = psutil.disk_usage('/')
-            
-            return {
-                "status": "healthy",
-                "cpu": {
-                    "percent": cpu_percent,
-                    "count": psutil.cpu_count()
-                },
-                "memory": {
-                    "total_gb": round(memory.total / (1024**3), 2),
-                    "used_gb": round(memory.used / (1024**3), 2),
-                    "percent": memory.percent
-                },
-                "disk": {
-                    "total_gb": round(disk.total / (1024**3), 2),
-                    "free_gb": round(disk.free / (1024**3), 2),
-                    "percent": disk.percent
-                },
-                "platform": platform.system()
-            }
-        except Exception as e:
-            return {"status": "error", "error": "Resource collection failed"}
     
     def _collect_thinking(self) -> Dict[str, Any]:
         """收集思维模块状态"""
@@ -264,10 +227,6 @@ class StatusCollector:
         except Exception as e:
             return {"status": "error", "error": "Resource collection failed"}
     
-    def _collect_plugin(self) -> Dict[str, Any]:
-        """插件系统已移除"""
-        return {"status": "healthy", "note": "插件系统已移除", "available": False}
-
     def _collect_database(self) -> Dict[str, Any]:
         """收集数据库模块状态"""
         try:
@@ -321,85 +280,4 @@ class StatusCollector:
             return {"status": "error", "error": "Resource collection failed"}
 
 
-class SystemInfo:
-    """系统信息收集器"""
-    
-    @staticmethod
-    def get_full_info() -> Dict[str, Any]:
-        """获取完整系统信息"""
-        cpu_percent = psutil.cpu_percent(interval=0.1)
-        memory = psutil.virtual_memory()
-        disk = psutil.disk_usage('/')
-        
-        boot_time = datetime.fromtimestamp(psutil.boot_time())
-        uptime = datetime.now() - boot_time
-        
-        return {
-            "platform": {
-                "system": platform.system(),
-                "release": platform.release(),
-                "version": platform.version(),
-                "machine": platform.machine(),
-                "processor": platform.processor()
-            },
-            "uptime": {
-                "started_at": boot_time.isoformat(),
-                "seconds": int(uptime.total_seconds()),
-                "days": uptime.days,
-                "hours": uptime.seconds // 3600
-            },
-            "cpu": {
-                "count": psutil.cpu_count(),
-                "count_logical": psutil.cpu_count(logical=True),
-                "percent": cpu_percent,
-                "freq": psutil.cpu_freq()._asdict() if psutil.cpu_freq() else None
-            },
-            "memory": {
-                "total_gb": round(memory.total / (1024**3), 2),
-                "available_gb": round(memory.available / (1024**3), 2),
-                "used_gb": round(memory.used / (1024**3), 2),
-                "percent": memory.percent
-            },
-            "disk": {
-                "total_gb": round(disk.total / (1024**3), 2),
-                "used_gb": round(disk.used / (1024**3), 2),
-                "free_gb": round(disk.free / (1024**3), 2),
-                "percent": disk.percent
-            },
-            "network": SystemInfo._get_network_info(),
-            "process": SystemInfo._get_process_info()
-        }
-    
-    @staticmethod
-    def _get_network_info() -> Dict[str, Any]:
-        """获取网络信息"""
-        try:
-            net_io = psutil.net_io_counters()
-            return {
-                "bytes_sent": net_io.bytes_sent,
-                "bytes_recv": net_io.bytes_recv,
-                "packets_sent": net_io.packets_sent,
-                "packets_recv": net_io.packets_recv
-            }
-        except Exception as e:
-            logger.warning(f"获取网络信息失败: {e}")
-            return {}
 
-    @staticmethod
-    def _get_process_info() -> Dict[str, Any]:
-        """获取当前进程信息"""
-        try:
-            process = psutil.Process()
-            with process.oneshot():
-                return {
-                    "pid": process.pid,
-                    "name": process.name(),
-                    "status": process.status(),
-                    "cpu_percent": process.cpu_percent(),
-                    "memory_mb": round(process.memory_info().rss / (1024 * 1024), 2),
-                    "num_threads": process.num_threads(),
-                    "open_files": len(process.open_files())
-                }
-        except Exception as e:
-            logger.warning(f"获取进程信息失败: {e}")
-            return {}

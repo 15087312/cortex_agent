@@ -244,6 +244,9 @@ class Settings(BaseSettings):
     PERCEPTION_VOICE_LANGUAGE: str = "zh"              # 语音识别语言
     PERCEPTION_VOICE_ENERGY_THRESHOLD: int = 300       # 静音能量阈值（越低越灵敏）
     PERCEPTION_VOICE_TIMEOUT: float = 10.0             # 单次录音超时（秒）
+    PERCEPTION_VOICE_LLM_TRIGGER_ENABLED: bool = False  # 语音识别后是否自动触发大模型
+    PERCEPTION_VOICE_WAKE_PREFIX: str = "科特"           # 语音触发大模型时的唤醒前缀
+    PERCEPTION_VOICE_WAKE_SUFFIX: str = "完毕"           # 语音触发大模型时的结束后缀
 
     # ── 主动感知（差异检测 → 触发响应） ────────────────────
     # 负责分析被动感知数据，检测变化并触发思考/搭话等响应
@@ -254,6 +257,11 @@ class Settings(BaseSettings):
     PERCEPTION_TRIGGER_THINK: bool = True              # 差异是否触发单次思考
     PERCEPTION_TRIGGER_MIN_INTENSITY: float = 50.0     # 触发思考的最小差异强度 (0-100)
     PERCEPTION_TRIGGER_COOLDOWN: int = 60              # 触发冷却（秒）
+
+    # MCP 屏幕差异检测（像素级帧差）
+    SCREEN_DIFF_ENABLED: bool = True                   # 屏幕帧差检测
+    SCREEN_DIFF_INTERVAL: float = 1.0                  # 检测间隔（秒）
+    SCREEN_DIFF_CHANGE_THRESHOLD: float = 0.01         # 最小变化面积比例 (1%)
 
     # 主动搭话（空闲时主动与用户交互）
     PROACTIVE_OUTREACH_ENABLED: bool = True            # 是否启用自动搭话

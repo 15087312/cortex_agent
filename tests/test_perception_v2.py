@@ -1,6 +1,6 @@
 """感知系统补全测试 — 覆盖审计发现的测试缺口
 
-覆盖: ThinkTrigger, VoiceDetector(mock), Pipeline集成, WorldState边界,
+覆盖: VoiceDetector(mock), Pipeline集成, WorldState边界,
       Event Bus异步, ROI Manager边界, FrameDiff边界, Setup配置驱动
 """
 import asyncio
@@ -15,13 +15,10 @@ import pytest
 
 from modules.perception.events.types import PerceptionEvent, PerceptionEventType
 from modules.perception.events.bus import PerceptionEventBus
-from modules.perception.pipeline.frame_diff import FrameDiffDetector
 from modules.perception.detectors.voice_detector import VoiceDetector
 from modules.perception.detectors.ocr_detector import OCRDetector
 from modules.perception.detectors.window_detector import WindowDetector
 from modules.perception.state.world_state import WorldState, WorldStateManager
-from modules.perception.state.perception_source import PerceptionDifferenceSource
-from modules.perception.state.think_trigger import PerceptionThinkTrigger
 
 
 # ====================================================================
@@ -89,127 +86,6 @@ class TestEventBusAdvanced:
         e1 = PerceptionEvent(event_type="test")
         e2 = PerceptionEvent(event_type="test")
         assert e1.event_id != e2.event_id
-
-
-# ====================================================================
-# ThinkTrigger — 完整测试
-# ====================================================================
-
-class TestThinkTrigger:
-    def test_intensity_filter(self):
-        bus = PerceptionEventBus()
-        trigger = PerceptionThinkTrigger(min_intensity=50, cooldown_seconds=0)
-        trigger.start(bus)
-
-        # 低强度不触发
-        bus.publish(PerceptionEvent(
-            event_type=PerceptionEventType.DIFFERENCE_DETECTED,
-            payload={"intensity": 30},
-        ))
-        time.sleep(0.05)
-        assert trigger._trigger_count == 0
-
-        # 高强度触发
-        bus.publish(PerceptionEvent(
-            event_type=PerceptionEventType.DIFFERENCE_DETECTED,
-            payload={"intensity": 60},
-        ))
-        time.sleep(0.05)
-        assert trigger._trigger_count == 1
-
-        trigger.stop(bus)
-
-    def test_cooldown(self):
-        bus = PerceptionEventBus()
-        trigger = PerceptionThinkTrigger(min_intensity=50, cooldown_seconds=1)
-        trigger.start(bus)
-
-        bus.publish(PerceptionEvent(
-            event_type=PerceptionEventType.DIFFERENCE_DETECTED,
-            payload={"intensity": 60},
-        ))
-        time.sleep(0.05)
-        assert trigger._trigger_count == 1
-
-        # 冷却期内不触发
-        bus.publish(PerceptionEvent(
-            event_type=PerceptionEventType.DIFFERENCE_DETECTED,
-            payload={"intensity": 70},
-        ))
-        time.sleep(0.05)
-        assert trigger._trigger_count == 1
-
-        # 冷却过后触发
-        time.sleep(1.1)
-        bus.publish(PerceptionEvent(
-            event_type=PerceptionEventType.DIFFERENCE_DETECTED,
-            payload={"intensity": 60},
-        ))
-        time.sleep(0.05)
-        assert trigger._trigger_count == 2
-
-        trigger.stop(bus)
-
-    def test_trigger_count_in_lock(self):
-        """验证计数器在锁内，不会出现双触发"""
-        bus = PerceptionEventBus()
-        trigger = PerceptionThinkTrigger(min_intensity=50, cooldown_seconds=0)
-        trigger.start(bus)
-
-        # 并发发送
-        threads = []
-        for _ in range(10):
-            t = threading.Thread(
-                target=lambda: bus.publish(PerceptionEvent(
-                    event_type=PerceptionEventType.DIFFERENCE_DETECTED,
-                    payload={"intensity": 60},
-                ))
-            )
-            threads.append(t)
-            t.start()
-        for t in threads:
-            t.join()
-        time.sleep(0.2)
-
-        # 所有事件都应该触发（cooldown=0）
-        assert trigger._trigger_count == 10
-        trigger.stop(bus)
-
-    def test_build_context(self):
-        trigger = PerceptionThinkTrigger()
-        event = PerceptionEvent(
-            event_type=PerceptionEventType.DIFFERENCE_DETECTED,
-            payload={
-                "intensity": 60, "category": "idle_alert",
-                "source_type": "time", "description": "空闲 15 分钟",
-            },
-        )
-        ctx = trigger._build_context(event)
-        assert "idle_alert" in ctx
-        assert "空闲 15 分钟" in ctx
-        assert "60" in ctx
-
-    def test_get_stats(self):
-        trigger = PerceptionThinkTrigger(min_intensity=40, cooldown_seconds=30)
-        stats = trigger.get_stats()
-        assert stats["trigger_count"] == 0
-        assert stats["min_intensity"] == 40
-        assert stats["cooldown_seconds"] == 30
-        assert stats["has_trigger_port"] is False
-
-    def test_set_trigger_port(self):
-        trigger = PerceptionThinkTrigger()
-        assert trigger._trigger_port is None
-        port = MagicMock()
-        trigger.set_trigger_port(port)
-        assert trigger._trigger_port is port
-
-    def test_stop_idempotent(self):
-        bus = PerceptionEventBus()
-        trigger = PerceptionThinkTrigger()
-        trigger.start(bus)
-        trigger.stop(bus)
-        trigger.stop(bus)  # 不应报错
 
 
 # ====================================================================
@@ -356,67 +232,6 @@ class TestWorldStateManagerAdvanced:
 
 
 # ====================================================================
-# PerceptionDifferenceSource — 边界测试
-# ====================================================================
-
-class TestPerceptionDifferenceSourceAdvanced:
-    def test_difference_fields(self):
-        bus = PerceptionEventBus()
-        src = PerceptionDifferenceSource(event_bus=bus)
-        src.start(bus)
-
-        bus.publish(PerceptionEvent(
-            event_type=PerceptionEventType.SPEECH_DETECTED,
-            source="voice",
-            payload={"text": "hello"},
-        ))
-        diffs = src.detect()
-        assert len(diffs) == 1
-        d = diffs[0]
-        assert d.source_type == "perception"
-        assert d.category == "speech"
-        assert d.intensity == 35.0
-        assert d.ttl == 300
-        assert "text" in d.payload
-
-        src.stop(bus)
-
-    def test_fifo_ordering(self):
-        bus = PerceptionEventBus()
-        src = PerceptionDifferenceSource(event_bus=bus)
-        src.start(bus)
-
-        for i in range(5):
-            bus.publish(PerceptionEvent(
-                event_type=PerceptionEventType.SCREEN_OCR,
-                payload={"i": i},
-            ))
-        diffs = src.detect()
-        assert len(diffs) == 5
-        assert diffs[0].payload["i"] == 0
-        assert diffs[4].payload["i"] == 4
-
-        src.stop(bus)
-
-    def test_detect_drains_queue(self):
-        bus = PerceptionEventBus()
-        src = PerceptionDifferenceSource(event_bus=bus)
-        src.start(bus)
-
-        bus.publish(PerceptionEvent(event_type=PerceptionEventType.SCREEN_OCR))
-        bus.publish(PerceptionEvent(event_type=PerceptionEventType.SCREEN_WINDOW))
-        diffs = src.detect()
-        assert len(diffs) == 2
-        assert src.detect() == []  # 队列已空
-
-        src.stop(bus)
-
-    def test_source_type(self):
-        src = PerceptionDifferenceSource()
-        assert src.source_type == "perception"
-
-
-# ====================================================================
 # FrameDiffDetector — 边界测试
 # ====================================================================
 
@@ -479,21 +294,12 @@ class TestFrameDiffDetectorAdvanced:
 # ====================================================================
 
 class TestPerceptionSystemSetup:
-    def test_screen_disabled(self):
+    def test_default_setup_pipeline_none(self):
         from modules.perception.setup import get_perception_system
         system = get_perception_system()
-        system.setup(screen_enabled=False, voice_enabled=False, trigger_enabled=False)
+        system.setup()
         status = system.get_status()
         assert status["pipeline"] is None
-        system.stop()
-
-    def test_trigger_enabled(self):
-        from modules.perception.setup import get_perception_system
-        system = get_perception_system()
-        system.setup(screen_enabled=False, trigger_enabled=True, trigger_min_intensity=40)
-        status = system.get_status()
-        assert status["think_trigger"] is not None
-        assert status["think_trigger"]["min_intensity"] == 40
         system.stop()
 
     def test_voice_disabled(self):
@@ -504,21 +310,38 @@ class TestPerceptionSystemSetup:
         assert status["voice_available"] is False
         system.stop()
 
+    def test_voice_enabled(self):
+        from modules.perception.setup import get_perception_system
+        system = get_perception_system()
+        system.setup(voice_enabled=True)
+        status = system.get_status()
+        # 语音依赖可能不可用，但至少不会报错
+        assert "voice_available" in status
+        system.stop()
+
     def test_repeated_setup_no_leak(self):
         from modules.perception.setup import get_perception_system
         system = get_perception_system()
-        system.setup(screen_enabled=True, fps=1)
-        system.setup(screen_enabled=False, trigger_enabled=False)
-        system.setup(screen_enabled=True, fps=2)
+        system.setup(voice_enabled=False)
+        system.setup(voice_enabled=False)
+        system.setup(voice_enabled=False)
         status = system.get_status()
-        assert status["pipeline"] is not None
+        assert status["pipeline"] is None
+        assert "voice_available" in status
         system.stop()
 
-    def test_set_think_trigger_port(self):
+    def test_proactive_trigger_enabled(self):
         from modules.perception.setup import get_perception_system
         system = get_perception_system()
-        system.setup(trigger_enabled=True)
-        port = MagicMock()
-        system.set_think_trigger_port(port)
-        assert system.think_trigger._trigger_port is port
+        system.setup(proactive_enabled=True)
+        status = system.get_status()
+        assert status["proactive_trigger"] is not None
+        system.stop()
+
+    def test_proactive_trigger_disabled(self):
+        from modules.perception.setup import get_perception_system
+        system = get_perception_system()
+        system.setup(proactive_enabled=False)
+        status = system.get_status()
+        assert status["proactive_trigger"] is None
         system.stop()

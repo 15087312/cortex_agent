@@ -1,6 +1,6 @@
 """
 图像分析核心 - 支持本地多模态模型 + 云API
-支持：Qwen-VL (MLX/transformers) / LLaVA / GPT-4V / UI检测 / 模拟模式
+支持：Qwen-VL (MLX/transformers) / LLaVA / GPT-4V / UI检测
 
 平台适配:
   - macOS (Apple Silicon): 优先 mlx-vlm (4-bit量化, ~4GB), 回退 transformers+mps
@@ -88,11 +88,8 @@ class ImageAnalyzer:
             await self._load_llava()
         elif self.model_type == "openai":
             await self._init_openai()
-        elif self.model_type == "unavailable":
-            logger.error("视觉后端不可用，跳过初始化（后续调用可重试）")
-            return
         else:
-            logger.info("使用模拟模式")
+            raise ValueError(f"不支持的视觉后端类型: {self.model_type}")
 
         self._initialized = True
         logger.info(f"图像分析器初始化完成 (类型: {self.model_type})")
@@ -301,15 +298,7 @@ class ImageAnalyzer:
             logger.error(f"Qwen-VL 加载失败: {e}")
             self.model_type = "unavailable"
 
-    async def _load_llava(self):
-        """加载LLaVA模型"""
-        try:
-            import llava
-            self.model = llava.load_img
-            logger.info("LLaVA模型加载成功")
-        except ImportError:
-            logger.warning("LLaVA未安装，使用模拟模式")
-            self.model_type = "mock"
+
 
     async def _init_openai(self):
         """初始化云端视觉 API"""
@@ -345,8 +334,6 @@ class ImageAnalyzer:
             return await self._analyze_mlx_vlm(image_data, prompt)
         elif self.model_type == "qwen_vl":
             return await self._analyze_qwen_vl(image_data, prompt)
-        elif self.model_type == "llava":
-            return await self._analyze_llava(image_data, prompt)
         elif self.model_type == "openai":
             return await self._analyze_openai(image_data, prompt)
         elif self.model_type == "unavailable":
@@ -429,26 +416,7 @@ class ImageAnalyzer:
             import os
             os.unlink(temp_path)
 
-    async def _analyze_llava(
-        self,
-        image_data: bytes,
-        prompt: str
-    ) -> Dict[str, Any]:
-        """使用LLaVA分析"""
-        import llava
-        
-        image = Image.open(io.BytesIO(image_data))
-        response = llava.conversation([
-            {"role": "user", "content": prompt}
-        ], image)
-        
-        return {
-            "description": response,
-            "objects": [],
-            "scene": "unknown",
-            "colors": [],
-            "format": "llava"
-        }
+
 
     async def _analyze_openai(
         self,
@@ -509,31 +477,7 @@ class ImageAnalyzer:
         finally:
             await client.close()
 
-    async def _analyze_mock(
-        self,
-        image_data: bytes,
-        prompt: str
-    ) -> Dict[str, Any]:
-        """模拟分析"""
-        try:
-            image = Image.open(io.BytesIO(image_data))
-            width, height = image.size
-            mode = image.mode
-        except Exception:
-            width, height, mode = 0, 0, "unknown"
-        
-        return {
-            "description": f"[模拟分析] 这是一张 {width}x{height} 的 {mode} 图像。{prompt}",
-            "objects": [
-                {"label": "物体1", "confidence": 0.9, "bbox": [10, 10, 100, 100]},
-                {"label": "物体2", "confidence": 0.8, "bbox": [120, 50, 200, 150]}
-            ],
-            "scene": "室内场景",
-            "colors": ["blue", "white", "gray"],
-            "width": width,
-            "height": height,
-            "format": "mock"
-        }
+
 
     async def _detect_objects(self, image_data: bytes) -> List[Dict[str, Any]]:
         """目标检测（简化版）"""
@@ -714,71 +658,7 @@ class ImageAnalyzer:
         finally:
             await client.close()
 
-    async def _detect_ui_mock(
-        self,
-        image_data: bytes,
-        element_types: List[str]
-    ) -> Dict[str, Any]:
-        """模拟UI元素检测（用于测试）"""
-        try:
-            image = Image.open(io.BytesIO(image_data))
-            width, height = image.size
-        except Exception:
-            width, height = 1920, 1080
-        
-        elements = [
-            {
-                "type": "button",
-                "text": "提交",
-                "bounds": {"x": 800, "y": 500, "width": 120, "height": 40},
-                "center": {"x": 860, "y": 520},
-                "colors": {"bg": "#3498db", "text": "#ffffff"},
-                "confidence": 0.95
-            },
-            {
-                "type": "input",
-                "text": "",
-                "placeholder": "请输入...",
-                "bounds": {"x": 600, "y": 400, "width": 400, "height": 50},
-                "center": {"x": 800, "y": 425},
-                "colors": {"bg": "#ffffff", "border": "#cccccc"},
-                "confidence": 0.90
-            },
-            {
-                "type": "text",
-                "text": "欢迎使用",
-                "bounds": {"x": 700, "y": 300, "width": 200, "height": 30},
-                "center": {"x": 800, "y": 315},
-                "colors": {"text": "#333333"},
-                "confidence": 0.99
-            },
-            {
-                "type": "icon",
-                "text": "菜单",
-                "bounds": {"x": 50, "y": 50, "width": 40, "height": 40},
-                "center": {"x": 70, "y": 70},
-                "colors": {"bg": "transparent", "icon": "#666666"},
-                "confidence": 0.85
-            },
-            {
-                "type": "link",
-                "text": "了解更多",
-                "bounds": {"x": 750, "y": 600, "width": 100, "height": 25},
-                "center": {"x": 800, "y": 612},
-                "colors": {"text": "#0066cc"},
-                "confidence": 0.92
-            }
-        ]
-        
-        return {
-            "elements": elements,
-            "layout": {
-                "width": width,
-                "height": height,
-                "grid": self._estimate_grid(width, height)
-            },
-            "summary": f"检测到 {len(elements)} 个UI元素"
-        }
+
 
     def _estimate_grid(self, width: int, height: int) -> str:
         """估算布局网格"""

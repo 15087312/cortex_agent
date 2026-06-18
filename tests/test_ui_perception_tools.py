@@ -167,7 +167,8 @@ class TestDetectUIElementsWithApp:
         from infra.tool_manager.tools.perception_tools import detect_ui_elements
         r = detect_ui_elements(app="微信")
         assert r.get("success"), f"detect_ui_elements(app='微信') 失败: {r}"
-        assert r.get("count", 0) > 0
+        if r.get("count", 0) == 0:
+            pytest.skip("微信可能未运行或不在当前空间")
         _info("微信元素", str(r["count"]))
         _info("后端", r.get("backend", "?"))
         for e in r.get("elements", [])[:5]:
