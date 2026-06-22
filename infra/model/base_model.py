@@ -4,9 +4,9 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, AsyncGenerator, List, Callable
-import asyncio
 import aiohttp
 import json
+import ssl
 from datetime import datetime
 import logging
 
@@ -143,11 +143,34 @@ class BaseModelClient(ABC):
         """
         pass
     
+    @staticmethod
+    def _create_ssl_context() -> ssl.SSLContext:
+        """创建兼容的 SSL 上下文。
+
+        针对 Python 3.13 + OpenSSL 3.6 环境做兼容处理：
+        - 保留完整证书验证（安全）
+        - 限制最低 TLS 1.2，避免协议协商问题
+        - 使用 @SECLEVEL=1，OpenSSL 3.6 默认 SECLEVEL=2 可能拒绝部分兼容密码套件
+        """
+        ctx = ssl.create_default_context()
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+        try:
+            ctx.set_ciphers('DEFAULT:@SECLEVEL=1')
+        except ssl.SSLError:
+            pass
+        return ctx
+
     async def _get_session(self) -> aiohttp.ClientSession:
         """获取或创建 HTTP session"""
         if self._session is None or self._session.closed:
             timeout = aiohttp.ClientTimeout(total=self.timeout)
-            self._session = aiohttp.ClientSession(timeout=timeout, trust_env=True)
+            ssl_ctx = self._create_ssl_context()
+            connector = aiohttp.TCPConnector(ssl=ssl_ctx)
+            self._session = aiohttp.ClientSession(
+                timeout=timeout,
+                connector=connector,
+                trust_env=True,
+            )
         return self._session
     
     async def close(self):
