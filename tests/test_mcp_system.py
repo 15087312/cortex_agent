@@ -708,7 +708,10 @@ class TestMCPServerManager:
         import asyncio
         from infra.mcp.server_manager import MCPServerManager
         mgr = MCPServerManager([])
-        asyncio.run(mgr.shutdown())  # 不应报错
+        asyncio.run(mgr.shutdown())
+        # shutdown 后状态应保持一致：无服务器、无工具
+        assert mgr.get_all_tools() == {}
+        assert mgr.get_server_status() == []
 
     def test_start_all_empty(self):
         import asyncio

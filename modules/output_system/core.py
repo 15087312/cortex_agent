@@ -6,9 +6,8 @@
 - 基础设施层：鼠标键盘控制
 - 样式适配：根据情绪和人格调整输出
 """
-from typing import Dict, Optional, Generator, Tuple
+from typing import Dict, Generator, Optional, Tuple
 
-from modules.security_system.interface import SecurityPort, get_security_port
 from modules.security_system.validators import CoreValidator, ContentValidator, OutputValidator
 from .distributor import OutputDistributor
 from .input_controller import InputController
@@ -18,9 +17,7 @@ logger = setup_logger("output_system")
 
 
 class OutputSystem:
-    def __init__(self, _memory_module=None, security: Optional[SecurityPort] = None):
-        self.security_api = security or get_security_port()
-
+    def __init__(self, _memory_module=None):
         self.core_validator = CoreValidator()
         self.content_validator = ContentValidator()
         self.output_validator = OutputValidator()

@@ -31,6 +31,9 @@ class PerceptionSystem:
         self.voice_llm_handler = None
         self.proactive_trigger = None
         self.mcp_detector = None
+        self.window_detector = None
+        self._window_detector_thread = None
+        self._window_stop_event = threading.Event()
         self._started = False
 
     def setup(self, **overrides) -> None:
@@ -88,7 +91,10 @@ class PerceptionSystem:
         else:
             logger.info("主动触发已禁用")
 
-        logger.info("感知系统组装完成（屏幕管道已移除，使用 Touchpoint + ScreenMonitorMCP）")
+        # 6. 窗口检测器（定时 publish SCREEN_WINDOW 到事件总线）
+        self._setup_window_detector()
+
+        logger.info("感知系统组装完成")
 
     def _setup_voice_detector(self, cfg: dict):
         from modules.perception.detectors.voice_detector import VoiceDetector
@@ -113,6 +119,47 @@ class PerceptionSystem:
         self.voice_llm_handler.start()
         logger.info("语音 LLM 处理器: 已启动")
 
+    def _setup_window_detector(self) -> None:
+        """启动窗口检测器后台线程，定时 publish SCREEN_WINDOW 到事件总线"""
+        self._window_stop_event.clear()
+        try:
+            import numpy as np
+            from modules.perception.detectors.window_detector import WindowDetector
+            self.window_detector = WindowDetector()
+            if self.window_detector.is_available():
+                self._window_detector_thread = threading.Thread(
+                    target=self._window_detector_loop,
+                    daemon=True,
+                    name="perception-window",
+                )
+                self._window_detector_thread.start()
+                logger.info("窗口检测器: 已启动 (1Hz → SCREEN_WINDOW 事件)")
+            else:
+                self.window_detector = None
+                logger.info("窗口检测器: 依赖不可用")
+        except Exception as e:
+            self.window_detector = None
+            logger.debug(f"窗口检测器初始化失败 (非致命): {e}")
+
+    def _window_detector_loop(self) -> None:
+        """窗口检测器后台循环"""
+        import time
+        import numpy as np
+        interval = 1.0
+        while not self._window_stop_event.is_set():
+            try:
+                if self.window_detector:
+                    events = self.window_detector.detect(np.empty(0), "_system")
+                    for evt in events:
+                        if self.event_bus:
+                            self.event_bus.publish(evt)
+            except Exception:
+                pass
+            for _ in range(int(interval * 10)):
+                if self._window_stop_event.is_set():
+                    return
+                time.sleep(0.1)
+
     def start(self) -> None:
         if self._started:
             return
@@ -126,6 +173,10 @@ class PerceptionSystem:
             self.voice_llm_handler.stop()
         if self.proactive_trigger:
             self.proactive_trigger.stop()
+        if self._window_detector_thread:
+            self._window_stop_event.set()
+            self._window_detector_thread.join(timeout=3)
+            self._window_detector_thread = None
         if self.world_state:
             from modules.perception.events.bus import get_event_bus
             self.world_state.stop(get_event_bus())
@@ -139,6 +190,7 @@ class PerceptionSystem:
             "voice_detector_type": self.voice_detector.detector_type if self.voice_detector else None,
             "voice_llm_handler_active": self.voice_llm_handler.is_active if self.voice_llm_handler else False,
             "mcp_available": self.mcp_detector is not None,
+            "window_detector_available": self.window_detector is not None and self.window_detector.is_available(),
             "proactive_trigger": self.proactive_trigger.get_stats() if self.proactive_trigger else None,
             "world_state": self.world_state.get_state().to_dict() if self.world_state else None,
             "event_bus": self.event_bus.get_stats() if self.event_bus else None,

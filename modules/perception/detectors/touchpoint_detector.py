@@ -1,7 +1,8 @@
-"""Touchpoint UI 结构化检测器（首选）
-
+"""Touchpoint UI 结构化检测器（首选，仅 macOS）
+ 
 使用 Touchpoint（macOS 无障碍 API）做 UI 元素检测。
 零模型、零推理延迟，直接从系统读取原生 UI 控件树。
+Windows/Linux 上降级为纯视觉方案（截图 + OCR）。
 
 CDP（Chrome DevTools Protocol）支持：
 对于 Electron/CEF 应用（如网易云音乐），如果应用以 --remote-debugging-port 启动，
@@ -17,6 +18,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -27,6 +29,8 @@ from modules.perception.events.types import PerceptionEvent, PerceptionEventType
 from utils.logger import setup_logger
 
 logger = setup_logger("touchpoint_detector")
+
+_IS_MAC = sys.platform == "darwin"
 
 # ---------------------------------------------------------------------------
 # CEF 116 兼容补丁
@@ -202,6 +206,11 @@ class TouchpointDetector(PerceptionDetector):
     def is_available(self) -> bool:
         if self._available is not None:
             return self._available
+
+        if not _IS_MAC:
+            self._available = False
+            logger.info("Touchpoint 仅支持 macOS，降级到视觉方案")
+            return False
 
         try:
             import touchpoint as tp
@@ -464,10 +473,12 @@ class TouchpointDetector(PerceptionDetector):
 
     @staticmethod
     def _find_app_path(app_name: str) -> Optional[str]:
-        """查找 .app 路径（支持中文名、英文名、Bundle ID）"""
+        """查找应用路径（macOS 返回 .app 路径，Windows/Linux 返回 None）"""
+        if not _IS_MAC:
+            return None
+
         import subprocess
         import plistlib
-        import shlex
 
         # 方法1: 通过 touchpoint window 拿 PID → lsappinfo 拿 bundle path
         try:
@@ -489,7 +500,7 @@ class TouchpointDetector(PerceptionDetector):
         except Exception:
             pass
 
-        # 方法2: mdfind 搜索显示名称（用 shell=True 避免 Python subprocess 中文编码问题）
+        # 方法2: mdfind 搜索显示名称（macOS only）
         try:
             result = subprocess.run(
                 f'mdfind "kMDItemDisplayName == \'{app_name}\'"',
@@ -514,11 +525,9 @@ class TouchpointDetector(PerceptionDetector):
                     base_name = item[:-4]
                     base_lower = base_name.lower()
 
-                    # 文件名匹配
                     if base_lower == app_lower or (app_lower in base_lower or base_lower in app_lower):
                         return full_path
 
-                    # Info.plist 显示名称匹配
                     try:
                         plist_path = os.path.join(full_path, "Contents", "Info.plist")
                         if not os.path.isfile(plist_path):
@@ -595,24 +604,42 @@ class TouchpointDetector(PerceptionDetector):
 
     @staticmethod
     def _quit_app_gracefully(app_name: str):
-        """优雅退出应用"""
+        """优雅退出应用（跨平台）"""
         import subprocess
-        try:
-            subprocess.run(
-                ["osascript", "-e",
-                 f'tell application "{app_name}" to quit'],
-                capture_output=True, text=True, timeout=5,
-            )
-        except Exception:
-            pass
-        # 再补一刀 kill
-        try:
-            subprocess.run(
-                ["pkill", "-f", app_name],
-                capture_output=True, text=True, timeout=3,
-            )
-        except Exception:
-            pass
+        import sys
+
+        if sys.platform == "darwin":
+            try:
+                subprocess.run(
+                    ["osascript", "-e",
+                     f'tell application "{app_name}" to quit'],
+                    capture_output=True, text=True, timeout=5,
+                )
+            except Exception:
+                pass
+            try:
+                subprocess.run(
+                    ["pkill", "-f", app_name],
+                    capture_output=True, text=True, timeout=3,
+                )
+            except Exception:
+                pass
+        elif sys.platform == "win32":
+            try:
+                subprocess.run(
+                    ["taskkill", "/IM", f"{app_name}.exe", "/F"],
+                    capture_output=True, text=True, timeout=5,
+                )
+            except Exception:
+                pass
+        else:
+            try:
+                subprocess.run(
+                    ["pkill", "-f", app_name],
+                    capture_output=True, text=True, timeout=3,
+                )
+            except Exception:
+                pass
 
     def _parse_flat_line(self, line: str, app_name: str) -> Optional[UIElement]:
         """解析 flat 格式的一行到 UIElement"""

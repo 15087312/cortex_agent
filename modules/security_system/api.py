@@ -9,8 +9,7 @@ from .security_level import SecurityLevel
 from .switch_manager import SecuritySwitchManager
 from .audit_logger import SecurityAuditLogger
 from .validators import (
-    CoreValidator, ContentValidator, ModuleValidator,
-    EvolveValidator, OutputValidator
+    CoreValidator, ContentValidator, OutputValidator
 )
 from utils.logger import setup_logger
 
@@ -28,8 +27,6 @@ class SecurityAPI:
 
         self.core_validator = CoreValidator()
         self.content_validator = ContentValidator()
-        self.module_validator = ModuleValidator()
-        self.evolve_validator = EvolveValidator()
         self.output_validator = OutputValidator()
 
         logger.info("安全系统API初始化完成")
@@ -47,59 +44,6 @@ class SecurityAPI:
                 return False, result
 
         return True, user_input
-
-    def validate_output(self, output_content: str) -> Tuple[bool, str]:
-        passed, result = self.core_validator.validate_all(output_content)
-        self.audit_logger.log("输出校验", "L0", output_content, passed)
-        if not passed:
-            return False, result
-
-        if self.switch_manager.is_enabled(SecurityLevel.CONTENT):
-            passed, result = self.content_validator.validate(output_content)
-            self.audit_logger.log("输出校验", "L1", output_content, passed)
-            if not passed:
-                return False, result
-
-        if self.switch_manager.is_enabled(SecurityLevel.OUTPUT):
-            passed, result = self.output_validator.validate(output_content)
-            self.audit_logger.log("输出校验", "L4", output_content, passed)
-            if not passed:
-                return False, result
-
-        return True, output_content
-
-    def validate_module_call(self, caller: str, target: str) -> Tuple[bool, str]:
-        passed, result = self.core_validator.validate_module_protect(target)
-        self.audit_logger.log("模块调用", "L0", f"{caller}→{target}", passed)
-        if not passed:
-            return False, result
-
-        if self.switch_manager.is_enabled(SecurityLevel.MODULE):
-            passed, result = self.module_validator.validate(caller, target)
-            self.audit_logger.log("模块调用", "L2", f"{caller}→{target}", passed)
-            if not passed:
-                return False, result
-
-        return True, target
-
-    def validate_evolve(self, code: str, target_module: str) -> Tuple[bool, str]:
-        passed, result = self.core_validator.validate_module_protect(target_module)
-        self.audit_logger.log("自进化校验", "L0", f"修改{target_module}", passed)
-        if not passed:
-            return False, result
-
-        passed, result = self.core_validator.validate_code_safety(code)
-        self.audit_logger.log("自进化校验", "L0", f"代码安全检查", passed)
-        if not passed:
-            return False, result
-
-        if self.switch_manager.is_enabled(SecurityLevel.EVOLVE):
-            passed, result = self.evolve_validator.validate(code, target_module)
-            self.audit_logger.log("自进化校验", "L3", f"修改{target_module}", passed)
-            if not passed:
-                return False, result
-
-        return True, code
 
     def set_security_switch(self, level: SecurityLevel, enable: bool, user_auth: bool = False) -> bool:
         result = self.switch_manager.set_switch(level, enable, user_auth)
@@ -154,25 +98,6 @@ async def validate_input(content: str = Body(..., description="要校验的输�
     """校验输入 - SEC-13: Use request body instead of query parameters"""
     api = get_security_api()
     passed, result = api.validate_input(content)
-    return {"success": True, "data": {"passed": passed, "result": result}}
-
-
-@router.post("/validate/output")
-async def validate_output(content: str = Body(..., description="要校验的输出内容")):
-    """校验输出 - SEC-13: Use request body instead of query parameters"""
-    api = get_security_api()
-    passed, result = api.validate_output(content)
-    return {"success": True, "data": {"passed": passed, "result": result}}
-
-
-@router.post("/validate/module")
-async def validate_module_call(
-    caller: str = Body(..., description="调用者模块"),
-    target: str = Body(..., description="目标模块")
-):
-    """校验模块调用 - SEC-13: Use request body instead of query parameters"""
-    api = get_security_api()
-    passed, result = api.validate_module_call(caller, target)
     return {"success": True, "data": {"passed": passed, "result": result}}
 
 

@@ -1573,8 +1573,8 @@ class ModelRunner:
                                     skill = skill_manager.get_skill(skill_id)
                                     if skill:
                                         self._active_skill = skill
-                                        tool_info = f" (+工具规则)" if skill.tool_rules else ""
-                                        logger.info(f"[ModelRunner] 技能已切换: {skill_id}{tool_info}")
+                                        self._active_skill_tool_rules = skill.tool_rules
+                                        logger.info(f"[ModelRunner] 技能已切换: {skill_id}")
                                     else:
                                         content = f"技能 {skill_id} 不存在"
                             elif tc.name == "set_memory_focus":
@@ -1746,7 +1746,8 @@ class ModelRunner:
                                 elif tc.name == "request_skill":
                                     skill_id = args.get("skill_id", "")
                                     if self._active_skill and self._active_skill.id == skill_id:
-                                        skill_feedback = f"【技能已激活】{self._active_skill.name}（{self._active_skill.role}）\n规章: {len(self._active_skill.rules)} 条 | 流程: {len(self._active_skill.workflow)} 步"
+                                        preview = self._active_skill.description[:120].replace("\n", " ")
+                                        skill_feedback = f"【技能已激活】{self._active_skill.name}\n{preview}"
                                     else:
                                         skill_feedback = f"【技能未找到】skill_id={skill_id} 不存在。使用 list_skills 查看可用技能。"
                                 elif tc.name == "stop_skill":
@@ -2044,16 +2045,12 @@ class ModelRunner:
         identity = self.identity
         if self._active_skill and self.tier == "large":
             skill = self._active_skill
-            # 技能模式：用技能的角色信息
+            # 技能模式：用技能的提示说明书
             parts = []
             parts.append(
                 f"【你的任务】\n{self._task_description}\n"
-                f"你是 {skill.name}（{skill.role}）。"
+                f"你是 {skill.name}。\n{skill.description}"
             )
-            # 注入技能规章和流程
-            skill_block = skill.to_context_block()
-            if skill_block:
-                parts.append(skill_block)
         else:
             parts = []
             parts.append(

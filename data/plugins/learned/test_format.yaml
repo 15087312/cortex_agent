@@ -1,0 +1,12 @@
+id: test_format
+name: 测试
+description: test desc
+keywords: &id001
+- t
+trigger:
+  include: *id001
+  min_score: 1
+metadata:
+  version: 1
+  type: learned
+  generated_at: '2026-06-21T22:56:13.612220'

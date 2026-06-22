@@ -121,30 +121,48 @@ def keyboard_type(text: str, interval: float = 0.05) -> str:
 
 
 def _type_via_clipboard(text: str) -> str:
-    """通过剪贴板输入文本：复制到剪贴板 → Cmd+V
+    """通过剪贴板输入文本：复制到剪贴板 → 粘贴快捷键
 
     适用于中文/日文等非 ASCII 文本，避免依赖系统输入法。
     """
+    import sys as _sys
     try:
         import subprocess
-        # macOS: 使用 pbcopy 写入剪贴板
-        proc = subprocess.run(
-            ["pbcopy"], input=text.encode("utf-8"), capture_output=True, timeout=5
-        )
+        if _sys.platform == "win32":
+            proc = subprocess.run(
+                ["clip"], input=text.encode("utf-16-le") + b"\x00\x00",
+                capture_output=True, timeout=5,
+            )
+            modifier = "ctrl"
+        elif _sys.platform == "darwin":
+            proc = subprocess.run(
+                ["pbcopy"], input=text.encode("utf-8"), capture_output=True, timeout=5
+            )
+            modifier = "command"
+        else:
+            try:
+                proc = subprocess.run(
+                    ["xclip", "-selection", "clipboard"], input=text.encode("utf-8"),
+                    capture_output=True, timeout=5,
+                )
+            except FileNotFoundError:
+                proc = subprocess.run(
+                    ["xsel", "-b", "-i"], input=text.encode("utf-8"),
+                    capture_output=True, timeout=5,
+                )
+            modifier = "ctrl"
+
         if proc.returncode != 0:
-            # 降级：直接按键输入
             success = _controller.type_text(text, interval=0.1)
             if success:
                 return f"键盘输入: {text[:50]}"
             return "文本输入失败"
 
-        # Cmd+V 粘贴
-        _controller.hotkey("command", "v")
+        _controller.hotkey(modifier, "v")
         preview = text[:50] + "..." if len(text) > 50 else text
         return f"键盘输入(剪贴板): {preview}"
     except Exception as e:
         logger.error(f"剪贴板输入失败: {e}")
-        # 降级：直接按键输入
         success = _controller.type_text(text, interval=0.1)
         if success:
             return f"键盘输入: {text[:50]}"

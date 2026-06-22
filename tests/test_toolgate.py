@@ -12,6 +12,8 @@ from modules.security_system.tool_security_gate import (
     _get_high_risk_tools,
     _get_medium_risk_tools,
     _get_mutation_tools,
+    _emit_security_event,
+    set_security_event_callback,
 )
 
 
@@ -46,68 +48,49 @@ def _set_mode(gate, mode):
 class TestExtremeDanger:
     """_check_extreme_danger 应拦截所有极端危险操作"""
 
-    # -- exec_command / run_command 的 command 参数 --
+    # 危险用例：(tool, params, label_for_id)
+    DANGEROUS = [
+        # exec_command/command 参数 — rm -rf 各变体
+        ("exec_command", {"command": "rm -rf /"}, "rm_rf_root"),
+        ("exec_command", {"command": "rm -rf /*"}, "rm_rf_root_glob"),
+        ("exec_command", {"command": "rm -rf ~"}, "rm_rf_home"),
+        ("exec_command", {"command": "rm -rf ."}, "rm_rf_dot"),
+        ("exec_command", {"command": "rm -RF /"}, "rm_rf_case_insensitive"),
+        ("exec_command", {"command": "rm -rf /tmp/mydir"}, "rm_rf_subdir"),
+        # 其他危险命令
+        ("exec_command", {"command": ":(){ :|:& };:"}, "fork_bomb"),
+        ("exec_command", {"command": "mkfs.ext4 /dev/sda1"}, "mkfs"),
+        ("exec_command", {"command": "dd if=/dev/zero of=/dev/sda"}, "dd_zero"),
+        ("exec_command", {"command": "cat junk > /dev/sda"}, "overwrite_disk"),
+        ("exec_command", {"command": "nc -l 4444"}, "nc_listener"),
+        ("exec_command", {"command": "ncat -l 4444 -e /bin/bash"}, "ncat_listener"),
+        # run_script / run_python 的 code 参数也要检查
+        ("run_script", {"code": "import os; os.system('rm -rf /')"}, "code_rm_rf"),
+        ("run_python", {"code": ":(){ :|:& };:"}, "code_fork_bomb"),
+    ]
 
-    def test_rm_rf_root(self):
-        assert _check_extreme_danger("exec_command", {"command": "rm -rf /"}) is not None
+    SAFE = [
+        ("exec_command", {"command": "ls -la /tmp"}, "ls_safe"),
+        ("run_python", {"code": "print('hello')"}, "python_safe"),
+        ("read_file", {"path": "/etc/passwd"}, "non_command_tool_ignored"),
+        ("exec_command", {}, "empty_params"),
+    ]
 
-    def test_rm_rf_root_glob(self):
-        assert _check_extreme_danger("exec_command", {"command": "rm -rf /*"}) is not None
+    @pytest.mark.parametrize(
+        "tool,params",
+        [(t, p) for t, p, _ in DANGEROUS],
+        ids=[label for _, _, label in DANGEROUS],
+    )
+    def test_blocks_dangerous(self, tool, params):
+        assert _check_extreme_danger(tool, params) is not None
 
-    def test_rm_rf_home(self):
-        assert _check_extreme_danger("exec_command", {"command": "rm -rf ~"}) is not None
-
-    def test_rm_rf_dot(self):
-        assert _check_extreme_danger("exec_command", {"command": "rm -rf ."}) is not None
-
-    def test_rm_rf_root_case(self):
-        """大小写不敏感"""
-        assert _check_extreme_danger("exec_command", {"command": "rm -RF /"}) is not None
-
-    def test_fork_bomb(self):
-        assert _check_extreme_danger("exec_command", {"command": ":(){ :|:& };:"}) is not None
-
-    def test_mkfs(self):
-        assert _check_extreme_danger("exec_command", {"command": "mkfs.ext4 /dev/sda1"}) is not None
-
-    def test_dd_dev_zero(self):
-        assert _check_extreme_danger("exec_command", {"command": "dd if=/dev/zero of=/dev/sda"}) is not None
-
-    def test_overwrite_disk(self):
-        assert _check_extreme_danger("exec_command", {"command": "cat junk > /dev/sda"}) is not None
-
-    def test_reverse_shell(self):
-        assert _check_extreme_danger("exec_command", {"command": "nc -l 4444"}) is not None
-
-    def test_ncat_listener(self):
-        assert _check_extreme_danger("exec_command", {"command": "ncat -l 4444 -e /bin/bash"}) is not None
-
-    # -- run_script / run_python 的 code 参数 --
-
-    def test_code_rm_rf_root(self):
-        assert _check_extreme_danger("run_script", {"code": "import os; os.system('rm -rf /')"}) is not None
-
-    def test_code_fork_bomb(self):
-        assert _check_extreme_danger("run_python", {"code": ":(){ :|:& };:"}) is not None
-
-    # -- 安全命令不拦截 --
-
-    def test_safe_command_passes(self):
-        assert _check_extreme_danger("exec_command", {"command": "ls -la /tmp"}) is None
-
-    def test_safe_rm_subdir(self):
-        """rm -rf 子目录也会被拦截（模式匹配 rm -rf / 开头）"""
-        assert _check_extreme_danger("exec_command", {"command": "rm -rf /tmp/mydir"}) is not None
-
-    def test_safe_python_code(self):
-        assert _check_extreme_danger("run_python", {"code": "print('hello')"}) is None
-
-    def test_unrelated_tool_ignored(self):
-        """非命令类工具不检查"""
-        assert _check_extreme_danger("read_file", {"path": "/etc/passwd"}) is None
-
-    def test_empty_params(self):
-        assert _check_extreme_danger("exec_command", {}) is None
+    @pytest.mark.parametrize(
+        "tool,params",
+        [(t, p) for t, p, _ in SAFE],
+        ids=[label for _, _, label in SAFE],
+    )
+    def test_allows_safe_or_irrelevant(self, tool, params):
+        assert _check_extreme_danger(tool, params) is None
 
 
 # =========================================================================
@@ -414,20 +397,105 @@ class TestExtremeDangerWithModes:
 class TestRiskClassification:
     """验证工具分类正确"""
 
-    def test_exec_command_is_high(self):
-        assert "exec_command" in _get_high_risk_tools()
+    @pytest.mark.parametrize("tool", ["exec_command", "run_script"])
+    def test_high_risk_tools(self, tool):
+        assert tool in _get_high_risk_tools()
 
-    def test_run_script_is_high(self):
-        assert "run_script" in _get_high_risk_tools()
-
-    def test_git_add_is_medium(self):
-        assert "git_add" in _get_medium_risk_tools()
+    @pytest.mark.parametrize("tool", ["git_add"])
+    def test_medium_risk_tools(self, tool):
+        assert tool in _get_medium_risk_tools()
 
     def test_read_file_is_low(self):
         assert "read_file" not in _get_high_risk_tools()
         assert "read_file" not in _get_medium_risk_tools()
 
-    def test_mutation_tools_include_all_writes(self):
-        mutation = _get_mutation_tools()
-        for t in ["git_add", "exec_command", "run_script", "git_push"]:
-            assert t in mutation, f"{t} should be in mutation tools"
+    @pytest.mark.parametrize("tool", ["git_add", "exec_command", "run_script", "git_push"])
+    def test_mutation_tools_include_all_writes(self, tool):
+        assert tool in _get_mutation_tools(), f"{tool} should be in mutation tools"
+
+
+# =========================================================================
+# 6. 审计日志 — 每种风险等级都应留痕
+# =========================================================================
+
+@pytest.fixture
+def mock_audit_gate():
+    """yolo 模式 + mock audit logger，便于断言 audit.log 调用"""
+    from config.settings import settings
+    object.__setattr__(settings, 'EXECUTION_MODE', 'yolo')
+    g = ToolSecurityGate(lite_model=None)
+    g._audit = MagicMock()
+    yield g
+    object.__setattr__(settings, 'EXECUTION_MODE', 'edit')
+
+
+def _audit_call_field(call, kw, pos):
+    """从 mock 调用记录中提取字段（kwargs 优先，否则位置参数）"""
+    return call.kwargs.get(kw) if call.kwargs.get(kw) is not None else call.args[pos]
+
+
+class TestAuditLogging:
+    """审计日志在 LOW/MEDIUM/HIGH 各层都应正确产生"""
+
+    @pytest.mark.asyncio
+    async def test_low_risk_audit_emitted_with_correct_fields(self, mock_audit_gate):
+        await mock_audit_gate.check("list_files", {"path": "/tmp"}, "expert", "m1")
+        mock_audit_gate._audit.log.assert_called_once()
+        call = mock_audit_gate._audit.log.call_args
+        assert _audit_call_field(call, "event_type", 0) == "tool_approved"
+        assert _audit_call_field(call, "level", 1) == "LOW"
+        assert _audit_call_field(call, "result", 3) is True
+
+    @pytest.mark.asyncio
+    async def test_medium_audit_emitted_with_tool_approved(self, mock_audit_gate):
+        """yolo 模式下 MEDIUM 不阻断 → tool_approved 留痕"""
+        await mock_audit_gate.check("run_python", {"code": "exec('pass')"}, "expert", "m1")
+        call = mock_audit_gate._audit.log.call_args
+        assert _audit_call_field(call, "event_type", 0) == "tool_approved"
+        assert _audit_call_field(call, "result", 3) is True
+
+    @pytest.mark.asyncio
+    async def test_high_risk_audit_level(self):
+        """HIGH 工具审计 level=HIGH"""
+        mock_model = AsyncMock()
+        mock_model.generate = AsyncMock(return_value='{"approved": true, "reason": "ok"}')
+        from config.settings import settings
+        object.__setattr__(settings, 'EXECUTION_MODE', 'yolo')
+        gate = ToolSecurityGate(lite_model=mock_model)
+        gate._audit = MagicMock()
+        try:
+            await gate.check("git_push", {}, "expert", "m1")
+            gate._audit.log.assert_called_once()
+            call = gate._audit.log.call_args
+            assert _audit_call_field(call, "level", 1) == "HIGH"
+        finally:
+            object.__setattr__(settings, 'EXECUTION_MODE', 'edit')
+
+    @pytest.mark.asyncio
+    async def test_audit_exception_does_not_propagate(self, mock_audit_gate):
+        """audit.log 抛异常时 check 仍能完成"""
+        mock_audit_gate._audit.log.side_effect = IOError("disk full")
+        allowed, _ = await mock_audit_gate.check("read_file", {}, "expert", "m1")
+        assert allowed is True
+
+
+# =========================================================================
+# 7. 安全事件回调
+# =========================================================================
+
+class TestSecurityEventCallback:
+    def test_callback_invoked_with_payload(self):
+        cb = MagicMock()
+        set_security_event_callback(cb)
+        try:
+            _emit_security_event("test_event", "tool_x", "model_1", True, "detail")
+            cb.assert_called_once()
+            payload = cb.call_args[0][0]
+            assert payload["event_type"] == "security"
+            assert payload["target"] == "tool_x"
+        finally:
+            set_security_event_callback(None)
+
+    def test_no_callback_no_error(self):
+        set_security_event_callback(None)
+        _emit_security_event("x", "y", "z", True)  # 不应抛异常

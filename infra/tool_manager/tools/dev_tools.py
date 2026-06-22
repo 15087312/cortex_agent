@@ -82,16 +82,24 @@ def find_definition(name: str, path: Optional[str] = None) -> Dict[str, Any]:
 def find_references(name: str, path: Optional[str] = None) -> Dict[str, Any]:
     if not name: return {"error": "名称不能为空"}
     search_root = Path(path).expanduser() if path else Path(__file__).resolve().parents[3]
-    import subprocess
+    pattern = re.compile(rf'\b{re.escape(name)}\b')
+    results = []
     try:
-        r = subprocess.run(["grep", "-rn", f"\\b{name}\\b", str(search_root)], capture_output=True, text=True, timeout=30)
-        lines = [l for l in (r.stdout or "").split("\n") if l.strip() and ".py:" in l]
-        results = []
-        for line in lines[:30]:
-            parts = line.split(":", 2)
-            if len(parts) >= 2: results.append({"file": parts[0], "line": parts[1], "content": parts[2] if len(parts) > 2 else ""})
+        for py_file in search_root.rglob("*.py"):
+            if ".git" in py_file.parts or "__pycache__" in py_file.parts:
+                continue
+            try:
+                with open(py_file, encoding="utf-8", errors="replace") as f:
+                    for lineno, line in enumerate(f, 1):
+                        if pattern.search(line):
+                            results.append({"file": str(py_file), "line": lineno, "content": line.strip()[:200]})
+                            if len(results) >= 30:
+                                return {"success": True, "count": len(results), "results": results}
+            except Exception:
+                continue
         return {"success": True, "count": len(results), "results": results}
-    except Exception as e: return {"error": str(e)}
+    except Exception as e:
+        return {"error": str(e)}
 
 @ToolRegistry.register("get_function_signature", description="获取 Python 函数的参数列表和返回值类型。", params={"path": "文件路径", "function_name": "函数名"}, risk_level="LOW", category="query")
 def get_function_signature(path: str, function_name: str) -> Dict[str, Any]:

@@ -18,15 +18,16 @@ MCP 屏幕差异源 — 通过 MCP stdio 协议连接 screen_diff_server
 """
 import json
 import os
-import select
 import subprocess
 import sys
 import threading
 import time
+from queue import Empty, Queue
 from typing import Optional
 
 from modules.perception.events.bus import get_event_bus
 from modules.perception.events.types import PerceptionEvent, PerceptionEventType
+from modules.perception.difference.sources.base import DifferenceSource
 from config.settings import settings
 from utils.logger import setup_logger
 
@@ -40,20 +41,32 @@ _IDLE_RESET_INTERVAL = 30        # 连续无变化超过 N 秒后重置强度
 _PERCEPTION_EVENT_IDLE_INTERVAL = 2.0  # 事件发布最小间隔（秒），避免刷屏
 
 
-class ScreenDiffSource:
+class ScreenDiffSource(DifferenceSource):
     """MCP 屏幕差异源
 
     后台线程持续检测屏幕像素变化，将结果注入 DifferenceDetector。
     """
 
+    @property
+    def source_type(self) -> str:
+        return "screen"
+
+    def detect(self):
+        """返回最新屏幕差异缓存（但数据流由独立线程通过 ingest() 注入，此方法返回空列表避免双重入库）"""
+        return []
+
     def __init__(self, server_script: str = "", interval: float = _DEFAULT_INTERVAL):
+        super().__init__()
         self._interval = interval
         self._change_threshold = settings.SCREEN_DIFF_CHANGE_THRESHOLD
         self._running = False
         self._thread: Optional[threading.Thread] = None
         self._proc: Optional[subprocess.Popen] = None
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()  # 可重入：_ensure_process 持锁 → _close_process 需要再次 acquire
         self._event_bus = None  # 延迟获取，避免循环导入
+        self._resp_queue: Queue = Queue()  # 跨平台：工作线程读 stdout 放入队列
+        self._reader_thread: Optional[threading.Thread] = None
+        self._reader_running = False
 
         # 状态跟踪
         self._last_change_ratio = 0.0
@@ -172,6 +185,13 @@ class ScreenDiffSource:
                     text=True,
                     bufsize=1,
                 )
+                # 启动 stdout 读取线程（跨平台，避免 select.select 在 Windows 管道上失败）
+                self._reader_running = True
+                self._reader_thread = threading.Thread(
+                    target=self._read_stdout_loop, daemon=True,
+                    name="mcp-screen-reader",
+                )
+                self._reader_thread.start()
 
                 # 发送 initialize 请求
                 init_req = {
@@ -208,6 +228,7 @@ class ScreenDiffSource:
 
     def _close_process(self):
         """关闭子进程"""
+        self._reader_running = False
         with self._lock:
             if self._proc:
                 try:
@@ -219,6 +240,12 @@ class ScreenDiffSource:
                     except Exception:
                         pass
                 self._proc = None
+        # 清空响应队列
+        while not self._resp_queue.empty():
+            try:
+                self._resp_queue.get_nowait()
+            except Empty:
+                break
 
     def _send_request(self, req: dict):
         """发送 JSON-RPC 请求到子进程 stdin"""
@@ -274,18 +301,31 @@ class ScreenDiffSource:
             return None
         return self._call_mcp_tool("capture_screenshot")
 
-    def _read_response(self, timeout: float = 5.0) -> Optional[dict]:
-        """从子进程 stdout 读取一行 JSON 响应"""
-        with self._lock:
-            if not self._proc or not self._proc.stdout:
-                return None
+    def _read_stdout_loop(self):
+        """后台线程：持续读取子进程 stdout 行，放入队列"""
+        while self._reader_running:
             try:
-                if select.select([self._proc.stdout], [], [], timeout)[0]:
+                if self._proc and self._proc.stdout:
                     line = self._proc.stdout.readline()
                     if line:
-                        return json.loads(line.strip())
+                        self._resp_queue.put(line.strip())
+                    else:
+                        break
+                else:
+                    break
             except Exception:
-                pass
+                break
+
+    def _read_response(self, timeout: float = 5.0) -> Optional[dict]:
+        """从队列获取一行 JSON 响应（跨平台，无 select）"""
+        try:
+            line = self._resp_queue.get(timeout=timeout)
+            if line:
+                return json.loads(line)
+        except Empty:
+            pass
+        except Exception:
+            pass
         return None
 
     # ── 检测主循环 ──
@@ -315,6 +355,8 @@ class ScreenDiffSource:
 
     def _check_once(self):
         """执行一次检测"""
+        if not self.enabled:
+            return
         if not self._ensure_process():
             return
 
@@ -401,4 +443,12 @@ def get_screen_diff_source() -> ScreenDiffSource:
         with _instance_lock:
             if _instance is None:
                 _instance = ScreenDiffSource()
+                # 注册到 detector registry，使 enable/disable/API 管理统一
+                try:
+                    from modules.perception.difference.detector import get_detector
+                    get_detector().registry.register(_instance)
+                    if hasattr(logger, 'debug'):
+                        logger.debug("ScreenDiffSource 已注册到 detector registry")
+                except Exception as _reg_err:
+                    logger.debug(f"注册 ScreenDiffSource 到 registry 失败 (非致命): {_reg_err}")
     return _instance

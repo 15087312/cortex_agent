@@ -30,7 +30,7 @@ class WindowDetector(PerceptionDetector):
         self._last_window: Optional[str] = None
         self._last_app: Optional[str] = None
         self._backend = None
-        self._init_backend()
+        # 懒加载: _init_backend() 在首次 detect() 时调用，避免 import AppKit 阻塞启动
 
     def _init_backend(self):
         """根据平台初始化窗口检测后端
@@ -65,6 +65,8 @@ class WindowDetector(PerceptionDetector):
         context: Optional[Dict[str, Any]] = None,
     ) -> List[PerceptionEvent]:
         """检测窗口状态变化（忽略 roi_image，直接查系统 API）"""
+        if self._backend is None:
+            self._init_backend()
         if not self.is_available():
             return []
 

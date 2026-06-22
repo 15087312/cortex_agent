@@ -1,5 +1,7 @@
 """open_app 工具 — 打开/切换到指定应用"""
+import os
 import subprocess
+import sys
 from typing import Optional
 
 from infra.tool_manager.tool_registry import ToolRegistry
@@ -73,14 +75,36 @@ def open_app(app_name: str, activate_only: bool = False) -> dict:
         }
 
     try:
-        # 优先用完整路径启动（绕过 open -a 的中文名问题）
-        if app_path:
+        if sys.platform == "win32":
+            if app_path:
+                os.startfile(app_path)
+            else:
+                subprocess.run(["start", app_name], shell=True, capture_output=True, timeout=15)
+            logger.info(f"Windows 启动: {app_name}")
+            return {"success": True, "action": "launched", "app": app_name, "message": f"已打开 {app_name}"}
+        elif sys.platform == "darwin":
+            # 优先用完整路径启动（绕过 open -a 的中文名问题）
+            if app_path:
+                result = subprocess.run(
+                    ["open", app_path],
+                    capture_output=True, text=True, timeout=15,
+                )
+                if result.returncode == 0:
+                    logger.info(f"open 路径启动成功: {app_path}")
+                    return {
+                        "success": True,
+                        "action": "launched",
+                        "app": app_name,
+                        "message": f"已打开 {app_name}",
+                    }
+
+            # 尝试用 open -a（支持英文应用名）
             result = subprocess.run(
-                ["open", app_path],
+                ["open", "-a", app_name],
                 capture_output=True, text=True, timeout=15,
             )
             if result.returncode == 0:
-                logger.info(f"open 路径启动成功: {app_path}")
+                logger.info(f"open -a 启动成功: {app_name}")
                 return {
                     "success": True,
                     "action": "launched",
@@ -88,27 +112,20 @@ def open_app(app_name: str, activate_only: bool = False) -> dict:
                     "message": f"已打开 {app_name}",
                 }
 
-        # 尝试用 open -a（支持英文应用名）
-        result = subprocess.run(
-            ["open", "-a", app_name],
-            capture_output=True, text=True, timeout=15,
-        )
-        if result.returncode == 0:
-            logger.info(f"open -a 启动成功: {app_name}")
-            return {
-                "success": True,
-                "action": "launched",
-                "app": app_name,
-                "message": f"已打开 {app_name}",
-            }
-
-        stderr = result.stderr or ""
-        logger.warning(f"open -a '{app_name}' 失败: {stderr.strip()}")
+            stderr = result.stderr or ""
+            logger.warning(f"open -a '{app_name}' 失败: {stderr.strip()}")
+        else:
+            # Linux: 用 xdg-open 或 gtk-launch
+            try:
+                result = subprocess.run(["xdg-open", app_path or app_name], capture_output=True, text=True, timeout=15)
+                if result.returncode == 0:
+                    return {"success": True, "action": "launched", "app": app_name, "message": f"已打开 {app_name}"}
+            except FileNotFoundError:
+                return {"success": False, "error": "当前系统不支持自动打开应用，请手动启动"}
     except subprocess.TimeoutExpired:
         return {"success": False, "error": f"打开 {app_name} 超时"}
     except FileNotFoundError:
-        # macOS 上没有 open 命令（不应该发生）
-        return {"success": False, "error": "系统不支持 open 命令"}
+        return {"success": False, "error": "系统不支持打开命令"}
 
     # 3. 尝试使用 Touchpoint 的 configure + CDP 发现（仅 Chrome 系浏览器）
     try:
@@ -119,7 +136,14 @@ def open_app(app_name: str, activate_only: bool = False) -> dict:
     except Exception:
         pass
 
+    import sys as _sys
+    if _sys.platform == "darwin":
+        hint = f"open /Applications/{app_name}.app"
+    elif _sys.platform == "win32":
+        hint = f"start {app_name}"
+    else:
+        hint = f"xdg-open {app_name}"
     return {
         "success": False,
-        "error": f"无法打开 {app_name}，请尝试使用完整路径: open /Applications/{app_name}.app，或确认应用名是否正确",
+        "error": f"无法打开 {app_name}，请尝试: {hint}，或确认应用名是否正确",
     }

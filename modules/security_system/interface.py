@@ -7,29 +7,7 @@ from typing import Dict, Tuple, Protocol, runtime_checkable
 @runtime_checkable
 class SecurityPort(Protocol):
     def validate_input(self, user_input: str) -> Tuple[bool, str]: ...
-    def validate_output(self, output_content: str) -> Tuple[bool, str]: ...
-    def validate_module_call(self, caller: str, target: str) -> Tuple[bool, str]: ...
     def get_security_state(self) -> Dict[str, bool]: ...
-
-
-class SecurityApiAdapter:
-    """具体安全API门面的适配器。"""
-
-    def __init__(self):
-        from modules.security_system.api import get_security_api
-        self._api = get_security_api()
-
-    def validate_input(self, user_input: str) -> Tuple[bool, str]:
-        return self._api.validate_input(user_input)
-
-    def validate_output(self, output_content: str) -> Tuple[bool, str]:
-        return self._api.validate_output(output_content)
-
-    def validate_module_call(self, caller: str, target: str) -> Tuple[bool, str]:
-        return self._api.validate_module_call(caller, target)
-
-    def get_security_state(self) -> Dict[str, bool]:
-        return self._api.get_security_state()
 
 
 _security_port: SecurityPort | None = None
@@ -39,14 +17,18 @@ def get_security_port() -> SecurityPort:
     """返回默认安全端口。"""
     global _security_port
     if _security_port is None:
-        _security_port = SecurityApiAdapter()
+        from modules.security_system.api import get_security_api
+        _security_port = get_security_api()  # type: ignore[assignment]
     return _security_port
 
 
 def set_security_port(port: SecurityPort | None) -> None:
     """覆盖安全端口，主要用于集成测试。"""
     global _security_port
-    _security_port = port or SecurityApiAdapter()
+    _security_port = port
+    if _security_port is None:
+        from modules.security_system.api import get_security_api
+        _security_port = get_security_api()  # type: ignore[assignment]
 
 
 __all__ = ["SecurityPort", "get_security_port", "set_security_port"]

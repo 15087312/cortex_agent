@@ -381,6 +381,60 @@ def test_format_expert_guidance_with_emotion():
 
 
 # ============================================================================
+# 12. MultiModelOrchestrator 单元测试（合并自 test_orchestrator.py）
+# ============================================================================
+
+@pytest.fixture
+def _orchestrator():
+    """无依赖的裸 orchestrator 实例，便于单测内部方法"""
+    from modules.thinking.multi_model_orchestrator import MultiModelOrchestrator
+    orch = MultiModelOrchestrator.__new__(MultiModelOrchestrator)
+    orch._security = None
+    orch._context_service = None
+    orch._guidance_service = None
+    orch._output_reviewer = None
+    orch._reflection_sm = None
+    orch._activity_notifier = None
+    orch._expert_pipeline = None
+    orch._gcm_pool = None
+    return orch
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_validate_security_passes(_orchestrator):
+    mock_security = MagicMock()
+    mock_security.validate_input.return_value = (True, "")
+    _orchestrator._security = mock_security
+
+    passed, error = await _orchestrator._validate_security("hello")
+    assert passed is True
+    assert error == ""
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_validate_security_blocks(_orchestrator):
+    mock_security = MagicMock()
+    mock_security.validate_input.return_value = (False, "dangerous input")
+    _orchestrator._security = mock_security
+
+    passed, error = await _orchestrator._validate_security("rm -rf /")
+    assert passed is False
+    assert "dangerous" in error
+
+
+def test_orchestrator_match_skill_no_manager(_orchestrator):
+    result = _orchestrator._match_skill("hello")
+    assert result is None or isinstance(result, str)
+
+
+def test_orchestrator_build_security_error():
+    from modules.thinking.multi_model_orchestrator import MultiModelOrchestrator
+    result = MultiModelOrchestrator._build_security_error("blocked", 0.0)
+    assert "安全拦截" in result["response"]
+    assert result["security_passed"] is False
+
+
+# ============================================================================
 # 运行
 # ============================================================================
 if __name__ == "__main__":

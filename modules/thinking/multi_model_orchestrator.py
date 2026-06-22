@@ -279,15 +279,10 @@ class MultiModelOrchestrator:
 
             importance_context = ""
             try:
-                from modules.attention.interface import create_attention_interface
-                attention = create_attention_interface()
-                decision = attention.analyze(user_input=user_input)
-                if decision:
-                    importance = getattr(decision, "importance_score", 0.5)
-                    importance_context = (
-                        f"\n\n【任务重要性】{importance:.2f}/1.0\n"
-                        f"高重要性任务应投入更多思考轮次和工具调用。"
-                    )
+                from modules.attention import create_attention_analyzer
+                attention = create_attention_analyzer()
+                result = attention.analyze(user_input=user_input)
+                importance_context = result.importance_context
             except Exception:
                 pass
 

@@ -1,12 +1,14 @@
 """技能定义 — 技能说明书
 
-Skill 是纯提示词说明书，不控制身份、不控制工具权限、不控制记忆。
-模型通过工具查询并阅读技能说明书，自行决定是否遵循。
+Skill 是提示词说明书 + 可选工具权限约束。
+模型通过工具查询并阅读技能说明书，自行决定是否激活。
 
 每个 YAML 文件 = 一个技能，包含：
   - name: 技能名称
   - description: 技能说明书（核心内容，模型阅读后就知道怎么做）
-  - keywords: 触发关键词（用于自动匹配）
+  - keywords: 匹配关键词
+  - trigger: 触发规则 {include, exclude, min_score}（自动建议用）
+  - tool_rules: 可选工具权限 {allow_tools, block_tools, block_tags, restrict_to}
 """
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -14,11 +16,13 @@ from typing import Any, Dict, List, Optional
 
 @dataclass
 class Skill:
-    """技能说明书 — 纯提示词文档"""
+    """技能说明书 — 提示词文档 + 可选工具约束"""
     id: str = ""
     name: str = ""
     description: str = ""     # 技能说明书正文（核心内容）
     keywords: List[str] = field(default_factory=list)  # 匹配关键词
+    tool_rules: Optional[Dict] = None  # 可选工具权限（learned skill 使用）
+    trigger: Optional[Dict] = None     # 可选触发规则 {include, exclude, min_score}
     metadata: Dict = field(default_factory=dict)
 
     def to_prompt_block(self) -> str:

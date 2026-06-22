@@ -8,7 +8,7 @@
 - experts/: PreGenExpertPipeline (小模型驱动大模型 prompt 引导，含 EmotionExpert)
 - evolution/: SelfReflection, ValueSystem
 - probes/: 探针系统 (5 类探针)
-- integration/: PerceptionThinkIntegrator
+- integration/: empty (placeholder)
 - skills/: YAML 技能系统 (角色+规章+流程)
 - session/: 层级会话管理 (主会话+子会话)
 

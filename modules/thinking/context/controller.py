@@ -82,9 +82,7 @@ class ContextController:
 
         # ── 身份注入：Skill 优先 ──
         if active_skill and tier == "large":
-            skill_block = active_skill.to_identity_block()
-            if skill_block:
-                parts.append(skill_block)
+            parts.append(active_skill.to_prompt_block())
         elif identity:
             parts.append(identity.build_system_prompt())
 
@@ -239,7 +237,7 @@ class ContextController:
         identity_expertise: tuple = (),
         identity_weaknesses: tuple = (),
         task_description: str = "",
-        active_skill: Any = None,
+        skill_suggestion: str = "",
         notebook_status: str = "",
         history_output: str = "",
         available_tools: str = "",
@@ -248,13 +246,11 @@ class ContextController:
         external_guidance: str = "",
         blackboard_context: str = "",
         message_context: str = "",
-        v2_attention_text: str = "",
         memory_recent: str = "",
         memory_related: str = "",
         memory_long_term: str = "",
         values_text: str = "",
         round_num: int = 0,
-        has_skill: bool = False,
     ) -> str:
         """构建每轮推理上下文
 
@@ -263,7 +259,7 @@ class ContextController:
             tier: 模型层级
             identity_*: 模型身份信息
             task_description: 当前任务描述
-            active_skill: 激活的技能（激活时替代默认身份块）
+            skill_suggestion: 技能建议文本（由 continuous_thinker 生成）
             notebook_status: 记事本状态
             history_output: 历史思考输出
             available_tools: 可用工具描述
@@ -272,36 +268,28 @@ class ContextController:
             external_guidance: 外部引导
             blackboard_context: ContextSlicer 产出的黑板上文
             message_context: 消息总线中的专家/主管回复
-            v2_attention_text: V2注意力状态文本
             memory_recent/memory_related/memory_long_term: 各层记忆文本（当前为空 — 记忆已存根）
             values_text: ValueSystem 活跃规则
             round_num: 当前轮次
-            has_skill: 是否有技能激活
 
         Returns:
             组装好的轮次提示词
         """
         parts = []
 
-        # 1. 身份 + 任务描述（Skill 激活时身份已在 build_system_prompt 注入）
-        if active_skill and tier == "large":
-            parts.append(
-                f"【你的任务】\n{task_description}\n"
-                f"当前技能: {active_skill.name}（{active_skill.role}）"
-            )
-        else:
-            identity_line = (
-                f"【你的任务】\n{task_description}\n"
-                f"你是 {identity_name}（{identity_tier} 层 / {identity_role}）。"
-            )
-            parts.append(identity_line)
-            boundary = (
-                f"【角色边界】\n{identity_personality}\n"
-                f"擅长: {', '.join(identity_expertise)}\n"
-                f"不擅长: {', '.join(identity_weaknesses)}"
-            ) if identity_personality else ""
-            if boundary:
-                parts.append(boundary)
+        # 1. 身份 + 任务描述（Skill 身份已在 build_system_prompt 注入）
+        identity_line = (
+            f"【你的任务】\n{task_description}\n"
+            f"你是 {identity_name}（{identity_tier} 层 / {identity_role}）。"
+        )
+        parts.append(identity_line)
+        boundary = (
+            f"【角色边界】\n{identity_personality}\n"
+            f"擅长: {', '.join(identity_expertise)}\n"
+            f"不擅长: {', '.join(identity_weaknesses)}"
+        ) if identity_personality else ""
+        if boundary:
+            parts.append(boundary)
 
         # 2. 记事本
         if notebook_status:
@@ -326,9 +314,13 @@ class ContextController:
         if available_tools:
             parts.append(f"【可用工具与指令】\n{available_tools}")
 
-        # 6. V2 注意力上下文
-        if v2_attention_text:
-            parts.append(v2_attention_text)
+        # 6. 注意力上下文（自动从 current_goal 分析）
+        try:
+            from modules.attention import create_attention_analyzer
+            attention_result = create_attention_analyzer().analyze(user_input=current_goal)
+            parts.append(attention_result.summary_text)
+        except Exception:
+            pass
 
         # 7. 黑板上文（ContextSlicer 产出）
         if blackboard_context:
@@ -350,7 +342,11 @@ class ContextController:
         if values_text:
             parts.append(values_text)
 
-        # 11. 开始标签
+        # 11. 技能建议（由 continuous_thinker 生成）
+        if skill_suggestion:
+            parts.append(skill_suggestion)
+
+        # 12. 开始标签
         parts.append(
             "\n【请开始工作】\n"
             "执行你的任务。需要继续、等待或委托时使用内部控制工具；"

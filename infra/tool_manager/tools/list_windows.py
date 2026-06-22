@@ -1,4 +1,5 @@
 """list_windows 工具 — 列出当前所有应用窗口"""
+import sys
 import subprocess
 from typing import Dict, List, Any
 
@@ -16,37 +17,53 @@ def _is_electron(app_name: str) -> bool:
     if app_name in _electron_cache:
         return _electron_cache[app_name]
 
-    # 从 touchpoint window 找 PID，再查进程命令行
-    try:
-        import touchpoint as tp
-        for w in tp.windows():
-            if getattr(w, "app", "") == app_name:
-                pid = getattr(w, "pid", 0)
-                if pid:
-                    try:
-                        cmdline = subprocess.run(
-                            ["ps", "-p", str(pid), "-o", "command="],
-                            capture_output=True, text=True, timeout=3,
-                        ).stdout.lower()
-                        is_elec = "electron" in cmdline or "cef" in cmdline or "helper (renderer)" in cmdline
-                        _electron_cache[app_name] = is_elec
-                        return is_elec
-                    except Exception:
-                        pass
-                break
-    except Exception:
-        pass
+    # macOS: 从 touchpoint window 找 PID，再查进程命令行
+    if sys.platform == "darwin":
+        try:
+            import touchpoint as tp
+            for w in tp.windows():
+                if getattr(w, "app", "") == app_name:
+                    pid = getattr(w, "pid", 0)
+                    if pid:
+                        try:
+                            cmdline = subprocess.run(
+                                ["ps", "-p", str(pid), "-o", "command="],
+                                capture_output=True, text=True, timeout=3,
+                            ).stdout.lower()
+                            is_elec = "electron" in cmdline or "cef" in cmdline or "helper (renderer)" in cmdline
+                            _electron_cache[app_name] = is_elec
+                            return is_elec
+                        except Exception:
+                            pass
+                    break
+        except Exception:
+            pass
 
-    # 降级：检查 .app bundle 结构
-    try:
-        from modules.perception.detectors.touchpoint_detector import TouchpointDetector
-        app_path = TouchpointDetector._find_app_path(app_name)
-        if app_path:
-            result = TouchpointDetector._is_electron_app(app_path)
-            _electron_cache[app_name] = result
-            return result
-    except Exception:
-        pass
+        # 降级：检查 .app bundle 结构（仅 macOS）
+        try:
+            from modules.perception.detectors.touchpoint_detector import TouchpointDetector
+            app_path = TouchpointDetector._find_app_path(app_name)
+            if app_path:
+                result = TouchpointDetector._is_electron_app(app_path)
+                _electron_cache[app_name] = result
+                return result
+        except Exception:
+            pass
+
+    # Windows: 通过 wmic 查询进程命令行
+    elif sys.platform == "win32":
+        try:
+            result = subprocess.run(
+                ["wmic", "process", "where",
+                 f"name like '%{app_name}%'", "get", "commandline"],
+                capture_output=True, text=True, timeout=5,
+            )
+            cmdline = result.stdout.lower()
+            if "electron" in cmdline or "cef" in cmdline:
+                _electron_cache[app_name] = True
+                return True
+        except Exception:
+            pass
 
     _electron_cache[app_name] = False
     return False

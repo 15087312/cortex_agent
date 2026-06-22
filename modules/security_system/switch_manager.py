@@ -13,8 +13,6 @@ class SecuritySwitchManager:
         self._switch_state: Dict[SecurityLevel, bool] = {
             SecurityLevel.CORE: True,
             SecurityLevel.CONTENT: True,
-            SecurityLevel.MODULE: True,
-            SecurityLevel.EVOLVE: True,
             SecurityLevel.OUTPUT: True
         }
         logger.info("安全开关管理器初始化完成")

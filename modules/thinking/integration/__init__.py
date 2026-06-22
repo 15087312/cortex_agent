@@ -1,12 +1,2 @@
-"""
-感知-思考集成模块
-"""
-from .perception_think_integrator import (
-    PerceptionThinkIntegrator,
-    AttentionAwarePerception,
-)
-
-__all__ = [
-    "PerceptionThinkIntegrator",
-    "AttentionAwarePerception",
-]
+"""集成模块 — 连接感知系统与思考循环"""
+__all__ = []

@@ -4,7 +4,7 @@
 模块门面导出感知接口/工厂，以及本模块内部常用类型。
 跨模块调用优先依赖 PerceptionPort/create_perception_port。
 """
-from .interface import PerceptionPort, create_perception_port, get_perception_port
+from .interface import PerceptionPort
 from .difference.detector import get_detector
 from .difference.heartbeat import get_heartbeat
 
@@ -14,10 +14,9 @@ from .change_event import ChangeEvent
 
 # integration.py 可能包含重型可选依赖，使用 try/except 确保不阻塞模块导入
 try:
-    from .integration import PerceptionIntegrator, perception_integrator
+    from .integration import PerceptionIntegrator
 except Exception:
     PerceptionIntegrator = None
-    perception_integrator = None
 
 # 新系统（按需导入）
 def get_perception_system():
@@ -34,17 +33,8 @@ def _get_compat_proxy():
         """旧版 perception_manager 兼容包装"""
 
         @property
-        @property
         def _running(self):
             return ps._started
-
-        @property
-        def file_perception(self):
-            return None  # 功能暂未实现
-
-        @property
-        def screen_perception(self):
-            return None  # 已由新流水线接管
 
         def start_monitoring(self):
             """启动监控（兼容旧接口）"""
@@ -62,13 +52,10 @@ perception_manager = _get_compat_proxy()
 
 __all__ = [
     "PerceptionPort",
-    "create_perception_port",
-    "get_perception_port",
     "get_perception_system",
     "ChangeEvent",
     "PerceptionIntegrator",
     "perception_manager",
-    "perception_integrator",
     "get_detector",
     "get_heartbeat",
 ]

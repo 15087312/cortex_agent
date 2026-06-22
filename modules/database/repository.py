@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from utils.logger import setup_logger
 from datetime import datetime
 from .connection import db_manager, Base
-from .models import ShortTermMemory, LongTermMemory, ExperienceMemory
+from .models import ShortTermMemory
 from .disk_cache import disk_cache
 
 logger = setup_logger("memory_repository")
@@ -257,71 +257,4 @@ class ShortTermMemoryRepository:
         return deleted
 
 
-
-class ExperienceRepository:
-    """经验仓储"""
-    
-    def __init__(self):
-        pass
-    
-    def add(
-        self,
-        situation: str,
-        action: str,
-        result: str,
-        success: bool,
-        context: Dict = None,
-        tags: List[str] = None,
-        reward: float = 0.0,
-        owner: str = "system"
-    ) -> str:
-        """添加经验"""
-        import uuid
-        
-        experience_id = f"exp_{uuid.uuid4().hex[:12]}"
-        now = datetime.utcnow()
-        
-        experience = ExperienceMemory(
-            id=experience_id,
-            situation=situation,
-            action=action,
-            result=result,
-            success=success,
-            context=context or {},
-            tags=tags or [],
-            success_count=1 if success else 0,
-            success_rate=1.0 if success else 0.0,
-            avg_reward=reward,
-            first_attempt=now,
-            last_attempt=now
-        )
-        
-        with db_manager.get_session() as session:
-            session.add(experience)
-        
-        return experience_id
-    
-    def get_successful_actions(self, situation: str, limit: int = 5) -> List[Dict]:
-        """获取成功动作"""
-        with db_manager.get_session() as session:
-            experiences = session.query(ExperienceMemory).filter(
-                ExperienceMemory.situation == situation,
-                ExperienceMemory.success == True
-            ).order_by(ExperienceMemory.success_rate.desc()).limit(limit).all()
-            
-            return [e.to_dict() for e in experiences]
-    
-    def get_failed_actions(self, situation: str, limit: int = 5) -> List[Dict]:
-        """获取失败动作"""
-        with db_manager.get_session() as session:
-            experiences = session.query(ExperienceMemory).filter(
-                ExperienceMemory.situation == situation,
-                ExperienceMemory.success == False
-            ).order_by(ExperienceMemory.last_attempt.desc()).limit(limit).all()
-            
-            return [e.to_dict() for e in experiences]
-
-
 short_term_repo = ShortTermMemoryRepository()
-long_term_repo = None  # 长期记忆由 MemoryScheduler 独立管理 (JSONL+FAISS)
-experience_repo = ExperienceRepository()

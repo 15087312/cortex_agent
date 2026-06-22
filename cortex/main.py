@@ -144,17 +144,26 @@ def main():
 
     # 端口被占用 → 停止旧进程再重启
     if _port_in_use(args.port):
-        # 发送 SIGTERM 到旧进程
-        import subprocess as _sp
+        my_pid = str(os.getpid())
         try:
-            pid_cmd = ["lsof", "-ti", f"tcp:{args.port}"]
-            pids = _sp.check_output(pid_cmd, timeout=5).decode().strip().split()
-            my_pid = str(os.getpid())
-            for pid in pids:
-                if pid != my_pid:  # 不要自杀
-                    os.kill(int(pid), signal.SIGTERM)
-            if pids:
-                time.sleep(1.5)
+            if sys.platform == "win32":
+                import subprocess as _sp
+                r = _sp.run(["netstat", "-ano"], capture_output=True, text=True, timeout=5)
+                for line in r.stdout.split("\n"):
+                    if f":{args.port}" in line and ("LISTENING" in line or "ESTABLISHED" in line):
+                        parts = line.strip().split()
+                        if parts:
+                            pid = parts[-1]
+                            if pid != my_pid:
+                                _sp.run(["taskkill", "/PID", pid, "/F"], capture_output=True, timeout=3)
+            else:
+                import subprocess as _sp
+                pid_cmd = ["lsof", "-ti", f"tcp:{args.port}"]
+                pids = _sp.check_output(pid_cmd, timeout=5).decode().strip().split()
+                for pid in pids:
+                    if pid != my_pid:
+                        os.kill(int(pid), signal.SIGTERM)
+            time.sleep(1.5)
         except Exception:
             pass
 

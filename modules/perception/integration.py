@@ -194,18 +194,6 @@ class PerceptionIntegrator:
             self._sub_id = ""
         logger.info("感知监控已停止")
 
-    def update_dialog(self, messages: List[Dict]) -> None:
-        """更新对话记录（预留接口）"""
-        pass
-
-    def add_dialog_change(self, role: str, content: str) -> None:
-        """添加对话变化（预留接口）"""
-        pass
-
-    def _add_to_attention(self, change, urgency: float = 0.5) -> None:
-        """向注意力池添加项（预留接口）"""
-        pass
-
     def get_attention_prompt(self) -> str:
         """获取注意力提示（结构化输出）"""
         if not self._attention_items:
@@ -257,25 +245,6 @@ class PerceptionIntegrator:
         
         return "【环境感知】\n" + "\n\n".join(sections)
 
-    def build_system_prompt(self, base_prompt: str) -> str:
-        """构建系统提示词（注入感知信息）"""
-        if not self._context_injection_enabled:
-            return base_prompt
-        attention_prompt = self.get_attention_prompt()
-        if attention_prompt:
-            return f"{base_prompt}\n\n{attention_prompt}"
-        return base_prompt
-
-    def build_messages(self, messages: List[Dict], system_prompt: str = None) -> List[Dict]:
-        """构建完整的消息列表（包含感知上下文）"""
-        if system_prompt:
-            system_prompt = self.build_system_prompt(system_prompt)
-        full_messages = []
-        if system_prompt:
-            full_messages.append({"role": "system", "content": system_prompt})
-        full_messages.extend(messages)
-        return full_messages
-
     def get_context_summary(self) -> str:
         """获取感知上下文摘要（由编排层调用，注入到模型 prompt）
 
@@ -306,7 +275,3 @@ def get_perception_integrator() -> PerceptionIntegrator:
             if _perception_integrator_instance is None:
                 _perception_integrator_instance = PerceptionIntegrator()
     return _perception_integrator_instance
-
-
-# 向后兼容
-perception_integrator = None

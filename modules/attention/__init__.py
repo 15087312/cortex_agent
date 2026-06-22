@@ -1,56 +1,20 @@
 """
-注意力系统 - 权重计算、优先级调度
+注意力系统 — 模块门面
 
-模块门面只导出接口和工厂函数，避免外部模块直接依赖具体实现。
-
-V1 模块（现有）：
-- AttentionDecision: 注意力决策
-- AttentionInterface: 注意力接口
-- MemoryAttentionScoringPort: 记忆打分接口
-
-V2 模块（新增）：
-- AttentionV2Adapter: V2适配器（兼容V1接口）
-- AttentionVector: 多维度注意力向量
-- CrossModalFusion: 跨模态融合
-- AdaptiveDecay: 自适应衰减
-- ResourceAllocator: 资源分配
-- AttentionExplainer: 可解释性
-- AttentionEngine: 注意力引擎
+合并 V1 和 V2 后只导出核心分析器 + 数据容器。
+外部模块统一从这里导入：
+    from modules.attention import AttentionAnalyzer, create_attention_analyzer
 """
-from modules.attention.interface import (
-    AttentionDecision,
-    AttentionInterface,
-    AttentionV2Adapter,
-    MemoryAttentionScoringPort,
-    create_attention_interface,
-    create_memory_attention_scorer,
-    get_attention_engine,
-)
-
-# V2 模块导出
-from modules.attention.core.v2 import (
+from modules.attention.analyzer import (
+    AttentionAnalyzer,
+    AttentionResult,
     AttentionVector,
-    CrossModalFusion,
-    AdaptiveDecay,
-    ResourceAllocator,
-    AttentionExplainer,
-    AttentionEngine,
+    create_attention_analyzer,
 )
 
 __all__ = [
-    # V1
-    "AttentionDecision",
-    "AttentionInterface",
-    "MemoryAttentionScoringPort",
-    "create_attention_interface",
-    "create_memory_attention_scorer",
-    # V2
-    "AttentionV2Adapter",
-    "get_attention_engine",
+    "AttentionAnalyzer",
+    "AttentionResult",
     "AttentionVector",
-    "CrossModalFusion",
-    "AdaptiveDecay",
-    "ResourceAllocator",
-    "AttentionExplainer",
-    "AttentionEngine",
+    "create_attention_analyzer",
 ]

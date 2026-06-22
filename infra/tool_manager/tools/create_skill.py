@@ -57,6 +57,8 @@ async def create_skill(
         "name": name,
         "description": description,
         "keywords": keywords or [],
+        "trigger": {"include": keywords or [], "min_score": 1},
+        "metadata": {"version": 1, "type": "learned", "generated_at": __import__("datetime").datetime.now().isoformat()},
     }
 
     skill_path.write_text(yaml.dump(data, allow_unicode=True, default_flow_style=False, sort_keys=False), encoding="utf-8")

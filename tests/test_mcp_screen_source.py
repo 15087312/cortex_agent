@@ -44,63 +44,43 @@ class TestInit:
 
 
 class TestIntervalProperty:
-    """interval 属性 getter/setter"""
+    """interval 属性 getter/setter — 范围 [0.1, 30.0] 钳位"""
 
-    def test_getter(self):
+    def test_getter_reflects_init_value(self):
         src = ScreenDiffSource(interval=3.0)
         assert src.interval == 3.0
 
-    def test_setter_normal(self):
+    @pytest.mark.parametrize("set_value,expected", [
+        (5.0, 5.0),       # 正常值
+        (0.01, 0.1),      # 低于下限 → 钳到 0.1
+        (100.0, 30.0),    # 高于上限 → 钳到 30.0
+        (0.1, 0.1),       # 下边界
+        (30.0, 30.0),     # 上边界
+    ])
+    def test_setter_clamps(self, set_value, expected):
         src = ScreenDiffSource()
-        src.interval = 5.0
-        assert src.interval == 5.0
-
-    def test_setter_clamps_low(self):
-        src = ScreenDiffSource()
-        src.interval = 0.01
-        assert src.interval == 0.1
-
-    def test_setter_clamps_high(self):
-        src = ScreenDiffSource()
-        src.interval = 100.0
-        assert src.interval == 30.0
-
-    def test_setter_edge_values(self):
-        src = ScreenDiffSource()
-        src.interval = 0.1
-        assert src.interval == 0.1
-        src.interval = 30.0
-        assert src.interval == 30.0
+        src.interval = set_value
+        assert src.interval == expected
 
 
 class TestChangeThresholdProperty:
-    """change_threshold 属性 getter/setter"""
+    """change_threshold 属性 getter/setter — 范围 [0.0, 1.0] 钳位"""
 
-    def test_getter(self):
+    def test_getter_returns_float(self):
         src = ScreenDiffSource()
         assert isinstance(src.change_threshold, float)
 
-    def test_setter_normal(self):
+    @pytest.mark.parametrize("set_value,expected", [
+        (0.05, 0.05),     # 正常值
+        (-1.0, 0.0),      # 低于下限 → 钳到 0.0
+        (2.0, 1.0),       # 高于上限 → 钳到 1.0
+        (0.0, 0.0),       # 下边界
+        (1.0, 1.0),       # 上边界
+    ])
+    def test_setter_clamps(self, set_value, expected):
         src = ScreenDiffSource()
-        src.change_threshold = 0.05
-        assert src.change_threshold == 0.05
-
-    def test_setter_clamps_negative(self):
-        src = ScreenDiffSource()
-        src.change_threshold = -1.0
-        assert src.change_threshold == 0.0
-
-    def test_setter_clamps_over_one(self):
-        src = ScreenDiffSource()
-        src.change_threshold = 2.0
-        assert src.change_threshold == 1.0
-
-    def test_setter_edge_values(self):
-        src = ScreenDiffSource()
-        src.change_threshold = 0.0
-        assert src.change_threshold == 0.0
-        src.change_threshold = 1.0
-        assert src.change_threshold == 1.0
+        src.change_threshold = set_value
+        assert src.change_threshold == expected
 
 
 class TestGetStats:
@@ -139,32 +119,21 @@ class TestGetScreenDiffSource:
         import modules.perception.difference.sources.mcp_screen_source as ms
         ms._instance = None
 
-    def test_singleton_returns_same_instance(self):
+    def test_singleton(self):
         s1 = get_screen_diff_source()
         s2 = get_screen_diff_source()
         assert s1 is s2
-
-    def test_singleton_is_screen_diff_source(self):
-        s = get_screen_diff_source()
-        assert isinstance(s, ScreenDiffSource)
-
-    def test_singleton_not_none(self):
-        s = get_screen_diff_source()
-        assert s is not None
+        assert isinstance(s1, ScreenDiffSource)
 
 
 class TestFindServerScript:
     """_find_server_script() 路径解析"""
 
-    def test_resolves_to_existing_file(self):
-        path = ScreenDiffSource._find_server_script()
-        assert path.endswith("screen_diff_server.py")
-        assert "infra/mcp/servers/screen_diff_server.py" in path.replace("\\", "/")
-
-    def test_returns_string(self):
+    def test_resolves_to_screen_diff_server(self):
         path = ScreenDiffSource._find_server_script()
         assert isinstance(path, str)
-        assert len(path) > 0
+        assert path.endswith("screen_diff_server.py")
+        assert "infra/mcp/servers/screen_diff_server.py" in path.replace("\\", "/")
 
 
 class TestLifecycle:
@@ -265,18 +234,21 @@ class TestEnsureProcess:
         assert result is False
 
     def test_process_initialize_failure(self):
+        """子进程启动后 init 握手无响应 → _ensure_process 返回 False 并 terminate
+
+        注意：源码已从 select.select 切换到 reader 线程模型（见
+        mcp_screen_source.py:188 注释），不再 import select。
+        """
         src = ScreenDiffSource(server_script="/nonexistent/path.py")
         with patch("os.path.exists", return_value=True):
             with patch("modules.perception.difference.sources.mcp_screen_source.subprocess.Popen") as mock_popen:
-                with patch("modules.perception.difference.sources.mcp_screen_source.select.select",
-                           return_value=([MagicMock()], [], [])):
-                    mock_proc = MagicMock()
-                    mock_proc.poll.return_value = None
-                    mock_proc.stdout.readline.return_value = ""
-                    mock_popen.return_value = mock_proc
-                    result = src._ensure_process()
-                    assert result is False
-                    mock_proc.terminate.assert_called_once()
+                mock_proc = MagicMock()
+                mock_proc.poll.return_value = None
+                mock_proc.stdout.readline.return_value = ""  # 无 init 响应
+                mock_popen.return_value = mock_proc
+                result = src._ensure_process()
+                assert result is False
+                mock_proc.terminate.assert_called_once()
 
     def test_process_start_exception(self):
         src = ScreenDiffSource(server_script="/nonexistent/path.py")
@@ -406,7 +378,7 @@ class TestCheckOnce:
             with patch.object(src, "_call_mcp_tool", return_value={
                 "changed": False, "change_ratio": 0.0, "regions": []
             }):
-                with patch("modules.perception.difference.sources.mcp_screen_source.get_detector") as mock_get:
+                with patch("modules.perception.difference.get_detector") as mock_get:
                     src._check_once()
                     mock_get.return_value.ingest.assert_not_called()
                     assert src._consecutive_no_change == 1
@@ -419,7 +391,7 @@ class TestCheckOnce:
                 "changed": True, "change_ratio": 0.05, "regions": [{"x": 10, "y": 20, "w": 100, "h": 50}],
                 "width": 1920, "height": 1080,
             }):
-                with patch("modules.perception.difference.sources.mcp_screen_source.get_detector") as mock_get:
+                with patch("modules.perception.difference.get_detector") as mock_get:
                     mock_detector = MagicMock()
                     mock_get.return_value = mock_detector
                     src._check_once()
@@ -504,8 +476,11 @@ class TestThreadSafety:
             assert r is results[0]
 
     def test_lock_prevents_race(self):
+        """验证 _lock 是可用的锁对象（Lock 或 RLock 都接受）"""
         src = ScreenDiffSource()
-        assert isinstance(src._lock, threading.Lock)
+        # 鸭子类型校验：能进入 with 块、能 acquire/release 即可
+        with src._lock:
+            pass
         acquired = src._lock.acquire(blocking=False)
         assert acquired is True
         src._lock.release()

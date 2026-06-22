@@ -29,7 +29,7 @@ class SkillManager:
         self._loaded = False
 
     def load_skills(self, directory: Optional[str] = None) -> int:
-        """从 skills/ 目录加载所有 YAML 技能文件"""
+        """从 skills/ 目录加载所有 YAML 技能文件（含 learned/ 子目录）"""
         skills_dir = Path(directory) if directory else _get_skills_dir()
 
         if not skills_dir.exists():
@@ -37,16 +37,23 @@ class SkillManager:
             return 0
 
         count = 0
-        for glob_pat in ("*.yaml", "*.yml"):
-            for file_path in sorted(skills_dir.glob(glob_pat)):
-                try:
-                    skill = self._load_yaml(file_path)
-                    if skill:
-                        self._skills[skill.id] = skill
-                        count += 1
-                        logger.info(f"[技能] 加载: {skill.id} ({skill.name})")
-                except Exception as e:
-                    logger.warning(f"[技能] 加载失败 {file_path.name}: {e}")
+        search_dirs = [skills_dir]
+        if not directory:
+            learned_dir = skills_dir / "learned"
+            if learned_dir.exists():
+                search_dirs.append(learned_dir)
+
+        for search_dir in search_dirs:
+            for glob_pat in ("*.yaml", "*.yml"):
+                for file_path in sorted(search_dir.glob(glob_pat)):
+                    try:
+                        skill = self._load_yaml(file_path)
+                        if skill:
+                            self._skills[skill.id] = skill
+                            count += 1
+                            logger.info(f"[技能] 加载: {skill.id} ({skill.name})")
+                    except Exception as e:
+                        logger.warning(f"[技能] 加载失败 {file_path.name}: {e}")
 
         self._loaded = True
         logger.info(f"[技能] 共加载 {count} 个技能")
@@ -63,10 +70,12 @@ class SkillManager:
         return list(self._skills.values())
 
     def match_skill(self, user_input: str) -> Optional[Skill]:
-        """根据用户输入自动匹配最合适的技能
+        """根据用户输入自动匹配最合适的技能（不区分大小写）
 
-        匹配策略：关键词包含匹配（不区分大小写），分数最高者胜。
-        阈值：至少命中 1 个关键词。
+        匹配策略：
+          1. trigger.exclude 命中 → 跳过（负向匹配优先）
+          2. trigger.include + min_score → 精准匹配
+          3. keywords → 宽匹配
         """
         if not self._loaded:
             self.load_skills()
@@ -78,15 +87,32 @@ class SkillManager:
         best_score = 0
 
         for skill in self._skills.values():
+            # 负向匹配：命中 trigger.exclude 则跳过
+            trig = skill.trigger or {}
+            exclude = trig.get("exclude") or []
+            if any(e.lower() in user_lower for e in exclude if len(e) >= 2):
+                continue
+
             score = 0
+
+            # trigger.include 精准匹配（权重 3）
+            include = trig.get("include") or []
+            for inc in include:
+                if len(inc) >= 2 and inc.lower() in user_lower:
+                    score += 3
+
+            # keywords 宽匹配（权重 1）
             for kw in skill.keywords:
                 if len(kw) >= 2 and kw.lower() in user_lower:
                     score += 1
-            if score > best_score:
-                best_score = score
-                best_skill = skill
 
-        if best_score >= 1 and best_skill:
+            if score > best_score:
+                min_score = trig.get("min_score", 1)
+                if score >= min_score:
+                    best_score = score
+                    best_skill = skill
+
+        if best_skill:
             logger.info(f"[技能] 自动匹配: {best_skill.id} (score={best_score})")
             return best_skill
         return None
@@ -121,6 +147,8 @@ class SkillManager:
             name=data.get("name", ""),
             description=data.get("description", ""),
             keywords=data.get("keywords", []),
+            tool_rules=data.get("tool_rules"),
+            trigger=data.get("trigger"),
             metadata=data.get("metadata", {}),
         )
 

@@ -9,8 +9,6 @@ import ast
 class SecurityLevel(Enum):
     CORE = "L0"
     CONTENT = "L1"
-    MODULE = "L2"
-    EVOLVE = "L3"
     OUTPUT = "L4"
 
 

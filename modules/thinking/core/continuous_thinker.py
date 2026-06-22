@@ -26,7 +26,6 @@ from modules.thinking.core.process_collector import (
     ThinkingProcessCollector,
     create_thinking_process_collector,
 )
-from modules.attention import AttentionInterface, create_attention_interface
 from modules.management.core.error_bus import error_bus, ErrorContext
 
 # 单次思考超时（秒）
@@ -51,7 +50,6 @@ class ContinuousThinker:
         model_id: str = "",
         tier: str = "large",
         task_context: Optional[ThinkingTaskContext] = None,
-        attention: Optional[AttentionInterface] = None,
         prompt_builder: Optional[Callable[..., Any]] = None,
         process_collector: Optional[ThinkingProcessCollector] = None,
         delegation_port: Optional[DelegationPort] = None,
@@ -73,7 +71,6 @@ class ContinuousThinker:
             model_id: 模型标识（如 large_primary, supervisor_code_001）
             tier: 模型层级 (large / supervisor / expert)
             task_context: 当前连续思考循环的任务目标和结果返回目标
-            attention: 注意力决策接口，默认通过注意力模块工厂创建
             prompt_builder: 可选的外部 prompt 构建器（兼容 ModelRunner 注入）
             process_collector: 思考过程收集器，供其他模块通过抽象接口读取过程快照
             delegation_port: 委托执行抽象端口，默认使用 probe_start 适配器
@@ -125,9 +122,9 @@ class ContinuousThinker:
             except Exception:
                 pass
 
-        # 上下文操作系统：检索、注意力排序、prompt 构建都由 ContextManager 统一负责
+        # 上下文操作系统：检索、prompt 构建都由 ContextManager 统一负责
+        # 注意力分析由 ContextController.build_round_context() 内部完成，不在此处调用。
         self.context_manager = ContextManager(memory_manager=self.memory)
-        self.attention = attention or create_attention_interface()
 
         # 工具调用累计计数器 (防止无限工具调用循环)
         self._total_tool_calls_in_session: int = 0
@@ -607,38 +604,10 @@ class ContinuousThinker:
         expert_ctx = self._build_expert_context_section()
         dlg_status = self._build_delegation_status_section()
 
-        attention_level = 0.6
-        attention_vector = None
-        try:
-            short_memories = []
-            try:
-                short_items = self.memory.get_context(limit=20)
-                short_memories = [str(item.get("text", "")) for item in short_items if isinstance(item, dict) and item.get("text")]
-            except Exception:
-                short_memories = []
-            attention_decision = self.attention.analyze(
-                user_input=initial_question, context=[], short_term_memory=short_memories,
-            )
-            attention_level = getattr(attention_decision, "attention_level", 0.6)
-            attention_vector = getattr(attention_decision, "attention_vector", None)
-        except Exception:
-            pass
-
-        v2_text = ""
-        if attention_vector is not None:
-            try:
-                from modules.attention.core.v2.attention_vector import AttentionVector
-                if isinstance(attention_vector, AttentionVector):
-                    v2_parts = [
-                        f"语义相关性: {attention_vector.semantic:.2f}",
-                        f"时间敏感性: {attention_vector.temporal:.2f}",
-                        f"任务重要性: {attention_vector.task:.2f}",
-                        f"情感强度: {attention_vector.emotion:.2f}",
-                        f"模态权重: {attention_vector.modality:.2f}",
-                    ]
-                    v2_text = "【注意力状态】" + ", ".join(v2_parts)
-            except Exception:
-                pass
+        # 注意力上下文无需在此处分析 — ContextController.build_round_context()
+        # 会在 step 6 自动从 initial_question 调用 AttentionAnalyzer 并注入 prompt。
+        # 不要在此处添加 self.attention.analyze() 调用。
+        # 动机：注意力是上下文组装层的职责，ContinuousThinker 是编排层，不应知悉注意力格式细节。
 
         # 记忆上下文 — 事件记忆系统检索（按遗忘曲线 × 强化 × 重要性排序）
         memory_recent = memory_related = memory_long = ""
@@ -702,6 +671,36 @@ class ContinuousThinker:
             except Exception:
                 pass
 
+        # 技能自动建议（无技能激活时推荐匹配项）
+        try:
+            from modules.thinking.skills import skill_manager
+            runner = getattr(self, '_runner_ref', None)
+            has_active = bool(getattr(runner, '_active_skill', None)) if runner else False
+            if not has_active:
+                suggested = skill_manager.match_skill(initial_question)
+                if suggested:
+                    hint = f"【建议技能】当前场景推荐激活「{suggested.name}」，可用 request_skill(skill_id='{suggested.id}') 激活"
+                    dl = dlg_status or ""
+                    dlg_status = (hint + "\n\n" + dl) if dl else hint
+        except Exception:
+            pass
+
+        # 技能建议（无激活技能时推荐匹配项，由 context/controller 渲染）
+        skill_suggestion = ""
+        try:
+            from modules.thinking.skills import skill_manager
+            runner = getattr(self, '_runner_ref', None)
+            has_active = bool(getattr(runner, '_active_skill', None)) if runner else False
+            if not has_active:
+                suggested = skill_manager.match_skill(initial_question)
+                if suggested:
+                    skill_suggestion = (
+                        f"【建议技能】当前场景推荐激活「{suggested.name}」，"
+                        f"可用 request_skill(skill_id='{suggested.id}') 激活"
+                    )
+        except Exception:
+            pass
+
         from modules.thinking.context.controller import get_context_controller
         ctrl = get_context_controller()
         prompt = ctrl.build_round_context(
@@ -714,13 +713,12 @@ class ContinuousThinker:
             delegation_status=dlg_status,
             external_guidance=external_guidance,
             blackboard_context=external_section,
-            v2_attention_text=v2_text,
             memory_recent=memory_recent,
             memory_related=memory_related,
             memory_long_term=memory_long,
             values_text=values_text,
             round_num=round_num,
-            has_skill=bool(getattr(self._runner_ref, '_active_skill', None)),
+            skill_suggestion=skill_suggestion,
         )
 
         try:
