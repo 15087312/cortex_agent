@@ -131,20 +131,6 @@ class ToolManager:
             self._tool_events.append(event)
 
         try:
-            from monitor_cli import get_monitor
-            monitor = get_monitor()
-            monitor.record(
-                "tool",
-                tool_name,
-                str(params)[:80],
-                str(result if success else error)[:50],
-                latency_ms,
-                success
-            )
-        except Exception as e:
-            self.logger.warning(f"监控事件记录失败: {e}")
-
-        try:
             blackbox = _get_blackbox()
             if blackbox:
                 blackbox.log_module_call(

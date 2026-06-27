@@ -63,8 +63,7 @@ class TestRuleBasedCompression:
         assert len(result) < len(text)
 
 
-@pytest.mark.asyncio
-async def test_compress_none_level(engine):
+def test_compress_none_level(engine):
     text = "short text"
-    result = await engine.compress(text, max_tokens=10000, level=CompressionLevel.NONE)
+    result = engine.compress(text, max_tokens=10000, level=CompressionLevel.NONE)
     assert result == text
