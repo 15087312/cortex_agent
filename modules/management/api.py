@@ -400,11 +400,12 @@ async def get_thinking_status():
     """获取思维模块状态"""
     try:
         from modules.thinking.core.continuous_thinker import ContinuousThinker
-        from modules.thinking.core.model_manager import model_manager
+        from modules.thinking.model_factory import get_model_factory
 
-        big_ok = model_manager.big_model is not None
-        medium_ok = model_manager.middle_model is not None
-        small_ok = model_manager.small_model is not None
+        factory = get_model_factory()
+        big_ok = factory.get_client("large") is not None
+        medium_ok = factory.get_client("supervisor") is not None
+        small_ok = factory.get_client("expert") is not None
 
         return {
             "success": True,

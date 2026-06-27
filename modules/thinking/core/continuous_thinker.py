@@ -919,8 +919,8 @@ class ContinuousThinker:
         """
         if not self.think_fn:
             try:
-                from modules.thinking.core.model_manager import model_manager
-                model = model_manager.big_model
+                from modules.thinking.model_factory import get_model_factory
+                model = get_model_factory().get_client("large")
                 if not model:
                     raise ValueError("大模型未初始化")
                 self.set_think_fn(model.generate)

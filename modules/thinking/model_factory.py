@@ -281,6 +281,33 @@ class ModelInstanceFactory:
         self._instances.clear()
         self._count_by_tier = {"large": 0, "supervisor": 0, "expert": 0}
 
+    # ── 生命周期方法 ──
+
+    def ensure_ready(self) -> None:
+        """惰性初始化：确保 large/supervisor/expert 各至少有一个可用实例"""
+        if self._count_by_tier.get("large", 0) == 0:
+            self.create_large()
+        if self._count_by_tier.get("supervisor", 0) == 0:
+            self.create_supervisor()
+        if self._count_by_tier.get("expert", 0) == 0:
+            self.create_expert()
+
+    @property
+    def is_ready(self) -> bool:
+        return self._count_by_tier.get("large", 0) > 0
+
+    def get_client(self, tier: str):
+        """获取指定层级的原始模型 client"""
+        instances = self.list_by_tier(tier)
+        if instances:
+            return instances[0].client
+        return None
+
+    def shutdown(self) -> None:
+        """关闭所有实例（同步版本）"""
+        for model_id in list(self._instances.keys()):
+            self.destroy(model_id)
+
 
 # ---------------------------------------------------------------------------
 # 全局工厂单例

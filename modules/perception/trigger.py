@@ -216,8 +216,8 @@ class ProactiveTrigger:
     async def _call_llm(self, prompt: str) -> str:
         """调用大模型"""
         try:
-            from modules.thinking.core.model_manager import model_manager
-            client = model_manager.get_main_model()
+            from modules.thinking.model_factory import get_model_factory
+            client = get_model_factory().get_client("large")
             response = await client.chat([{"role": "user", "content": prompt}])
             return response.get("content", "") if isinstance(response, dict) else str(response)
         except Exception as e:

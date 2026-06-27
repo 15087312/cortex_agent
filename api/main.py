@@ -50,9 +50,9 @@ async def lifespan(app: FastAPI):
 
     # 初始化模型调度管理器
     try:
-        from modules.thinking.core.model_manager import model_manager
-        await model_manager.initialize()
-        logger.info("✓ 模型调度管理器已初始化")
+        from modules.thinking.model_factory import get_model_factory
+        get_model_factory().ensure_ready()
+        logger.info("✓ 模型实例工厂已就绪")
     except Exception as e:
         logger.error(f"✗ 模型调度管理器初始化失败: {e}")
 
@@ -160,9 +160,9 @@ async def lifespan(app: FastAPI):
 
     # 关闭模型调度管理器
     try:
-        from modules.thinking.core.model_manager import model_manager
-        await model_manager.close()
-        logger.info("✓ 模型调度管理器已关闭")
+        from modules.thinking.model_factory import get_model_factory
+        get_model_factory().shutdown()
+        logger.info("✓ 模型实例已关闭")
     except Exception as e:
         logger.debug(f"模型调度管理器关闭失败 (非致命): {e}")
 
@@ -457,8 +457,8 @@ async def health_check():
 
     # 检查模型管理器
     try:
-        from modules.thinking.core.model_manager import model_manager
-        checks["model_manager"] = "ok" if model_manager.is_initialized else "not_initialized"
+        from modules.thinking.model_factory import get_model_factory
+        checks["model_manager"] = "ok" if get_model_factory().is_ready else "not_initialized"
     except Exception as e:
         logger.debug("健康检查: 模型管理器不可用: %s", e)
         checks["model_manager"] = "unavailable"

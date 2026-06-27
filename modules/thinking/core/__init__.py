@@ -3,14 +3,12 @@
 
 提供思考相关的核心功能：
 - ContinuousThinker: 连续思考器，支持多轮短思考循环
-- ModelManager: 模型调度管理器，负责大中小模型的层级调用
 - ThinkingProcessCollector: 思考过程收集抽象接口
+- DelegationPort: 委托端口抽象
 
-所有类均通过外部注入的思考函数调用模型，
-不直接依赖模型客户端。
+模型生命周期由 modules.thinking.model_factory.ModelInstanceFactory 统一管理。
 """
 from .continuous_thinker import ContinuousThinker
-from .model_manager import model_manager
 from .delegation_port import (
     DelegationPort,
     DelegationRequest,
@@ -32,7 +30,6 @@ from .process_collector import (
 
 __all__ = [
     "ContinuousThinker",
-    "model_manager",
     "ThinkingProcessCollector",
     "ThinkingProcessCollectorFactory",
     "ThinkingProcessSnapshot",

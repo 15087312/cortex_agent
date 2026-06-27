@@ -91,9 +91,9 @@ async def test_root_returns_app_info(_mock_lifespan, _no_auth, _reset_rate_limit
 @pytest.mark.asyncio
 async def test_health_returns_status(_mock_lifespan, _no_auth, _reset_rate_limit):
     """Health endpoint should return success with a status field and checks dict."""
-    with patch("modules.thinking.core.model_manager.model_manager") as mock_mm, \
+    with patch("api.main.get_model_factory") as mock_factory, \
          patch("modules.database.connection.db_manager") as mock_db:
-        mock_mm.is_initialized = True
+        mock_factory.return_value.is_ready = True
         mock_db.get_session.return_value = MagicMock()
 
         from api.main import app
@@ -110,17 +110,13 @@ async def test_health_returns_status(_mock_lifespan, _no_auth, _reset_rate_limit
 @pytest.mark.asyncio
 async def test_health_degraded_when_subsystem_unavailable(_mock_lifespan, _no_auth, _reset_rate_limit):
     """When a subsystem raises, health should report 'degraded'."""
-    # MagicMock side_effect does NOT fire on attribute access — only on call.
-    # The health endpoint does: `from ... import model_manager` then accesses
-    # `model_manager.is_initialized`.  We must configure the mock objects so
-    # the code paths that set ``all_healthy = False`` are actually hit.
-    mock_mm = MagicMock()
-    mock_mm.is_initialized = False          # → "not_initialized"
+    mock_factory = MagicMock()
+    mock_factory.is_ready = False
 
     mock_db = MagicMock()
     mock_db.get_session.side_effect = RuntimeError("db down")  # → "unavailable"
 
-    with patch("modules.thinking.core.model_manager.model_manager", mock_mm), \
+    with patch("api.main.get_model_factory", return_value=mock_factory), \
          patch("modules.database.connection.db_manager", mock_db):
 
         from api.main import app

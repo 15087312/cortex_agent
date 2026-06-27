@@ -2,16 +2,15 @@
 思维模块
 
 活跃子模块：
-- core/: ContinuousThinker, model_manager
-- cognition/: CognitiveBlackboard, ContextSlicer, SessionLifecycle, DomainEvent
+- core/: ContinuousThinker, DelegationPort, ThinkingProcessCollector
+- cognition/: CognitiveBlackboard, ContextSlicer, SessionLifecycle
 - communication/: ModelMessageBus, MessageBusPort
 - runtime_expert: RuntimeExpert 常驻专家基类
-- conscience（已迁移到 config/conscience.py）: 良知系统
-- evolution/: ValueSystem
-- probes/: 探针系统 (5 类探针)
-- integration/: empty (placeholder)
-- skills/: YAML 技能系统 (角色+规章+流程)
-- session/: 层级会话管理 (主会话+子会话)
+- conscience: 良知系统（值演化在 config/values_store.py）
+- probes/: 探针系统
+- skills/: YAML 技能系统
+- context/: 上下文池化与压缩
+- model_factory: ModelInstanceFactory 统一模型入口
 
 API 入口：
 - api_stream.py: StreamThinkingSystem (WebSocket + SSE)
