@@ -951,12 +951,10 @@ class ModelRunner:
     async def _build_runner_prompt(self, round_num: int) -> str:
         """构建每轮 prompt（作为 ContinuousThinker 的外部 prompt builder）。
 
-        只提供 ExpertPromptBuilder 未覆盖的独有内容：
-        - Blackboard 切片（目标/计划/委托/专家发现/系统观察/共享记忆）
-        - 消息总线中的专家消息
+        提供 Blackboard 切片（目标/计划/委托/专家发现/系统观察/共享记忆）
+        和消息总线中的专家消息。
 
-        记忆、引导、私有上下文、角色信息均由 ExpertPromptBuilder 统一提供，
-        此处不再重复，避免上下文膨胀和信息重复。
+        角色信息、系统规则等由 PromptComposer.build_system() 统一提供。
         """
         from modules.thinking.cognition import ContextSlicer
 

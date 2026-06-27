@@ -48,7 +48,7 @@ class CompressionEngine:
         en_chars = len(text) - cn_chars
         return cn_chars // self.CHARS_PER_TOKEN_CN + en_chars // self.CHARS_PER_TOKEN_EN
 
-    async def compress(
+    def compress(
         self,
         content: str,
         max_tokens: int = 8000,

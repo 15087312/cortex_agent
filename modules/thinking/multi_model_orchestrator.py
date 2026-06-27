@@ -230,10 +230,7 @@ class MultiModelOrchestrator:
             logger.warning(f"[安全拦截] {security_error}")
             return self._build_security_error(security_error, start_time)
 
-        # ---- 2. 记忆上下文 ----
-        memory_context_text = ""
-
-        # ---- 2.5 设置执行模式 ----
+        # ---- 2. 设置执行模式 ----
         try:
             from modules.thinking.context.controller import get_context_controller
             from config.settings import settings as _cfg
@@ -244,7 +241,7 @@ class MultiModelOrchestrator:
         # ---- 3. 专家引导 (情绪 + 价值观) ----
         # 由激活的 Skill 决定是否运行，目前默认始终运行
         expert_guidance = await self._run_expert_pipeline(
-            user_input, memory_context_text
+            user_input
         )
 
         # ---- 3.5 技能匹配（已移除自动匹配，技能仅通过 request_skill 工具手动激活） ----
@@ -254,7 +251,6 @@ class MultiModelOrchestrator:
         thinking_result = await self._execute_multi_model_thinking(
             user_input=user_input,
             session_id=session_id,
-            memory_context_text=memory_context_text,
             expert_guidance=expert_guidance,
             event_callback=event_callback,
             skill_id=skill_id,
@@ -333,8 +329,8 @@ class MultiModelOrchestrator:
     # 3. 专家引导
     # ------------------------------------------------------------------
 
-    async def _run_expert_pipeline(self, user_input: str, memory_context_text: str) -> dict:
-        return await self._get_guidance_service().run(user_input, memory_context_text)
+    async def _run_expert_pipeline(self, user_input: str) -> dict:
+        return await self._get_guidance_service().run(user_input)
 
     # ------------------------------------------------------------------
     # 3.5 技能匹配
@@ -360,7 +356,6 @@ class MultiModelOrchestrator:
         self,
         user_input: str,
         session_id: str,
-        memory_context_text: str,
         expert_guidance: dict,
         event_callback,
         skill_id: str = "",

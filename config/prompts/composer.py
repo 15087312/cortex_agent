@@ -46,7 +46,6 @@ class PromptComposer:
     def __init__(self):
         from config.prompts.loader import get_loader
         self._loader = get_loader()
-        self._system_cache: dict[str, str] = {}
 
     @property
     def _base(self):
@@ -57,23 +56,16 @@ class PromptComposer:
         return self._loader.load("roles") or {}
 
     def build(self, pool, role: str, tier: str, question: str = "") -> str:
-        """唯一入口：从 TurnContext 池构建完整 prompt"""
+        """从 TurnContext 池构建轮次上下文（不含系统提示词）
+        
+        系统提示词由 model_runner._build_system_prompt_for_mode() 
+        单独注入，避免在 system + user 消息中重复出现。
+        """
         from modules.thinking.context.pool import TurnContext
-        system = self._build_cached_system(role, tier)
         round_ctx = pool.view(role) if isinstance(pool, TurnContext) else ""
         task_block = f"【当前任务】\n{question}" if question else ""
-        parts = [system, round_ctx, task_block]
+        parts = [round_ctx, task_block]
         return "\n\n".join(p for p in parts if p)
-
-    def _build_cached_system(self, role: str, tier: str) -> str:
-        cache_key = f"{role}:{tier}"
-        if cache_key not in self._system_cache:
-            req = PromptRequest(tier=tier, role=role)
-            self._system_cache[cache_key] = self.build_system(req)
-        return self._system_cache[cache_key]
-
-    def invalidate_cache(self):
-        self._system_cache.clear()
 
     def build_system(self, req: PromptRequest) -> str:
         """构建 system prompt"""
@@ -154,7 +146,8 @@ class PromptComposer:
             lines.insert(0, identity_text)
         lines.append(
             "【工具使用】所有工具在用户本地电脑上执行。"
-            "可用工具包括 web_search、calc、tools_search 等。"
+            "只能调用系统已列出的工具，禁止编造、推测或假设存在未列出的工具名。"
+            "不确定有哪些工具时，使用 ★ tools_search ★ 列出所有可用工具及其参数。"
             "当用户要求执行操作时，先思考是否有可用工具能完成。"
         )
         return "\n".join(lines)

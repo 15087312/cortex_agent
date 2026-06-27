@@ -44,7 +44,7 @@ class SecurityApiAdapter:
 class PreGenExpertGuidanceAdapter:
     """由良知系统支持的指导端口。"""
 
-    async def run(self, user_input: str, memory_context_text: str) -> Dict[str, Any]:
+    async def run(self, user_input: str) -> Dict[str, Any]:
         try:
             from modules.thinking.conscience import get_conscience
             from infra.model.small_model_client import SmallModelClient

@@ -21,7 +21,7 @@ class SecurityPort(Protocol):
 class GuidancePort(Protocol):
     """生成前专家指导提供者。"""
 
-    def run(self, user_input: str, memory_context_text: str) -> Dict[str, Any]:
+    def run(self, user_input: str) -> Dict[str, Any]:
         """为当前用户输入返回专家指导。"""
 
 
