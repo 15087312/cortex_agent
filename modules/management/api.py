@@ -616,8 +616,8 @@ async def get_model_runners():
         from modules.thinking.core.model_runner import get_runner_manager, ModelRunnerManager
 
         all_runners = []
-        for lifecycle in get_active_sessions():
-            rm = get_runner_manager(lifecycle.session_id)
+        for session in get_active_sessions():
+            rm = get_runner_manager(session.get("session_id", ""))
             if rm:
                 runners = rm.list_runners()
                 all_runners.extend(runners)
@@ -653,9 +653,9 @@ async def get_session_dialog(
         from modules.thinking.multi_model_orchestrator import get_active_sessions
 
         bb = None
-        for lifecycle in get_active_sessions():
-            if lifecycle.session_id == session_id:
-                bb = lifecycle.blackboard
+        for session in get_active_sessions():
+            if session.get("session_id") == session_id:
+                bb = session.get("blackboard")
                 break
 
         if not bb:
@@ -688,8 +688,8 @@ async def get_runners():
         from modules.thinking.core.model_runner import get_runner_manager
 
         runners = []
-        for lifecycle in get_active_sessions():
-            rm = get_runner_manager(lifecycle.session_id)
+        for session in get_active_sessions():
+            rm = get_runner_manager(session.get("session_id", ""))
             if rm:
                 try:
                     runner_list = rm.list_runners() if hasattr(rm, 'list_runners') else []
@@ -701,7 +701,7 @@ async def get_runners():
                                 "tier": r.get("tier", ""),
                                 "role": r.get("role", ""),
                                 "status": r.get("status", "active"),
-                                "session_id": lifecycle.session_id,
+                                "session_id": session.get("session_id", ""),
                             })
                 except Exception as e:
                     logger.debug(f"读取 runner 信息失败: {e}")
