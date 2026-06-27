@@ -1,12 +1,26 @@
 """
-TurnContext — 单轮上下文池
+TurnContext — 单轮上下文池 + 轮次生命周期
 
 ContextFragment 来源 → TurnContext 池化 → view(role) 角色过滤输出
 替代 ContextController.build_context(**sources) 的松散 dict 传入。
+同时承载轮次生命周期状态（turn_id, state 转移, 统计）。
 """
 import hashlib
+import time
+import uuid
+from enum import Enum
 from dataclasses import dataclass, field
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Optional
+
+
+class TurnState(str, Enum):
+    """轮次状态机"""
+    IDLE = "idle"
+    PLANNING = "planning"
+    EXECUTING = "executing"
+    INTEGRATING = "integrating"
+    COMPLETE = "complete"
+    ERROR = "error"
 
 
 @dataclass
@@ -21,15 +35,57 @@ class ContextFragment:
 
 
 class TurnContext:
-    """单轮上下文池
+    """单轮上下文池 + 生命周期
 
     add() 收集 Fragment → view(role) 产出角色定制文本
     内置去重（MD5 哈希）、优先级排序、token 预算压缩。
+
+    生命周期：
+    - turn_id: UUID 唯一标识
+    - state: IDLE → PLANNING → EXECUTING → INTEGRATING → COMPLETE/ERROR
+    - 统计：elapsed_seconds, round_count
     """
 
-    def __init__(self):
+    def __init__(self, session_id: str = "", user_input: str = ""):
         self.fragments: Dict[str, ContextFragment] = {}
         self._hashes: set = set()
+
+        # 生命周期字段
+        self.turn_id: str = str(uuid.uuid4())
+        self.session_id: str = session_id
+        self.user_input: str = user_input
+        self.state: TurnState = TurnState.IDLE
+        self.start_ts: float = time.time()
+        self.end_ts: Optional[float] = None
+        self.elapsed_seconds: float = 0.0
+        self.round_count: int = 0
+        self.last_user_message_time: float = 0.0
+
+    @property
+    def is_active(self) -> bool:
+        return self.state in (TurnState.PLANNING, TurnState.EXECUTING, TurnState.INTEGRATING)
+
+    @property
+    def is_complete(self) -> bool:
+        return self.state in (TurnState.COMPLETE, TurnState.ERROR)
+
+    def transition_to(self, new_state: TurnState) -> None:
+        self.state = new_state
+        if new_state in (TurnState.COMPLETE, TurnState.ERROR):
+            self.end_ts = time.time()
+            self.elapsed_seconds = self.end_ts - self.start_ts
+
+    def to_dict(self) -> dict:
+        return {
+            "turn_id": self.turn_id,
+            "session_id": self.session_id,
+            "state": self.state.value,
+            "user_input": self.user_input[:200],
+            "start_ts": self.start_ts,
+            "end_ts": self.end_ts,
+            "elapsed_seconds": self.elapsed_seconds,
+            "round_count": self.round_count,
+        }
 
     def add(self, fragment: ContextFragment) -> None:
         if not fragment.content:

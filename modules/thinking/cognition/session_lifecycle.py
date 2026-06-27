@@ -11,7 +11,7 @@
 import threading
 import time
 from typing import Optional, Any, Dict, List
-from .turn_context import TurnContext, TurnState
+from modules.thinking.context.pool import TurnContext, TurnState
 from .blackboard import CognitiveBlackboard
 from utils.logger import setup_logger
 
