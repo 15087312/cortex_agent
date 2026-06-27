@@ -245,10 +245,28 @@ class CombinedToolExecutor(ToolExecutorPort):
             if item.get("type") == "text":
                 content_text += item.get("text", "")
 
+        # 错误信息提取：优先 content_text，其次 MCP error 字段，最后回退到原始结果摘要
+        error_text = None
+        if is_error:
+            text = (content_text or "").strip()
+            if text:
+                error_text = text
+            else:
+                # 尝试从 MCP 错误字段提取
+                text = (result.get("error", "") or "").strip()
+                if text:
+                    if isinstance(text, str):
+                        error_text = text
+                    else:
+                        error_text = str(text)
+                else:
+                    # 回退：尝试提取有用的错误描述
+                    error_text = result.get("message", "") or str(result)
+
         return ToolCallResult(
             success=not is_error,
             result=content_text,
-            error=content_text if is_error else None,
+            error=error_text,
             tool_name=request.tool_name,
             source="mcp",
             latency_ms=latency_ms,

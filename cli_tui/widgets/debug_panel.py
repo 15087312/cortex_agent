@@ -43,9 +43,9 @@ class DebugPanel(Static):
             lines.append(
                 "\n".join(
                     [
-                        f"[green]来源:[/green] {card.get('source', '-')}",
-                        f"[green]卡点:[/green] {card.get('bottleneck', '-')}",
-                        f"[green]最后事件:[/green] {card.get('last_event', '-')}",
+                        f"[green]来源:[/green] {str(card.get('source', '-'))}",
+                        f"[green]卡点:[/green] {str(card.get('bottleneck', '-'))}",
+                        f"[green]最后事件:[/green] {str(card.get('last_event', '-'))[:200]}",
                     ]
                 )
             )

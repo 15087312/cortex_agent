@@ -1881,7 +1881,8 @@ class ModelRunner:
                                         if mcp_result.success:
                                             result = str(mcp_result.result) if mcp_result.result is not None else "(无返回值)"
                                         else:
-                                            result = f"[错误: {mcp_result.error}]"
+                                            error_msg = mcp_result.error or "(未知错误)"
+                                            result = f"[错误: {error_msg}]"
                                             if self.tier == "expert":
                                                 expert_errors.append(f"{tc.name}: {mcp_result.error}")
                             except Exception as e:
