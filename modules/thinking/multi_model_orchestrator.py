@@ -384,14 +384,10 @@ class MultiModelOrchestrator:
         timings['开始'] = (0, '多模型思考启动')
 
         try:
-            # ---- SessionLifecycle: 会话生命周期 + CognitiveBlackboard ----
+            # ---- 会话初始化: TurnContext + CognitiveBlackboard ----
             runner_manager = None
             turn_context = None
             blackboard = None
-
-            timings = {}
-            start = time.time()
-            timings['开始'] = (0, '多模型思考启动')
 
             try:
                 from modules.thinking.context.pool import TurnContext
@@ -420,8 +416,6 @@ class MultiModelOrchestrator:
                 )
             except Exception as e:
                 logger.debug(f"[编排器] 初始化失败 (非致命): {e}")
-            except Exception as e:
-                logger.debug(f"[SessionLifecycle] 初始化失败 (非致命): {e}")
                 blackboard = None
                 turn_context = None
 

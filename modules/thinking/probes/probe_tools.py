@@ -178,6 +178,7 @@ def probe_start(
             logger.debug("[probe_start] SessionManager 副会话已废弃，使用 CognitiveBlackboard")
 
         # 直接激活 runner（不经过 MessageBus）
+        import asyncio as _asyncio
         model_id = ""
         try:
             from modules.thinking.core.model_runner import _runner_managers
@@ -188,7 +189,7 @@ def probe_start(
                     mgr = m
                     break
             if mgr:
-                model_id = await mgr.start_runner(
+                _coro = mgr.start_runner(
                     identity_key=identity_key,
                     task_description=task_description,
                     probe_id=probe_id,
@@ -197,6 +198,14 @@ def probe_start(
                     return_to_session_id=return_to_session_id,
                     skill_id=kwargs.get("skill_id", ""),
                 )
+                try:
+                    _loop = _asyncio.get_running_loop()
+                except RuntimeError:
+                    _loop = None
+                if _loop and _loop.is_running():
+                    _loop.create_task(_coro)
+                else:
+                    model_id = _asyncio.run(_coro)
                 logger.info(f"[probe_start] runner 已激活: probe={probe_id} → model={model_id}")
             else:
                 logger.warning(f"[probe_start] 未找到 session={sid_prefix} 的 runner_manager")
@@ -271,12 +280,21 @@ def probe_stop(probe_id: str, **kwargs) -> Dict[str, Any]:
             }
 
         # 直接停止 runner
+        import asyncio as _asyncio
         try:
             from modules.thinking.core.model_runner import _runner_managers
             for mgr in _runner_managers.values():
                 if hasattr(mgr, '_probe_to_model') and probe_id in mgr._probe_to_model:
                     model_id = mgr._probe_to_model[probe_id]
-                    await mgr.stop_runner(model_id)
+                    _coro = mgr.stop_runner(model_id)
+                    try:
+                        _loop = _asyncio.get_running_loop()
+                    except RuntimeError:
+                        _loop = None
+                    if _loop and _loop.is_running():
+                        _loop.create_task(_coro)
+                    else:
+                        _asyncio.run(_coro)
                     logger.info(f"[probe_stop] runner 已停止: probe={probe_id} → model={model_id}")
                     break
         except Exception as e:
