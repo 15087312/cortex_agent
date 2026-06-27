@@ -3,7 +3,7 @@
 
 活跃子模块：
 - core/: ContinuousThinker, DelegationPort, ThinkingProcessCollector
-- cognition/: CognitiveBlackboard, ContextSlicer, SessionLifecycle
+- cognition/: CognitiveBlackboard, ContextSlicer
 - communication/: ModelMessageBus, MessageBusPort
 - runtime_expert: RuntimeExpert 常驻专家基类
 - conscience: 良知系统（值演化在 config/values_store.py）

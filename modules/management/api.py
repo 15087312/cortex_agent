@@ -580,20 +580,18 @@ async def get_sessions(dialog_limit: int = Query(50, ge=1, le=500)):
     获取所有活跃会话及对话框内容
     """
     try:
-        from modules.thinking.cognition.session_lifecycle import get_active_sessions
+        from modules.thinking.multi_model_orchestrator import get_active_sessions
 
         sessions = []
-        for lifecycle in get_active_sessions():
-            bb = lifecycle.blackboard
+        for session in get_active_sessions():
+            bb = session.get("blackboard")
             dialog = bb.read_dialog(limit=dialog_limit) if bb else []
             sessions.append({
-                "session_id": lifecycle.session_id,
-                "state": lifecycle.state.value,
-                "is_active": lifecycle.is_active,
-                "turn_id": lifecycle.turn_id,
+                "session_id": session.get("session_id", ""),
+                "state": session.get("state", "?"),
+                "is_active": session.get("is_active", False),
+                "turn_id": session.get("turn_id", ""),
                 "dialog_size": len(dialog),
-                "active_runners": len(lifecycle._active_runners) if hasattr(lifecycle, '_active_runners') else 0,
-                "participants": list(lifecycle._participants) if hasattr(lifecycle, '_participants') else [],
                 "dialog": [e.to_dict() if hasattr(e, 'to_dict') else e for e in dialog],
             })
 
@@ -614,7 +612,7 @@ async def get_model_runners():
     获取所有活跃模型实例（runner）状态
     """
     try:
-        from modules.thinking.cognition.session_lifecycle import get_active_sessions
+        from modules.thinking.multi_model_orchestrator import get_active_sessions
         from modules.thinking.core.model_runner import get_runner_manager, ModelRunnerManager
 
         all_runners = []
@@ -652,7 +650,7 @@ async def get_session_dialog(
     获取指定会话的对话框内容
     """
     try:
-        from modules.thinking.cognition.session_lifecycle import get_active_sessions
+        from modules.thinking.multi_model_orchestrator import get_active_sessions
 
         bb = None
         for lifecycle in get_active_sessions():
@@ -686,7 +684,7 @@ async def get_runners():
     获取所有活跃的 ModelRunner
     """
     try:
-        from modules.thinking.cognition.session_lifecycle import get_active_sessions
+        from modules.thinking.multi_model_orchestrator import get_active_sessions
         from modules.thinking.core.model_runner import get_runner_manager
 
         runners = []

@@ -82,18 +82,6 @@ class ContextSlicer:
             findings_text = self._format_findings(bb.expert_findings)
             parts.append(f"【专家发现】\n{findings_text}")
 
-        # 6. 公共记忆上下文（从 dialog entries 中提取，由 inject_to_dialog 写入）
-        with bb._lock:
-            entries_snapshot = list(bb._dialog_entries)
-        memory_entries = [
-            e for e in entries_snapshot
-            if e.entry_type == "thought"
-            and e.tier == "system"
-            and e.metadata.get("context_type") == "shared_memory_context"
-        ]
-        if memory_entries:
-            parts.append(memory_entries[-1].content)
-
         return "\n\n".join(parts)
 
     def slice_for_supervisor(

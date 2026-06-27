@@ -177,60 +177,31 @@ def probe_start(
         if target_tier == "supervisor":
             logger.debug("[probe_start] SessionManager 副会话已废弃，使用 CognitiveBlackboard")
 
-        # 注册到 ProbeCache
+        # 直接激活 runner（不经过 MessageBus）
+        model_id = ""
         try:
-            from modules.thinking.probes.probe_cache import get_probe_cache, ActiveProbe
-
-            cache = get_probe_cache()
-            active = cache.get_or_create(
-                template_key=probe_id,
-                target_model=identity_key,
-                description=task_description[:200],
-            )
-            active.last_used = time.time()
-
-            logger.info(
-                f"[probe_start] 探针已创建: id={probe_id} "
-                f"tier={target_tier} identity={identity_key} "
-                f"priority={probe_priority} ttl={ttl_seconds}s"
-            )
+            from modules.thinking.core.model_runner import _runner_managers
+            sid_prefix = return_to_session_id[:8] if return_to_session_id else ""
+            mgr = None
+            for skey, m in _runner_managers.items():
+                if sid_prefix and skey.startswith(sid_prefix):
+                    mgr = m
+                    break
+            if mgr:
+                model_id = await mgr.start_runner(
+                    identity_key=identity_key,
+                    task_description=task_description,
+                    probe_id=probe_id,
+                    task_id=task_id,
+                    return_to_model_id=return_to_model_id,
+                    return_to_session_id=return_to_session_id,
+                    skill_id=kwargs.get("skill_id", ""),
+                )
+                logger.info(f"[probe_start] runner 已激活: probe={probe_id} → model={model_id}")
+            else:
+                logger.warning(f"[probe_start] 未找到 session={sid_prefix} 的 runner_manager")
         except Exception as e:
-            logger.warning(f"[probe_start] ProbeCache 注册失败 (非致命): {e}")
-
-        # 通过 MessageBus 通知系统有新探针
-        try:
-            from modules.thinking.communication.message_bus import (
-                Message, MessageType, get_message_bus,
-            )
-            bus = get_message_bus()
-
-            # 使用 session-specific 频道确保消息被正确的 ModelRunnerManager 接收
-            channel = f"model_runner_manager_{return_to_session_id[:8]}" if return_to_session_id else "model_runner_manager"
-
-            msg = Message(
-                msg_type=MessageType.SYSTEM,
-                sender="probe_tools",
-                recipient=channel,
-                content={
-                    "action": "probe_started",
-                    "probe_id": probe_id,
-                    "task_id": task_id,
-                    "target_tier": target_tier,
-                    "identity_key": identity_key,
-                    "task_description": task_description[:500],
-                    "return_to_model_id": return_to_model_id,
-                    "return_to_session_id": return_to_session_id,
-                    "priority": priority,
-                    "ttl_seconds": ttl_seconds,
-                    "caller_tier": caller_tier,
-                },
-            )
-            try:
-                asyncio.get_running_loop().create_task(bus.send(msg))
-            except RuntimeError:
-                pass
-        except Exception as e:
-            logger.debug(f"[probe_start] MessageBus 通知失败 (非致命): {e}")
+            logger.warning(f"[probe_start] 直接激活 runner 失败 (非致命): {e}")
 
         result = {
             "success": True,
@@ -299,41 +270,17 @@ def probe_stop(probe_id: str, **kwargs) -> Dict[str, Any]:
                 "error": f"权限不足: {caller_tier} 不能停止 {target_tier} 的探针",
             }
 
-        # 从 ProbeCache 移除
+        # 直接停止 runner
         try:
-            from modules.thinking.probes.probe_cache import get_probe_cache
-            cache = get_probe_cache()
-            cache._probes.pop(probe_id, None)
-            cache._save_to_disk()
+            from modules.thinking.core.model_runner import _runner_managers
+            for mgr in _runner_managers.values():
+                if hasattr(mgr, '_probe_to_model') and probe_id in mgr._probe_to_model:
+                    model_id = mgr._probe_to_model[probe_id]
+                    await mgr.stop_runner(model_id)
+                    logger.info(f"[probe_stop] runner 已停止: probe={probe_id} → model={model_id}")
+                    break
         except Exception as e:
-            logger.debug(f"[probe_stop] ProbeCache 移除失败 (非致命): {e}")
-
-        # 通过 MessageBus 通知系统探针已停止
-        try:
-            from modules.thinking.communication.message_bus import (
-                Message, MessageType, get_message_bus,
-            )
-            bus = get_message_bus()
-
-            # 使用 session-specific 频道
-            session_id = kwargs.get("_session_id", "") or kwargs.get("return_to_session_id", "")
-            channel = f"model_runner_manager_{session_id[:8]}" if session_id else "model_runner_manager"
-
-            msg = Message(
-                msg_type=MessageType.SYSTEM,
-                sender="probe_tools",
-                recipient=channel,
-                content={
-                    "action": "probe_stopped",
-                    "probe_id": probe_id,
-                },
-            )
-            try:
-                asyncio.get_running_loop().create_task(bus.send(msg))
-            except RuntimeError:
-                pass
-        except Exception as e:
-            logger.debug(f"[probe_stop] MessageBus 通知失败 (非致命): {e}")
+            logger.debug(f"[probe_stop] 直接停止 runner 失败 (非致命): {e}")
 
         logger.info(f"[probe_stop] 探针已停止: {probe_id}")
 
@@ -356,23 +303,23 @@ def probe_stop(probe_id: str, **kwargs) -> Dict[str, Any]:
     category="query",
 )
 def probe_list(**kwargs) -> Dict[str, Any]:
-    """列出所有活跃探针"""
+    """列出所有活跃模型运行器"""
     try:
-        from modules.thinking.probes.probe_cache import get_probe_cache
-
-        cache = get_probe_cache()
-        active = cache.list_active()
-
-        if not active:
-            return {"success": True, "probes": [], "total": 0, "message": "当前无活跃探针"}
-
-        return {
-            "success": True,
-            "probes": active,
-            "total": len(active),
-            "message": f"共 {len(active)} 个活跃探针",
-        }
-
+        from modules.thinking.core.model_runner import _runner_managers
+        total = 0
+        probes = []
+        for sid, mgr in list(_runner_managers.items()):
+            for model_id, runner in mgr._runners.items():
+                probes.append({
+                    "model_id": model_id,
+                    "tier": getattr(runner, 'tier', '?'),
+                    "session_id": sid[:8],
+                    "task": getattr(runner, '_task_description', '')[:100],
+                })
+                total += 1
+        if not probes:
+            return {"success": True, "probes": [], "total": 0, "message": "当前无活跃模型"}
+        return {"success": True, "probes": probes, "total": total}
     except Exception as e:
         logger.error(f"[probe_list] 失败: {e}")
         return {"success": False, "error": str(e)}
@@ -591,14 +538,14 @@ def request_intermediate_response(
         # 尝试从 SessionLifecycle 获取 CognitiveBlackboard
         dialog = None
         try:
-            from modules.thinking.cognition.session_lifecycle import get_active_sessions
-            for lifecycle in get_active_sessions():
-                if lifecycle.session_id == session_id:
-                    dialog = lifecycle.blackboard
+            from modules.thinking.multi_model_orchestrator import get_active_sessions
+            for s in get_active_sessions():
+                if s.get("session_id") == session_id:
+                    dialog = s.get("blackboard")
                     break
             if not dialog:
-                for lifecycle in get_active_sessions():
-                    dialog = lifecycle.blackboard
+                for s in get_active_sessions():
+                    dialog = s.get("blackboard")
                     break
         except Exception:
             dialog = None
@@ -851,11 +798,11 @@ def view_sub_session(supervisor_name: str = "", limit: int = 30, **kwargs) -> Di
     """
     try:
         # 从 CognitiveBlackboard 读取对话记录，按 supervisor/expert 过滤
-        from modules.thinking.cognition.session_lifecycle import get_active_sessions
+        from modules.thinking.multi_model_orchestrator import get_active_sessions
 
         entries = []
-        for lifecycle in get_active_sessions():
-            bb = lifecycle.blackboard
+        for s in get_active_sessions():
+            bb = s.get("blackboard")
             if bb:
                 all_entries = bb.read_dialog(limit=limit)
                 # 过滤出 supervisor 和 expert 的条目

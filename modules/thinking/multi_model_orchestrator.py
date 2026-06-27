@@ -24,6 +24,16 @@ from utils.logger import setup_logger
 
 logger = setup_logger("multi_model_orchestrator")
 
+# ── 全局会话注册表（供管理 API 和 probe_tools 查询）──
+_session_registry: Dict[str, Dict[str, Any]] = {}
+_session_registry_lock = threading.Lock()
+
+
+def get_active_sessions() -> List[Dict[str, Any]]:
+    """获取所有活跃会话信息"""
+    with _session_registry_lock:
+        return list(_session_registry.values())
+
 
 class MultiModelOrchestrator:
     """多模型编排器"""
@@ -378,26 +388,38 @@ class MultiModelOrchestrator:
             runner_manager = None
             turn_context = None
             blackboard = None
-            lifecycle = None
 
             timings = {}
             start = time.time()
             timings['开始'] = (0, '多模型思考启动')
 
             try:
-                from modules.thinking.cognition.session_lifecycle import (
-                    SessionLifecycle, register_session,
+                from modules.thinking.context.pool import TurnContext
+                from modules.thinking.cognition.blackboard import CognitiveBlackboard
+                turn_context = TurnContext(session_id=session_id or "", user_input=user_input)
+                blackboard = CognitiveBlackboard(
+                    session_id=session_id or "",
+                    turn_id=turn_context.turn_id,
                 )
-                lifecycle = SessionLifecycle(session_id or "")
-                turn_context = lifecycle.start_turn(user_input)
-                blackboard = lifecycle.blackboard
-                # 注册到全局 registry（供管理 API 遍历）
-                register_session(lifecycle)
+                blackboard.set_goal(user_input)
+                # 注册到全局会话表（供管理 API）
+                with _session_registry_lock:
+                    _session_registry[session_id or ""] = {
+                        "session_id": session_id or "",
+                        "state": "planning",
+                        "is_active": True,
+                        "turn_id": turn_context.turn_id,
+                        "blackboard": blackboard,
+                        "turn_context": turn_context,
+                        "started_at": time.time(),
+                    }
                 t1 = time.time() - start
                 timings['SessionLifecycle'] = (t1, f'会话初始化完成')
                 logger.info(
-                    f"[SessionLifecycle] 会话就绪: session={session_id[:12]}, turn={turn_context.turn_id[:8]}, state={lifecycle.state.value} (+{t1:.2f}s)"
+                    f"[编排器] 会话就绪: session={session_id[:12]}, turn={turn_context.turn_id[:8]} (+{t1:.2f}s)"
                 )
+            except Exception as e:
+                logger.debug(f"[编排器] 初始化失败 (非致命): {e}")
             except Exception as e:
                 logger.debug(f"[SessionLifecycle] 初始化失败 (非致命): {e}")
                 blackboard = None
