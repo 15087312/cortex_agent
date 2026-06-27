@@ -7,10 +7,9 @@ import aiohttp
 import asyncio
 import json
 import re
+import time
 import logging
-from config.model_config import LargeModelConfig, get_large_model_config
 from config.settings import settings
-from infra.prompts import prompt_manager
 from modules.management import report_api_error, report_exception
 
 # Q-12: Module-level logger to avoid repeated creation
@@ -22,24 +21,18 @@ class LargeModelClient(BaseModelClient):
 
     def __init__(
         self,
-        config: LargeModelConfig = None,
         api_key: str = None,
         api_url: str = None,
         timeout: int = 120,
         api_format: str = "",
     ):
-        if config:
-            super().__init__(config.api_key, config.api_url, config.timeout)
-            self.max_tokens = config.max_tokens
-            self.temperature = config.temperature
-            self.model_name = config.model_name
-            self._api_format = config.api_format or ""
-        else:
-            super().__init__(api_key or "", api_url or "", timeout)
-            self.max_tokens = 4096
-            self.temperature = 0.7
-            self.model_name = settings.LARGE_MODEL_NAME
-            self._api_format = api_format
+        key = api_key or settings.LARGE_MODEL_API_KEY
+        url = api_url or settings.LARGE_MODEL_API_URL
+        super().__init__(key, url, timeout or settings.MODEL_TIMEOUT)
+        self.max_tokens = 4096
+        self.temperature = 0.7
+        self.model_name = settings.LARGE_MODEL_NAME
+        self._api_format = api_format or settings.LARGE_MODEL_API_FORMAT
 
         # 自动检测 API 格式
         if not self._api_format:
@@ -51,9 +44,8 @@ class LargeModelClient(BaseModelClient):
 
     @classmethod
     def from_config(cls) -> 'LargeModelClient':
-        """从配置文件创建实例"""
-        config = get_large_model_config()
-        return cls(config=config)
+        """从配置创建实例"""
+        return cls()
 
     @staticmethod
     def _detect_api_format(url: str) -> str:
@@ -72,9 +64,17 @@ class LargeModelClient(BaseModelClient):
     
     async def generate(self, prompt: str, max_retries: int = 2, **kwargs) -> str:
         """生成响应 - 支持 DashScope / OpenAI / Anthropic，带重试机制"""
-        # 从提示词管理器获取系统提示词
-        from infra.prompts.registry import prompt_registry
-        system_prompt = prompt_registry.get("large_model") or ""
+        try:
+            from config.prompts.composer import PromptComposer, PromptRequest
+            from config.settings import settings as _cfg
+            composer = PromptComposer()
+            system_prompt = composer.build_system(PromptRequest(
+                tier="large",
+                role="orchestrator",
+                mode=_cfg.effective_execution_mode,
+            ))
+        except Exception:
+            system_prompt = "你是系统主模型，简洁直接地回复用户。"
 
         if self._api_format == "anthropic":
             headers = {
@@ -120,7 +120,11 @@ class LargeModelClient(BaseModelClient):
                     if response.status == 200:
                         # Try to parse JSON regardless of Content-Type
                         try:
-                            data = await response.json()
+                            t1 = time.time()
+                            raw = await response.text()
+                            elapsed = (t1 - time.time()) * 1000
+                            data = json.loads(raw)
+                            self._log_response_body(200, elapsed, raw, tokens=data.get("usage",{}).get("total_tokens",0))
                             logger.debug(f"[generate] API response keys: {data.keys()}")
 
                             # Anthropic 格式响应
@@ -320,6 +324,7 @@ class LargeModelClient(BaseModelClient):
             try:
                 # RES-1: Reuse pooled session instead of creating new one per request
                 session = await self._get_session()
+                self._log_request("POST", self.api_url, len(json.dumps(payload)))
                 async with session.post(
                     self.api_url,
                     headers=headers,
@@ -982,6 +987,8 @@ class LargeModelClient(BaseModelClient):
         try:
             # RES-1: Reuse pooled session instead of creating new one per request
             session = await self._get_session()
+            self._log_request("POST", self.api_url, len(json.dumps(payload)))
+            self._log_payload(payload)
             async with session.post(
                 self.api_url,
                 headers=headers,

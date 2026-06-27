@@ -14,125 +14,16 @@ from typing import Optional, Dict, Any, List
 from infra.model.large_model_client import LargeModelClient
 from infra.model.medium_model_client import MediumModelClient
 from infra.model.small_model_client import SmallModelClient
-from infra.model.lite_model_client import LiteModelClient
-from utils.logger import setup_logger
-
+from infra.model.small_model_client import SmallModelClient
 
 class ModelManager:
-    """模型调度中心 - 单例模式（兼容旧接口）+ 工厂模式（新架构）"""
-
     def __init__(self):
-        self.big_model: Optional[LargeModelClient] = None
-        self.middle_model: Optional[MediumModelClient] = None
-        self.small_model: Optional[SmallModelClient] = None
-        self.lite_model: Optional[LiteModelClient] = None  # 轻量专家模型
-        self.logger = setup_logger("model_manager")
-        self.gcm_pool = None  # 全局上下文池（可选注入）
-        # v2: 身份映射 — model_id → ModelIdentity
-        self._identities: Dict[str, Any] = {}
-        self._factory = None  # 延迟创建 ModelInstanceFactory
+        ...
+        self.lite_model: Optional[SmallModelClient] = None
 
-    # ------------------------------------------------------------------
-    # v2: 工厂集成
-    # ------------------------------------------------------------------
+    ...
 
-    @property
-    def factory(self):
-        """获取模型实例工厂（延迟加载）"""
-        if self._factory is None:
-            from modules.thinking.model_factory import get_model_factory
-            self._factory = get_model_factory()
-        return self._factory
 
-    def create_supervisor(self, template_key: str = "supervisor_code",
-                          tool_whitelist: List[str] = None, **kwargs):
-        """创建主管模型实例（独立个体）
-
-        Args:
-            template_key: 身份模板键
-            tool_whitelist: 可选的自定义工具白名单（覆盖默认）
-            **kwargs: 传递给客户端的额外参数
-
-        Returns:
-            ModelInstance
-        """
-        from modules.thinking.identity import ModelIdentity
-        identity = ModelIdentity.from_template(template_key)
-        if tool_whitelist:
-            identity.tool_whitelist = tool_whitelist
-        self._identities[identity.model_id] = identity
-        return self.factory.create_supervisor(identity=identity, **kwargs)
-
-    def create_expert(self, template_key: str = "expert_implementer",
-                      tool_whitelist: List[str] = None, **kwargs):
-        """创建专家模型实例（独立个体）
-
-        Args:
-            template_key: 身份模板键
-            tool_whitelist: 可选的自定义工具白名单（覆盖默认）
-            **kwargs: 传递给客户端的额外参数
-
-        Returns:
-            ModelInstance
-        """
-        from modules.thinking.identity import ModelIdentity
-        identity = ModelIdentity.from_template(template_key)
-        if tool_whitelist:
-            identity.tool_whitelist = tool_whitelist
-        self._identities[identity.model_id] = identity
-        return self.factory.create_expert(identity=identity, **kwargs)
-
-    def get_model_identity(self, model_id: str):
-        """获取模型的身份配置"""
-        return self._identities.get(model_id)
-
-    def can_use_tool(self, model_id: str, tool_name: str) -> bool:
-        """检查指定模型是否有权使用某工具"""
-        identity = self._identities.get(model_id)
-        if identity is None:
-            # 降级：检查工厂中的实例
-            instance = self.factory.get(model_id)
-            if instance:
-                return instance.can_use_tool(tool_name)
-            return False
-        whitelist = identity.tool_whitelist
-        if "*" in whitelist:
-            return True
-        return tool_name in whitelist
-
-    async def initialize(self):
-        """初始化所有模型客户端"""
-        if self.big_model is None:
-            try:
-                self.big_model = LargeModelClient.from_config()
-                self.logger.info("大模型客户端初始化成功")
-                # 注册大模型身份
-                from modules.thinking.identity import ModelIdentity
-                ident = ModelIdentity.from_template("large")
-                self._identities[ident.model_id] = ident
-            except Exception as e:
-                self.logger.error("大模型初始化失败: %s", e)
-
-        if self.middle_model is None:
-            try:
-                self.middle_model = MediumModelClient.from_config()
-                self.logger.info("中模型客户端初始化成功")
-            except Exception as e:
-                self.logger.error("中模型初始化失败: %s", e)
-
-        if self.small_model is None:
-            try:
-                self.small_model = SmallModelClient.from_config()
-                self.logger.info("小模型客户端初始化成功")
-            except Exception as e:
-                self.logger.error("小模型初始化失败: %s", e)
-
-        if self.lite_model is None:
-            try:
-                self.lite_model = LiteModelClient.from_config()
-                self.logger.info("轻量模型客户端初始化成功")
-            except Exception as e:
-                self.logger.error("轻量模型初始化失败: %s", e)
     
     # ======================
     # 通用调用接口（供探针/专家使用）

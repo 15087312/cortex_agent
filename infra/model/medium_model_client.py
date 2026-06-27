@@ -6,9 +6,7 @@ import aiohttp
 import asyncio
 import json
 from typing import Dict, List, Optional
-from config.model_config import MediumModelConfig, get_medium_model_config
 from config.settings import settings
-from infra.prompts import prompt_manager
 from modules.management import report_api_error, report_exception
 from utils.logger import setup_logger
 
@@ -26,33 +24,27 @@ class MediumModelClient(BaseModelClient):
         - temperature: 0.1
     """
 
-    def __init__(self, config: MediumModelConfig = None, api_key: str = None, api_url: str = None, timeout: int = 60):
+    def __init__(self, api_key: str = None, api_url: str = None, timeout: int = 60):
         """初始化中模型客户端
 
         Args:
-            config: 配置对象
             api_key: API 密钥
             api_url: API 地址
             timeout: 超时时间（秒）- 默认60秒支持深度推理
         """
-        if config:
-            super().__init__(config.api_key, config.api_url, config.timeout)
-            self.max_tokens = config.max_tokens
-            self.temperature = config.temperature
-            self.model_name = config.model_name or settings.MEDIUM_MODEL_NAME
-        else:
-            super().__init__(api_key or "", api_url or "", timeout)
-            self.max_tokens = 1024  # 增加 token 支持深度推理
-            self.temperature = 0.1
-            self.model_name = settings.MEDIUM_MODEL_NAME
+        key = api_key or settings.MEDIUM_MODEL_API_KEY or settings.LARGE_MODEL_API_KEY
+        url = api_url or settings.MEDIUM_MODEL_API_URL
+        super().__init__(key, url, timeout)
+        self.max_tokens = 1024
+        self.temperature = 0.1
+        self.model_name = settings.MEDIUM_MODEL_NAME
         self.supports_native_tools = True
         self._api_format = self.detect_api_format(self.api_url)
 
     @classmethod
     def from_config(cls) -> 'MediumModelClient':
-        """从配置文件创建实例"""
-        config = get_medium_model_config()
-        return cls(config=config)
+        """从配置创建实例"""
+        return cls()
 
     # ------------------------------------------------------------------
     # 原生工具调用 chat()
@@ -113,6 +105,7 @@ class MediumModelClient(BaseModelClient):
         for attempt in range(1, max_retries + 1):
             try:
                 session = await self._get_session()
+                self._log_request("POST", self.api_url, len(json.dumps(payload)))
                 async with session.post(
                     self.api_url, headers=headers, json=payload, timeout=self.timeout
                 ) as response:
@@ -163,23 +156,37 @@ class MediumModelClient(BaseModelClient):
         )
 
     async def generate(self, prompt: str, **kwargs) -> str:
-        """生成响应 - 自动添加系统提示词（支持 OpenAI / Anthropic）"""
-
-        # 构建完整提示词
-        full_prompt = prompt_manager.build_medium_model_prompt(user_input=prompt)
+        """生成响应（支持 OpenAI / Anthropic）"""
+        try:
+            from config.prompts.composer import PromptComposer, PromptRequest
+            from config.settings import settings as _cfg
+            sys_prompt = PromptComposer().build_system(PromptRequest(
+                tier="supervisor", role="code_supervisor", mode=_cfg.effective_execution_mode))
+            messages = [{"role": "system", "content": sys_prompt}, {"role": "user", "content": prompt}]
+        except Exception:
+            messages = [{"role": "user", "content": prompt}]
 
         headers = self._build_headers(self._api_format)
 
         if self._api_format == "anthropic":
+            system_text = ""
+            user_msgs = []
+            for m in messages:
+                if m["role"] == "system":
+                    system_text = m["content"]
+                else:
+                    user_msgs.append(m)
             payload = {
                 "model": self.model_name,
                 "max_tokens": kwargs.get("max_tokens", self.max_tokens),
-                "messages": [{"role": "user", "content": full_prompt}],
+                "messages": user_msgs,
             }
+            if system_text:
+                payload["system"] = system_text
         else:
             payload = {
                 "model": self.model_name,
-                "messages": [{"role": "user", "content": full_prompt}],
+                "messages": messages,
                 "max_tokens": kwargs.get("max_tokens", self.max_tokens),
                 "temperature": kwargs.get("temperature", self.temperature),
                 "stream": False,

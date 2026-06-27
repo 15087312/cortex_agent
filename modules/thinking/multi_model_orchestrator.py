@@ -13,12 +13,8 @@ import asyncio
 import threading
 from typing import List, Dict, Optional, Any, Callable
 
-from modules.thinking.evolution.reflection_sm import (
-    ReflectionStateMachine, StepContext, TriggerType,
-)
 from modules.thinking.ports import (
     ActivityNotifierPort,
-    ContextPort,
     GuidancePort,
     OutputReviewPort,
     SecurityPort,
@@ -37,27 +33,17 @@ class MultiModelOrchestrator:
         gcm_pool=None,
         activity_notifier: Optional[ActivityNotifierPort] = None,
         security: Optional[SecurityPort] = None,
-        context_service: Optional[ContextPort] = None,
         guidance_service: Optional[GuidancePort] = None,
         output_reviewer: Optional[OutputReviewPort] = None,
     ):
         self._gcm_pool = gcm_pool
         self._activity_notifier = activity_notifier
         self._security = security
-        self._context_service = context_service
         self._guidance_service = guidance_service
         self._output_reviewer = output_reviewer
-        # 反思状态机（首次访问时惰性初始化，避免 import 顺序问题）
-        self._reflection_sm = None
-
         # S7: WebSocket 消息队列（per-session 串行处理）
         self._request_queues: Dict[str, asyncio.Queue] = {}
         self._queue_consumers: Dict[str, asyncio.Task] = {}
-
-    def _get_reflection_sm(self):
-        if self._reflection_sm is None:
-            self._reflection_sm = ReflectionStateMachine()
-        return self._reflection_sm
 
     def _get_activity_notifier(self) -> ActivityNotifierPort:
         if self._activity_notifier is None:
@@ -72,13 +58,6 @@ class MultiModelOrchestrator:
 
             self._security = SecurityApiAdapter()
         return self._security
-
-    def _get_context_service(self) -> ContextPort:
-        if self._context_service is None:
-            from modules.thinking.adapters import ContextManagerAdapter
-
-            self._context_service = ContextManagerAdapter()
-        return self._context_service
 
     def _get_guidance_service(self) -> GuidancePort:
         if self._guidance_service is None:
@@ -227,9 +206,7 @@ class MultiModelOrchestrator:
 
         start_time = time.time()
         trace_id = str(uuid.uuid4())
-        # 透传事件回调到反思状态机（后续被 ContinuousThinker 使用）
-        if event_callback:
-            self._get_reflection_sm().set_event_callback(event_callback)
+        # 透传事件回调（后续被 ContinuousThinker 使用）
         logger.info(f"[编排器] 接收输入: {user_input}...")
 
         # 通知差异检测器有活动
@@ -254,48 +231,15 @@ class MultiModelOrchestrator:
             return self._build_security_error(security_error, start_time)
 
         # ---- 2. 记忆上下文 ----
-        memory_context_text, mm = await self._load_memory_context_via_api(
-            user_input, context, session_id
-        )
+        memory_context_text = ""
 
-        # ---- 2.5 上下文控制器（统一管理所有上下文注入）----
-        controller_context = ""
+        # ---- 2.5 设置执行模式 ----
         try:
             from modules.thinking.context.controller import get_context_controller
-            ctrl = get_context_controller()
-
-            # 从 settings 获取当前模式
             from config.settings import settings as _cfg
-            ctrl.set_mode(_cfg.effective_execution_mode)
-
-            # 收集各来源上下文
-            perception_context = ""
-            try:
-                from modules.perception.integration import get_perception_integrator
-                integrator = get_perception_integrator()
-                perception_context = integrator.get_context_summary()
-            except Exception:
-                pass
-
-            importance_context = ""
-            try:
-                from modules.attention import create_attention_analyzer
-                attention = create_attention_analyzer()
-                result = attention.analyze(user_input=user_input)
-                importance_context = result.importance_context
-            except Exception:
-                pass
-
-            # 交给控制器组装（自动去重/压缩/模式过滤）
-            controller_context = ctrl.build_context(
-                memory=memory_context_text,
-                perception=perception_context,
-                importance=importance_context,
-            )
-            if controller_context:
-                logger.debug(f"[上下文] 控制器输出: {len(controller_context)} 字符")
-        except Exception as e:
-            logger.debug(f"[上下文] 控制器失败 (非致命): {e}")
+            get_context_controller().set_mode(_cfg.effective_execution_mode)
+        except Exception:
+            pass
 
         # ---- 3. 专家引导 (情绪 + 价值观) ----
         # 由激活的 Skill 决定是否运行，目前默认始终运行
@@ -312,10 +256,8 @@ class MultiModelOrchestrator:
             session_id=session_id,
             memory_context_text=memory_context_text,
             expert_guidance=expert_guidance,
-            memory_manager=mm,
             event_callback=event_callback,
             skill_id=skill_id,
-            controller_context=controller_context,
             context=context,  # 传递对话历史用于短期记忆
         )
 
@@ -328,11 +270,8 @@ class MultiModelOrchestrator:
         # ---- 5. 输出审查 (专家系统) ----
         final_response = await self._review_output(raw_response, user_input, expert_guidance, blackboard)
 
-        # ---- 6. 记忆存储 + GCM 同步 ----
-        await self._save_memory(mm, session_id, user_input, final_response, self._gcm_pool, thinking_turns)
-
-        # ---- 7. 记忆晋升 (fire-and-forget, 不阻塞主流程) ----
-        asyncio.create_task(self._promote_memories(mm))
+        # ---- 6. 价值观演化 (fire-and-forget, 不阻塞主流程) ----
+        asyncio.create_task(self._maybe_evolve_values(user_input, final_response))
 
         elapsed_ms = (time.time() - start_time) * 1000
 
@@ -391,13 +330,6 @@ class MultiModelOrchestrator:
         }
 
     # ------------------------------------------------------------------
-    # 2. 记忆上下文
-    # ------------------------------------------------------------------
-
-    async def _load_memory_context_via_api(self, user_input: str, context: List[Dict], session_id: str):
-        return await self._get_context_service().load_context(user_input, context, session_id)
-
-    # ------------------------------------------------------------------
     # 3. 专家引导
     # ------------------------------------------------------------------
 
@@ -430,10 +362,8 @@ class MultiModelOrchestrator:
         session_id: str,
         memory_context_text: str,
         expert_guidance: dict,
-        memory_manager,
         event_callback,
         skill_id: str = "",
-        controller_context: str = "",
         context: List[Dict] = None,
     ) -> Dict:
         """执行多模型思考 — 统一探针驱动流程
@@ -514,12 +444,10 @@ class MultiModelOrchestrator:
             # ---- 写入上下文到 CognitiveBlackboard ----
 
             # 1. 委托引导（系统级，持久上下文）
-            from modules.thinking.identity import (
-                build_expert_capability_list,
-                build_supervisor_capability_list,
-            )
-            supervisor_list = build_supervisor_capability_list()
-            expert_list = build_expert_capability_list()
+            from config.prompts.composer import PromptComposer, PromptRequest
+            composer = PromptComposer()
+            supervisor_list = composer._build_supervisor_table()
+            expert_list = composer._build_expert_table()
             delegation_guidance = (
                 "【多模型协作 — 使用内部控制工具委托，不要滥用委托】\n"
                 "搜索、读文件、写代码等需要外部执行的操作，应通过 delegate_task 委托给合适主管或专家。\n"
@@ -557,40 +485,20 @@ class MultiModelOrchestrator:
                         metadata={"context_type": "conversation_history"},
                     )
 
-            # 2. 专家引导（情绪 + 价值观 + 安全）
-            if expert_guidance:
-                guidance_text = self._format_expert_guidance(expert_guidance)
-                if guidance_text:
-                    if blackboard:
-                        blackboard.add_observation(
-                            tier="system",
-                            content=guidance_text,
-                            metadata={"context_type": "expert_guidance"},
-                        )
-
+            # 2. 良知引导（注入内心独白）
+            inner_thoughts = expert_guidance.get("inner_thoughts", "") if expert_guidance else ""
+            if inner_thoughts:
+                if blackboard:
+                    blackboard.add_observation(
+                        tier="system",
+                        content=inner_thoughts,
+                        metadata={"context_type": "conscience_guidance"},
+                    )
                 try:
                     from modules.thinking.probes.probe_tools import set_session_guidance
-                    set_session_guidance(session_id or "", {
-                        "principle": expert_guidance.get("principle", ""),
-                        "reflection": expert_guidance.get("reflection", ""),
-                        "risk": expert_guidance.get("risk_level", "none"),
-                        "safety": expert_guidance.get("safety_guidance", ""),
-                        "emotion": expert_guidance.get("emotion", "neutral"),
-                        "emotion_intensity": expert_guidance.get("emotion_intensity", 0.3),
-                        "emotion_guidance": expert_guidance.get("emotion_guidance", ""),
-                        "ai_mood": expert_guidance.get("ai_mood", "平和"),
-                        "emotion_strategy": expert_guidance.get("emotion_strategy", ""),
-                    })
+                    set_session_guidance(session_id or "", {"inner_thoughts": inner_thoughts})
                 except Exception as e:
                     logger.debug(f"[编排器] 会话引导注入失败 (非致命): {e}")
-
-            # 3. 记忆上下文注入 CognitiveBlackboard
-            if blackboard:
-                # 合并感知上下文到记忆上下文
-                full_context = memory_context_text
-                if controller_context:
-                    full_context += f"\n\n{controller_context}"
-                self._get_context_service().inject_to_dialog(blackboard, full_context)
 
             # ---- 直接激活大模型（替代 SessionMonitor）----
             # 用户输入后立即发送 probe_start，通知 ModelRunnerManager 启动大模型
@@ -606,7 +514,7 @@ class MultiModelOrchestrator:
                             "action": "probe_started",
                             "probe_id": "probe_user_input",
                             "target_tier": "large",
-                            "identity_key": "large",
+                            "identity_key": "orchestrator",
                             "task_description": user_input,
                             "return_to_model_id": "",
                             "return_to_session_id": session_id or "",
@@ -736,24 +644,6 @@ class MultiModelOrchestrator:
                 logger.info(f"  • {desc:20s} {elapsed:7.3f}s ({pct:5.1f}%)")
             logger.info(f"  最慢步骤: {max(timings.items(), key=lambda x: x[1][0])[0]}")
 
-            # ---- 协作回合反思（时机5） ----
-            try:
-                sd_text = blackboard.format_for_model(limit=5) if blackboard else ""
-                col_ctx = StepContext(
-                    node_id="multi_model_collab",
-                    trigger=TriggerType.COLLAB_ROUND,
-                    task_goal=user_input,
-                    execution_log=sd_text if sd_text else final_response,
-                    error_message=(
-                        "超时" if (not completed and "超时" in final_response)
-                        else "无可见回复" if (completed and "没有生成可见回复" in final_response)
-                        else ""
-                    ),
-                )
-                await self._get_reflection_sm().on_collaboration_round(col_ctx)
-            except Exception as e:
-                logger.debug(f"[协作反思] 非致命: {e}")
-
             return {
                 "response": final_response,
                 "thinking_history": [],
@@ -804,7 +694,7 @@ class MultiModelOrchestrator:
     async def _review_output(self, raw_response: str, user_input: str = "", expert_guidance: dict = None, blackboard=None) -> str:
         """输出清洗 + 安全信号检查"""
         # 先做输出清洗
-        cleaned = await self._get_output_reviewer().review(raw_response, user_input, expert_guidance)
+        cleaned = await self._get_output_reviewer().review(raw_response, user_input)
 
         # 检查 Blackboard 中的安全拦截信号
         try:
@@ -825,70 +715,34 @@ class MultiModelOrchestrator:
         return cleaned
 
     # ------------------------------------------------------------------
-    # 7. 记忆存储
-    # ------------------------------------------------------------------
-
-    async def _save_memory(self, mm, session_id: str, user_input: str, final_response: str, gcm_pool=None, turns=0):
-        self._get_context_service().save_memory(
-            mm,
-            session_id,
-            user_input,
-            final_response,
-            gcm_pool=gcm_pool,
-            turns=turns,
-        )
-
-    # ------------------------------------------------------------------
     # 工具方法
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _format_expert_guidance(guidance: Dict[str, Any]) -> str:
-        # 工作模式：保留完整信息
-        parts = ["[专家系统引导]"]
-        principle = guidance.get("principle", "")
-        reflection = guidance.get("reflection", "")
-        if principle:
-            parts.append(f"价值观准则: {principle}")
-        if reflection:
-            parts.append(f"反思: {reflection}")
-        risk_level = guidance.get("risk_level", "")
-        if risk_level:
-            parts.append(f"风险等级: {risk_level}")
-        emotion = guidance.get("emotion", "")
-        emotion_guidance = guidance.get("emotion_guidance", "")
-        if emotion and emotion != "neutral":
-            intensity = guidance.get("emotion_intensity", 0.3)
-            ai_mood = guidance.get("ai_mood", "")
-            parts.append(f"用户情绪: {emotion} (强度{intensity})")
-            if ai_mood:
-                parts.append(f"你的心情: {ai_mood}")
-            if emotion_guidance:
-                parts.append(f"行为指导: {emotion_guidance}")
-        if len(parts) == 1:
-            return ""
-        return "\n".join(parts)
-
-    @staticmethod
-    async def _promote_memories(mm) -> None:
-        """
-        记忆晋升决策 (fire-and-forget)
-
-        在每轮处理结束后调用，将符合条件的 private 记忆晋升为 shared。
-        条件：重要性 >= 0.7 的 private 记忆 → shared。
-        失败仅记日志，绝不阻塞或抛异常。
-        """
-        if mm is None:
-            return
+    async def _maybe_evolve_values(user_input: str, response: str):
+        """价值观演化（fire-and-forget）：高风险对话后自动反思"""
         try:
-            promoted = mm.promote_private_memories(
-                memory_type=None,
-                target_scope="shared",
-                min_importance=0.7,
-                max_promote=5,
+            from modules.thinking.conscience import get_conscience
+            from infra.model.small_model_client import SmallModelClient
+            from config.settings import settings
+
+            if len(response) < 20:
+                return
+
+            risk_keywords = ["删除", "rm ", "DROP", "格式化", "密码", "sudo ", "生产", "prod"]
+            if not any(kw in user_input + response for kw in risk_keywords):
+                return
+
+            cons = get_conscience()
+            client = SmallModelClient(
+                api_key=settings.SMALL_MODEL_API_KEY or settings.LARGE_MODEL_API_KEY,
+                api_url=settings.SMALL_MODEL_API_URL or settings.LARGE_MODEL_API_URL,
             )
-            if promoted:
-                logger.info(f"[记忆晋升] 已晋升 {len(promoted)} 条: {promoted}")
+            cons._model_client = client
+            await cons.review_and_evolve(
+                full_dialog=f"用户: {user_input}\n助手: {response}",
+                trigger_reason="检测到高风险关键词",
+            )
         except Exception as e:
-            logger.debug(f"[记忆晋升] 非致命错误: {e}")
+            logger.debug(f"[价值观演化] 非致命错误: {e}")
 

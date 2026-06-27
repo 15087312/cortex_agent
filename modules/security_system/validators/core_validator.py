@@ -19,13 +19,6 @@ class CoreValidator:
         return True, content
 
     @staticmethod
-    def validate_module_protect(module_name: str) -> Tuple[bool, str]:
-        if module_name in PROTECTED_CORE_MODULES:
-            logger.warning(f"[L0拦截] 尝试修改受保护模块: {module_name}")
-            return False, f"[L0核心拦截] 禁止修改受保护的核心模块「{module_name}」"
-        return True, module_name
-
-    @staticmethod
     def validate_code_safety(code: str) -> Tuple[bool, str]:
         # SEC-10: Use AST-based static analysis for robust code checking
         passed, ast_error = _check_code_with_ast(code)

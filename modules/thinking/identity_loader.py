@@ -1,6 +1,6 @@
 """外部身份配置加载器
 
-从 data/identities/ 目录加载 YAML 文件，与 DEFAULT_IDENTITIES 合并。
+从 data/identities/ 目录加载 YAML 文件，与 roles.yaml 中的角色配置合并。
 YAML 中的配置优先于硬编码默认值。
 
 配置文件结构示例:
@@ -164,8 +164,8 @@ def load_and_merge(defaults: Dict[str, dict] = None, directory: str = None) -> D
         合并后的身份字典
     """
     if defaults is None:
-        from modules.thinking.identity import DEFAULT_IDENTITIES
-        defaults = DEFAULT_IDENTITIES
+        from modules.thinking.identity import get_identities
+        defaults = get_identities()
 
     overrides = load_yaml_identities(directory)
     if not overrides:

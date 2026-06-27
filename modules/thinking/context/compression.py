@@ -48,63 +48,16 @@ class CompressionEngine:
         en_chars = len(text) - cn_chars
         return cn_chars // self.CHARS_PER_TOKEN_CN + en_chars // self.CHARS_PER_TOKEN_EN
 
-    def auto_level(self, content: str, max_tokens: int) -> CompressionLevel:
-        """根据内容长度和目标 token 数自动选择压缩级别"""
-        tokens = self.estimate_tokens(content)
-        if tokens <= max_tokens:
-            return CompressionLevel.NONE
-        ratio = tokens / max_tokens
-        if ratio <= 1.5:
-            return CompressionLevel.LIGHT
-        elif ratio <= 3:
-            return CompressionLevel.MODERATE
-        elif ratio <= 6:
-            return CompressionLevel.HEAVY
-        else:
-            return CompressionLevel.AGGRESSIVE
-
     async def compress(
         self,
         content: str,
         max_tokens: int = 8000,
         level: CompressionLevel = None
     ) -> str:
-        """
-        压缩内容到目标 token 数
-
-        Args:
-            content: 原始内容
-            max_tokens: 目标最大 token 数
-            level: 指定压缩级别 (None 则自动选择)
-
-        Returns:
-            压缩后的内容
-        """
         if not content:
             return ""
-
-        if level is None:
-            level = self.auto_level(content, max_tokens)
-
-        if level == CompressionLevel.NONE:
-            return self._truncate_to_tokens(content, max_tokens)
-
-        elif level == CompressionLevel.LIGHT:
-            result = self._light_compress(content)
-            return self._truncate_to_tokens(result, max_tokens)
-
-        elif level == CompressionLevel.MODERATE:
-            result = await self._moderate_compress(content)
-            return self._truncate_to_tokens(result, max_tokens)
-
-        elif level == CompressionLevel.HEAVY:
-            result = await self._heavy_compress(content)
-            return self._truncate_to_tokens(result, max_tokens)
-
-        elif level == CompressionLevel.AGGRESSIVE:
-            return await self._aggressive_compress(content, max_tokens)
-
-        return content
+        result = self._light_compress(content)
+        return self._truncate_to_tokens(result, max_tokens)
 
     def _truncate_to_tokens(self, text: str, max_tokens: int) -> str:
         """按 token 数截断（考虑中英混合内容）"""
@@ -148,7 +101,7 @@ class CompressionEngine:
         return head + "\n\n... [内容已截断] ...\n\n" + tail
 
     # ========================================================================
-    # 5 级压缩实现
+    # 轻量压缩
     # ========================================================================
 
     def _light_compress(self, text: str) -> str:
@@ -160,87 +113,6 @@ class CompressionEngine:
         # 去空行
         lines = [l for l in lines if l]
         return '\n'.join(lines)
-
-    async def _moderate_compress(self, text: str) -> str:
-        """中等压缩：摘要化旧信息"""
-        text = self._light_compress(text)
-
-        paragraphs = text.split('\n\n')
-        if len(paragraphs) <= 5:
-            return text
-
-        # 保留前 2 段和后 2 段完整，中间摘要
-        head = '\n\n'.join(paragraphs[:2])
-        tail = '\n\n'.join(paragraphs[-2:])
-        middle_summary = await self._summarize_paragraphs(paragraphs[2:-2])
-        return head + '\n\n' + middle_summary + '\n\n' + tail
-
-    async def _heavy_compress(self, text: str) -> str:
-        """重度压缩：LLM 结构化摘要，回退到规则提取"""
-        # 尝试 LLM 结构化压缩
-        target_tokens = max(300, self.estimate_tokens(text) // 6)
-        llm_result = await self._llm_summarize(
-            text,
-            target_tokens=target_tokens,
-            instruction=(
-                "将以下内容压缩为结构化摘要。格式：\n"
-                "【关键决策】列出重要决策和结论\n"
-                "【工具结果】列出工具调用的关键输出\n"
-                "【待办事项】列出未完成的任务\n"
-                "【上下文】保留必要的背景信息"
-            ),
-        )
-        if llm_result:
-            return llm_result
-
-        # 回退：规则提取
-        sections = re.split(r'\n(?:#{1,3}|【|\[)', text)
-        compressed = []
-        for section in sections:
-            section = section.strip()
-            if not section:
-                continue
-            sentences = re.split(r'[。.!！?？]', section)
-            key_sentences = [s.strip() for s in sentences[:2] if s.strip()]
-            if key_sentences:
-                compressed.append('。'.join(key_sentences) + '。')
-        return '\n\n'.join(compressed)
-
-    async def _aggressive_compress(self, text: str, max_tokens: int) -> str:
-        """激进压缩：LLM 提取核心要点，回退到关键词提取"""
-        # 尝试 LLM 极限压缩
-        llm_result = await self._llm_summarize(
-            text,
-            target_tokens=max_tokens,
-            instruction=(
-                "将以下内容极限压缩，只保留最核心的信息。"
-                "用 bullet points 列出关键事实和结论，每条不超过一句话。"
-                "丢弃所有过程描述、重复内容和次要细节。"
-            ),
-        )
-        if llm_result:
-            return self._truncate_to_tokens(llm_result, max_tokens)
-
-        # 回退：关键词提取
-        words = re.findall(r'[\u4e00-\u9fff]{2,}|[a-zA-Z]{3,}', text)
-        word_freq = {}
-        for w in words:
-            word_freq[w] = word_freq.get(w, 0) + 1
-
-        top_keywords = sorted(word_freq.items(), key=lambda x: -x[1])[:20]
-        kw_str = ' | '.join([f"{k}({v})" for k, v in top_keywords])
-
-        conclusion_lines = []
-        for line in text.split('\n'):
-            if any(marker in line for marker in
-                   ['结论', '总结', '因此', '所以', '综上', '建议', 'conclusion', 'summary']):
-                conclusion_lines.append(line.strip()[:200])
-
-        result = f"[核心关键词] {kw_str}"
-        if conclusion_lines:
-            result += '\n\n[关键结论]\n' + '\n'.join(conclusion_lines[:3])
-
-        return self._truncate_to_tokens(result, max_tokens)
 
     # ========================================================================
     # 语义摘要
@@ -276,72 +148,6 @@ class CompressionEngine:
 
         summary = '\n\n'.join(parts)
         return self._truncate_to_tokens(summary, max_summary_tokens)
-
-    async def _summarize_paragraphs(self, paragraphs: List[str]) -> str:
-        """用 LLM 摘要段落内容，失败时回退到规则提取"""
-        if not paragraphs:
-            return ""
-
-        content = '\n\n'.join(paragraphs)
-        target_tokens = max(200, self.estimate_tokens(content) // 4)
-
-        # 尝试 LLM 摘要
-        llm_result = await self._llm_summarize(
-            content,
-            target_tokens=target_tokens,
-            instruction="压缩以下对话历史为简明摘要，保留关键决策、工具调用结果、重要结论。不要丢失实质性信息。",
-        )
-        if llm_result:
-            return f"【历史摘要】\n{llm_result}"
-
-        # 回退：规则提取
-        summaries = []
-        for para in paragraphs[:5]:
-            para = para.strip()
-            if not para:
-                continue
-            sentences = [s.strip() for s in re.split(r'[。.!！?？]', para) if s.strip()]
-            if sentences:
-                core = sentences[0]
-                if len(sentences) > 1 and len(core) < 30:
-                    core = "。".join([sentences[0], sentences[1]])
-                summaries.append(core[:100])
-
-        if summaries:
-            return "【中间段落摘要】" + "；".join(summaries)
-        else:
-            total_chars = sum(len(p) for p in paragraphs)
-            return f"[中间 {len(paragraphs)} 段已压缩，共 {total_chars} 字符]"
-
-    async def _llm_summarize(self, content: str, target_tokens: int = 500, instruction: str = "") -> Optional[str]:
-        """调用小模型进行摘要压缩，失败返回 None"""
-        try:
-            from infra.model.small_model_client import SmallModelClient
-            from config.settings import settings
-
-            client = SmallModelClient(
-                model_name=settings.SMALL_MODEL_NAME,
-                max_tokens=target_tokens,
-                temperature=0.1,
-                api_key=settings.SMALL_MODEL_API_KEY or settings.LARGE_MODEL_API_KEY,
-                api_url=settings.SMALL_MODEL_API_URL or settings.LARGE_MODEL_API_URL,
-            )
-
-            prompt = (
-                f"{instruction}\n\n"
-                f"目标长度：约 {target_tokens} tokens\n"
-                f"---\n{content}"
-            )
-
-            result = await client.generate(prompt, max_tokens=target_tokens)
-            await client.close()
-
-            if result and isinstance(result, str) and len(result.strip()) > 20:
-                return result.strip()
-            return None
-        except Exception as e:
-            logger.debug(f"[LLM摘要] 调用失败，回退到规则压缩: {e}")
-            return None
 
     # ========================================================================
     # 冗余检测

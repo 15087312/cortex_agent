@@ -14,9 +14,13 @@ logger = setup_logger("value_tools")
 
 
 def _get_value_system():
-    """延迟加载价值观系统"""
-    from modules.thinking.evolution.value_system import value_system
+    from config.values_store import value_system
     return value_system
+
+
+def _get_formatter():
+    from modules.thinking.value_formatter import ValueFormatter
+    return ValueFormatter(_get_value_system())
 
 
 @ToolRegistry.register(
@@ -196,6 +200,7 @@ def get_current_values(format: str = "compact") -> str:
         价值观内容
     """
     value_sys = _get_value_system()
+    formatter = _get_formatter()
     format = format.strip().lower()
 
     try:
@@ -204,79 +209,15 @@ def get_current_values(format: str = "compact") -> str:
             return f"【完整价值观文本】\n{content}"
 
         elif format == "compact":
-            compact = value_sys.build_compact_context()
+            compact = formatter.build_compact_context()
             return compact if compact else "（暂无规则）"
 
         elif format == "sections":
-            sections_dict = value_sys.get_values_dict()
-            if not sections_dict:
-                return "（暂无规则）"
-
-            lines = ["【价值观规则分类】"]
-            for section, rules in sections_dict.items():
-                if section == "进化记录":
-                    continue
-                if rules:
-                    lines.append(f"\n[{section}]")
-                    for rule in rules:
-                        lines.append(f"  • {rule}")
-            return "\n".join(lines)
+            return formatter.build_sections()
 
         else:
             return f"❌ 未知格式: {format}，支持: full / compact / sections"
 
     except Exception as e:
         logger.error(f"[get_current_values] 异常: {e}")
-        return f"❌ 查询出错: {str(e)}"
-
-
-@ToolRegistry.register(
-    "get_evolution_log",
-    description="查看价值观系统的修改历史（审计用）",
-    params={
-        "limit": "显示最近 N 条记录（默认: 20）",
-    },
-    category="query",
-    tags=["value_system", "audit"],
-    risk_level="LOW",
-    core=False,
-)
-def get_evolution_log(limit: int = 20) -> str:
-    """查看价值观修改历史
-
-    Args:
-        limit: 显示最近 N 条记录
-
-    Returns:
-        修改历史
-    """
-    value_sys = _get_value_system()
-
-    try:
-        log = value_sys.get_evolution_log(limit=limit)
-        if not log:
-            return "（暂无修改历史）"
-
-        lines = ["【价值观修改历史】"]
-        for entry in log:
-            timestamp = entry.get("ctime", "？")
-            action = entry.get("action", "？")
-            details = entry.get("details", {})
-            lines.append(f"\n{timestamp}")
-            lines.append(f"  操作: {action}")
-            if action == "add_rule":
-                lines.append(f"  分类: {details.get('section')}")
-                lines.append(f"  规则: {details.get('rule')}")
-            elif action == "remove_rule":
-                lines.append(f"  分类: {details.get('section')}")
-                lines.append(f"  规则: {details.get('rule')}")
-            elif action == "update_rule":
-                lines.append(f"  分类: {details.get('section')}")
-                lines.append(f"  旧规则: {details.get('old')}")
-                lines.append(f"  新规则: {details.get('new')}")
-
-        return "\n".join(lines)
-
-    except Exception as e:
-        logger.error(f"[get_evolution_log] 异常: {e}")
         return f"❌ 查询出错: {str(e)}"

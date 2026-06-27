@@ -13,7 +13,6 @@ import asyncio
 import time
 import uuid
 from utils.logger import setup_logger
-from modules.thinking.context import ContextManager
 from modules.thinking.core.control_tools import (
     ThinkingControlDecision,
     ThinkingTaskContext,
@@ -121,10 +120,6 @@ class ContinuousThinker:
                 self.memory.set_session_id(self._session_id)
             except Exception:
                 pass
-
-        # 上下文操作系统：检索、prompt 构建都由 ContextManager 统一负责
-        # 注意力分析由 ContextController.build_round_context() 内部完成，不在此处调用。
-        self.context_manager = ContextManager(memory_manager=self.memory)
 
         # 工具调用累计计数器 (防止无限工具调用循环)
         self._total_tool_calls_in_session: int = 0
@@ -286,7 +281,7 @@ class ContinuousThinker:
             parts.append("【委托状态摘要】\n" + delegation_status)
 
         notebook_status = self._sanitize_final_context_text(
-            self.notebook.get_status(),
+            self.notebook.content,
             limit=1200,
         )
         if notebook_status:
@@ -561,72 +556,47 @@ class ContinuousThinker:
         """
         return self.interval
     
-    def _build_tool_prompt_section(self) -> str:
-        """构建思考控制工具说明（tier-aware）。"""
-        tc = self._task_context
-        goal = tc.loop_goal if tc else ""
-
-        if self._tier == "supervisor":
-            return (
-                "## 可用工具\n"
-                "- delegate_task: 向专家委托任务\n"
-                "- continue_thinking: 继续/结束思考循环\n"
-                "三阶段：1.目标分析 → 2.规划与委托 → 3.等待整合"
-            )
-        elif self._tier == "expert":
-            return (
-                "## 可用工具\n"
-                "- continue_thinking: 继续/结束思考循环\n"
-                "完成工作后使用 continue_thinking(continue=false) 输出 result_summary。"
-            )
-        else:  # large
-            return (
-                "## 可用工具\n"
-                "- delegate_task: 【关键】向主管委托任务。所有需要查询、搜索、文件操作等具身任务都必须通过 delegate_task 委托，不能自己用 probe_start。\n"
-                "- continue_thinking: 继续/结束思考循环\n"
-                "- respond_to_user: 向用户输出最终回复\n"
-                "- request_skill: 激活技能说明书（先 list_skills 查看可用技能，再 get_skill_detail 阅读）\n"
-                "- set_memory_focus: 设置记忆检索配比\n"
-                "- list_skills: 列出所有可用技能\n"
-                                f"当前任务：{goal}"
-            )
+    def _consume_external_guidance(self) -> str:
+        """消费外部引导文本。委托 ContextManager。"""
+        from modules.thinking.context.manager import ContextManager
+        result = ContextManager.build_external_guidance(
+            persistent_prompts=self._persistent_prompts,
+            transient_prompts=self._transient_prompts,
+        )
+        self._transient_prompts.clear()
+        return result
 
     async def _build_prompt(self, initial_question: str, round_num: int = 0) -> str:
-        """构建当前轮 prompt — 委托 ContextController 统一管理上下文。"""
+        """构建当前轮 prompt — TurnContext 池化 + PromptComposer"""
+        from config.prompts.composer import PromptComposer, PromptRequest
+        from modules.thinking.context.pool import TurnContext, ContextFragment
+
+        pool = TurnContext()
+        role = getattr(self, '_role', 'orchestrator')
+
+        # 外部引导
         external_guidance = self._consume_external_guidance()
-        notebook_status = self.notebook.get_status()
-        _default_notebook = "任务刚开始，请制定初步计划。"
-        if self.notebook.content.strip() == _default_notebook:
-            notebook_status = ""
+        if external_guidance:
+            pool.add(ContextFragment("guidance", external_guidance, ("large", "supervisor"), "系统指令", 10))
 
+        # 记事本
+        notebook_status = self.notebook.content
+        if self.notebook.content.strip() != "任务刚开始，请制定初步计划。":
+            pool.add(ContextFragment("notebook", notebook_status, ("large",), "当前任务进度记事本", 15))
+
+        # 历史输出
         history_output = "\n".join(self.history_thoughts[:-1]) if len(self.history_thoughts) > 1 else ""
-        available_tools = self._build_tool_prompt_section()
-        expert_ctx = self._build_expert_context_section()
-        dlg_status = self._build_delegation_status_section()
+        if history_output:
+            pool.add(ContextFragment("history", history_output, ("large",), "历史输出（不得重复）", 20))
 
-        # 注意力上下文无需在此处分析 — ContextController.build_round_context()
-        # 会在 step 6 自动从 initial_question 调用 AttentionAnalyzer 并注入 prompt。
-        # 不要在此处添加 self.attention.analyze() 调用。
-        # 动机：注意力是上下文组装层的职责，ContinuousThinker 是编排层，不应知悉注意力格式细节。
-
-        # 记忆上下文 — 事件记忆系统检索（按遗忘曲线 × 强化 × 重要性排序）
-        memory_recent = memory_related = memory_long = ""
+        # 记忆检索
         try:
             from modules.memory.event_retrieval import get_event_retrieval
-            from modules.memory.event_strategy import EventStrategy, format_strategy_for_prompt
-            from infra.model.lite_model_client import LiteModelClient
-
             retrieval = get_event_retrieval()
-
-            # 有记忆配比时按主题分布检索，否则用用户问题直接查
             if self._memory_focus:
-                events = await retrieval.retrieve_mixed(
-                    mix=self._memory_focus,
-                    top_k=5,
-                )
+                events = await retrieval.retrieve_mixed(mix=self._memory_focus, max_results=10)
             else:
-                events = await retrieval.retrieve(query=initial_question, top_k=5)
-
+                events = await retrieval.retrieve(query=initial_question, max_results=10)
             if events:
                 parts = []
                 for i, ev in enumerate(events, 1):
@@ -636,30 +606,29 @@ class ContinuousThinker:
                         parts.append(f"  经验: {ev.lesson}")
                     if ev.keywords:
                         parts.append(f"  标签: {', '.join(ev.keywords)}")
-                memory_recent = "\n".join(parts)
-
-                # 策略生成
-                try:
-                    client = await LiteModelClient.get_instance()
-                    strategy_gen = EventStrategy(model_client=client)
-                    strategy = await strategy_gen.generate_strategy(initial_question, events)
-                    strategy_text = format_strategy_for_prompt(strategy)
-                    memory_recent = f"{memory_recent}\n\n{strategy_text}"
-                except Exception:
-                    pass
+                pool.add(ContextFragment("memory", "\n".join(parts), ("large", "supervisor", "expert"), "历史记忆", 30))
         except Exception as e:
             self.logger.debug(f"[事件检索] 失败: {e}")
 
-        # ValueSystem 规则
-        values_text = ""
+        # 感知上下文
         try:
-            from modules.thinking.evolution.value_system import value_system
-            values_text = value_system.get_active_rules()
+            from modules.thinking.context.sources.perception_source import PerceptionSource
+            frag = await PerceptionSource().collect()
+            if frag.content:
+                pool.add(frag)
         except Exception:
             pass
 
-        # 外部 prompt builder（ModelRunner._build_runner_prompt）
-        external_section = ""
+        # 价值观
+        try:
+            from modules.thinking.conscience import get_conscience
+            values_text = get_conscience()._values
+            if values_text:
+                pool.add(ContextFragment("values", values_text, ("large", "supervisor", "expert"), "行为准则", 40))
+        except Exception:
+            pass
+
+        # 外部 prompt builder（黑板）
         if self._external_prompt_builder is not None:
             try:
                 import inspect
@@ -667,59 +636,31 @@ class ContinuousThinker:
                     external_section = await self._external_prompt_builder(round_num=round_num)
                 else:
                     external_section = self._external_prompt_builder(round_num=round_num)
-                external_section = str(external_section).strip() if external_section else ""
+                if external_section:
+                    pool.add(ContextFragment("blackboard", str(external_section).strip(), ("large",), "协作上下文", 50))
             except Exception:
                 pass
 
-        # 技能自动建议（无技能激活时推荐匹配项）
+        # 委托状态
+        dlg_status = self._build_delegation_status_section()
+        if dlg_status:
+            pool.add(ContextFragment("delegation", dlg_status, ("large",), "当前委托状态", 60))
+
+        # 技能建议
         try:
             from modules.thinking.skills import skill_manager
             runner = getattr(self, '_runner_ref', None)
-            has_active = bool(getattr(runner, '_active_skill', None)) if runner else False
-            if not has_active:
+            if not (runner and getattr(runner, '_active_skill', None)):
                 suggested = skill_manager.match_skill(initial_question)
                 if suggested:
-                    hint = f"【建议技能】当前场景推荐激活「{suggested.name}」，可用 request_skill(skill_id='{suggested.id}') 激活"
-                    dl = dlg_status or ""
-                    dlg_status = (hint + "\n\n" + dl) if dl else hint
+                    pool.add(ContextFragment("skill_suggestion",
+                        f"【建议技能】当前场景推荐激活「{suggested.name}」，可用 request_skill(skill_id='{suggested.id}') 激活",
+                        ("large",), "技能建议", 70))
         except Exception:
             pass
 
-        # 技能建议（无激活技能时推荐匹配项，由 context/controller 渲染）
-        skill_suggestion = ""
-        try:
-            from modules.thinking.skills import skill_manager
-            runner = getattr(self, '_runner_ref', None)
-            has_active = bool(getattr(runner, '_active_skill', None)) if runner else False
-            if not has_active:
-                suggested = skill_manager.match_skill(initial_question)
-                if suggested:
-                    skill_suggestion = (
-                        f"【建议技能】当前场景推荐激活「{suggested.name}」，"
-                        f"可用 request_skill(skill_id='{suggested.id}') 激活"
-                    )
-        except Exception:
-            pass
-
-        from modules.thinking.context.controller import get_context_controller
-        ctrl = get_context_controller()
-        prompt = ctrl.build_round_context(
-            current_goal=initial_question,
-            tier=self._tier,
-            notebook_status=notebook_status,
-            history_output=history_output,
-            available_tools=available_tools,
-            expert_context=expert_ctx,
-            delegation_status=dlg_status,
-            external_guidance=external_guidance,
-            blackboard_context=external_section,
-            memory_recent=memory_recent,
-            memory_related=memory_related,
-            memory_long_term=memory_long,
-            values_text=values_text,
-            round_num=round_num,
-            skill_suggestion=skill_suggestion,
-        )
+        composer = PromptComposer()
+        prompt = composer.build(pool, role=role, tier=self._tier, question=initial_question)
 
         try:
             from config.settings import settings as _cfg
@@ -732,16 +673,6 @@ class ContinuousThinker:
         except Exception:
             self._context_tokens = 0
         return prompt
-
-    def _consume_external_guidance(self) -> str:
-        """消费外部引导文本。委托 ContextManager。"""
-        from modules.thinking.context.manager import ContextManager
-        result = ContextManager.build_external_guidance(
-            persistent_prompts=self._persistent_prompts,
-            transient_prompts=self._transient_prompts,
-        )
-        self._transient_prompts.clear()
-        return result
 
     def _build_expert_context_section(self) -> str:
         """构建可用主管和专家上下文（大模型关键信息）"""

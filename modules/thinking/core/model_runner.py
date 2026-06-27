@@ -242,7 +242,7 @@ class ModelRunner:
     def _get_runtime_expert_class(role: str):
         """检查是否为已注册的 RuntimeExpert 子类"""
         try:
-            from modules.thinking.experts.base import get_runtime_expert_class
+            from modules.thinking.runtime_expert import get_runtime_expert_class
             return get_runtime_expert_class(role)
         except Exception as e:
             logger.debug(f"[ModelRunner] RuntimeExpert 类查找失败 (role={role}): {e}")
@@ -1195,28 +1195,26 @@ class ModelRunner:
         return prioritized
 
     def _build_system_prompt_for_mode(self) -> str:
-        """根据运行模式构建系统提示词 — 委托给 ContextController"""
+        """根据运行模式构建系统提示词 — 委托给 PromptComposer"""
         from config.settings import settings as _cfg
         try:
-            from modules.thinking.context.controller import get_context_controller
-            ctrl = get_context_controller()
+            from config.prompts.composer import PromptComposer, PromptRequest
+            composer = PromptComposer()
             mode = _cfg.effective_execution_mode
+            skill_id = self._active_skill.id if self._active_skill else None
             logger.info(f"[ModelRunner] 构建系统提示词: mode={mode}, tier={self.tier}")
-            result = ctrl.build_system_prompt(
-                mode=mode,
+            result = composer.build_system(PromptRequest(
                 tier=self.tier,
-                identity=self.identity,
-                active_skill=self._active_skill,
-                delegation_available=_cfg.is_delegation_available,
-                blackboard=self.blackboard,
+                role=self.identity.role,
+                mode=mode,
+                skill_id=skill_id,
                 tool_count=len(self._visible_tool_whitelist()),
-            )
-            # 记录提示词前 100 字符确认身份
+            ))
             logger.info(f"[ModelRunner] 系统提示词前100字: {result[:100]}")
             return result
         except Exception as e:
-            logger.warning(f"[ModelRunner] ContextController 构建系统提示词失败，回退默认身份: {e}")
-            return self.identity.build_system_prompt()
+            logger.warning(f"[ModelRunner] PromptComposer 构建失败，回退: {e}")
+            return self.identity.personality
     def _build_time_context(self) -> str:
         """构建时间感知上下文 — 当前时间 + 距上次用户对话时长 + 用户身份"""
         from datetime import datetime
@@ -2039,29 +2037,24 @@ class ModelRunner:
         expert_context: str,
     ) -> str:
         """构建本轮 prompt"""
-        from config.settings import settings as _cfg
+        parts = []
 
-        # 技能优先：覆盖默认身份
+        # 身份注入
         identity = self.identity
+        parts.append(
+            f"【你的任务】\n{self._task_description}\n"
+            f"你是 {identity.name}（{identity.tier} 层 / {identity.role}）。"
+        )
+        parts.append(
+            f"【角色边界】\n{identity.personality}\n"
+            f"擅长: {', '.join(identity.expertise)}\n"
+            f"不擅长: {', '.join(identity.weaknesses)}"
+        )
+
+        # 技能叠加
         if self._active_skill and self.tier == "large":
             skill = self._active_skill
-            # 技能模式：用技能的提示说明书
-            parts = []
-            parts.append(
-                f"【你的任务】\n{self._task_description}\n"
-                f"你是 {skill.name}。\n{skill.description}"
-            )
-        else:
-            parts = []
-            parts.append(
-                f"【你的任务】\n{self._task_description}\n"
-                f"你是 {identity.name}（{identity.tier} 层 / {identity.role}）。"
-            )
-            parts.append(
-                f"【角色边界】\n{identity.personality}\n"
-                f"擅长: {', '.join(identity.expertise)}\n"
-                f"不擅长: {', '.join(identity.weaknesses)}"
-            )
+            parts.append(f"你是 {skill.name}。\n{skill.description}")
 
         if dialog_context:
             parts.append(dialog_context)

@@ -309,6 +309,28 @@ class BaseModelClient(ABC):
         self._request_count += 1
         self._last_request_time = datetime.now()
         self._total_tokens_used += tokens_used
+
+    def _log_request(self, method: str, url: str, payload_size: int = 0):
+        """记录每次模型 API 请求（POST 日志）"""
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        logger.info(
+            f"[API REQUEST #{self._request_count + 1}] {now} | "
+            f"{method} {url} | payload={payload_size}B"
+        )
+
+    def _log_payload(self, payload: dict):
+        """记录完整请求体（DEBUG 级别）"""
+        logger.debug(f"[API PAYLOAD #{self._request_count + 1}]\n{json.dumps(payload, ensure_ascii=False, indent=2)[:4000]}")
+
+    def _log_response_body(self, status: int, elapsed_ms: float, text: str, tokens: int = 0):
+        """记录完整响应体（DEBUG 级别）"""
+        logger.debug(f"[API RESPONSE #{self._request_count + 1}] status={status} elapsed={elapsed_ms:.0f}ms tokens={tokens}\n{text[:2000]}")
+
+    def _log_response(self, status: int, elapsed_ms: float, tokens: int = 0):
+        logger.info(
+            f"[API RESPONSE #{self._request_count}] "
+            f"status={status} elapsed={elapsed_ms:.0f}ms tokens={tokens}"
+        )
     
     def get_usage_stats(self) -> Dict[str, Any]:
         """获取使用统计信息

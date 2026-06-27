@@ -1,8 +1,7 @@
-"""Delegation abstraction for single-model thinking loops.
+"""单次模型思考循环的委托抽象。
 
-ContinuousThinker owns the decision that a model wants to delegate, but the
-concrete system action (probe_start / runner activation) belongs behind this
-port so the thinker does not depend on probe tools directly.
+ContinuousThinker 负责决定模型是否要委托，但具体的系统动作（probe_start / runner 激活）
+由这个 port 封装，这样 thinker 就不需要直接依赖 probe 工具。
 """
 from __future__ import annotations
 
@@ -12,7 +11,7 @@ from typing import Any, Dict, Optional, Protocol
 
 @dataclass
 class DelegationRequest:
-    """A model-internal delegation request emitted during one thinking call."""
+    """一次思考调用中发出的模型内部委托请求。"""
 
     role: str
     task: str
@@ -28,7 +27,7 @@ class DelegationRequest:
 
 @dataclass
 class DelegationResult:
-    """Result of dispatching a delegation request."""
+    """分发委托请求的结果。"""
 
     success: bool
     probe_id: str = ""
@@ -37,21 +36,20 @@ class DelegationResult:
 
 
 class DelegationPort(Protocol):
-    """Abstract port used by ContinuousThinker to dispatch delegations."""
+    """ContinuousThinker 用于分发委托的抽象端口。"""
 
     def delegate(self, request: DelegationRequest) -> DelegationResult:
         ...
 
 
 class ProbeDelegationAdapter:
-    """Delegation adapter backed by probe_start."""
+    """基于 probe_start 的委托适配器。"""
 
     def delegate(self, request: DelegationRequest) -> DelegationResult:
         try:
-            from modules.thinking.intent import resolve_role
             from modules.thinking.probes.probe_tools import probe_start
 
-            identity = resolve_role(request.role)
+            identity = _resolve_role(request.role)
             if identity is None:
                 return DelegationResult(
                     success=False,
@@ -83,5 +81,52 @@ class ProbeDelegationAdapter:
 
 
 def create_delegation_port() -> DelegationPort:
-    """Factory for the default delegation port."""
+    """创建默认委托端口的工厂函数。"""
     return ProbeDelegationAdapter()
+
+
+# ── 角色名解析表 ──
+
+ROLE_TO_IDENTITY: Dict[str, tuple[str, str]] = {
+    # 主管
+    "code_supervisor": ("supervisor", "supervisor_code"),
+    "code supervisor": ("supervisor", "supervisor_code"),
+    "代码主管": ("supervisor", "supervisor_code"),
+    "query_supervisor": ("supervisor", "supervisor_query"),
+    "query supervisor": ("supervisor", "supervisor_query"),
+    "查询主管": ("supervisor", "supervisor_query"),
+    "creative_supervisor": ("supervisor", "supervisor_creative"),
+    "创意主管": ("supervisor", "supervisor_creative"),
+    # 专家
+    "code_reviewer": ("expert", "expert_reviewer"),
+    "代码审查专家": ("expert", "expert_reviewer"),
+    "code_writer": ("expert", "expert_implementer"),
+    "代码实现专家": ("expert", "expert_implementer"),
+    "test_writer": ("expert", "expert_tester"),
+    "测试专家": ("expert", "expert_tester"),
+    "data_analyzer": ("expert", "expert_analyzer"),
+    "分析专家": ("expert", "expert_analyzer"),
+    "customer": ("expert", "expert_customer"),
+    "客户": ("expert", "expert_customer"),
+    "creative_writer": ("expert", "expert_creative_writer"),
+    "创意写作专家": ("expert", "expert_creative_writer"),
+    "emotion": ("expert", "expert_emotion"),
+    "情绪分析师": ("expert", "expert_emotion"),
+    "memory_manager": ("expert", "expert_memory_manager"),
+    "记忆管理员": ("expert", "expert_memory_manager"),
+    # 大模型
+    "orchestrator": ("large", "orchestrator"),
+    "总指挥": ("large", "large"),
+}
+
+def _resolve_role(role_name: str) -> Optional[tuple[str, str]]:
+    role_name = str(role_name or "").strip()
+    if not role_name:
+        return None
+    if role_name in ROLE_TO_IDENTITY:
+        return ROLE_TO_IDENTITY[role_name]
+    role_lower = role_name.lower()
+    for name, identity in ROLE_TO_IDENTITY.items():
+        if name.lower() in role_lower or role_lower in name.lower():
+            return identity
+    return None

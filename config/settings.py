@@ -49,8 +49,7 @@ class Settings(BaseSettings):
     SMALL_MODEL_API_URL: str = ""
     SMALL_MODEL_NAME: str = "deepseek-v4-flash"
 
-    # 轻量模型
-    EXPERT_MODEL_NAME: str = "qwen2.5-7b-instruct"
+
 
     # 视觉模型配置
     # VISION_BACKEND: 后端选择 — api / mlx / transformers / mock / auto
@@ -68,7 +67,7 @@ class Settings(BaseSettings):
     VISION_MLX_MODEL: str = ""                     # MLX 模型名（留空用默认）
 
     # 默认模型名（不建议修改，优先用上面的 VISION_* 配置）
-    IMAGE_MODEL_NAME: str = "gpt-4o"
+    IMAGE_MODEL_NAME: str = ""
     QWEN_VL_MODEL_NAME: str = "Qwen/Qwen2-VL-2B-Instruct"  # 本地视觉模型（transformers 路径）
     QWEN_VL_MLX_MODEL_NAME: str = "mlx-community/Qwen2-VL-7B-Instruct-4bit"  # Apple Silicon MLX 路径
 
@@ -81,9 +80,6 @@ class Settings(BaseSettings):
     # SQLite 数据库配置（默认，可直接打包）
     SQLITE_PATH: str = str(Path(__file__).resolve().parents[1] / "data" / "memory.db")
 
-    # diskcache 缓存配置
-    CACHE_DIR: str = "data/cache"
-    CACHE_SIZE_LIMIT: int = 100 * 1024 * 1024  # 100MB
 
     # 向量数据库配置（可选）
     VECTOR_DB_HOST: str = "localhost"
@@ -295,11 +291,44 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    _USER_CONFIG_PATH = Path.home() / ".cortex" / "settings.json"
+
     def model_post_init(self, __context) -> None:
-        """创建必要的数据目录"""
+        """创建必要的数据目录，并加载用户级配置覆盖"""
         db_dir = os.path.dirname(self.SQLITE_PATH)
         if db_dir:
             os.makedirs(db_dir, exist_ok=True)
+
+        self._load_user_config()
+
+    def _load_user_config(self):
+        """加载 ~/.cortex/settings.json，覆盖 .env 中的同名配置
+
+        优先级: 用户 settings.json > 项目 .env > 硬编码默认值
+        只覆盖 Settings 类中已定义的字段，忽略 JSON 中的未知 key。
+        """
+        if not self._USER_CONFIG_PATH.exists():
+            return
+
+        try:
+            import json
+            user_config = json.loads(self._USER_CONFIG_PATH.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError) as e:
+            import sys
+            print(f"[WARNING] 用户配置文件解析失败 ({self._USER_CONFIG_PATH}): {e}", file=sys.stderr)
+            return
+
+        overridden = []
+        for key, value in user_config.items():
+            if key.startswith("_"):
+                continue
+            if hasattr(type(self), 'model_fields') and key in type(self).model_fields:
+                setattr(self, key, value)
+                overridden.append(key)
+
+        if overridden:
+            import sys
+            print(f"[INFO] 已应用用户配置 ({self._USER_CONFIG_PATH}): {', '.join(overridden)}", file=sys.stderr)
 
     @property
     def sqlite_url(self) -> str:

@@ -5,7 +5,6 @@
 """
 from typing import Any, Dict, List, Optional
 from .base_model import BaseModelClient, ToolCall, ChatMessage, ChatResponse
-from config.model_config import SmallModelConfig, get_small_model_config
 from config.settings import settings
 from utils.logger import setup_logger
 from modules.management import report_api_error, report_exception
@@ -50,13 +49,12 @@ class SmallModelClient(BaseModelClient):
     @classmethod
     def from_config(cls) -> 'SmallModelClient':
         """从配置创建实例"""
-        config = get_small_model_config()
         return cls(
-            model_name=config.model_name,
-            max_tokens=config.max_tokens,
-            temperature=config.temperature,
-            api_key=config.api_key,
-            api_url=config.api_url,
+            model_name=settings.SMALL_MODEL_NAME,
+            max_tokens=512,
+            temperature=0.3,
+            api_key=settings.SMALL_MODEL_API_KEY or settings.LARGE_MODEL_API_KEY,
+            api_url=settings.SMALL_MODEL_API_URL or settings.LARGE_MODEL_API_URL,
         )
 
     async def chat(
@@ -109,6 +107,7 @@ class SmallModelClient(BaseModelClient):
         for attempt in range(1, max_retries + 1):
             try:
                 session = await self._get_session()
+                self._log_request("POST", self.api_url, len(json.dumps(payload)))
                 async with session.post(self.api_url, headers=headers, json=payload, timeout=self.timeout) as response:
                     if response.status == 200:
                         data = await response.json()
@@ -155,20 +154,38 @@ class SmallModelClient(BaseModelClient):
 
     async def generate(self, prompt: str, max_retries: int = 3, **kwargs) -> str:
         """生成响应 - 使用 OpenAI / Anthropic 兼容 API，带重试机制"""
+        try:
+            from config.prompts.composer import PromptComposer, PromptRequest
+            from config.settings import settings as _cfg
+            sys_prompt = PromptComposer().build_system(PromptRequest(
+                tier="expert", role="code_writer", mode=_cfg.effective_execution_mode))
+            messages = [{"role": "system", "content": sys_prompt}, {"role": "user", "content": prompt}]
+        except Exception:
+            messages = [{"role": "user", "content": prompt}]
+
         headers = self._build_headers(self._api_format)
         max_tokens = kwargs.get("max_tokens", self.max_tokens)
         temp = kwargs.get("temperature", self.temperature)
 
         if self._api_format == "anthropic":
+            system_text = ""
+            user_msgs = []
+            for m in messages:
+                if m["role"] == "system":
+                    system_text = m["content"]
+                else:
+                    user_msgs.append(m)
             payload = {
                 "model": self.model_name,
                 "max_tokens": max_tokens,
-                "messages": [{"role": "user", "content": prompt}],
+                "messages": user_msgs,
             }
+            if system_text:
+                payload["system"] = system_text
         else:
             payload = {
                 "model": self.model_name,
-                "messages": [{"role": "user", "content": prompt}],
+                "messages": messages,
                 "max_tokens": max_tokens,
                 "temperature": temp,
                 "top_p": kwargs.get("top_p", 0.9),
@@ -178,6 +195,7 @@ class SmallModelClient(BaseModelClient):
         for attempt in range(1, max_retries + 1):
             try:
                 session = await self._get_session()
+                self._log_request("POST", self.api_url, len(json.dumps(payload)))
                 async with session.post(self.api_url, headers=headers, json=payload, timeout=self.timeout) as response:
                     if response.status == 200:
                         data = await response.json()

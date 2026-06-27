@@ -16,6 +16,25 @@ from utils.logger import setup_logger
 
 logger = setup_logger("event_reducer")
 
+# ── 离散重要性等级（LLM 分类比回归可靠）──
+_IMPORTANCE_MAP = {
+    "critical": 1.0,
+    "high":    0.70,
+    "medium":  0.40,
+    "low":     0.15,
+    "trivial": 0.03,
+}
+
+
+def _parse_importance(value) -> float:
+    """解析 importance 字段：兼容离散等级和旧浮点数"""
+    if isinstance(value, str):
+        return _IMPORTANCE_MAP.get(value.strip().lower(), 0.40)
+    if isinstance(value, (int, float)):
+        return max(0.0, min(1.0, float(value)))
+    return 0.40
+
+
 # LLM 提示词：将一段对话提炼为结构化记忆事件
 REDUCE_PROMPT_TEMPLATE = """你是一个记忆分析专家。请分析以下对话，提炼出有价值的记忆事件。
 
@@ -25,18 +44,17 @@ REDUCE_PROMPT_TEMPLATE = """你是一个记忆分析专家。请分析以下对�
 - thought: 你的思考和分析（20-100 字）
 - lesson: 学到了什么，可复用的经验教训（10-60 字）
 - keywords: 关键词列表（2-6 个，用于检索匹配）
-- importance: 重要性评分（0.0-1.0，0.3=普通, 0.5=值得注意, 0.7=重要, 0.9=极其重要）
+- importance: 重要性（选一个：critical / high / medium / low / trivial）
+  - critical: 用户明确表达的硬约束、安全相关、不可逆决策
+  - high: 对后续工作有指导意义的经验教训、技术决策
+  - medium: 一般信息、偏好、状态
+  - low: 临时性、一次性信息
+  - trivial: 无关紧要的闲聊（优先不生成事件）
 - type: 事件类型（emotion | thought | fact | strategy）
   - emotion: 情绪感受、用户偏好、痛点
   - thought: 分析推理、反思、见解
   - fact: 客观事实、技术细节、配置信息
   - strategy: 方法论、架构决策、长期经验
-
-判断标准：
-- 用户明确表达偏好/痛点的 → importance ≥ 0.7
-- 技术决策、架构约定 → importance ≥ 0.6
-- 问题解决的方法 → importance ≥ 0.5
-- 普通寒暄、临时状态 → 不要生成事件
 
 只返回 JSON 数组，不要多余的文字说明。
 
@@ -160,7 +178,7 @@ class EventReducer:
                 thought=str(item.get("thought", ""))[:500],
                 lesson=str(item.get("lesson", ""))[:300],
                 keywords=item.get("keywords", [])[:10],
-                importance=min(max(float(item.get("importance", 0.5)), 0.0), 1.0),
+                importance=_parse_importance(item.get("importance", "medium")),
                 type=t,
             )
             events.append(ev)

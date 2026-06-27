@@ -1,10 +1,6 @@
 """
 感知模块 - 动态感知外部变化
-
-模块门面导出感知接口/工厂，以及本模块内部常用类型。
-跨模块调用优先依赖 PerceptionPort/create_perception_port。
 """
-from .interface import PerceptionPort
 from .difference.detector import get_detector
 from .difference.heartbeat import get_heartbeat
 
@@ -51,7 +47,6 @@ def _get_compat_proxy():
 perception_manager = _get_compat_proxy()
 
 __all__ = [
-    "PerceptionPort",
     "get_perception_system",
     "ChangeEvent",
     "PerceptionIntegrator",

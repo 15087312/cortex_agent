@@ -30,7 +30,6 @@ class PerceptionSystem:
         self.voice_detector = None
         self.voice_llm_handler = None
         self.proactive_trigger = None
-        self.mcp_detector = None
         self.window_detector = None
         self._window_detector_thread = None
         self._window_stop_event = threading.Event()
@@ -189,7 +188,6 @@ class PerceptionSystem:
             "voice_available": self.voice_detector is not None,
             "voice_detector_type": self.voice_detector.detector_type if self.voice_detector else None,
             "voice_llm_handler_active": self.voice_llm_handler.is_active if self.voice_llm_handler else False,
-            "mcp_available": self.mcp_detector is not None,
             "window_detector_available": self.window_detector is not None and self.window_detector.is_available(),
             "proactive_trigger": self.proactive_trigger.get_stats() if self.proactive_trigger else None,
             "world_state": self.world_state.get_state().to_dict() if self.world_state else None,

@@ -5,8 +5,9 @@
 - core/: ContinuousThinker, model_manager
 - cognition/: CognitiveBlackboard, ContextSlicer, SessionLifecycle, DomainEvent
 - communication/: ModelMessageBus, MessageBusPort
-- experts/: PreGenExpertPipeline (小模型驱动大模型 prompt 引导，含 EmotionExpert)
-- evolution/: SelfReflection, ValueSystem
+- runtime_expert: RuntimeExpert 常驻专家基类
+- conscience（已迁移到 config/conscience.py）: 良知系统
+- evolution/: ValueSystem
 - probes/: 探针系统 (5 类探针)
 - integration/: empty (placeholder)
 - skills/: YAML 技能系统 (角色+规章+流程)

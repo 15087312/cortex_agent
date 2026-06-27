@@ -835,10 +835,13 @@ class StreamThinkingSystem:
             from modules.memory import get_reducer
             reducer = get_reducer()
 
-            # 尝试注入 LiteModelClient
             try:
-                from infra.model.lite_model_client import LiteModelClient
-                client = await LiteModelClient.get_instance()
+                from infra.model.small_model_client import SmallModelClient
+                from config.settings import settings
+                client = SmallModelClient(
+                    api_key=settings.SMALL_MODEL_API_KEY or settings.LARGE_MODEL_API_KEY,
+                    api_url=settings.SMALL_MODEL_API_URL or settings.LARGE_MODEL_API_URL,
+                )
                 if client:
                     reducer.set_model(client)
             except Exception as e:

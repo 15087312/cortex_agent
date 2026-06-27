@@ -98,15 +98,12 @@ class AttentionAnalyzer:
 
     @staticmethod
     def _load_config():
-        try:
-            from config.attention_config import get_attention_config
-            return get_attention_config()
-        except Exception:
-            from types import SimpleNamespace
-            return SimpleNamespace(
-                importance_enabled=True,
-                force_static_level=None,
-            )
+        from config.settings import settings
+        from types import SimpleNamespace
+        return SimpleNamespace(
+            importance_enabled=settings.ATTENTION_IMPORTANCE_ENABLED,
+            force_static_level=settings.ATTENTION_FORCE_STATIC_LEVEL,
+        )
 
     def analyze(
         self,

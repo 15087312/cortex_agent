@@ -52,6 +52,8 @@ class WindowDetector(PerceptionDetector):
                 logger.debug("pyobjc AppKit 不可用")
 
     def is_available(self) -> bool:
+        if self._backend is None:
+            self._init_backend()
         return self._backend is not None
 
     @property

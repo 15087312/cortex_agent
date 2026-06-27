@@ -1,8 +1,7 @@
 """
-Continuous thinking control tools and task context.
+连续思考控制工具和任务上下文。
 
-These controls belong to the thinking loop rather than a model runner because
- they decide loop lifecycle, completion semantics, and result routing.
+这些控制属于思考循环而不是模型 runner，因为它们决定循环的生命周期、完成语义和结果路由。
 """
 from __future__ import annotations
 
@@ -73,7 +72,7 @@ DELEGATE_TASK_TOOL = {
     }
 }
 
-# Control tools flow via tool_calls to ModelRunner which routes them to thinker
+# 控制工具通过 tool_calls 流转到 ModelRunner，由其路由给 thinker
 
 
 CREATE_SUPERVISOR_TOOL = {
@@ -295,7 +294,7 @@ ASK_USER_INTENT_TOOL = {
 
 @dataclass
 class ThinkingTaskContext:
-    """一次连续思考循环的任务契约。"""
+    """一次连续思考循环的任务上下文。"""
 
     task_id: str
     loop_goal: str

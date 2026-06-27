@@ -129,6 +129,23 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"MCP 屏幕差异检测启动失败: {e}")
 
+        # 屏幕内容分析（OCR + 视觉，独立于像素差）
+        try:
+            from modules.perception.difference.sources.screen_monitor_source import get_screen_monitor_source
+            get_screen_monitor_source().start()
+            logger.info("✓ 屏幕内容分析已启动 (screen_monitor_server)")
+        except Exception as e:
+            logger.warning(f"屏幕内容分析启动失败: {e}")
+
+    # 启动差异检测器心跳（1Hz 扫描 TimeDifferenceSource — 空闲检测/时间差异）
+    if settings.DIFFERENCE_DETECTOR_ENABLED:
+        try:
+            from modules.perception.difference import get_heartbeat
+            get_heartbeat().start()
+            logger.info("✓ 差异检测器心跳已启动 (1Hz)")
+        except Exception as e:
+            logger.warning(f"差异检测器心跳启动失败: {e}")
+
     # 预加载视觉模型（MLX-VLM），避免首次 tool call 时阻塞事件循环
     if settings.VISION_BACKEND != "mock":
         try:
@@ -504,7 +521,7 @@ async def update_config(key: str, body: PutConfigRequest):
         )
 
     # 检查字段是否存在
-    field_info = settings.model_fields.get(key_upper)
+    field_info = type(settings).model_fields.get(key_upper)
     if field_info is None:
         return JSONResponse(
             status_code=404,

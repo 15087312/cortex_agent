@@ -41,72 +41,32 @@ class SecurityApiAdapter:
             return False, f"[安全系统异常] 输入验证失败: {e}"
 
 
-class ContextManagerAdapter:
-    """由 ContextManager 支持的上下文端口。"""
-
-    async def load_context(
-        self,
-        user_input: str,
-        context: List[Dict[str, Any]],
-        session_id: str | None,
-    ) -> Tuple[str, Any]:
-        from modules.thinking.context import ContextManager
-
-        return await ContextManager.load_context(user_input, context, session_id)
-
-    def inject_to_dialog(self, blackboard: Any, memory_context_text: str) -> None:
-        from modules.thinking.context import ContextManager
-
-        ContextManager.inject_to_dialog(blackboard, memory_context_text)
-
-    def save_memory(
-        self,
-        memory_manager: Any,
-        session_id: str | None,
-        user_input: str,
-        final_response: str,
-        *,
-        gcm_pool: Any = None,
-        turns: int = 0,
-    ) -> None:
-        from modules.thinking.context import ContextManager
-
-        ContextManager.save_memory(
-            memory_manager,
-            session_id,
-            user_input,
-            final_response,
-            gcm_pool=gcm_pool,
-            turns=turns,
-        )
-
-
 class PreGenExpertGuidanceAdapter:
-    """由 PreGenExpertPipeline 支持的指导端口。"""
+    """由良知系统支持的指导端口。"""
 
     async def run(self, user_input: str, memory_context_text: str) -> Dict[str, Any]:
         try:
-            from modules.thinking.experts.pre_gen_experts import PreGenExpertPipeline
+            from modules.thinking.conscience import get_conscience
+            from infra.model.small_model_client import SmallModelClient
+            from config.settings import settings
 
-            pipeline = PreGenExpertPipeline()
-            guidance = await pipeline.run(
-                user_input=user_input,
-                memory_context=memory_context_text,
+            client = SmallModelClient(
+                api_key=settings.SMALL_MODEL_API_KEY or settings.LARGE_MODEL_API_KEY,
+                api_url=settings.SMALL_MODEL_API_URL or settings.LARGE_MODEL_API_URL,
             )
-            logger.info(
-                f"[专家流水线] 风险={guidance.get('risk_level')} "
-                f"准则={guidance.get('principle', '') or '无'}"
-            )
-            return guidance
+            conscience = get_conscience()
+            conscience._model_client = client
+            thoughts = await conscience.think(user_input)
+            return {"inner_thoughts": thoughts} if thoughts else {}
         except Exception as e:
-            logger.warning(f"专家流水线失败: {e}")
+            logger.warning(f"良知系统失败: {e}")
             return {}
 
 
 class OutputSystemReviewAdapter:
     """由 OutputSystem 支持的输出审查端口。"""
 
-    async def review(self, raw_response: str, user_input: str = "", expert_guidance: dict = None) -> str:
+    async def review(self, raw_response: str, user_input: str = "") -> str:
         """只做输出清洗（格式化），不做安全拦截。
 
         安全拦截由 SecurityMonitor 在 Blackboard 层面处理，

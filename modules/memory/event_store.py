@@ -28,6 +28,7 @@ class MemoryEvent:
     type: emotion|thought|fact|strategy — 决定衰减速率
     last_accessed: 上次被成功召回的 ISO 时间戳（用于 recency_decay）
     access_count: 被成功召回的次数（用于 reinforcement）
+    mention_count: 话题在对话中被提及的累计次数（用于 frequency）
     """
     id: str = ""
     fact: str = ""          # 发生了什么
@@ -43,6 +44,7 @@ class MemoryEvent:
     type: str = "fact"           # emotion | thought | fact | strategy
     last_accessed: str = ""      # ISO 时间戳，初始等于 time
     access_count: int = 0        # 被成功检索的次数
+    mention_count: int = 1       # 话题累计提及次数
 
     def to_dict(self) -> Dict[str, Any]:
         d = asdict(self)
@@ -129,6 +131,7 @@ class EventStore:
                 type TEXT DEFAULT 'fact',
                 last_accessed TEXT DEFAULT '',
                 access_count INTEGER DEFAULT 0,
+                mention_count INTEGER DEFAULT 1,
                 created_at TEXT DEFAULT (datetime('now'))
             )
         """)
@@ -148,6 +151,8 @@ class EventStore:
             conn.execute("ALTER TABLE events ADD COLUMN last_accessed TEXT DEFAULT ''")
         if "access_count" not in existing:
             conn.execute("ALTER TABLE events ADD COLUMN access_count INTEGER DEFAULT 0")
+        if "mention_count" not in existing:
+            conn.execute("ALTER TABLE events ADD COLUMN mention_count INTEGER DEFAULT 1")
         conn.commit()
 
     # ------------------------------------------------------------------
@@ -199,6 +204,16 @@ class EventStore:
         conn.commit()
         if cur.rowcount:
             self.logger.debug(f"[EventStore] touch {event_id} at {now}")
+        return cur.rowcount > 0
+
+    def increment_mention(self, event_id: str) -> bool:
+        """递增话题提及次数（EventReducer 合并时调用）"""
+        conn = self._get_conn()
+        cur = conn.execute(
+            "UPDATE events SET mention_count = mention_count + 1 WHERE id = ?",
+            (event_id,),
+        )
+        conn.commit()
         return cur.rowcount > 0
 
     def get_event(self, event_id: str) -> Optional[MemoryEvent]:

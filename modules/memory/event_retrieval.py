@@ -1,22 +1,22 @@
 """
 EventRetrieval — 事件检索（RAG 混合检索）
 
-最终排序公式：
+评分公式（加权和 × 内容加成）:
+  raw = 0.35*semantic + 0.20*importance + 0.20*recency + 0.15*utility + 0.10*frequency
+  score = raw * content_bonus
 
-  score = semantic_similarity
-          * type_decay(type, last_accessed)    # 类型相关的遗忘曲线
-          * reinforcement(access_count)         # 成功召回的强化
-          * importance                          # 原始重要性
+因子说明:
+  semantic   - FAISS 向量相似度（内积，0~1）
+  importance - 离散等级: critical=1.0, high=0.70, medium=0.40, low=0.15, trivial=0.03
+  recency    - exp(-λ * days)，按 type 不同衰减速率
+  utility    - log(access_count + 3) / log(13)，检索次数越多越高
+  frequency  - log(mention_count + 3) / log(13)，话题被提及越多越高
 
-type_decay = exp(-λ * days)  其中 λ 由 type 决定：
-  emotion:  0.01    → 30 天衰减到 0.74，一年消失
-  thought:  0.003   → 180 天衰减到 0.58
-  fact:     0.0005  → 365 天衰减到 0.83
-  strategy: 0.00005 → 10 年仅衰减到 0.83
-
-reinforcement = log(access_count + 1)  被召回越多权重越高
-
-永不修改存储，只在检索时动态算分。
+排序与过滤:
+  1. 批内 min-max 归一化到 0~1
+  2. 淘汰 score < threshold 的
+  3. 降序排列
+  4. 截取前 max_results 条
 """
 import math
 import re
@@ -31,12 +31,20 @@ from utils.logger import setup_logger
 logger = setup_logger("event_retrieval")
 
 # ── 类型衰减系数 ──────────────────────────────────────────────
-# λ 越大衰减越快
 TYPE_DECAY_LAMBDA = {
     "emotion":  0.01,     # 情绪：最快衰减
     "thought":  0.003,    # 思考：中速
     "fact":     0.0005,   # 事实：慢速
     "strategy": 0.00005,  # 策略：几乎不衰减
+}
+
+# ── 评分权重 ──────────────────────────────────────────────
+SCORE_WEIGHTS = {
+    "semantic": 0.35,     # 语义相关
+    "importance": 0.20,   # 重要性（LLM 离散标注）
+    "recency": 0.20,      # 最近被访问
+    "utility": 0.15,      # 被检索次数
+    "frequency": 0.10,    # 话题被提及次数
 }
 
 SECONDS_PER_DAY = 86400.0
@@ -67,7 +75,8 @@ class EventRetrieval:
     async def retrieve(
         self,
         query: str,
-        top_k: int = 5,
+        max_results: int = 10,
+        threshold: float = 0.06,
         min_importance: float = 0.0,
         types: Optional[List[str]] = None,
     ) -> List[MemoryEvent]:
@@ -75,64 +84,52 @@ class EventRetrieval:
 
         Args:
             query: 查询文本
-            top_k: 返回数量
+            max_results: 最多返回条数
+            threshold: 归一化分数阈值，低于此值的淘汰
             min_importance: 最低重要性过滤
-            types: 可选，只返回指定类型的事件，如 ["strategy", "fact"]
+            types: 可选，只返回指定类型
 
-        1. 向量语义搜索得到候选集
-        2. 合并关键词命中候选
-        3. 用「遗忘曲线 × 强化 × 重要性」算最终分
-        4. 按 type 过滤（如果指定）
-        5. 返回时 touch 每条事件（更新 last_accessed + access_count）
+        流程:
+        1. FAISS 向量搜索 + 关键词搜索
+        2. 加权和公式计算总分
+        3. 批内 min-max 归一化
+        4. 阈值过滤 + 降序截断
+        5. touch 最终入选的事件
         """
         # 1. 向量语义搜索
-        vector_results = await self._vector_search(query, top_k=top_k * 3)
+        vector_results = await self._vector_search(query, top_k=max_results * 3)
 
         # 2. 关键词搜索（补充候选）
         query_keywords = self._extract_keywords(query)
         keyword_results = self._keyword_search(query_keywords)
 
-        # 3. 用新公式评分
+        # 3. 逐条算分
         now = datetime.now(timezone.utc)
-        scored = self._score_events(vector_results, keyword_results, now)
+        scored = self._calculate_all_scores(vector_results, keyword_results, now)
 
-        # 4. 按 type 过滤（如果指定）
+        # 4. type 过滤 + 重要性过滤
         if types:
             types_set = set(t.lower() for t in types)
             scored = [(ev, s) for ev, s in scored if ev.type in types_set]
-
-        # 5. 过滤低重要性
         if min_importance > 0:
             scored = [(ev, s) for ev, s in scored if ev.importance >= min_importance]
 
-        top_events = [ev for ev, _ in scored[:top_k]]
-
-        # 6. touch 每条结果（更新 last_accessed + access_count）
-        store = self._get_store()
-        for ev in top_events:
-            store.touch_event(ev.id)
+        # 5. 归一化 + 阈值 + 排序 + 截断
+        top_events = self._rank_and_filter(scored, threshold, max_results)
 
         return top_events
 
     async def retrieve_mixed(
         self,
         mix: Dict[str, float],
-        top_k: int = 5,
+        max_results: int = 10,
+        threshold: float = 0.06,
         types: Optional[List[str]] = None,
     ) -> List[MemoryEvent]:
-        """按主题配比多路检索合并
-
-        Args:
-            mix: {主题: 权重}，如 {"coding": 0.7, "architecture": 0.2, "experience": 0.1}
-            top_k: 总返回数量
-            types: 可选，传给每次检索的类型过滤
-
-        每个主题按权重分配 top_k 中的名额，分别检索后合并打分。
-        """
+        """按主题配比多路检索合并"""
         if not mix:
             return []
 
-        # 归一化权重
         total = sum(mix.values())
         if total <= 0:
             return []
@@ -144,90 +141,115 @@ class EventRetrieval:
         for topic, weight in norm.items():
             if not topic.strip():
                 continue
-            topic_top_k = max(1, round(top_k * weight))
-            # 向量搜索
-            vector_results = await self._vector_search(topic, top_k=topic_top_k * 3)
+            topic_top_k = max(3, round(max_results * weight * 3))
+            vector_results = await self._vector_search(topic, top_k=topic_top_k)
             kw_results = self._keyword_search(self._extract_keywords(topic))
-            scored = self._score_events(vector_results, kw_results, now)
-            # 类型过滤
+            scored = self._calculate_all_scores(vector_results, kw_results, now)
+
             if types:
                 ts = set(t.lower() for t in types)
                 scored = [(ev, s) for ev, s in scored if ev.type in ts]
-            # 加权重后放入总池
-            for ev, s in scored[:topic_top_k]:
+
+            for ev, s in scored:
                 adjusted = s * weight
                 if ev.id not in all_scored or adjusted > all_scored[ev.id][1]:
                     all_scored[ev.id] = (ev, adjusted)
 
-        # 按调整后分数排序
-        ordered = sorted(all_scored.values(), key=lambda x: x[1], reverse=True)
-
-        store = self._get_store()
-        for ev, _ in ordered[:top_k]:
-            store.touch_event(ev.id)
-
-        return [ev for ev, _ in ordered[:top_k]]
+        scored_list = list(all_scored.values())
+        return self._rank_and_filter(scored_list, threshold, max_results)
 
     # ------------------------------------------------------------------
-    # 评分引擎（核心）
+    # 评分引擎
     # ------------------------------------------------------------------
 
-    def _score_events(
+    def _calculate_all_scores(
         self,
         vector_results: List[Tuple[MemoryEvent, float]],
         keyword_results: List[Tuple[MemoryEvent, float]],
         now: datetime,
     ) -> List[Tuple[MemoryEvent, float]]:
-        """用遗忘曲线公式重新评分"""
-        scores: Dict[str, Dict[str, Any]] = {}
+        """逐条计算最终评分"""
+        seen: Dict[str, Dict[str, Any]] = {}
 
-        # 向量分
-        for ev, score in vector_results:
-            scores[ev.id] = {"event": ev, "vector": score}
+        for ev, sim in vector_results:
+            seen[ev.id] = {"event": ev, "semantic": sim}
 
-        # 关键词候选补充（没有向量分的给基础分）
         for ev, _ in keyword_results:
-            if ev.id not in scores:
-                scores[ev.id] = {"event": ev, "vector": 0.1}
+            if ev.id not in seen:
+                seen[ev.id] = {"event": ev, "semantic": 0.1}
 
-        scored_list = []
-        for sid, data in scores.items():
+        scored = []
+        for sid, data in seen.items():
             ev = data["event"]
-            semantic = data["vector"]
+            semantic = data["semantic"]
 
-            # 时间衰减：用 last_accessed 而非 created_at
             days = self._days_since(ev.last_accessed or ev.time, now)
-            lam = TYPE_DECAY_LAMBDA.get(ev.type, 0.0005)
-            time_decay = math.exp(-lam * days)
+            λ = TYPE_DECAY_LAMBDA.get(ev.type, 0.0005)
+            recency = math.exp(-λ * max(days, 0.01))
 
-            # 增强因子
-            reinforcement = math.log(ev.access_count + 1) + 1.0  # +1 保证最小值 1
+            ac = max(ev.access_count or 0, 0)
+            utility = math.log(ac + 3) / math.log(13)
 
-            # 最终分
-            final_score = semantic * time_decay * reinforcement * ev.importance
+            mc = max(ev.mention_count or 1, 1)
+            frequency = math.log(mc + 3) / math.log(13)
 
-            scored_list.append((ev, final_score))
+            has_lesson = 1.0 if ev.lesson else 0.0
+            fact_len = len(ev.fact or "")
+            content_bonus = 1.0 + 0.05 * (min(fact_len, 200) / 100) + 0.10 * has_lesson
 
-        scored_list.sort(key=lambda x: x[1], reverse=True)
-        return scored_list
+            w = SCORE_WEIGHTS
+            raw = (
+                w["semantic"]   * semantic +
+                w["importance"] * ev.importance +
+                w["recency"]    * recency +
+                w["utility"]    * utility +
+                w["frequency"]  * frequency
+            ) * content_bonus
+
+            scored.append((ev, raw))
+
+        return scored
+
+    def _rank_and_filter(
+        self,
+        scored: List[Tuple[MemoryEvent, float]],
+        threshold: float,
+        max_results: int,
+    ) -> List[MemoryEvent]:
+        """归一化 → 阈值 → 排序 → 截断"""
+        if not scored:
+            return []
+
+        scores = [s for _, s in scored]
+        smin, smax = min(scores), max(scores)
+
+        if smax - smin < 0.0001:
+            normalized = [(ev, 0.5) for ev, _ in scored]
+        else:
+            normalized = [(ev, (s - smin) / (smax - smin)) for ev, s in scored]
+
+        qualified = [(ev, ns) for ev, ns in normalized if ns >= threshold]
+        qualified.sort(key=lambda x: x[1], reverse=True)
+
+        store = self._get_store()
+        for ev, _ in qualified[:max_results]:
+            store.touch_event(ev.id)
+
+        return [ev for ev, _ in qualified[:max_results]]
 
     # ------------------------------------------------------------------
     # 各维度检索
     # ------------------------------------------------------------------
 
     async def _vector_search(self, query: str, top_k: int = 15) -> List[Tuple[MemoryEvent, float]]:
-        """FAISS 向量语义搜索"""
         embedder = self._get_embedder()
         store = self._get_store()
-
         query_embedding = embedder.embed(query)
         if query_embedding is None:
             return []
-
         results = store.search_by_vector(query_embedding, top_k=top_k)
         if not results:
             return []
-
         output = []
         for event_id, score in results:
             event = store.get_event(event_id)
@@ -236,12 +258,11 @@ class EventRetrieval:
         return output
 
     def _keyword_search(self, keywords: List[str]) -> List[Tuple[MemoryEvent, float]]:
-        """关键词精确匹配"""
         if not keywords:
             return []
         store = self._get_store()
         events = store.search_by_keywords(keywords, limit=20)
-        return [(ev, 0.8) for ev in events]
+        return [(ev, 0.0) for ev in events]
 
     # ------------------------------------------------------------------
     # 工具
@@ -249,11 +270,9 @@ class EventRetrieval:
 
     @staticmethod
     def _days_since(iso_time: str, now: datetime) -> float:
-        """计算 ISO 时间戳距今的天数"""
         try:
             if not iso_time:
                 return 0.0
-            # 兼容带时区和不带时区的 ISO 格式
             if "+" in iso_time or iso_time.endswith("Z"):
                 t = datetime.fromisoformat(iso_time)
             else:
@@ -267,7 +286,6 @@ class EventRetrieval:
 
     @staticmethod
     def _extract_keywords(text: str) -> List[str]:
-        """简单分词提取关键词"""
         if not text:
             return []
         keywords = set()

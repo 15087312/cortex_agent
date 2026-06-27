@@ -107,7 +107,7 @@ class ModelInstanceFactory:
     def create_large(self, identity: ModelIdentity = None, **kwargs) -> ModelInstance:
         """创建大模型实例（上限由 identity.permissions.max_instances 控制）"""
         if identity is None:
-            identity = ModelIdentity.from_template("large")
+            identity = ModelIdentity.from_template("orchestrator")
         max_n = self._get_max_for_identity(identity)
         self._ensure_capacity("large", max_n)
 
@@ -193,9 +193,9 @@ class ModelInstanceFactory:
         if identity is None:
             identity = ModelIdentity.from_template(template_key)
 
-        from infra.model.lite_model_client import LiteModelClient
+        from infra.model.small_model_client import SmallModelClient
 
-        client = LiteModelClient(
+        client = SmallModelClient(
             model_name=kwargs.get("model_name") or settings.SMALL_MODEL_NAME,
             max_tokens=identity.max_tokens or 64,
             temperature=identity.temperature or 0.1,

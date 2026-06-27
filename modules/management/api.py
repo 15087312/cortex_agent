@@ -467,9 +467,8 @@ async def get_attention_status():
 async def get_security_status():
     """获取安全模块状态"""
     try:
-        from modules.security_system.audit_logger import AuditLogger
-
-        audit = AuditLogger()
+        from modules.security_system.audit_logger import SecurityAuditLogger
+        audit = SecurityAuditLogger()
         audit_ok = audit is not None
 
         return {

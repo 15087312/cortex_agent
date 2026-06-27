@@ -27,7 +27,6 @@ class SecurityAPI:
 
         self.core_validator = CoreValidator()
         self.content_validator = ContentValidator()
-        self.output_validator = OutputValidator()
 
         logger.info("安全系统API初始化完成")
 

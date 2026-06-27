@@ -165,11 +165,7 @@ class ProactiveTrigger:
             logger.error(f"[主动触发 #{trigger_count}] 失败: {e}")
 
     def _get_session_info(self):
-        """获取最近活跃的 session
-
-        优先选择有 WebSocket 连接的 session（表示用户在线），
-        然后按创建时间排序取最新的。
-        """
+        """获取最近活跃的 session，附带对话历史"""
         try:
             from modules.thinking.api_stream import get_thinking_system, connection_manager
             system = get_thinking_system()
@@ -179,14 +175,25 @@ class ProactiveTrigger:
             active_ws = set(connection_manager.active_connections.keys())
             best_sid = ""
             best_ts = 0
-            # 元组比较：(has_ws, started_at) 降序，有 WebSocket 连接的优先
             for sid, data in system.sessions.items():
                 started = data.get("started_at", 0)
                 has_ws = sid in active_ws
                 if (has_ws, started) > (best_sid in active_ws, best_ts):
                     best_ts = started
                     best_sid = sid
-            return best_sid, ""
+
+            # 获取最近对话文本
+            conversation = ""
+            if best_sid:
+                session_data = system.sessions.get(best_sid, {})
+                messages = session_data.get("messages", [])
+                if messages:
+                    recent = messages[-6:]  # 最近 6 条（3 轮）
+                    conversation = "\n".join(
+                        f"{'用户' if m.get('role') == 'user' else '助手'}: {str(m.get('content', ''))[:200]}"
+                        for m in recent
+                    )
+            return best_sid, conversation
         except Exception:
             return "", ""
 

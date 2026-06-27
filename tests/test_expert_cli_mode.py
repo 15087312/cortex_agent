@@ -7,7 +7,7 @@ import json
 from unittest.mock import AsyncMock, MagicMock, patch
 from typing import Dict, Any, List
 
-from modules.thinking.experts.base import RuntimeExpert
+from modules.thinking.runtime_expert import RuntimeExpert
 
 
 # ============================================================================

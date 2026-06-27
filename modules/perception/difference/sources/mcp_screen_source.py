@@ -84,7 +84,7 @@ class ScreenDiffSource(DifferenceSource):
     def _find_server_script() -> str:
         """自动定位 screen_diff_server.py 的路径"""
         project_root = os.path.dirname(
-            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
         )
         candidate = os.path.join(
             project_root, "infra", "mcp", "servers", "screen_diff_server.py"
@@ -169,7 +169,7 @@ class ScreenDiffSource(DifferenceSource):
                 if not os.path.isabs(script):
                     # 从项目根目录查找
                     project_root = os.path.dirname(
-                        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+                        os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
                     )
                     script = os.path.join(project_root, script)
 
@@ -269,8 +269,15 @@ class ScreenDiffSource(DifferenceSource):
                 "arguments": arguments or {},
             },
         }
+        t0 = time.time()
         self._send_request(req)
         resp = self._read_response(timeout=10.0)
+        elapsed = time.time() - t0
+        if elapsed > 5:
+            logger.debug(f"[{tool_name}] {elapsed:.1f}s (慢)")
+        if resp is None:
+            logger.warning(f"[{tool_name}] 无响应 (超时 10s, 等待 {elapsed:.1f}s)")
+            return None
         if resp and "result" in resp:
             content = resp["result"].get("content", [])
             for item in content:

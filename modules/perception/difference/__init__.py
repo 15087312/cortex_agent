@@ -3,6 +3,7 @@ from modules.perception.difference.detector import DifferenceDetector, get_detec
 from modules.perception.difference.heartbeat import ExistentialHeartbeat, get_heartbeat
 from modules.perception.difference.sources.base import DifferenceSourceRegistry
 from modules.perception.difference.sources.mcp_screen_source import ScreenDiffSource, get_screen_diff_source
+from modules.perception.difference.sources.screen_monitor_source import ScreenMonitorSource, get_screen_monitor_source
 
 
 def get_registry() -> DifferenceSourceRegistry:
