@@ -130,7 +130,7 @@ class ModelInstanceFactory:
 
         return self._register(identity, client)
 
-    def create_supervisor(self, template_key: str = "supervisor_code",
+    def create_supervisor(self, template_key: str = "code_supervisor",
                           identity: ModelIdentity = None, **kwargs) -> ModelInstance:
         """创建主管模型实例（上限由 identity.permissions.max_instances 控制）"""
         if identity is None:
@@ -157,7 +157,7 @@ class ModelInstanceFactory:
 
         return self._register(identity, client)
 
-    def create_expert(self, template_key: str = "expert_implementer",
+    def create_expert(self, template_key: str = "code_writer",
                       identity: ModelIdentity = None, **kwargs) -> ModelInstance:
         """创建专家模型实例（云端 7B，上限由 identity.permissions.max_instances 控制）"""
         if identity is None:
