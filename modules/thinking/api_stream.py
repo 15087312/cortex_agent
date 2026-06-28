@@ -449,7 +449,7 @@ class StreamThinkingSystem:
             context_messages = self.get_context(session_id)
             short_term_memory = [m.get("content", "") for m in context_messages[-6:]]
             scheduler_context = [
-                {"role": m.get("role", ""), "content": m.get("content", "")}
+                {"role": m.get("role", ""), "content": m.get("content", ""), "timestamp": m.get("timestamp", 0.0)}
                 for m in context_messages[-8:]
             ]
 

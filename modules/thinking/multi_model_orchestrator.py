@@ -427,11 +427,19 @@ class MultiModelOrchestrator:
                 blackboard = None
                 turn_context = None
 
-            # 记录用户说话时间
-            if turn_context:
-                turn_context.last_user_message_time = time.time()
-                if blackboard:
-                    blackboard.runtime_state["last_user_message_time"] = time.time()
+            # 记录上一次用户说话时间（不是当前时间）
+            # 从 context 中找倒数第二条 user 消息的时间戳
+            if context:
+                prev_user_time = 0.0
+                for msg in reversed(context[:-1]):  # 排除当前消息
+                    if msg.get("role") == "user" and msg.get("timestamp"):
+                        prev_user_time = msg["timestamp"]
+                        break
+                if prev_user_time > 0:
+                    if turn_context:
+                        turn_context.last_user_message_time = prev_user_time
+                    if blackboard:
+                        blackboard.runtime_state["last_user_message_time"] = prev_user_time
 
             # 注入 Blackboard 到 ToolSecurityGate（用于安全拦截检查）
             if blackboard:
