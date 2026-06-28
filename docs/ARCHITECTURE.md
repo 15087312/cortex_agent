@@ -71,20 +71,28 @@ multi_model_orchestrator.py :: MultiModelOrchestrator.process()
   │  3. GuidancePort.run()                     → PreGenExpertPipeline
   │     └─ ValuesExpert + SecurityExpert + EmotionExpert (并行)
   │  3.5 SkillManager.match_skill()            → YAML 技能匹配
-  │  4. _execute_multi_model_thinking()        ← 核心编排
-  │     │
-  │     ├─ SessionLifecycle.start_turn()       → TurnContext + CognitiveBlackboard
-  │     ├─ ModelRunnerManager.start_listening()
-  │     ├─ 注入上下文到 Blackboard（委托指导、专家指导、记忆）
-  │     ├─ MessageBus: probe_start("large")    → ModelRunner 激活
-  │     ├─ ModelRunner._think_loop()
-  │     │   → ContinuousThinker.continuous_think()
-  │     │     → build_prompt → model.chat() with tools → parse tools
-  │     │     → delegate_task → ProbeDelegationAdapter → probe_start
-  │     │     → write to Blackboard → loop or finalize
-  │     │
-  │     ├─ 等待 thinking_complete 事件 (MessageBus, 300s 超时)
-  │     └─ 读取 CognitiveBlackboard.final_response
+   │  4. _execute_multi_model_thinking()        ← 核心编排
+   │     │
+   │     ├─ TurnContext + CognitiveBlackboard 初始化
+   │     ├─ ModelRunnerManager.start_listening()
+   │     ├─ 注入上下文到 Blackboard（委托指导、良知引导、记忆）
+   │     ├─ MessageBus: probe_start("large")    → ModelRunner 激活
+   │     │
+   │     ├─ ModelRunner._think_loop()            ← 会话循环（跨委托）
+   │     │   │
+   │     │   ├─ ContinuousThinker.continuous_think()  ← 思考轮次
+   │     │   │   │  每轮重建 prompt（黑板状态 + 记忆 + 感知）
+   │     │   │   │
+   │     │   │   └─ _generate_with_tools()        ← 工具循环（ReAct）
+   │     │   │       │  turn 0..N: chat → tool_calls → execute → 结果注入
+   │     │   │       └─ 无工具调用 → 输出文本 → return
+   │     │   │
+   │     │   ├─ 检测到委托 → 退出思考轮次 → _wait_for_wakeup
+   │     │   ├─ 收到 thinking_result → 重建 prompt → 新一轮思考
+   │     │   └─ 无委托且 continue=false → 退出会话循环
+   │     │
+   │     ├─ 等待 thinking_complete 事件 (MessageBus, 300s 超时)
+   │     └─ 读取 CognitiveBlackboard.final_response
   │
   │  5. OutputReviewPort.review()              → 输出校验 + 专家审查 + 情感样式
   │  6. ContextPort.save_memory()              → 对话记忆保存

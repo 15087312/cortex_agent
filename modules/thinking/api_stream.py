@@ -957,8 +957,8 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
                                 from modules.thinking.context.controller import get_context_controller
                                 get_context_controller().set_mode(exec_mode)
                                 logger.info(f"[API] WebSocket 消息设置模式: {exec_mode}")
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.warning(f"WebSocket 消息设置执行模式 '{exec_mode}' 失败: {e}")
                     asyncio.create_task(system.think(session_id, user_content))
 
             elif msg_type == "stop":

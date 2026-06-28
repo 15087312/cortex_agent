@@ -245,8 +245,8 @@ class MultiModelOrchestrator:
             from modules.thinking.context.controller import get_context_controller
             from config.settings import settings as _cfg
             get_context_controller().set_mode(_cfg.effective_execution_mode)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Orchestrator 设置执行模式失败: {e}")
 
         # ---- 3. 专家引导 (情绪 + 价值观) ----
         # 由激活的 Skill 决定是否运行，目前默认始终运行
@@ -254,8 +254,10 @@ class MultiModelOrchestrator:
             user_input
         )
 
-        # ---- 3.5 技能匹配（已移除自动匹配，技能仅通过 request_skill 工具手动激活） ----
-        skill_id = ""
+        # ---- 3.5 技能匹配：基于关键词自动匹配用户输入与技能标题 ----
+        skill_id = self._match_skill(user_input)
+        if skill_id:
+            logger.info(f"[编排器] 自动匹配技能: {skill_id}")
 
         # ---- 4. 多模型思考 (核心) ----
         thinking_result = await self._execute_multi_model_thinking(
@@ -384,10 +386,14 @@ class MultiModelOrchestrator:
         timings['开始'] = (0, '多模型思考启动')
 
         try:
-            # ---- 会话初始化: TurnContext + CognitiveBlackboard ----
+            # ---- SessionLifecycle: 会话生命周期 + CognitiveBlackboard ----
             runner_manager = None
             turn_context = None
             blackboard = None
+
+            timings = {}
+            start = time.time()
+            timings['开始'] = (0, '多模型思考启动')
 
             try:
                 from modules.thinking.context.pool import TurnContext
@@ -416,6 +422,8 @@ class MultiModelOrchestrator:
                 )
             except Exception as e:
                 logger.debug(f"[编排器] 初始化失败 (非致命): {e}")
+            except Exception as e:
+                logger.debug(f"[SessionLifecycle] 初始化失败 (非致命): {e}")
                 blackboard = None
                 turn_context = None
 
@@ -443,6 +451,10 @@ class MultiModelOrchestrator:
                     turn_context=turn_context,
                 )
                 await runner_manager.start_listening()
+                # 注册到全局会话表（供轮询检查委托状态）
+                with _session_registry_lock:
+                    if (session_id or "") in _session_registry:
+                        _session_registry[session_id or ""]["runner_manager"] = runner_manager
                 t3 = time.time() - start
                 timings['ModelRunnerManager'] = (t3 - timings.get('SessionLifecycle', (0,))[0], f'模型运行管理器启动')
                 logger.info(
@@ -490,11 +502,15 @@ class MultiModelOrchestrator:
                     if content and isinstance(content, str):
                         history_lines.append(f"[{role}]: {content[:500]}")
                 if history_lines:
+                    history_text = "【对话历史】\n" + "\n".join(history_lines)
                     blackboard.add_observation(
                         tier="system",
-                        content="【对话历史】\n" + "\n".join(history_lines),
+                        content=history_text,
                         metadata={"context_type": "conversation_history"},
                     )
+                    logger.info(f"[编排器] 注入对话历史到黑板: {len(history_lines)} 条, {len(history_text)} 字符")
+            else:
+                logger.info(f"[编排器] 无对话历史 (blackboard={bool(blackboard)}, context={len(context) if context else 0})")
 
             # 2. 良知引导（注入内心独白）
             inner_thoughts = expert_guidance.get("inner_thoughts", "") if expert_guidance else ""
@@ -550,10 +566,10 @@ class MultiModelOrchestrator:
             else:
                 turn_start_ts = time.time()
 
-            # ---- 等待大模型完成 (事件驱动) ----
+            # ---- 等待大模型完成 (轮询 + 活动感知超时) ----
             t_wait_start = time.time()
             final_response = ""
-            LARGE_TIMEOUT = 300  # 5分钟，允许多轮思考和工具调用
+            POLL_INTERVAL = 15  # 每 15s 检查一次
 
             from modules.thinking.communication.message_bus import get_message_bus
             bus = get_message_bus()
@@ -562,9 +578,7 @@ class MultiModelOrchestrator:
             logger.info(f"[编排器] 等待 thinking_complete: channel={orch_channel} session={session_id}")
 
             async def _on_orchestrator_msg(_msg):
-                """消息到达时检查是否为 thinking_complete"""
                 try:
-                    # 用 peek 非破坏性检查，避免 receive 的锁竞争
                     msgs = await bus.peek(orch_channel, limit=5)
                     for m in msgs:
                         content = m.content if hasattr(m, 'content') else {}
@@ -579,12 +593,29 @@ class MultiModelOrchestrator:
                 except Exception as e:
                     logger.warning(f"[编排器] 消息回调异常: {e}")
 
+            def _has_pending_delegations() -> bool:
+                """检查大模型是否有未完成委托（说明仍在工作中）"""
+                try:
+                    with _session_registry_lock:
+                        info = _session_registry.get(session_id or "")
+                    if info:
+                        mgr = info.get("runner_manager")
+                        if mgr:
+                            runners = mgr.get_active_runners()
+                            for r in runners.values():
+                                if r.tier == "large" and r._thinker:
+                                    return bool(getattr(r._thinker, '_pending_delegations', None))
+                except Exception:
+                    pass
+                return False
+
             completed = False
+            consecutive_idle = 0
+            MAX_IDLE_CHECKS = 4  # 连续 4 次（60s）无进展则超时
+            MAX_WALL_TIME = 600  # 硬上限 10 分钟
+
             try:
                 await bus.subscribe(orch_channel, _on_orchestrator_msg)
-
-                # 消费队列中已有的 thinking_complete 消息
-                # （模型可能在订阅前就发送了，用 receive 消费避免被旧消息干扰）
                 stale = await bus.receive(orch_channel)
                 while stale:
                     content = stale.content if hasattr(stale, "content") else {}
@@ -598,21 +629,38 @@ class MultiModelOrchestrator:
                         break
                     stale = await bus.receive(orch_channel)
 
-                try:
-                    await asyncio.wait_for(done_event.wait(), timeout=LARGE_TIMEOUT)
-                    completed = True
-                except asyncio.TimeoutError:
-                    completed = False
+                while not completed and (time.time() - t_wait_start) < MAX_WALL_TIME:
+                    try:
+                        await asyncio.wait_for(asyncio.shield(done_event.wait()), timeout=POLL_INTERVAL)
+                        completed = True
+                        break
+                    except asyncio.TimeoutError:
+                        pass
+
+                    elapsed = time.time() - t_wait_start
+                    if blackboard and blackboard.final_response:
+                        final_response = blackboard.final_response
+                        completed = True
+                        logger.info(f"[编排器] 从黑板获取到 final_response (+{elapsed:.0f}s)")
+                        break
+
+                    if _has_pending_delegations():
+                        consecutive_idle = 0
+                        logger.info(f"[编排器] 大模型等待委托中，延长等待 (+{elapsed:.0f}s)")
+                    else:
+                        consecutive_idle += 1
+                        logger.debug(f"[编排器] 无进展 ({consecutive_idle}/{MAX_IDLE_CHECKS}) +{elapsed:.0f}s")
+
+                    if consecutive_idle >= MAX_IDLE_CHECKS:
+                        logger.warning(f"[编排器] 连续 {consecutive_idle} 次无进展，判定超时 (+{elapsed:.0f}s)")
+                        break
+
                 t_wait_elapsed = time.time() - t_wait_start
                 timings['WaitLargeModel'] = (t_wait_elapsed, f'等待大模型完成' + (f' (完成)' if completed else f' (超时或中止)'))
                 logger.info(f"[等待大模型] {('完成信号已收到' if completed else '等待超时')} (+{t_wait_elapsed:.2f}s)")
 
-                # 1. 优先从 CognitiveBlackboard 读取
-                if blackboard and blackboard.final_response:
+                if not final_response and blackboard and blackboard.final_response:
                     final_response = blackboard.final_response
-                    logger.info(
-                        f"[编排器] 大模型已完成（来自 CognitiveBlackboard），回复长度 {len(final_response)} 字符"
-                    )
             finally:
                 try:
                     await bus.unsubscribe(orch_channel, _on_orchestrator_msg)
@@ -621,18 +669,11 @@ class MultiModelOrchestrator:
 
             if not final_response:
                 if completed:
-                    logger.warning(
-                        "[编排器] 大模型已发送完成信号但无 final_response，返回最后可用内容"
-                    )
+                    logger.warning("[编排器] 大模型已发送完成信号但无 final_response")
                 else:
-                    logger.warning(
-                        f"[编排器] 大模型超时 ({LARGE_TIMEOUT}s)，"
-                        f"尝试恢复最后可用的内容"
-                    )
-                # 1. 优先从 CognitiveBlackboard 读取
+                    logger.warning(f"[编排器] 大模型超时，尝试恢复最后可用的内容")
                 if blackboard and blackboard.final_response:
                     final_response = blackboard.final_response
-                    logger.info(f"[编排器] 从 CognitiveBlackboard 恢复 final_response: {len(final_response)} 字符")
 
             if not final_response:
                 if completed:

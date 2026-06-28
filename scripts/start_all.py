@@ -25,11 +25,18 @@ def main():
     """启动服务"""
     global _memory_scheduler
 
+    import argparse
+    parser = argparse.ArgumentParser(description="Humanoid AGI Server")
+    parser.add_argument("--debug", action="store_true", help="开启 DEBUG 日志（含 prompt 前 500 字符输出）")
+    args = parser.parse_args()
+
+    log_level = "debug" if args.debug else os.environ.get("LOG_LEVEL", "info")
+
     # 注册信号处理器
     signal.signal(signal.SIGINT, _graceful_shutdown)
     signal.signal(signal.SIGTERM, _graceful_shutdown)
 
-    print("Starting Humanoid AGI server...")
+    print(f"Starting Humanoid AGI server (log={log_level})...")
 
     # 后台记忆由 EventReducer 在每次会话结束后自动处理，无需独立调度器
     print("记忆系统: 事件驱动 (EventReducer + EventStore)")
@@ -42,7 +49,7 @@ def main():
         port=int(os.environ.get("SERVER_PORT", "8080")),
         workers=workers,
         reload=False,
-        log_level="info"
+        log_level=log_level,
     )
 
 

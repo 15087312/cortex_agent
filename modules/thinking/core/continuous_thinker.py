@@ -302,17 +302,20 @@ class ContinuousThinker:
                 "- 分析完毕后，【必须】使用 delegate_task 工具向专家委托任务。\n"
                 "- 禁止输出'我需要...'、'应该...'等自然语言分析；系统只接收工具调用。\n"
                 "- 你的每一轮输出都会被检查：如果没有工具调用，会被拒绝并要求重新尝试。\n"
-                "- 整合阶段：使用 continue_thinking 并设置 continue=false 来结束循环。"
+                "- 整合阶段：使用 continue_thinking(continue=false) 结束循环并返回 result_summary 给指挥。"
             )
         elif self._tier == "expert":
             control_hint = (
-                "- 完成工作后使用内部工具输出 result_summary。\n"
+                "- 你调用的每个工具，系统自动把结果追加给你继续，不需要主动结束。\n"
+                "- 任务完成时使用 continue_thinking(continue=false, result_summary=...) 返回结果。\n"
                 "- 不要把控制标记写进自然语言回复。"
             )
         else:  # large
             control_hint = (
-                "- 使用 continue_thinking 工具控制循环继续/结束/等待。\n"
-                "- 使用 delegate_task 工具向主管委托任务（主管负责调度专家）。\n"
+                "- 【自动推进】: 调用普通工具后系统会自动把结果返回给你继续处理，无需手动暂停或等待下一轮。\n"
+                "- 【继续思考】continue_thinking: continue=true 重建全局上下文（你会看到更新后的记忆、发现、进度），"
+                "continue=false 结束任务并返回 result_summary 给用户。\n"
+                "- 【委托】delegate_task: 委托给主管→专家执行。调用后思考暂停，等待后你会被唤醒并看到新的黑板状态。"
                 "- 不要把内部工具名、委托协议、控制标记写进自然语言回复。"
             )
 
@@ -472,7 +475,7 @@ class ContinuousThinker:
             }
             if final_text:
                 self.history_thoughts.append(final_text)
-                self.notebook.update(new_content=final_text, is_finished=True)
+                self.notebook.append(final_text, is_finished=True)
                 if self._get_dialog and self._model_id:
                     try:
                         self._get_dialog.write_thought(
@@ -568,6 +571,7 @@ class ContinuousThinker:
 
     async def _build_prompt(self, initial_question: str, round_num: int = 0) -> str:
         """构建当前轮 prompt — TurnContext 池化 + PromptComposer"""
+        import asyncio as _asyncio_thinker
         from config.prompts.composer import PromptComposer, PromptRequest
         from modules.thinking.context.pool import TurnContext, ContextFragment
 
@@ -594,9 +598,9 @@ class ContinuousThinker:
             from modules.memory.event_retrieval import get_event_retrieval
             retrieval = get_event_retrieval()
             if self._memory_focus:
-                events = await retrieval.retrieve_mixed(mix=self._memory_focus, max_results=10)
+                events = await _asyncio_thinker.wait_for(retrieval.retrieve_mixed(mix=self._memory_focus, max_results=10), timeout=10)
             else:
-                events = await retrieval.retrieve(query=initial_question, max_results=10)
+                events = await _asyncio_thinker.wait_for(retrieval.retrieve(query=initial_question, max_results=10), timeout=10)
             if events:
                 parts = []
                 for i, ev in enumerate(events, 1):
@@ -616,17 +620,10 @@ class ContinuousThinker:
             frag = await PerceptionSource().collect()
             if frag.content:
                 pool.add(frag)
-        except Exception:
-            pass
+        except Exception as e:
+            self.logger.debug(f"感知上下文收集失败: {e}")
 
-        # 价值观
-        try:
-            from modules.thinking.conscience import get_conscience
-            values_text = get_conscience()._values
-            if values_text:
-                pool.add(ContextFragment("values", values_text, ("large", "supervisor", "expert"), "行为准则", 40))
-        except Exception:
-            pass
+        # 良知引导（由 PreGenExpertGuidanceAdapter 注入黑板，ContextSlicer 切片到 prompt）
 
         # 外部 prompt builder（黑板）
         if self._external_prompt_builder is not None:
@@ -638,8 +635,8 @@ class ContinuousThinker:
                     external_section = self._external_prompt_builder(round_num=round_num)
                 if external_section:
                     pool.add(ContextFragment("blackboard", str(external_section).strip(), ("large",), "协作上下文", 50))
-            except Exception:
-                pass
+            except Exception as e:
+                self.logger.debug(f"黑板外部 prompt builder 调用失败: {e}")
 
         # 委托状态
         dlg_status = self._build_delegation_status_section()
@@ -1017,7 +1014,7 @@ class ContinuousThinker:
                     self.logger.info("思考被中断")
                     break
 
-                # 构建提示词（包含历史记忆和外部提示）
+                        # 构建提示词（包含历史记忆和外部提示）
                 prompt = await self._build_prompt(question, round_num=i + 1)
 
                 # 执行思考
@@ -1058,7 +1055,7 @@ class ContinuousThinker:
                     metadata={"has_control_decision": control_decision is not None},
                 )
                 notebook_is_finished = bool(control_decision and not control_decision.should_continue)
-                self.notebook.update(new_content=cleaned_for_notebook, is_finished=notebook_is_finished)
+                self.notebook.append(cleaned_for_notebook, is_finished=notebook_is_finished)
 
                 # 更新委托计数器
                 if has_delegation:

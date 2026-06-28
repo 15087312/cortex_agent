@@ -38,16 +38,19 @@ class DelegationResult:
 class DelegationPort(Protocol):
     """ContinuousThinker 用于分发委托的抽象端口。"""
 
-    def delegate(self, request: DelegationRequest) -> DelegationResult:
+    async def delegate(self, request: DelegationRequest) -> DelegationResult:
         ...
 
 
 class ProbeDelegationAdapter:
-    """基于 probe_start 的委托适配器。"""
+    """基于 MessageBus 的委托适配器 — 通过探针消息激活目标模型"""
 
-    def delegate(self, request: DelegationRequest) -> DelegationResult:
+    async def delegate(self, request: DelegationRequest) -> DelegationResult:
         try:
-            from modules.thinking.probes.probe_tools import probe_start
+            from modules.thinking.communication.message_bus import Message, MessageType, get_message_bus
+            from modules.thinking.probes.probe_permission import get_probe_permission_manager
+            from modules.thinking.identity import get_identities
+            import uuid
 
             identity = _resolve_role(request.role)
             if identity is None:
@@ -57,24 +60,46 @@ class ProbeDelegationAdapter:
                 )
 
             target_tier, identity_key = identity
-            raw = probe_start(
-                target_tier=target_tier,
-                identity_key=identity_key,
-                task_description=request.task,
-                probe_priority=str(request.metadata.get("probe_priority", "MEDIUM")),
-                ttl_seconds=int(request.metadata.get("ttl_seconds", 1800)),
-                _caller_role=request.caller_tier,
-                _caller_model_id=request.caller_model_id,
-                _session_id=request.session_id,
-                return_to_model_id=request.return_to_model_id or request.caller_model_id,
-                return_to_session_id=request.return_to_session_id or request.session_id,
-                task_id=request.task_id,
+
+            ppm = get_probe_permission_manager()
+            error = ppm.validate_probe_start(request.caller_tier, target_tier, identity_key)
+            if error:
+                return DelegationResult(success=False, error=error)
+
+            if identity_key not in get_identities():
+                return DelegationResult(
+                    success=False,
+                    error=f"未知的身份模板: {identity_key}",
+                )
+
+            probe_id = f"probe_{target_tier}_{identity_key}_{uuid.uuid4().hex[:6]}"
+            task_id = request.task_id or f"task_{uuid.uuid4().hex[:8]}"
+
+            bus = get_message_bus()
+            msg = Message(
+                msg_type=MessageType.SYSTEM,
+                sender=request.caller_model_id or "delegation_adapter",
+                recipient=f"model_runner_manager_{request.session_id[:8]}",
+                content={
+                    "action": "probe_started",
+                    "probe_id": probe_id,
+                    "target_tier": target_tier,
+                    "identity_key": identity_key,
+                    "task_description": request.task[:500],
+                    "return_to_model_id": request.return_to_model_id or request.caller_model_id,
+                    "return_to_session_id": request.return_to_session_id or request.session_id,
+                    "task_id": task_id,
+                    "caller_tier": request.caller_tier,
+                    "priority": 5,
+                    "ttl_seconds": 1800,
+                },
             )
+            await bus.send(msg)
+
             return DelegationResult(
-                success=bool(raw.get("success")),
-                probe_id=str(raw.get("probe_id", "") or ""),
-                error=str(raw.get("error", "") or ""),
-                metadata=dict(raw),
+                success=True,
+                probe_id=probe_id,
+                metadata={"probe_id": probe_id, "task_id": task_id, "target_tier": target_tier},
             )
         except Exception as e:
             return DelegationResult(success=False, error=str(e))

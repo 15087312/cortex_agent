@@ -8,9 +8,9 @@ import aiohttp
 import json
 import ssl
 from datetime import datetime
-import logging
 
-logger = logging.getLogger(__name__)
+from utils.logger import setup_logger
+logger = setup_logger("model_client")
 
 
 # ---------------------------------------------------------------------------
@@ -319,12 +319,12 @@ class BaseModelClient(ABC):
         )
 
     def _log_payload(self, payload: dict):
-        """记录完整请求体（DEBUG 级别）"""
-        logger.debug(f"[API PAYLOAD #{self._request_count + 1}]\n{json.dumps(payload, ensure_ascii=False, indent=2)[:4000]}")
+        """记录完整请求体（INFO 级别 — 用 --debug 启动时可见）"""
+        logger.info(f"[API PAYLOAD #{self._request_count + 1}]\n{json.dumps(payload, ensure_ascii=False, indent=2)}")
 
     def _log_response_body(self, status: int, elapsed_ms: float, text: str, tokens: int = 0):
-        """记录完整响应体（DEBUG 级别）"""
-        logger.debug(f"[API RESPONSE #{self._request_count + 1}] status={status} elapsed={elapsed_ms:.0f}ms tokens={tokens}\n{text[:2000]}")
+        """记录完整响应体（INFO 级别）"""
+        logger.info(f"[API RESPONSE #{self._request_count + 1}] status={status} elapsed={elapsed_ms:.0f}ms tokens={tokens}\n{text}")
 
     def _log_response(self, status: int, elapsed_ms: float, tokens: int = 0):
         logger.info(

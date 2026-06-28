@@ -106,6 +106,17 @@ class SkillManager:
                 if len(kw) >= 2 and kw.lower() in user_lower:
                     score += 1
 
+            # 技能名称匹配（权重 2）— 用户说"代码审查"直接匹配 code_review
+            if skill.name and len(skill.name) >= 2:
+                if skill.name.lower() in user_lower:
+                    score += 2
+            # 技能描述匹配（权重 1）
+            if skill.description and len(skill.description) >= 2:
+                desc_words = skill.description.lower().split()
+                match_count = sum(1 for w in desc_words if len(w) >= 2 and w in user_lower)
+                if match_count >= 2:
+                    score += 1
+
             if score > best_score:
                 min_score = trig.get("min_score", 1)
                 if score >= min_score:

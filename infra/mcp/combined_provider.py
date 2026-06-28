@@ -47,16 +47,16 @@ def _run_async_in_thread(func, kwargs) -> Any:
         #   3. loop.close()
         try:
             loop.run_until_complete(loop.shutdown_asyncgens())
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"shutdown_asyncgens 失败 (非致命): {e}")
         try:
             loop.run_until_complete(loop.shutdown_default_executor(timeout=5.0))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"shutdown_default_executor 失败 (非致命): {e}")
         try:
             loop.close()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"loop.close 失败 (非致命): {e}")
         asyncio.set_event_loop(None)
 
 
@@ -184,8 +184,9 @@ class CombinedToolExecutor(ToolExecutorPort):
         return self._execute_local(request, start)
 
     def _execute_local(self, request: ToolCallRequest, start: float) -> ToolCallResult:
-        """执行本地工具（全部提交到全局线程池，避免阻塞事件循环）"""
+        """执行本地工具（async 函数在当前事件循环执行，sync 函数走线程池）"""
         from infra.tool_manager.tool_registry import ToolRegistry
+        import asyncio as _asyncio
 
         func = ToolRegistry.get_func(request.tool_name)
         if not func:
@@ -197,9 +198,12 @@ class CombinedToolExecutor(ToolExecutorPort):
             )
 
         try:
-            pool = _get_async_pool()
-            future = pool.submit(func, **request.params)
-            result = future.result(timeout=120)
+            if _asyncio.iscoroutinefunction(func):
+                result = _asyncio.run(func(**request.params))
+            else:
+                pool = _get_async_pool()
+                future = pool.submit(func, **request.params)
+                result = future.result(timeout=120)
             latency = (time.time() - start) * 1000
             return ToolCallResult(
                 success=True,

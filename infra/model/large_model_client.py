@@ -73,8 +73,9 @@ class LargeModelClient(BaseModelClient):
                 role="orchestrator",
                 mode=_cfg.effective_execution_mode,
             ))
-        except Exception:
-            system_prompt = "你是系统主模型，简洁直接地回复用户。"
+        except Exception as e:
+            logger.error(f"System prompt 构建失败，raise 以避免模型在错误配置下运行: {e}")
+            raise
 
         if self._api_format == "anthropic":
             headers = {
@@ -108,6 +109,8 @@ class LargeModelClient(BaseModelClient):
             try:
                 # RES-1: Reuse pooled session instead of creating new one per request
                 session = await self._get_session()
+                self._log_request("POST", self.api_url, len(json.dumps(payload)))
+                self._log_payload(payload)
                 async with session.post(
                     self.api_url,
                     headers=headers,
@@ -325,6 +328,7 @@ class LargeModelClient(BaseModelClient):
                 # RES-1: Reuse pooled session instead of creating new one per request
                 session = await self._get_session()
                 self._log_request("POST", self.api_url, len(json.dumps(payload)))
+                self._log_payload(payload)
                 async with session.post(
                     self.api_url,
                     headers=headers,
@@ -333,6 +337,7 @@ class LargeModelClient(BaseModelClient):
                 ) as response:
                     if response.status == 200:
                         data = await response.json()
+                        self._log_response_body(200, (time.time() - request_start) * 1000, json.dumps(data, ensure_ascii=False))
                         return self._parse_chat_response(data, tools=tools)
                     else:
                         error_data = await response.json()
@@ -482,6 +487,8 @@ class LargeModelClient(BaseModelClient):
         for attempt in range(1, max_retries + 1):
             try:
                 session = await self._get_session()
+                self._log_request("POST", self.api_url, len(json.dumps(payload)))
+                self._log_payload(payload)
                 async with session.post(
                     self.api_url, headers=headers, json=payload,
                     timeout=aiohttp.ClientTimeout(total=self.timeout, sock_read=30)
@@ -495,11 +502,16 @@ class LargeModelClient(BaseModelClient):
 
                     # 按 API 格式解析 SSE 流
                     if self._api_format == "anthropic":
-                        return await self._parse_anthropic_stream(response, on_token)
+                        result = await self._parse_anthropic_stream(response, on_token)
                     elif self._api_format == "dashscope":
-                        return await self._parse_dashscope_stream(response, on_token)
+                        result = await self._parse_dashscope_stream(response, on_token)
                     else:
-                        return await self._parse_openai_stream(response, on_token)
+                        result = await self._parse_openai_stream(response, on_token)
+                    resp_text = ""
+                    if result and hasattr(result, 'message'):
+                        resp_text = getattr(result.message, 'content', '') or ""
+                    self._log_response_body(200, 0, resp_text)
+                    return result
 
             except Exception as e:
                 last_error = e
@@ -989,11 +1001,12 @@ class LargeModelClient(BaseModelClient):
             session = await self._get_session()
             self._log_request("POST", self.api_url, len(json.dumps(payload)))
             self._log_payload(payload)
+            request_start = time.time()
             async with session.post(
                 self.api_url,
                 headers=headers,
                 json=payload,
-                timeout=self.timeout
+                timeout=self.timeout,
             ) as response:
                 async for line in response.content:
                     if line:

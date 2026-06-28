@@ -39,16 +39,8 @@ class ContextSlicer:
         """
         parts = []
 
-        # 0a. 对话历史（短期记忆）
-        conv_obs = [
-            o for o in bb.observations
-            if o.tier == "system"
-            and o.metadata.get("context_type") == "conversation_history"
-        ]
-        if conv_obs:
-            parts.append(conv_obs[-1].content)
-
-        # 0b. 系统级观察（委托引导、专家引导等，排除对话历史避免重复）
+        # 对话历史已由 _build_system_prompt_for_mode 前置到 system prompt
+        # 此处只收集系统观察（委托引导、良知引导等）
         system_observations = [
             o for o in bb.observations
             if o.tier == "system"

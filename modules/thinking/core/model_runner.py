@@ -1026,6 +1026,17 @@ class ModelRunner:
             system_prompt = f"{system_prompt}\n\n{self._build_time_context()}"
 
         client = self.instance.client
+        total_prompt_len = len(system_prompt) + len(prompt)
+        logger.info(f"[PromptSize] {self.model_id} tier={self.tier} system={len(system_prompt)} user={len(prompt)} total={total_prompt_len} chars")
+
+        # Debug: 打印完整 prompt 前 500 和后 200 字符
+        if logger.isEnabledFor(10):  # DEBUG level
+            sp = system_prompt[:500] + ("...[截断]" if len(system_prompt) > 500 else "")
+            up = prompt[:500] + ("...[截断]" if len(prompt) > 500 else "")
+            logger.debug(f"[Prompt] system={sp}")
+            logger.debug(f"[Prompt] user={up}")
+            if len(system_prompt) > 700:
+                logger.debug(f"[Prompt] system尾={system_prompt[-200:]}")
 
         # ── 用 wait_for 包裹整轮生成，防止永久挂起 ──
         async def _do_generate():
@@ -1200,6 +1211,20 @@ class ModelRunner:
             composer = PromptComposer()
             mode = _cfg.effective_execution_mode
             skill_id = self._active_skill.id if self._active_skill else None
+
+            # 对话历史置于 system prompt 最前面，确保模型最先看到
+            conversation_header = ""
+            if self.blackboard:
+                conv_obs = [o for o in self.blackboard.observations
+                           if o.tier == "system" and o.metadata.get("context_type") == "conversation_history"]
+                if conv_obs:
+                    conversation_header = conv_obs[-1].content + "\n\n---\n\n"
+                    logger.info(f"[ModelRunner] 对话历史前置: {len(conversation_header)} 字符")
+                else:
+                    logger.info(f"[ModelRunner] 黑板无对话历史 (obs={len(self.blackboard.observations)})")
+            else:
+                logger.info(f"[ModelRunner] blackboard 为 None")
+
             logger.info(f"[ModelRunner] 构建系统提示词: mode={mode}, tier={self.tier}")
             result = composer.build_system(PromptRequest(
                 tier=self.tier,
@@ -1208,8 +1233,23 @@ class ModelRunner:
                 skill_id=skill_id,
                 tool_count=len(self._visible_tool_whitelist()),
             ))
-            logger.info(f"[ModelRunner] 系统提示词前100字: {result[:100]}")
-            return result
+            # 非核心工具名称列表
+            non_core_section = ""
+            try:
+                non_core = ToolRegistry.list_non_core_tools(self._visible_tool_whitelist())
+                if non_core:
+                    names = [t["name"] for t in non_core]
+                    non_core_section = (
+                        f"\n\n【其他可用工具（需先查询再调用）】\n"
+                        f"以下工具可用但未附带参数定义：{', '.join(names)}\n"
+                        "调用前请先使用 query_tool_details(tool_name) 查询其参数和用法。"
+                    )
+            except Exception:
+                pass
+
+            full = conversation_header + result + non_core_section
+            logger.info(f"[ModelRunner] 系统提示词: {len(full)} 字符 (对话历史 {len(conversation_header)} + 系统 {len(result)} + 非核心工具)")
+            return full
         except Exception as e:
             logger.warning(f"[ModelRunner] PromptComposer 构建失败，回退: {e}")
             return self.identity.personality
@@ -1229,8 +1269,8 @@ class ModelRunner:
         # 距上次用户对话时长
         try:
             last_time = 0.0
-            if self._blackboard:
-                last_time = self._blackboard.runtime_state.get("last_user_message_time", 0.0)
+            if self.blackboard:
+                last_time = self.blackboard.runtime_state.get("last_user_message_time", 0.0)
             if last_time > 0:
                 elapsed = time.time() - last_time
                 if elapsed < 60:
@@ -1384,6 +1424,7 @@ class ModelRunner:
         expert_errors = []  # 收集专家工具调用失败信息，最终附给主管
         for attempt in range(self.GENERATE_RETRIES):
             try:
+                logger.info(f"[TOOL-LOOP] {self.model_id} 进入工具循环 (max_turns={self.MAX_CHAT_TOOL_TURNS})")
                 for turn in range(self.MAX_CHAT_TOOL_TURNS):
                     # ── 每轮检查执行模式是否被外部变更 ──
                     try:
@@ -1451,9 +1492,11 @@ class ModelRunner:
                         f"content_len={len(content) if content else 0}, "
                         f"tool_calls={len(tool_calls) if tool_calls else 0}"
                     )
+                    if tool_calls:
+                        tc_names = [tc.name for tc in tool_calls]
+                        logger.info(f"[TOOL-LOOP] turn={turn} tools={tc_names}")
 
                     if not tool_calls:
-                        # 大模型：允许直接文本回复（闲聊/问候）
                         if self.tier == "large" and content.strip():
                             if self.blackboard:
                                 self.blackboard.set_final_response(content)
@@ -1642,7 +1685,7 @@ class ModelRunner:
                                     return_to_session_id=self._return_to_session_id,
                                     task_id=self._task_id,
                                 )
-                                dlg_result = ProbeDelegationAdapter().delegate(request)
+                                dlg_result = await ProbeDelegationAdapter().delegate(request)
                                 if not dlg_result.success:
                                     # 委托失败 → 记录到 thinker 以便跟踪状态
                                     error_msg = dlg_result.error or f"未找到匹配的角色 '{role}'"
