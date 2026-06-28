@@ -249,16 +249,12 @@ class EventStore:
     def _get_embedding_dim(self) -> int:
         """获取实际 embedding 维度"""
         if self._embedding_dim is None:
-            try:
-                from modules.memory.embedding import EmbeddingEngine
-                eng = EmbeddingEngine.get_instance()
-                # 触发模型加载以获取维度
-                if eng._load_model():
-                    self._embedding_dim = eng.dim
-                else:
-                    self._embedding_dim = 384  # 降级默认值
-            except Exception:
-                self._embedding_dim = 384
+            from modules.memory.embedding import EmbeddingEngine
+            eng = EmbeddingEngine.get_instance()
+            # 触发模型加载以获取维度
+            if not eng._load_model():
+                raise RuntimeError("Embedding 模型加载失败，无法获取向量维度")
+            self._embedding_dim = eng.dim
         return self._embedding_dim
 
     def _load_faiss(self):

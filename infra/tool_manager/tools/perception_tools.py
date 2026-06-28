@@ -230,31 +230,29 @@ def _vision_understand(
 def detect_ui_elements(focus: str = "", app: str = "") -> Dict[str, Any]:
     """检测当前屏幕 UI 元素并返回坐标"""
     try:
-        from modules.perception.detectors.touchpoint_detector import TouchpointDetector
-        detector = TouchpointDetector(fallback_to_screenmonitor=True)
-        elements = detector.detect_elements(app=app)
+        from modules.perception.difference.sources.screen_monitor_source import get_screen_monitor_source
+        source = get_screen_monitor_source()
+        result = source.analyze_ui_elements()
+        raw_elements = result.get("elements", [])
 
-        if not elements:
-            return {"success": True, "elements": [], "message": "未检测到 UI 元素"}
-
-        result = []
-        for elem in elements:
-            result.append({
-                "element_id": elem.element_id,
-                "type": elem.type,
-                "label": elem.label,
-                "bbox": elem.bbox,
-                "center_x": elem.center_x,
-                "center_y": elem.center_y,
-                "confidence": round(elem.confidence, 2),
+        formatted = []
+        for e in raw_elements:
+            x, y, w, h = e.get("x", 0), e.get("y", 0), e.get("w", 0), e.get("h", 0)
+            formatted.append({
+                "element_id": f"{e['type']}_{x}_{y}",
+                "type": e["type"],
+                "label": e.get("text", ""),
+                "bbox": [x, y, x + w, y + h],
+                "center_x": x + w // 2,
+                "center_y": y + h // 2,
+                "confidence": round(e.get("confidence", 0), 2),
             })
 
         return {
             "success": True,
-            "elements": result,
-            "count": len(result),
-            "backend": detector.backend,
-            "precision": detector.precision,
+            "elements": formatted,
+            "count": len(formatted),
+            "backend": "screen_monitor",
             "hint": "使用 mouse_click(x=center_x, y=center_y) 点击对应元素",
         }
     except Exception as e:

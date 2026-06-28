@@ -238,7 +238,8 @@ def test_real_perception_pipeline():
         time.sleep(1)
 
     # 验证
-    prompt = integrator.get_context_summary()
+    fragment = integrator.pool.snapshot()
+    prompt = fragment.content
     print(f"\n  {B}注入 LLM 的 Prompt:{R}")
     if prompt:
         print(f"  {MAGENTA}{prompt}{R}")
@@ -247,7 +248,7 @@ def test_real_perception_pipeline():
 
     print(f"\n  {B}检测结果:{R}")
     print(f"    事件数: {events_count}")
-    print(f"    注意力项: {len(integrator._attention_items)}")
+    print(f"    池条目: {len(integrator.pool._items)}")
     print(f"    差异检测器: scans={detector.get_status()['scan_count']}")
 
     hb.stop()

@@ -163,8 +163,9 @@ class MediumModelClient(BaseModelClient):
             sys_prompt = PromptComposer().build_system(PromptRequest(
                 tier="supervisor", role="code_supervisor", mode=_cfg.effective_execution_mode))
             messages = [{"role": "system", "content": sys_prompt}, {"role": "user", "content": prompt}]
-        except Exception:
-            messages = [{"role": "user", "content": prompt}]
+        except Exception as e:
+            logger.error(f"构建系统提示词失败，raise 以避免对话上下文丢失: {e}")
+            raise
 
         headers = self._build_headers(self._api_format)
 

@@ -232,6 +232,13 @@ class ScreenMonitorSource:
 
     # ── 公共方法 ──
 
+    def analyze_ui_elements(self, confidence_threshold: float = 0.3) -> dict:
+        """公共 API: 同步分析屏幕 UI 元素（供 LLM 工具调用，非后台过滤）"""
+        if not self._ensure_process():
+            return {"elements": []}
+        result = self._call_mcp_tool("analyze_ui_elements", {"confidence_threshold": confidence_threshold})
+        return result if result else {"elements": []}
+
     def _call_capture_and_analyze(self) -> str:
         """公共 API: 同步获取屏幕分析文本（用于预热/测试）"""
         if not self._ensure_process():

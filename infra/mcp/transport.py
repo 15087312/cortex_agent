@@ -131,13 +131,13 @@ class MCPStdioTransport:
         try:
             if self._session_ctx:
                 await self._session_ctx.__aexit__(None, None, None)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"MCP session 关闭失败 (非致命): {e}")
         try:
             if self._stdio_ctx:
                 await self._stdio_ctx.__aexit__(None, None, None)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"MCP stdio 关闭失败 (非致命): {e}")
         self._session_ctx = None
         self._stdio_ctx = None
         logger.info(f"[MCP] 已断开: {self.server_name}")
@@ -236,13 +236,13 @@ class MCPSseTransport:
         try:
             if self._session_ctx:
                 await self._session_ctx.__aexit__(None, None, None)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"MCP-SSE session 关闭失败 (非致命): {e}")
         try:
             if self._sse_ctx:
                 await self._sse_ctx.__aexit__(None, None, None)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"MCP-SSE 连接关闭失败 (非致命): {e}")
         self._session_ctx = None
         self._sse_ctx = None
 

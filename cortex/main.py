@@ -164,8 +164,9 @@ def main():
                     if pid != my_pid:
                         os.kill(int(pid), signal.SIGTERM)
             time.sleep(1.5)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"⚠ 无法释放端口 {args.port}: {e}，后端可能启动失败")
+            raise
 
     # 启动后端
     print(f"🚀 启动 Cortex Agent (:{args.port})...")

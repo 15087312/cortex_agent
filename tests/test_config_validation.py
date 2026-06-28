@@ -2,6 +2,7 @@
 Tests for config/settings.py — field validators and production checks.
 """
 import pytest
+from unittest.mock import patch
 from config.settings import Settings
 
 
@@ -11,7 +12,8 @@ from config.settings import Settings
 
 def _make_settings(**overrides):
     """Build a Settings instance with no .env file and optional overrides."""
-    return Settings(_env_file=None, **overrides)
+    with patch.object(Settings, "_load_user_config", return_value=None):
+        return Settings(_env_file=None, **overrides)
 
 
 # ---------------------------------------------------------------------------

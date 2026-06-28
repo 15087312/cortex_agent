@@ -427,6 +427,7 @@ class ScreenDiffSource(DifferenceSource):
                 importance=min(change_ratio * 2, 1.0),
                 payload={
                     "change_ratio": round(change_ratio, 4),
+                    "intensity": round(change_ratio, 4),
                     "changed_regions": regions,
                     "width": data.get("width", 0),
                     "height": data.get("height", 0),

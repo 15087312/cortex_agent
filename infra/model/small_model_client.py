@@ -160,8 +160,9 @@ class SmallModelClient(BaseModelClient):
             sys_prompt = PromptComposer().build_system(PromptRequest(
                 tier="expert", role="code_writer", mode=_cfg.effective_execution_mode))
             messages = [{"role": "system", "content": sys_prompt}, {"role": "user", "content": prompt}]
-        except Exception:
-            messages = [{"role": "user", "content": prompt}]
+        except Exception as e:
+            logger.error(f"构建系统提示词失败，raise 以避免对话上下文丢失: {e}")
+            raise
 
         headers = self._build_headers(self._api_format)
         max_tokens = kwargs.get("max_tokens", self.max_tokens)

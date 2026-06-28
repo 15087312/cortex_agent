@@ -17,6 +17,9 @@ class _MockResponse:
     async def json(self):
         return {"choices": [{"message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}]}
 
+    async def text(self):
+        return '{"choices": [{"message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}]}'
+
     async def __aenter__(self):
         return self
 
