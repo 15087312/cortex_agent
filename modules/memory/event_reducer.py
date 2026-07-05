@@ -173,6 +173,11 @@ class EventReducer:
             t = str(item.get("type", "fact")).strip().lower()
             if t not in ("emotion", "thought", "fact", "strategy"):
                 t = "fact"
+            causal_ids = item.get("causal_node_ids")
+            if isinstance(causal_ids, list):
+                causal_ids = [str(cid) for cid in causal_ids[:10]]
+            else:
+                causal_ids = []
             ev = MemoryEvent(
                 fact=str(item["fact"])[:500],
                 thought=str(item.get("thought", ""))[:500],
@@ -180,6 +185,7 @@ class EventReducer:
                 keywords=item.get("keywords", [])[:10],
                 importance=_parse_importance(item.get("importance", "medium")),
                 type=t,
+                causal_node_ids=causal_ids,
             )
             events.append(ev)
 

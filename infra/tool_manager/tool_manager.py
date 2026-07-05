@@ -355,6 +355,12 @@ class ToolManager:
             self._record_tool_event(tool_name, params, False, error=error, source="sync")
             return {"success": False, "result": None, "error": error}
 
+        # 若工具函数是 async（如 understand_screen），同步调用需用 asyncio.run
+        if inspect.iscoroutinefunction(func):
+            async def _sync_wrapper(**kw):
+                return await func(**kw)
+            func = lambda **kw: asyncio.run(_sync_wrapper(**kw))
+
         # === 权限检查 ===
         perm = self._check_tool_permission(tool_name, caller_role, caller_model_id)
         if not perm["allowed"]:

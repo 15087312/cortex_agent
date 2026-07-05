@@ -61,13 +61,6 @@ class RuntimeExpert(ABC):
         self.is_persistent = (self.startup_mode == "persistent")
 
         # 专属记忆目录
-        self._expert_memory_dir = self._init_expert_memory()
-        self._memory_entries: List[Dict[str, Any]] = []
-        self._max_memory_entries = 200  # 防止无限增长
-
-        # 创建 expert 专属的 MemoryManager（整个生命周期复用，避免每次 search/save 重复创建）
-        self._mm = self._create_memory_manager()
-
         # 运行状态
         self._running = False
         self._round = 0
@@ -78,8 +71,7 @@ class RuntimeExpert(ABC):
 
         self.logger.info(
             f"[{self.identity.name}] 初始化完成 "
-            f"model={self.model_id} role={self.identity.role} "
-            f"memory_dir={self._expert_memory_dir}"
+            f"model={self.model_id} role={self.identity.role}"
         )
 
     # ------------------------------------------------------------------
@@ -124,47 +116,6 @@ class RuntimeExpert(ABC):
 
         from modules.thinking.identity import ModelIdentity
         return ModelIdentity.from_template(self.template_key)
-
-    def _init_expert_memory(self) -> str:
-        """初始化专家专属记忆目录（旧版 LongTermMemory 已废弃，使用事件记忆 EventStore）"""
-        return ""
-
-    def add_memory(self, category: str, content: str, importance: float = 0.5) -> None:
-        """添加一条专属记忆"""
-        entry = {
-            "category": category,
-            "content": content,
-            "importance": importance,
-            "timestamp": time.time(),
-        }
-        self._memory_entries.append(entry)
-        # 限制大小防止内存泄漏
-        if len(self._memory_entries) > self._max_memory_entries:
-            self._memory_entries = self._memory_entries[-self._max_memory_entries:]
-
-    def query_memory(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
-        """查询专属记忆（简单关键词匹配，子类可覆盖使用 FAISS）"""
-        query_lower = query.lower()
-        scored = []
-        for entry in self._memory_entries:
-            content = entry.get("content", "")
-            keywords = query_lower.split()
-            hits = sum(1 for kw in keywords if kw in content.lower())
-            if hits > 0:
-                scored.append((hits / max(len(keywords), 1), entry))
-        scored.sort(key=lambda x: x[0], reverse=True)
-        return [e for _, e in scored[:top_k]]
-
-    def _create_memory_manager(self):
-        """旧版 MemoryManager 已废弃，返回 None"""
-        return None
-
-    async def _load_private_context(self, request_text: str) -> str:
-        """加载当前专家可见的 private/global 记忆上下文（已存根，不再使用记忆系统）。"""
-        return ""
-
-    def _save_private_memory(self, content: str, source: str = "runtime_expert_response") -> None:
-        """保存当前专家私有记忆（已存根，不再使用记忆系统）。"""
 
     # ------------------------------------------------------------------
     # Blackboard 通信
@@ -241,7 +192,6 @@ class RuntimeExpert(ABC):
                     "visibility": "agents_only",
                 },
             )
-            self._save_private_memory(str(content))
             return entry.entry_id if entry else None
         except Exception as e:
             self.logger.debug(f"写入响应失败: {e}")
@@ -291,7 +241,7 @@ class RuntimeExpert(ABC):
 
         # 写入就绪通知
         self.write_thought(
-            f"[{self.identity.name}就绪] 记忆目录: {self._expert_memory_dir}",
+            f"[{self.identity.name}就绪]",
             round_num=0,
         )
 
@@ -334,9 +284,6 @@ class RuntimeExpert(ABC):
                         request_parts.append(str(msg.get("content", "")))
                     for req in dialog_requests:
                         request_parts.append(str(req.get("content", "")))
-                    private_context = await self._load_private_context(task_description)
-                    if private_context:
-                        request_parts.append(f"【你的私有记忆上下文】\n{private_context}")
                     combined_request = "\n\n".join(request_parts)
 
                     # 4. 如果有实质请求（或第一轮），调用子类的 process()
@@ -777,8 +724,6 @@ class RuntimeExpert(ABC):
             "persistent": self.is_persistent,
             "round": self._round,
             "running": self._running,
-            "memory_dir": self._expert_memory_dir,
-            "memory_entries": len(self._memory_entries),
             "has_blackboard": self._blackboard is not None,
             "has_model_instance": self.model_instance is not None,
             "uptime": time.time() - self._started_at if self._started_at else 0,

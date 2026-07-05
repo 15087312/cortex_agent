@@ -7,6 +7,7 @@ import aiohttp
 import asyncio
 import json
 import re
+import ssl
 import time
 import logging
 from config.settings import settings
@@ -195,14 +196,24 @@ class LargeModelClient(BaseModelClient):
                 last_error = Exception(f"Large model request timeout (attempt {attempt}/{max_retries})")
                 logger.warning(last_error)
                 if attempt < max_retries:
-                    wait_time = 2 ** attempt  # 指数退避：2s, 4s, 8s
+                    wait_time = 2 ** attempt
                     await asyncio.sleep(wait_time)
                     continue
+            except (aiohttp.ClientConnectorError, aiohttp.ClientOSError, ssl.SSLError) as conn_err:
+                # SSL 连接错误（如 "SSL record layer failure"）通常由 keep-alive
+                # 连接失效或网络波动引起。重置 session 强制新建连接。
+                last_error = conn_err
+                logger.error(f"[generate] 连接错误 (attempt {attempt}/{max_retries}): {conn_err}")
+                self._reset_session()
+                if attempt < max_retries:
+                    wait_time = 2 ** attempt
+                    await asyncio.sleep(wait_time)
+                    continue
+                break
             except Exception as e:
                 last_error = e
                 logger.error(f"[generate] Attempt {attempt} failed: {e}")
                 if attempt < max_retries:
-                    # 503 服务繁忙：使用更长退避 (5s, 15s, 30s)，给服务恢复时间
                     is_service_busy = "503" in str(e)
                     if is_service_busy:
                         wait_time = min(5 * (3 ** (attempt - 1)), 60)

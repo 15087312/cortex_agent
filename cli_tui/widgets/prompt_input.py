@@ -1,17 +1,28 @@
-"""输入框 — 用户输入 + 历史 + 命令检测 + 安全审批模式"""
+"""输入框 — 用户输入 + 历史 + 命令检测 + 安全审批模式 (多行)"""
 
 from typing import Optional
 
-from textual.widgets import Input
+from textual import events
+from textual.message import Message
+from textual.widgets import TextArea
 
 from ..state import AppState
 
 
-class PromptInput(Input):
-    """带历史记录、命令检测和安全审批模式的输入框"""
+class PromptInput(TextArea):
+    """带历史记录、命令检测和安全审批模式的多行输入框"""
+
+    class Submitted(Message):
+        """提交消息 — 由 action_submit 发出"""
+        def __init__(self, text: str):
+            super().__init__()
+            self.text = text
 
     def __init__(self, state: AppState):
-        super().__init__(placeholder="输入消息… (/) 命令, Ctrl+C 退出")
+        super().__init__(
+            text="",
+            placeholder="输入消息… (/) 命令, Ctrl+C 退出",
+        )
         self._state = state
         self._history_index = -1
         self._approval_mode = False
@@ -19,6 +30,23 @@ class PromptInput(Input):
 
     def on_mount(self):
         self.border_title = "输入"
+        self._resize_to_content()
+
+    async def _on_key(self, event: events.Key) -> None:
+        if event.key == "enter":
+            event.stop()
+            event.prevent_default()
+            text = self.text.strip()
+            if text:
+                self.post_message(self.Submitted(text))
+            return
+        await super()._on_key(event)
+        self._resize_to_content()
+
+    def _resize_to_content(self):
+        n = self.document.line_count
+        h = min(max(n + 1, 3), 10)
+        self.styles.height = h
 
     def set_approval_mode(self, enabled: bool):
         """切换安全审批模式 — 改变输入框视觉状态"""

@@ -249,7 +249,6 @@ class ModelIdentity:
     startup: str = "on_demand"
     permissions: "ModelPermissions" = field(default_factory=lambda: ModelPermissions())
     metadata: Dict = field(default_factory=dict)
-    memory_config: Optional[Dict] = None
     api_key: Optional[str] = None
     api_url: Optional[str] = None
 
@@ -297,8 +296,6 @@ class ModelIdentity:
             "permissions": get_permissions(template_key),
             "metadata": {},
         }
-        if "memory_config" in template:
-            data["memory_config"] = template["memory_config"]
         if "api_key" in template:
             data["api_key"] = template["api_key"]
         if "api_url" in template:

@@ -11,7 +11,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import Screen
-from textual.widgets import Input, Footer, Static
+from textual.widgets import Footer, Static, TextArea
 from cli_tui.widgets.approval_select import ApprovalSelect
 
 from ..commands import find_command, is_command, get_all, Command
@@ -49,8 +49,9 @@ class REPL(Screen):
         margin: 0 1 1 1;
     }
 
-    #input-box {
-        height: 3;
+    PromptInput {
+        min-height: 3;
+        max-height: 10;
     }
 
     #suggestions {
@@ -114,8 +115,8 @@ class REPL(Screen):
     """
 
     BINDINGS = [
-        Binding("up", "history_back", "历史回退", show=False),
-        Binding("down", "history_forward", "历史前进", show=False),
+        Binding("ctrl+up", "history_back", "历史回退", show=False),
+        Binding("ctrl+down", "history_forward", "历史前进", show=False),
         Binding("escape", "stop_thinking", "停止思考", show=True, priority=True),
         Binding("ctrl+y", "retry_last", "重试", show=True, priority=True),
         Binding("ctrl+a", "approve_security", "批准", show=True, priority=True),
@@ -186,13 +187,12 @@ class REPL(Screen):
         """命令建议选中回调 — 执行选中的命令"""
         self._handle_command(cmd.name)
 
-    def on_input_changed(self, event: Input.Changed):
+    def on_text_area_changed(self, event: TextArea.Changed):
         """输入变化时更新命令建议"""
-        text = event.value
+        text = event.text_area.text
         if not self._suggestions:
             return
         if text.startswith("/") or text.startswith("!"):
-            # 提取 / 后面的部分作为查询
             query = text.lstrip("/!").strip()
             self._suggestions.update_query(query)
         else:
@@ -440,8 +440,9 @@ class REPL(Screen):
             if inp.has_focus:
                 val = inp.history_back()
                 if val is not None:
-                    inp.value = val
-                    inp.cursor_position = len(val)
+                    inp.text = val
+                    last_line = val.split('\n')[-1]
+                    inp.cursor_location = (val.count('\n'), len(last_line))
         except Exception as e:
             logger.debug("History back failed: %s", e)
 
@@ -451,8 +452,12 @@ class REPL(Screen):
             if inp.has_focus:
                 val = inp.history_forward()
                 if val is not None:
-                    inp.value = val
-                    inp.cursor_position = len(val)
+                    inp.text = val
+                    if val:
+                        last_line = val.split('\n')[-1]
+                        inp.cursor_location = (val.count('\n'), len(last_line))
+                    else:
+                        inp.cursor_location = (0, 0)
         except Exception as e:
             logger.debug("History forward failed: %s", e)
 
@@ -474,9 +479,9 @@ class REPL(Screen):
 
         # 重新发送最后的输入
         inp = self.query_one(PromptInput)
-        inp.value = self.state.last_user_input
+        inp.text = self.state.last_user_input
         # 触发提交
-        self.on_input_submitted(Input.Submitted(inp, self.state.last_user_input))
+        self.on_prompt_input_submitted(PromptInput.Submitted(self.state.last_user_input))
 
     def _resolve_security_review(self, approved: bool, reason: str = ""):
         """统一处理安全审批响应"""
@@ -656,8 +661,8 @@ class REPL(Screen):
             if self._suggestions._filtered and self._suggestions._selected_index < len(self._suggestions._filtered):
                 cmd = self._suggestions._filtered[self._suggestions._selected_index]
                 input_widget = self.query_one(PromptInput)
-                input_widget.value = cmd.name + " "
-                input_widget.cursor_position = len(input_widget.value)
+                input_widget.text = cmd.name + " "
+                input_widget.cursor_location = (0, len(cmd.name) + 1)
                 self._suggestions._dismiss()
             event.prevent_default()
         elif event.key == "escape":
@@ -668,18 +673,18 @@ class REPL(Screen):
                 logger.debug("Could not refocus input after escape: %s", e)
             event.prevent_default()
 
-    def on_input_submitted(self, event: Input.Submitted):
+    def on_prompt_input_submitted(self, event: PromptInput.Submitted):
         if self._suggestion_handled_enter:
             self._suggestion_handled_enter = False
             return
-        text = event.value.strip()
+        text = event.text
         if not text:
             return
 
         # 审批组件可见时，文本输入作为自定义回答路由到审批组件
         if self._approval_widget and "visible" in self._approval_widget.classes:
             input_widget = self.query_one(PromptInput)
-            input_widget.value = ""
+            input_widget.text = ""
             if self._approval_widget._on_confirm:
                 self._approval_widget._on_confirm("custom", text)
             return
@@ -689,7 +694,7 @@ class REPL(Screen):
             self._suggestions._dismiss()
 
         input_widget = self.query_one(PromptInput)
-        input_widget.value = ""
+        input_widget.text = ""
         input_widget.reset_history()
 
         # 安全审查响应拦截（文本输入兜底 — ApprovalSelect 优先）

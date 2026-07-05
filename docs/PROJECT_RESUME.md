@@ -63,7 +63,7 @@
 
 **注意力系统**: AttentionCore 分析关键词紧急程度 + TF-IDF 余弦相似度，动态调整记忆召回阈值。新版 V2 引擎支持跨模态融合、自适应衰减、资源分配。
 
-**记忆双引擎**: ShortTermMemory (SQLite + TTL 分级衰减：5min→7days) + ExperienceMemory (成功/尝试率统计)。EventStore 实现遗忘曲线 (`recency_decay` + `access_count` 强化)。
+**事件记忆系统**: EventReducer → EventStore (SQLite + FAISS) 持久化会话事件，EventRetrieval 每轮思考注入 `【历史记忆】` 至模型 prompt。新增**因果树深度回忆** (CausalGraph + CausalTree)：对溯源/预测/归纳类查询自动触发因果图邻域扩散→树下钻→事件池复合排序召回，输出因果链路+佐证事件+反例。
 
 ### 4. 认知黑板 (Cognitive Blackboard)
 
@@ -111,7 +111,7 @@
 - **SQLite** — 单文件、零配置、WAL 模式支持并发读写
 - **diskcache** — 替代 Redis 的磁盘缓存层，内存后备模式 (5000 条上限自动淘汰)
 - **SessionRepository** — 会话持久化，支持前端断线重连恢复上下文
-- **ShortTermMemoryRepository** — 短期记忆仓储，TTL 分级衰减自动过期
+- **EventStore** — 事件记忆持久化 (SQLite + FAISS)，会话结束后 30s 异步写入
 
 ### 9. 一键部署 + 容器化
 

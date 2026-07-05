@@ -241,22 +241,6 @@ class DiskCache:
             logger.error(f"diskcache search 失败: {e}")
             return []
     
-    def cache_short_memory(self, memory_id: str, data: dict, ttl: int = 300) -> bool:
-        """缓存短期记忆"""
-        return self.set(memory_id, data, prefix="short_term", ttl=ttl)
-    
-    def get_short_memory(self, memory_id: str) -> Optional[dict]:
-        """获取缓存的短期记忆"""
-        return self.get(memory_id, prefix="short_term")
-    
-    def cache_query_result(self, query_key: str, results: List[dict], ttl: int = 60) -> bool:
-        """缓存查询结果"""
-        return self.set(query_key, results, prefix="query", ttl=ttl)
-    
-    def get_cached_query(self, query_key: str) -> Optional[List[dict]]:
-        """获取缓存的查询结果"""
-        return self.get(query_key, prefix="query")
-    
     def add_to_recent(self, memory_id: str, ttl: int = 3600) -> int:
         """添加到最近访问"""
         return self.lpush(memory_id, time.time(), prefix="recent", max_len=1000)

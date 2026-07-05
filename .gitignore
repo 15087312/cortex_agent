@@ -89,6 +89,10 @@ OmniParser/weights/
 *.sqlite
 *.sqlite3
 
+# SQLite WAL/SHM 临时文件
+*.db-shm
+*.db-wal
+
 # Dot-directories (AI tools, IDE, etc)
 .claude/
 .hermes/
@@ -129,6 +133,9 @@ dmypy.json
 
 # TODO tracking
 /todo/
+
+# 本地身份/角色覆盖（不提交）
+data/identities/*.yaml
 
 # 测试用临时文件（含 API Key）
 test_gpt55*

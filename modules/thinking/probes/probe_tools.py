@@ -1,11 +1,11 @@
 """
 探针管理工具 — 模型通过工具调用来控制探针
 
-6 个核心工具:
+核心工具:
 - probe_start: 启动探针激活指定模型角色
 - probe_stop: 停止探针
 - probe_list: 列出活跃探针
-- memory_write: 向指定模型写入记忆
+- deep_recall: 深度因果回忆（因果图+树下钻+事件召回）
 - persona_inject: 向指定模型注入引导提示词
 - request_intermediate_response: 请求中途回复（大模型在专家工作时先回复用户）
 
@@ -326,90 +326,60 @@ def probe_list(**kwargs) -> Dict[str, Any]:
 
 
 # ============================================================================
-# memory_write — 写入模型记忆
+# deep_recall — 深度因果回忆
 # ============================================================================
 
 @ToolRegistry.register(
-    "memory_write",
-    description="向指定模型角色的会话记忆写入一条信息。用于在模型间传递上下文。",
+    "deep_recall",
+    description="深度因果回忆 — 当需要分析原因、预测后果、归纳规律时使用。比普通记忆检索更深，能给出因果链路和规律结论。",
     params={
-        "target_model_id": "目标模型ID，如 supervisor_code_001, expert_implementer_001",
-        "content": "要写入的记忆内容",
-        "importance": "重要度 0.0-1.0，默认为 0.5",
+        "query": "查询内容（如\"项目延期的原因\"）",
+        "depth_level": "1=标准（默认），2=深度（2跳邻域+全树遍历）",
+        "max_events": "最多返回佐证事件数，默认5",
     },
     risk_level="LOW",
-    category="mutation",
+    category="query",
+    tags=["memory", "causal"],
 )
-def memory_write(
-    target_model_id: str, content: str, importance: float = 0.5, **kwargs
+def deep_recall(
+    query: str, depth_level: int = 1, max_events: int = 5, **kwargs
 ) -> Dict[str, Any]:
-    """向指定模型写入记忆"""
+    """执行深度因果回忆"""
+    import asyncio
+    from modules.memory.depth_recall import DepthRecallScheduler
+    from modules.memory.result_fusion import format_deep_recall_result
+
     try:
-        caller_role = kwargs.get("_caller_role", "large")
-        caller_tier = _ROLE_TO_TIER.get(caller_role, "large")
+        scheduler = DepthRecallScheduler()
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            task = asyncio.ensure_future(
+                scheduler.deep_recall(query, max_results=max_events, depth_level=depth_level)
+            )
+            result = asyncio.run_coroutine_threadsafe(
+                scheduler.deep_recall(query, max_results=max_events, depth_level=depth_level),
+                loop,
+            ).result(timeout=30)
+        else:
+            result = loop.run_until_complete(
+                scheduler.deep_recall(query, max_results=max_events, depth_level=depth_level)
+            )
 
-        # 推断目标 tier
-        target_tier = "expert"
-        if target_model_id.startswith("large"):
-            target_tier = "large"
-        elif target_model_id.startswith("supervisor"):
-            target_tier = "supervisor"
-
-        # 权限校验 — 优先使用 ModelPermissions
-        from modules.thinking.probes.probe_permission import get_probe_permission_manager
-        ppm = get_probe_permission_manager()
-        caller_perms = _get_caller_permissions(kwargs)
-        if caller_perms is not None:
-            if not ppm.can_modify_memory_with_permissions(
-                caller_perms, target_tier, caller_tier,
-            ):
-                return {
-                    "success": False,
-                    "error": f"权限不足: {caller_tier} 不能修改 {target_tier} 的记忆",
-                }
-        elif not ppm.can_modify_memory(caller_tier, target_tier):
+        if result.success and not result.fallback:
+            formatted = format_deep_recall_result(result, max_events=max_events)
             return {
-                "success": False,
-                "error": f"权限不足: {caller_tier} 不能修改 {target_tier} 的记忆",
+                "success": True,
+                "result": formatted,
+                "causal_chains": len(result.causal_chains),
+                "supporting_events": len(result.supporting_events),
             }
-
-        # 通过 MessageBus 发送记忆写入消息（目标模型的 ModelRunner 消费）
-        try:
-            from modules.thinking.communication.message_bus import (
-                Message, MessageType, get_message_bus,
-            )
-            bus = get_message_bus()
-            msg = Message(
-                msg_type=MessageType.TASK_ASSIGN,
-                sender="probe_tools",
-                recipient=target_model_id,
-                content={
-                    "action": "memory_write",
-                    "content": content[:2000],
-                    "importance": max(0.0, min(1.0, importance)),
-                    "caller_tier": caller_tier,
-                },
-            )
-            try:
-                asyncio.get_running_loop().create_task(bus.send(msg))
-            except RuntimeError:
-                pass
-        except Exception as e:
-            logger.warning(f"[memory_write] MessageBus 发送失败: {e}")
-
-        logger.info(
-            f"[memory_write] {caller_tier} → {target_model_id}: "
-            f"{content[:80]} (importance={importance})"
-        )
         return {
-            "success": True,
-            "target_model_id": target_model_id,
-            "importance": importance,
-            "message": f"已向 {target_model_id} 写入记忆 (importance={importance})",
+            "success": False,
+            "error": f"深度回忆未找到因果关联 ({result.error})",
+            "hint": "请尝试使用普通记忆检索(event_query)",
         }
-
     except Exception as e:
-        logger.error(f"[memory_write] 失败: {e}")
+        logger.error(f"[deep_recall] 失败: {e}")
         return {"success": False, "error": str(e)}
 
 

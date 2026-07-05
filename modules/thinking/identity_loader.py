@@ -25,9 +25,6 @@ YAML 格式:
     model_name: deepseek-v4-flash     # 可选：覆盖 tier 默认模型
     api_key: sk-xxx                   # 可选：覆盖 tier 默认 API key
     api_url: https://api.xxx.com/v1   # 可选：覆盖 tier 默认 API URL
-    memory_config:                    # 可选：覆盖 tier 默认记忆配置
-      enable_personality: true
-      enable_notebook: true
     tool_whitelist:                    # 可选：覆盖 DEFAULT_TOOL_WHITELISTS
       - read_file
       - search_files
@@ -52,7 +49,7 @@ _VALID_FIELDS = {
     "identity_key", "model_id", "name", "tier", "role",
     "personality", "speaking_style", "expertise", "weaknesses",
     "tool_whitelist", "model_name", "max_tokens", "temperature",
-    "memory_config", "api_key", "api_url", "permissions",
+    "api_key", "api_url", "permissions",
 }
 
 

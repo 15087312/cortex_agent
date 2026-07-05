@@ -284,7 +284,6 @@ Pydantic Settings (config/settings.py)
 |------|-----|------|
 | `config/settings.py` | `Settings` | 全局配置（模型API、功能开关、TTL、阈值） |
 | `config/model_config.py` | `LargeModelConfig` 等 | 模型参数（max_tokens、temperature） |
-| `config/memory_config.py` | `MemoryConfig` | 记忆 TTL、向量维度、批量操作 |
 | `config/attention_config.py` | `AttentionWeightConfig` 等 | 注意力权重、中断规则、调度配置 |
 | `config/output_config.py` | `OutputPriorityConfig` 等 | 输出优先级、TTS |
 
@@ -380,25 +379,62 @@ ModelPermissions:
 
 ## 8. 记忆系统架构
 
-### 8.1 T1-T6 管线
+### 8.1 两层回忆体系
 
-详见 README.md 记忆系统章节。关键实现细节：
+```
+浅层回忆（默认）              深度回忆（触发式）
+   │                            │
+   ▼                            ▼
+EventRetrieval              CausalGraph (因果图)
+(RAG 语义+关键词+重要性)       │ 定位锚点 + 邻域扩散
+   │                            ▼
+   ▼                        CausalTree (树下钻)
+注入 prompt 作为            上溯/下钻/横向对比
+【历史记忆】                    │
+                               ▼
+                           EventStore (事件池)
+                           复合排序召回（因果+语义+重要性+时间）
+```
 
-| 阶段 | 实现位置 | 异步策略 |
-|------|---------|---------|
-| T1 | `api_stream.py` `_preload_session_memories` | `asyncio.create_task` (fire-and-forget) |
-| T2 | `ContextManager.load_context` | 同步（在 orchestrator 流程内） |
-| T3 | 工具执行后钩子 | `asyncio.create_task` |
-| T4 | `CompressionEngine` | 按需触发 |
-| T5 | `_post_task_extraction` | `asyncio.create_task` |
-| T6 | `MemoryManagerExpert` | 定时任务（12小时周期） |
+### 8.2 浅层回忆（EventRetrieval）
 
-### 8.2 向量检索
+评分公式: `0.35×语义 + 0.20×重要性 + 0.20×衰减 + 0.15×效用 + 0.10×频率`
 
-- **模型**：`all-MiniLM-L6-v2`（sentence-transformers）
-- **索引**：FAISS（IndexFlatIP，内积相似度）
-- **维度**：768
-- **搜索**：`MemoryMatchEngine` 四维评分（语义 40% + 关键词 20% + 时间衰减 20% + 重要性 20%）
+| 因子 | 来源 | 说明 |
+|------|------|------|
+| semantic | FAISS 向量内积 | 归一化 0~1 |
+| importance | LLM 离散标注 | critical=1.0 → trivial=0.03 |
+| recency | exp(-λ·days) | 按 type 不同衰减速率 |
+| utility | log(access+3)/log(13) | 检索次数越多越高 |
+| frequency | log(mention+3)/log(13) | 话题被提及越多越高 |
+
+### 8.3 深度回忆（CausalGraph + CausalTree）
+
+三步闭环:
+1. **图定位**: `find_anchor_nodes()` 按关键词定位锚点，按意图定向邻域扩散
+2. **树下钻**: `trace_up()` 溯源 → `trace_down()` 预测 → `compare_lateral()` 归纳
+3. **事件召回**: 复合排序 `0.3×语义 + 0.4×因果关联 + 0.2×重要性 + 0.1×时间`
+
+触发条件（自动）:
+- 查询含"为什么/原因/后果/规律/如果当时"等逻辑词
+- 浅层召回置信度 < 0.3
+- 当前为决策/分析类任务
+
+| 模块 | 文件 | 职责 |
+|------|------|------|
+| CausalGraph | `modules/memory/causal_graph.py` | 因果节点与边持久化 (SQLite) |
+| CausalTree | `modules/memory/causal_tree.py` | 上溯/下钻/横向对比遍历 |
+| DepthRecallScheduler | `modules/memory/depth_recall.py` | 触发判断+三步闭环调度 |
+| ResultFusion | `modules/memory/result_fusion.py` | 结果格式组装 |
+
+### 8.4 记忆流水线
+
+| 阶段 | 实现位置 | 说明 |
+|------|---------|------|
+| 写入 | `api_stream.py` `_post_task_extraction` → `EventReducer.reduce()` | 会话结束后 30s |
+| 浅层读取 | `ContinuousThinker._build_prompt()` → `EventRetrieval.retrieve()` | 每轮思考 |
+| 深度读取 | `ContinuousThinker._build_prompt()` → `DepthRecallScheduler.deep_recall()` | 触发式 |
+| 工具调用 | `deep_recall` probe tool | 模型主动调用 |
 
 ---
 

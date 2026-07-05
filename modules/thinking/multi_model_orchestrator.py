@@ -578,8 +578,6 @@ class MultiModelOrchestrator:
             t_wait_start = time.time()
             final_response = ""
             POLL_INTERVAL = 15  # 每 15s 检查一次
-
-            from modules.thinking.communication.message_bus import get_message_bus
             bus = get_message_bus()
             done_event = asyncio.Event()
             orch_channel = f"orchestrator_{session_id[:12]}"
@@ -690,7 +688,7 @@ class MultiModelOrchestrator:
                     # 即使超时，也记录一条信息而不是直接拒绝
                     logger.warning(
                         f"[编排器] 警告：无法获取到任何回复 "
-                        f"(completed={completed}, 已等待{LARGE_TIMEOUT}s)"
+                        f"(completed={completed}, 已等待{t_wait_elapsed:.0f}s)"
                     )
                     final_response = "[系统通知] 思考超时，请重试。"
 

@@ -105,7 +105,6 @@ class ModelRunner:
         self._return_to_model_id = ""
         self._return_to_session_id = ""
         self._pending_guidance: List[str] = []
-        self._pending_memories: List[Dict[str, Any]] = []
         self._thinker: Optional[Any] = None  # ContinuousThinker, 延迟创建
         self._active_skill: Any = None  # 当前激活的技能（Skill 实例）
         self._active_skill_tool_rules: Any = None  # 技能的工具范围规则
@@ -190,17 +189,6 @@ class ModelRunner:
         self._pending_guidance.append(guidance_text)
         logger.debug(
             f"[ModelRunner] {self.model_id} 收到引导注入: {guidance_text[:60]}..."
-        )
-
-    def inject_memory(self, content: str, importance: float = 0.5) -> None:
-        """注入记忆（memory_write 工具调用结果）"""
-        self._pending_memories.append({
-            "content": content,
-            "importance": importance,
-            "timestamp": time.time(),
-        })
-        logger.debug(
-            f"[ModelRunner] {self.model_id} 收到记忆写入 (importance={importance})"
         )
 
     # ------------------------------------------------------------------
@@ -351,10 +339,9 @@ class ModelRunner:
             except Exception as e:
                 logger.error(f"[ModelRunner] 唤醒失败: {e}")
 
-    def _save_private_memory(self, final_thought: str) -> None:
-        """保存当前模型私有任务记忆，不写入共享会话窗口。"""
-        return
-
+    # 注意：此方法被 _think_loop 以 await 调用（line 563），
+    # 若改为 sync 函数必须同步修改调用处的 await，否则抛出
+    # "object NoneType can't be used in 'await' expression"
     async def _think_loop(self) -> None:
         """通用思考循环（含等待唤醒）— large/supervisor 委托后等待结果再重启
 
@@ -559,9 +546,6 @@ class ModelRunner:
                     "system", f"思考被用户中断，已保存部分输出 ({completed} 轮, {total_len} 字符)"
                 )
 
-            # 保存到记忆
-            await self._save_private_memory(final_text)
-
             # 通知 orchestrator
             await self._notify_thinking_complete()
 
@@ -619,8 +603,6 @@ class ModelRunner:
             has_final_result = bool(
                 control_decision and getattr(control_decision, "result_summary", None)
             )
-
-            self._save_private_memory(final_thought[:8000])
 
             # 使用新架构：写入 CognitiveBlackboard
             if self.blackboard:
@@ -958,9 +940,8 @@ class ModelRunner:
         """
         from modules.thinking.cognition import ContextSlicer
 
-        # 消费待转发的引导和记忆（侧效应：转发给 ContinuousThinker），但不注入 prompt
+        # 消费待转发的引导（侧效应：转发给 ContinuousThinker）
         self._consume_guidance()
-        self._consume_memories_text()
 
         messages = await self._check_messages()
 
@@ -995,7 +976,6 @@ class ModelRunner:
         return self._build_prompt(
             dialog_context=dialog_context,
             guidance="",
-            memories="",
             expert_context=expert_context,
         )
 
@@ -2053,17 +2033,6 @@ class ModelRunner:
             self._thinker.add_external_prompt("\n\n".join(guidance_list))
         return guidance_list
 
-    def _consume_memories_text(self) -> str:
-        """消费待注入的记忆，暂时保留为文本兼容层"""
-        if not self._pending_memories:
-            return ""
-        memories_text = "\n".join(
-            f"- [{m.get('importance', 0.5):.0%}] {m.get('content', '')}"
-            for m in self._pending_memories[-5:]
-        )
-        self._pending_memories.clear()
-        return f"【外部注入记忆】\n{memories_text}"
-
     def _build_tool_prompt_section(self) -> str:
         """工具说明统一由 ContinuousThinker 生成（tier-aware）
 
@@ -2074,7 +2043,6 @@ class ModelRunner:
     def _build_prompt(
         self,
         guidance: str,
-        memories: str,
         dialog_context: str,
         expert_context: str,
     ) -> str:
@@ -2106,9 +2074,6 @@ class ModelRunner:
 
         if guidance:
             parts.append(guidance)
-
-        if memories:
-            parts.append(memories)
 
         parts.append(
             "\n【请开始工作】\n"
@@ -2346,15 +2311,13 @@ class ModelRunnerManager:
     def inject_to_runner(
         self, model_id: str, action: str, content: str, importance: float = 0.5
     ) -> bool:
-        """向指定 runner 注入引导/记忆"""
+        """向指定 runner 注入引导"""
         runner = self._runners.get(model_id)
         if runner is None:
             logger.warning(f"[ModelRunnerManager] 目标 runner 不存在: {model_id}")
             return False
 
-        if action == "memory_write":
-            runner.inject_memory(content, importance)
-        elif action == "persona_inject":
+        if action == "persona_inject":
             runner.inject_guidance(content)
         else:
             logger.warning(f"[ModelRunnerManager] 未知注入动作: {action}")

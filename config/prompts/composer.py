@@ -20,7 +20,6 @@ class PromptRequest:
     task: str = ""
     notebook: str = ""
     history_output: str = ""
-    memory: str = ""
     values: str = ""
     blackboard: str = ""
     messages: str = ""
@@ -86,39 +85,6 @@ class PromptComposer:
         parts.append(self._build_capability_table(role, req.tier))
         parts.append(self._build_tool_section(req))
         parts.append(self._build_values_section())
-
-        return "\n\n".join(p for p in parts if p)
-
-    def build_round(self, req: PromptRequest) -> str:
-        parts = []
-        role = self._get_role(req.role)
-
-        parts.append(self._build_task_header(req, role))
-        if req.notebook:
-            parts.append(f"【当前任务进度记事本】\n{req.notebook}")
-        if req.memory and req.memory != "无近期上下文":
-            parts.append(req.memory)
-        if req.history_output:
-            parts.append(f"【历史输出（不得重复）】\n{req.history_output}")
-        tools = self._build_available_tools(req)
-        if tools:
-            parts.append(f"【可用工具与指令】\n{tools}")
-        if req.values:
-            parts.append(req.values)
-        if req.blackboard:
-            parts.append(req.blackboard)
-        if req.messages:
-            parts.append(req.messages)
-        if req.guidance:
-            parts.append(req.guidance)
-        if req.delegation:
-            parts.append(req.delegation)
-        if req.skill_suggestion:
-            parts.append(req.skill_suggestion)
-        parts.append("【请开始工作】\n执行你的任务。需要继续、等待或委托时使用内部控制工具；只有在参数完整且确有必要时才调用普通工具。")
-        phase = self._build_phase_hint(req)
-        if phase:
-            parts.append(phase)
 
         return "\n\n".join(p for p in parts if p)
 
@@ -280,52 +246,6 @@ class PromptComposer:
                 lines.append(f"- {cn} ({name}): {stars} {w:.0%}")
             parts.append("\n".join(lines))
         return "\n\n".join(parts)
-
-    def _build_task_header(self, req: PromptRequest, role: RoleInfo) -> str:
-        lines = [
-            f"【你的任务】\n{req.task}",
-            f"你是 {role.name}（{role.tier} 层 / {req.role}）。",
-        ]
-        if role.personality:
-            lines.append(f"【角色边界】\n{role.personality}")
-            lines.append(f"擅长: {', '.join(role.expertise)}")
-            lines.append(f"不擅长: {', '.join(role.weaknesses)}")
-        return "\n".join(lines)
-
-    def _build_available_tools(self, req: PromptRequest) -> str:
-        if req.tier == "supervisor":
-            return (
-                "- delegate_task: 委托任务给专家执行。调用后系统会暂停当前思考并等待专家完成，"
-                "专家完成后你会被唤醒并收到结果。\n"
-                "- continue_thinking: 控制思考节奏。continue=true: 请求获取最新上下文后继续；"
-                "continue=false: 最终结束，将 result_summary 返回给上级。\n"
-                "三阶段：1.目标分析 → 2.规划与委托 → 3.等待整合"
-            )
-        elif req.tier == "expert":
-            return (
-                "- 你调用的每个普通工具，系统会自动把结果追加给你继续执行，无需主动暂停。\n"
-                "- continue_thinking(continue=false): 任务完成，输出 result_summary 返回给委托方。\n"
-                "不要把控制标记写进自然语言回复。"
-            )
-        else:
-            return (
-                "- 【工具执行】: 当调用 web_search / read_file 等普通工具时，系统会自动把结果返回给你继续处理，不需要手动暂停或等待。\n"
-                "- 【委托】delegate_task: 委托任务给主管执行。调用后会暂停当前思考进入等待，"
-                "主管和专家完成后你会被唤醒，收到结果并看到最新的黑板状态（专家发现、委托进度等）。"
-                "寒暄和简单问题不要委托。\n"
-                "- 【继续思考】continue_thinking: continue=true 请求刷新全局上下文（你会看到最新的记忆、黑板发现和感知信息），"
-                "适合在获得新信息后重建全局视野；continue=false 最终结束任务，将 result_summary 返回给用户。\n"
-                "- respond_to_user: 向用户输出最终回复\n"
-                "- request_skill: 激活技能说明书（先 list_skills 查看可用技能）\n"
-                "- set_memory_focus: 设置记忆检索配比\n"
-                "- list_skills: 列出所有可用技能"
-            )
-
-    def _build_phase_hint(self, req: PromptRequest) -> str:
-        if req.tier != "supervisor":
-            return ""
-        phases = self._base.get("supervisor_phases", {})
-        return phases.get(str(req.round_num), "")
 
     def reload(self):
         self._loader.reload()

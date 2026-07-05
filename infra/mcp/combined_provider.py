@@ -199,7 +199,12 @@ class CombinedToolExecutor(ToolExecutorPort):
 
         try:
             if _asyncio.iscoroutinefunction(func):
-                result = _asyncio.run(func(**request.params))
+                # async 工具函数不能在已有事件循环中直接 asyncio.run()
+                # 在共享线程池中调用 _run_async_in_thread，确保新事件循环
+                # 且带 timeout 安全清理
+                pool = _get_async_pool()
+                future = pool.submit(_run_async_in_thread, func, request.params)
+                result = future.result(timeout=600)
             else:
                 pool = _get_async_pool()
                 future = pool.submit(func, **request.params)

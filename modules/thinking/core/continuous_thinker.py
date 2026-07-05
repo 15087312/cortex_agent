@@ -200,8 +200,10 @@ class ContinuousThinker:
     
     def clear_memory(self):
         """清除短期记忆和记事本"""
-        self.memory.clear_short_term()
-        self.notebook.clear()
+        if self.memory is not None:
+            self.memory.clear_short_term()
+        if self.notebook is not None:
+            self.notebook.clear()
         self.logger.debug("短期记忆和记事本已清空")
 
     def get_process_snapshot(self):
@@ -280,8 +282,9 @@ class ContinuousThinker:
         if delegation_status:
             parts.append("【委托状态摘要】\n" + delegation_status)
 
+        notebook_content = self.notebook.content if self.notebook is not None else ""
         notebook_status = self._sanitize_final_context_text(
-            self.notebook.content,
+            notebook_content,
             limit=1200,
         )
         if notebook_status:
@@ -475,7 +478,8 @@ class ContinuousThinker:
             }
             if final_text:
                 self.history_thoughts.append(final_text)
-                self.notebook.append(final_text, is_finished=True)
+                if self.notebook is not None:
+                    self.notebook.append(final_text, is_finished=True)
                 if self._get_dialog and self._model_id:
                     try:
                         self._get_dialog.write_thought(
@@ -584,8 +588,8 @@ class ContinuousThinker:
             pool.add(ContextFragment("guidance", external_guidance, ("large", "supervisor"), "系统指令", 10))
 
         # 记事本
-        notebook_status = self.notebook.content
-        if self.notebook.content.strip() != "任务刚开始，请制定初步计划。":
+        notebook_status = self.notebook.content if self.notebook is not None else ""
+        if self.notebook is not None and self.notebook.content.strip() != "任务刚开始，请制定初步计划。":
             pool.add(ContextFragment("notebook", notebook_status, ("large",), "当前任务进度记事本", 15))
 
         # 历史输出
@@ -593,7 +597,7 @@ class ContinuousThinker:
         if history_output:
             pool.add(ContextFragment("history", history_output, ("large",), "历史输出（不得重复）", 20))
 
-        # 记忆检索
+        # 记忆检索（深度回忆 + 浅层回退）
         try:
             from modules.memory.event_retrieval import get_event_retrieval
             retrieval = get_event_retrieval()
@@ -601,15 +605,51 @@ class ContinuousThinker:
                 events = await _asyncio_thinker.wait_for(retrieval.retrieve_mixed(mix=self._memory_focus, max_results=10), timeout=10)
             else:
                 events = await _asyncio_thinker.wait_for(retrieval.retrieve(query=initial_question, max_results=10), timeout=10)
-            if events:
+
+            # 尝试深度因果回忆（仅对逻辑类查询，每轮用最新黑板对话补充查询）
+            deep_text = ""
+            try:
+                from modules.memory.depth_recall import DepthRecallScheduler, should_trigger_deep_recall
+
+                # 构建更完整的查询：结合初始问题与当前轮对话焦点
+                recall_query = initial_question
+                if round_num > 1:
+                    try:
+                        from modules.thinking.cognition import ContextSlicer
+                        slicer = ContextSlicer()
+                        if self._external_prompt_builder:
+                            dialog = self._external_prompt_builder(round_num=round_num)
+                            if dialog:
+                                recall_query = f"{initial_question} {dialog[:300]}"
+                    except Exception:
+                        pass
+
+                trigger, reason = should_trigger_deep_recall(recall_query)
+                if trigger and not getattr(self, '_depth_recall_done', False):
+                    scheduler = DepthRecallScheduler()
+                    deep_result = await _asyncio_thinker.wait_for(
+                        scheduler.deep_recall(recall_query, max_results=5, depth_level=1),
+                        timeout=15,
+                    )
+                    if deep_result.success and not deep_result.fallback:
+                        from modules.memory.result_fusion import format_deep_recall_result
+                        deep_text = format_deep_recall_result(deep_result, max_events=3)
+                        self._depth_recall_done = True
+            except Exception as e:
+                self.logger.debug(f"[深度回忆] 失败: {e}")
+
+            if events or deep_text:
                 parts = []
-                for i, ev in enumerate(events, 1):
-                    parts.append(f"[历史事件 {i}] (类型={ev.type}, 重要性={ev.importance:.1f})")
-                    parts.append(f"  事实: {ev.fact}")
-                    if ev.lesson:
-                        parts.append(f"  经验: {ev.lesson}")
-                    if ev.keywords:
-                        parts.append(f"  标签: {', '.join(ev.keywords)}")
+                if deep_text:
+                    parts.append(deep_text)
+                if events:
+                    for i, ev in enumerate(events, 1):
+                        parts.append(f"[历史事件 {i}] (类型={ev.type}, 重要性={ev.importance:.1f})")
+                        parts.append(f"  事实: {ev.fact}")
+                        if ev.lesson:
+                            parts.append(f"  经验: {ev.lesson}")
+                        if ev.keywords:
+                            parts.append(f"  标签: {', '.join(ev.keywords)}")
                 pool.add(ContextFragment("memory", "\n".join(parts), ("large", "supervisor", "expert"), "历史记忆", 30))
         except Exception as e:
             self.logger.debug(f"[事件检索] 失败: {e}")
@@ -984,6 +1024,7 @@ class ContinuousThinker:
         min_rounds_required = min_rounds if min_rounds is not None else 1
         results = []
         self._running = True
+        self._depth_recall_done = False
         previous_task_context = self._task_context
         if task_context is not None:
             self._task_context = task_context
@@ -1055,7 +1096,8 @@ class ContinuousThinker:
                     metadata={"has_control_decision": control_decision is not None},
                 )
                 notebook_is_finished = bool(control_decision and not control_decision.should_continue)
-                self.notebook.append(cleaned_for_notebook, is_finished=notebook_is_finished)
+                if self.notebook is not None:
+                    self.notebook.append(cleaned_for_notebook, is_finished=notebook_is_finished)
 
                 # 更新委托计数器
                 if has_delegation:

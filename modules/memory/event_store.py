@@ -46,10 +46,14 @@ class MemoryEvent:
     access_count: int = 0        # 被成功检索的次数
     mention_count: int = 1       # 话题累计提及次数
 
+    # ── 因果树关联 ──
+    causal_node_ids: List[str] = field(default_factory=list)  # 关联的因果节点 ID 列表
+
     def to_dict(self) -> Dict[str, Any]:
         d = asdict(self)
         d.pop("embedding", None)
         d["keywords"] = json.dumps(self.keywords, ensure_ascii=False)
+        d["causal_node_ids"] = json.dumps(self.causal_node_ids, ensure_ascii=False)
         return d
 
     @classmethod
@@ -66,6 +70,7 @@ class MemoryEvent:
             type=row.get("type", "fact"),
             last_accessed=row.get("last_accessed", row.get("time", "")),
             access_count=row.get("access_count", 0),
+            causal_node_ids=json.loads(row.get("causal_node_ids", "[]")),
         )
 
 
@@ -153,6 +158,8 @@ class EventStore:
             conn.execute("ALTER TABLE events ADD COLUMN access_count INTEGER DEFAULT 0")
         if "mention_count" not in existing:
             conn.execute("ALTER TABLE events ADD COLUMN mention_count INTEGER DEFAULT 1")
+        if "causal_node_ids" not in existing:
+            conn.execute("ALTER TABLE events ADD COLUMN causal_node_ids TEXT DEFAULT '[]'")
         conn.commit()
 
     # ------------------------------------------------------------------
@@ -173,8 +180,8 @@ class EventStore:
         conn.execute(
             """INSERT OR REPLACE INTO events
                (id, fact, thought, lesson, keywords, importance, time, session_id,
-                type, last_accessed, access_count)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                type, last_accessed, access_count, causal_node_ids)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 event.id,
                 event.fact,
@@ -187,6 +194,7 @@ class EventStore:
                 event.type,
                 event.last_accessed,
                 event.access_count,
+                json.dumps(event.causal_node_ids, ensure_ascii=False),
             ),
         )
         conn.commit()

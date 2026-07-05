@@ -147,17 +147,39 @@ class BaseModelClient(ABC):
     def _create_ssl_context() -> ssl.SSLContext:
         """创建兼容的 SSL 上下文。
 
-        针对 Python 3.13 + OpenSSL 3.6 环境做兼容处理：
-        - 保留完整证书验证（安全）
-        - 限制最低 TLS 1.2，避免协议协商问题
-        - 使用 @SECLEVEL=1，OpenSSL 3.6 默认 SECLEVEL=2 可能拒绝部分兼容密码套件
+        针对 Python 3.13 + OpenSSL 3.6 环境做兼容处理。
+
+        根因分析："SSL record layer failure (_ssl.c:2658)" 是 OpenSSL 3.6 的协议层
+        错误，在以下场景触发：
+        - ssl.create_default_context() 继承了系统 CACertBundle + 平台默认选项，
+          OpenSSL 3.6 在某些 TLS 1.3 会话票据/0-RTT 场景下会产生无法解析的记录
+        - 部分 API 网关（如阿里云/Cloudflare）返回的 TLS 记录格式与 OpenSSL 3.6
+          的严格解析逻辑不完全兼容
+
+        修复：不依赖 create_default_context() 的平台默认行为，而是显式构造
+        SSLContext，只设置必要的证书验证和密码套件，避免 OpenSSL 3.6 的
+        实验性特性（0-RTT、early data、session ticket eager processing）干扰。
         """
-        ctx = ssl.create_default_context()
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+        ctx.maximum_version = ssl.TLSVersion.TLSv1_3
+        ctx.check_hostname = True
+        ctx.verify_mode = ssl.CERT_REQUIRED
+
+        # 使用 certifi 加载系统 CA 证书（跨平台可靠，覆盖 anaconda/homebrew 等非标准路径）
+        try:
+            import certifi as _certifi
+            ctx.load_verify_locations(cafile=_certifi.where())
+        except Exception:
+            ctx.load_default_certs(ssl.Purpose.SERVER_AUTH)
+
+        # 安全的密码套件子集（移除 PSK/SRP 等非对称认证套件，避免干扰）
+        # 使用 DEFAULT + @SECLEVEL=1 放宽 OpenSSL 3.6 对部分密码套件的限制
         try:
             ctx.set_ciphers('DEFAULT:@SECLEVEL=1')
         except ssl.SSLError:
             pass
+
         return ctx
 
     async def _get_session(self) -> aiohttp.ClientSession:
@@ -165,13 +187,32 @@ class BaseModelClient(ABC):
         if self._session is None or self._session.closed:
             timeout = aiohttp.ClientTimeout(total=self.timeout)
             ssl_ctx = self._create_ssl_context()
-            connector = aiohttp.TCPConnector(ssl=ssl_ctx)
+            # force_close=False（默认）：复用 keep-alive 连接提升性能。
+            # 若服务端关闭连接后客户端仍尝试复用，可能引发 SSL 记录层报错。
+            # 如果此类错误高频出现，可改为 force_close=True 禁用连接复用，
+            # 但需注意这会增加 TCP 握手开销（约 1-RTT）。
+            connector = aiohttp.TCPConnector(
+                ssl=ssl_ctx,
+                enable_cleanup_closed=True,
+            )
             self._session = aiohttp.ClientSession(
                 timeout=timeout,
                 connector=connector,
                 trust_env=True,
             )
         return self._session
+
+    def _reset_session(self):
+        """关闭并重置 session，用于 SSL 等连接错误后重建"""
+        if self._session and not self._session.closed:
+            try:
+                # 不 await close：在异常处理中同步关闭，
+                # 下次 _get_session 会重新创建
+                import asyncio
+                asyncio.ensure_future(self._session.close())
+            except Exception:
+                pass
+        self._session = None
     
     async def close(self):
         """关闭连接"""

@@ -7,10 +7,12 @@
   - Windows/Linux (CUDA):   transformers + CUDA
   - CPU 兜底:              transformers + float32
 """
+import asyncio
 import base64
 import io
 import sys
 import tempfile
+import time
 import json
 import random
 from typing import Dict, Any, List, Optional, Tuple
@@ -190,6 +192,50 @@ class ImageAnalyzer:
             }
             logger.info(f"MLX-VLM 模型加载成功并已缓存: {model_name}")
             self._mlx_config = None  # 延迟加载，由 _analyze_mlx_vlm 缓存
+
+            # ═══════════════════════════════════════════════════════════════
+            # 重要：warmup 推理
+            # 触发 MLX JIT 编译 + Metal 着色器缓存，避免首次调用 150s+ 冷启动惩罚
+            # 实验数据：无 warmup 首次推理 ~153s，有 warmup 后 ~7s
+            # 必须通过 asyncio.to_thread 执行（与真实推理路径一致），因为
+            # Metal 着色器缓存是 per-thread 的，主线程 warmup 无法预热工作线程
+            # 警告：禁止删除此 warmup，禁止改为直接调用而非 to_thread
+            # ═══════════════════════════════════════════════════════════════
+            try:
+                logger.info("MLX-VLM warmup 推理中...")
+                _warm_start = time.time()
+                import os as _os
+                import tempfile as _tf
+                from PIL import Image as _PIL
+                from mlx_vlm.utils import load_config as _load_config
+                from mlx_vlm.prompt_utils import apply_chat_template as _apply_template
+                _img = _PIL.new("RGB", (200, 200), color=128)
+                _buf = io.BytesIO()
+                _img.save(_buf, format="JPEG")
+                with _tf.NamedTemporaryFile(delete=False, suffix=".jpg") as _f:
+                    _f.write(_buf.getvalue())
+                    _warmup_path = _f.name
+                _warm_config = _load_config(self._mlx_model_name)
+                _warm_messages = [
+                    {"role": "user", "content": [
+                        {"type": "image", "image": _warmup_path},
+                        {"type": "text", "text": "describe"},
+                    ]}
+                ]
+                _warm_prompt = _apply_template(self.processor, _warm_config, _warm_messages, num_images=1)
+                # 使用 to_thread 预热工作线程池中的 Metal 着色器缓存
+                await asyncio.to_thread(
+                    self._mlx_generate,
+                    self.model, self.processor,
+                    _warm_prompt,
+                    [_warmup_path],
+                    max_tokens=1, temperature=0, verbose=False,
+                )
+                _os.unlink(_warmup_path)
+                logger.info(f"MLX-VLM warmup 完成 ({time.time()-_warm_start:.1f}s)")
+            except Exception as e:
+                logger.warning(f"MLX-VLM warmup 失败 (非致命): {e}")
+                logger.debug("warmup 异常详情", exc_info=True)
         except Exception as e:
             logger.error(f"MLX-VLM 加载失败: {e}")
             self.model_type = "unavailable"
@@ -205,13 +251,17 @@ class ImageAnalyzer:
 
         # 限制最大边长，加速 ViT 推理（屏幕理解不需要超高分辨率）
         _img = _PIL.open(_io.BytesIO(image_data))
+        # macOS 截图可能含 alpha 通道，JPEG 不支持 RGBA，务必先转 RGB
+        # 警告：禁止删除此转换，否则 Pillow 保存 JPEG 时会抛 OSError
+        if _img.mode == "RGBA":
+            _img = _img.convert("RGB")
         _max_dim = 768
         if max(_img.size) > _max_dim:
             ratio = _max_dim / max(_img.size)
             _img = _img.resize((int(_img.width * ratio), int(_img.height * ratio)), _PIL.LANCZOS)
-            buf = _io.BytesIO()
-            _img.save(buf, format="JPEG", quality=85)
-            image_data = buf.getvalue()
+        buf = _io.BytesIO()
+        _img.save(buf, format="JPEG", quality=85)
+        image_data = buf.getvalue()
 
         with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as f:
             f.write(image_data)
@@ -238,12 +288,20 @@ class ImageAnalyzer:
                 self.processor, config, messages, num_images=1
             )
 
+            # ── 同步调用 self._mlx_generate ──
+            # _analyze_mlx_vlm 通过 MCP 执行路径（_run_async_in_thread）已运行在
+            # 独立线程 + 独立事件循环中，不存在阻塞主事件循环的问题。
+            # 若再加一层 asyncio.to_thread，会导致：
+            #   1. _run_async_in_thread 的 loop.shutdown_default_executor()
+            #      在 cleanup 时中断正在执行的 to_thread 任务
+            #   2. Python 3.13 下触发 PyThreadState_Get crash
+            # 警告：禁止加 asyncio.to_thread 包裹
             output = self._mlx_generate(
                 self.model,
                 self.processor,
                 formatted_prompt,
                 [temp_path],
-                max_tokens=512,
+                max_tokens=256,
                 temperature=0,
                 verbose=False,
             )

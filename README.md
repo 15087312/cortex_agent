@@ -111,8 +111,8 @@ cortex --api-key your-secret-key
 |------|------|------|
 | L1 入口 | `cortex/` | CLI 入口，子进程编排，版本管理 |
 | L2 API | `api/` | FastAPI 应用、WebSocket/SSE 流式、中间件（CORS/认证/限流/请求ID） |
-| L3 业务 | `modules/` | 15 个业务模块（思考、记忆、安全、感知、工具管理等） |
-| L4 基础设施 | `infra/` | 模型客户端、工具注册/管理、Prompt 引擎、NLP、数据库、MCP |
+| L3 业务 | `modules/` | 8 个业务模块（思考、记忆、安全、感知、注意力、输出、管理、数据库） |
+| L4 基础设施 | `infra/` | 模型客户端、工具注册/管理、MCP 协议、数据处理、硬件输入 |
 
 依赖规则：L3→L4 允许；L4→L3 禁止。跨模块通信仅通过 MessageBus、CognitiveBlackboard 或 Protocol 接口。
 
@@ -312,16 +312,13 @@ ai_backend/
 │   │   ├── intent/         # 委托编译器（角色名→身份映射）
 │   │   ├── probes/         # 探针系统（注册、缓存、权限、工具）
 │   │   └── skills/         # 技能管理器（YAML 技能加载）
-│   ├── toolbuilder/        # 学习模式管线（动作规划、recipe 引擎、插件生成、Skill 生成）
 │   ├── memory/             # 7 层记忆系统（短期/长期/分类/人格/黑匣/笔记本/向量RAG）
 │   ├── security_system/    # 5 层安全（5 个 AST 验证器 + 审计）
-│   ├── perception/         # 感知系统（文件/对话/屏幕 + 规范违反检测）
+│   ├── perception/         # 感知系统（文件/对话/屏幕 + 规范违反检测 + 差异检测）
 │   ├── attention/          # TF-IDF + 注意力评分
 │   ├── output_system/      # 输出管线（多通道分发、情感样式）
-│   │   └── difference/      # 差异检测（感知系统内）
 │   ├── management/         # GlobalMonitor、AlertEngine、HealthChecker
-│   ├── database/           # SQLAlchemy + SQLite WAL、DiskCache
-│   └── metrics/            # Prometheus 指标
+│   └── database/           # SQLAlchemy + SQLite WAL、DiskCache
 ├── infra/                  # 基础设施层
 │   ├── model/              # 模型客户端（Large/Medium/Small/Lite，三格式自动检测）
 │   ├── tool_manager/       # 工具注册/管理 + 50+ 内置工具 + AI 自创工具
@@ -332,12 +329,8 @@ ai_backend/
 │   │   ├── combined_provider.py  # 本地+远程工具合并
 │   │   ├── perception_client.py  # MCP 感知客户端
 │   │   └── factory.py      # MCP 连接工厂
-│   ├── prompts/            # Prompt 引擎（模板 + 构建器 + 约束）
-│   ├── security/           # 集中安全策略
 │   ├── data_process/       # 语音识别 + 图像分析
-│   ├── nlp/                # NLP 服务（情感、NER、摘要）
-│   ├── hardware_input/     # 硬件输入（PyAutoGUI + Serial）
-│   └── utils/              # 健康检查
+│   └── hardware_input/     # 硬件输入（PyAutoGUI + Serial）
 ├── config/                 # 配置系统（Pydantic Settings）
 ├── cli_tui/                # Textual TUI 终端界面
 ├── utils/                  # 共享工具（日志、异步、JSON、时间）
@@ -349,8 +342,7 @@ ai_backend/
 ├── pyproject.toml          # 项目配置
 ├── requirements.txt        # Python 依赖
 ├── Dockerfile              # Docker 构建（多阶段）
-├── docker-compose.yml      # Docker Compose 编排
-└── TODO.md                 # 设计问题与改进计划
+└── docker-compose.yml      # Docker Compose 编排
 ```
 
 ---
@@ -376,7 +368,6 @@ ai_backend/
 | 接口 | 说明 |
 |------|------|
 | `GET /health` | 健康检查（healthy / degraded / critical） |
-| `GET /metrics` | Prometheus 指标 |
 | `GET /` | 系统信息和版本 |
 | `WS /stream/ws/{session_id}` | WebSocket 实时对话 |
 | `GET /stream/sse/{session_id}` | SSE 流式对话 |
@@ -426,10 +417,10 @@ docker-compose down
 |------|------|
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 详细架构设计文档 |
 | [docs/CODE_QUALITY.md](docs/CODE_QUALITY.md) | 代码质量分析报告 |
-| [docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md) | 已知问题清单 |
 | [docs/CONFIG_VALUE_EVOLUTION.md](docs/CONFIG_VALUE_EVOLUTION.md) | 价值观进化系统配置 |
 | [docs/expert_cli_mode.md](docs/expert_cli_mode.md) | 专家 CLI 模式使用指南 |
-| [TODO.md](TODO.md) | 设计问题与改进计划 |
+| [docs/PERCEPTION_CONFIG.md](docs/PERCEPTION_CONFIG.md) | 感知系统配置说明 |
+| [docs/PROJECT_RESUME.md](docs/PROJECT_RESUME.md) | 项目概要 |
 
 ---
 

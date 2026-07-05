@@ -74,14 +74,14 @@ async def transcribe_audio(
     core=True,
     tags=["learning"],
 )
-def understand_screen(focus: str = "") -> Dict[str, Any]:
-    """截图 + VLM 视觉理解"""
+async def understand_screen(focus: str = "") -> Dict[str, Any]:
+    """截图 + VLM 视觉理解（async 确保与 ToolRegistry.call_tool 兼容）"""
     try:
         screenshot_b64 = _capture_screen()
         if not screenshot_b64:
             return {"error": "截图失败：无可用的屏幕捕获方式"}
         window_info = _get_active_window()
-        vision_result = _vision_understand(screenshot_b64, window_info, focus)
+        vision_result = await _vision_understand(screenshot_b64, window_info, focus)
 
         if "error" in vision_result:
             return {
@@ -155,23 +155,19 @@ def _get_active_window() -> str:
     return "未知"
 
 
-def _vision_understand(
+async def _vision_understand(
     screenshot_b64: str,
     window_info: str,
     focus: str,
 ) -> Dict[str, Any]:
-    """视觉理解（同步）：使用预加载的 ImageAnalyzer 调用本地 MLX-VLM"""
+    """视觉理解（async）：使用 ImageAnalyzer 调用本地 MLX-VLM"""
     try:
-        import asyncio
         import base64 as b64
         import time
 
-        from infra.data_process.core.image_analyzer import _default_analyzer
+        from infra.data_process.core.image_analyzer import get_default_analyzer
 
-        # 预加载的分析器（api/main.py lifespan 中初始化）
-        analyzer = _default_analyzer
-        if analyzer is None:
-            return {"error": "视觉分析器未初始化"}
+        analyzer = await get_default_analyzer()
 
         prompt = "描述这个屏幕截图：当前应用、界面布局、可见文字按钮。"
         if focus:
@@ -180,11 +176,7 @@ def _vision_understand(
         logger.info("[视觉理解] 开始分析图像...")
         start = time.time()
 
-        # 同步调用 async analyze：MLX-VLM 推理本质是同步的，
-        # asyncio.run() 创建临时事件循环，没有默认 executor 创建，安全关闭
-        result = asyncio.run(
-            analyzer.analyze(b64.b64decode(screenshot_b64), prompt=prompt)
-        )
+        result = await analyzer.analyze(b64.b64decode(screenshot_b64), prompt=prompt)
         logger.info(f"[视觉理解] 分析完成 ({time.time()-start:.2f}s)")
 
         understanding = result.get("description", "")
