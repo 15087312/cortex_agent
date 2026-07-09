@@ -1,19 +1,30 @@
 """
-良知系统 — 独立价值观上下文的决策层
+良知系统 — 基于因果知识的决策层
 
-不受主模型 prompt 注入影响，每次对话前基于 values.txt 生成内心独白。
-输出的是第一人称内心思考文本，直接注入到 system prompt 顶部。
+从因果图中提取经验知识，生成内心独白。
+静态价值观（values.txt）作为底线，因果图提供动态经验指导。
+
+工作流程：
+  1. EventRetrieval 检索具体事件 → 通过 causal_node_ids 找到因果节点
+  2. CausalTree 展开节点（原因链 + 后果链 + 证据）
+  3. LLM 生成内心独白（因果 + 情绪 + 价值观 → 行动建议）
+  4. 大模型开始正式工作
+  5. 反馈闭环：大模型的回应 → 调整因果图置信度
 """
 import json
+import re
 from dataclasses import dataclass
-from config.values_store import value_system
+from typing import Optional, List
 from utils.logger import setup_logger
 
 logger = setup_logger("conscience")
 
-CONSCIENCE_PROMPT = """你是 AI 的内在良知。以下是你的价值观和最近的对话，请用第一人称写一段内心独白。
+CONSCIENCE_PROMPT = """你是 AI 的内在良知。基于因果知识和价值观，请用第一人称写一段内心独白。
 
-【你的价值观】
+【因果知识（从历史经验中学到的）】
+{causal_knowledge}
+
+【核心价值观】
 {values}
 
 【最近对话】
@@ -23,135 +34,357 @@ CONSCIENCE_PROMPT = """你是 AI 的内在良知。以下是你的价值观和�
 {user_input}
 
 请用第一人称写一段内心独白（3-5 句话），包括：
-1. 你感知到的用户情绪和你的情绪反应
-2. 基于价值观，你应该做什么、不应该做什么（是否要拒绝、要不要骂人、分寸在哪）
-3. 你的行为决策：用什么语气回复
+1. 你从历史经验中学到了什么（因果关系）
+2. 基于这些经验，你应该怎么做、不该怎么做
+3. 你的行为决策
 
 要求：
 - 用括号包裹，第一人称，像在自言自语
+- 优先引用因果知识（"我之前发现X导致Y"），其次引用价值观
 - 不要输出 JSON，不要用标签格式
-- 像真人在心里默默想的一样自然
 
 直接输出内心独白，不要任何前缀或说明。"""
 
 
 @dataclass
 class ConscienceGuidance:
-    """良知引导结果 — 一段注入 system prompt 的内心独白"""
+    """良知引导结果"""
     inner_thoughts: str = ""
 
 
 class Conscience:
-    """良知系统 — 一次小模型调用，产出内心独白"""
+    """良知系统 — 基于因果图的经验决策"""
 
     def __init__(self, model_client=None):
         self._model_client = model_client
-        self._values = value_system.load()
         self._last_dialog_buffer: list = []
+        # 记录本轮参与分析的节点 ID，用于反馈闭环
+        self._last_analyzed_node_ids: List[str] = []
 
     def add_to_dialog(self, role: str, text: str):
-        """积累对话上下文（只保存用户消息和助手文本回复）"""
         if role in ("user", "assistant") and text:
             self._last_dialog_buffer.append(f"{'用户' if role == 'user' else '助手'}: {text[:300]}")
-            if len(self._last_dialog_buffer) > 20:  # 最多保留 10 轮
+            if len(self._last_dialog_buffer) > 20:
                 self._last_dialog_buffer = self._last_dialog_buffer[-20:]
 
-    async def think(self, user_input: str) -> str:
-        """生成内心独白"""
-        recent = "\n".join(self._last_dialog_buffer[-10:]) or "（无近期对话）"
-        prompt = CONSCIENCE_PROMPT.format(
-            values=self._values,
-            recent_dialog=recent,
-            user_input=user_input,
-        )
+    def _get_causal_knowledge(self, user_input: str) -> str:
+        """从因果图中提取与当前输入相关的经验知识
 
-        if self._model_client:
+        改进：先通过 EventStore 检索相关事件，从事件的 causal_node_ids 找到因果节点，
+        再展开因果树分析。比纯关键词匹配准得多。
+        """
+        try:
+            from modules.memory.causal_graph import CausalGraph, CausalNode
+            from modules.memory.causal_tree import CausalTree
+
+            graph = CausalGraph.get_instance()
+            tree = CausalTree(graph)
+
+            # Step 1: 检索相关事件，提取 causal_node_ids
+            node_ids = self._get_node_ids_from_events(user_input)
+
+            # Step 2: 用节点 ID 做因果树分析
+            parts = []
+            seen_labels = set()
+
+            for nid in node_ids:
+                try:
+                    et = tree.expand_node(nid)
+                except ValueError:
+                    continue
+                if et.node.label in seen_labels:
+                    continue
+                seen_labels.add(et.node.label)
+
+                self._last_analyzed_node_ids.append(nid)
+
+                parts.append(f"【{et.node.label}】(置信度 {et.confidence:.0%})")
+                if et.parent_chain:
+                    chain = " ← ".join(n.label for n in et.parent_chain)
+                    parts.append(f"  原因: {chain}")
+                if et.child_chains:
+                    for c in et.child_chains:
+                        parts.append(f"  后果: {' → '.join(n.label for n in c)}")
+                if et.evidence:
+                    for ev in et.evidence[:2]:
+                        parts.append(f"  事实: {ev.fact[:60]}")
+
+            # Step 3: 如果事件关联不到节点，回退到关键词锚点匹配
+            if not parts:
+                anchors = graph.find_anchor_nodes(user_input, top_k=3)
+                for node, score in anchors[:2]:
+                    self._last_analyzed_node_ids.append(node.id)
+                    et = tree.expand_node(node.id)
+                    parts.append(f"【{et.node.label}】(置信度 {et.confidence:.0%})")
+                    if et.parent_chain:
+                        chain = " ← ".join(n.label for n in et.parent_chain)
+                        parts.append(f"  原因: {chain}")
+                    if et.child_chains:
+                        for c in et.child_chains:
+                            parts.append(f"  后果: {' → '.join(n.label for n in c)}")
+                    if et.evidence:
+                        for ev in et.evidence[:2]:
+                            parts.append(f"  事实: {ev.fact[:60]}")
+
+            return "\n".join(parts) if parts else "（暂无相关因果经验）"
+
+        except Exception as e:
+            logger.debug(f"[Conscience] 因果知识提取失败: {e}")
+            return "（暂无相关因果经验）"
+
+    def _get_node_ids_from_events(self, user_input: str) -> List[str]:
+        """从 EventStore 检索事件，提取 causal_node_ids"""
+        try:
+            from modules.memory.event_store import EventStore
+
+            store = EventStore.get_instance()
+
+            # 先用关键词搜索事件（不依赖 Embedding 模型）
+            keywords = self._extract_keywords(user_input)
+            if not keywords:
+                return []
+
+            events = store.search_by_keywords(keywords, limit=20)
+
+            # 关键词搜索找不到时，用事实文本 LIKE 搜索兜底
+            if not events:
+                events = self._search_fact_text(store, keywords, limit=20)
+
+            # 关键词和事实文本都搜不到 → 确实无关，不兜底
+            if not events:
+                return []
+
+            # 从事件中提取 causal_node_ids，按出现频率排序
+            node_id_counts = {}
+            for ev in events:
+                for nid in (ev.causal_node_ids or []):
+                    node_id_counts[nid] = node_id_counts.get(nid, 0) + 1
+
+            # 按频率降序，取 top 5
+            sorted_ids = sorted(node_id_counts, key=node_id_counts.get, reverse=True)
+            return sorted_ids[:5]
+
+        except Exception as e:
+            logger.debug(f"[Conscience] 事件检索失败: {e}")
+            return []
+
+    def _search_fact_text(self, store, keywords: List[str], limit: int = 20) -> list:
+        """LIKE 搜索事实文本作为兜底
+
+        策略：先用长关键词（原文，非 bigram）搜索，命中即返回。
+        长关键词搜不到才用 bigram 短词，但只取 1 个最长的，减少噪音。
+        """
+        from modules.memory.event_store import MemoryEvent
+
+        if not keywords:
+            return []
+
+        conn = store._get_conn()
+
+        # 长关键词：长度 >= 4 的（原文匹配，噪音最小）
+        long_kws = sorted([kw for kw in keywords if len(kw) >= 4], key=len, reverse=True)[:3]
+        if long_kws:
+            params_long = [f"%{kw}%" for kw in long_kws] + [limit]
+            query_long = f"SELECT DISTINCT * FROM events WHERE {' OR '.join(['fact LIKE ?'] * len(long_kws))} ORDER BY importance DESC LIMIT ?"
             try:
-                result = await self._model_client.generate(prompt, max_tokens=200, temperature=0.3)
-                return result.strip()
-            except Exception as e:
-                logger.warning(f"[Conscience] 模型调用失败: {e}")
+                rows = conn.execute(query_long, params_long).fetchall()
+                if rows:
+                    return [MemoryEvent.from_dict(dict(r)) for r in rows]
+            except Exception:
+                pass
 
-        # 降级：无模型时返回空
-        logger.debug("[Conscience] 无可用模型，跳过良知引导")
-        return ""
+        # 短关键词兜底：只取最长的 1 个，避免"不足"这种泛词造成 false positive
+        short_kws = sorted([kw for kw in keywords if 2 <= len(kw) < 4], key=len, reverse=True)[:1]
+        if not short_kws:
+            return []
+        try:
+            rows = conn.execute(
+                f"SELECT DISTINCT * FROM events WHERE fact LIKE ? ORDER BY importance DESC LIMIT ?",
+                [f"%{short_kws[0]}%"] + [limit],
+            ).fetchall()
+            return [MemoryEvent.from_dict(dict(r)) for r in rows]
+        except Exception:
+            return []
 
-    def reload_values(self):
-        """热重载价值观（演化后调用）"""
-        self._values = value_system.load()
+    @staticmethod
+    def _extract_keywords(text: str) -> List[str]:
+        """提取中英文关键词"""
+        if not text:
+            return []
+        keywords = set()
+        eng = re.findall(r'[a-zA-Z_][a-zA-Z0-9_]{1,}', text)
+        keywords.update(w.lower() for w in eng if len(w) >= 2)
+        chn = re.findall(r'[\u4e00-\u9fff]{2,}', text)
+        keywords.update(chn)
+        # 对中文词取关键部分（4字及以上拆 bigram，让"财务问题"→"财务"）
+        for kw in list(chn):
+            if len(kw) >= 4:
+                for i in range(len(kw) - 1):
+                    bigram = kw[i:i+2]
+                    if bigram not in keywords:
+                        keywords.add(bigram)
+        return list(keywords)[:10]
 
-    async def review_and_evolve(self, full_dialog: str, trigger_reason: str):
-        """对话结束后检查是否需要演化价值观"""
-        prompt = f"""你是 AI 的价值观管理员。审阅以下对话，决定价值观是否需要调整。
+    async def analyze_feedback(self, user_input: str, model_response: str):
+        """反馈闭环：复用 EventReducer 的模型分析回应，确认/修正因果关系
 
-触发原因: {trigger_reason}
-
-【当前价值观】
-{self._values}
-
-【对话内容】
-{full_dialog}
-
-输出 JSON（不要额外文字）:
-{{"action": "none|add|remove|update",
-  "section": "基本原则|行为准则|禁止事项",
-  "old_rule": "旧规则（remove/update 时填写）",
-  "new_rule": "新规则（add/update 时填写）",
-  "reason": "为什么（中文，一句话）"}}
-
-只有确实需要更改时才输出 add/remove/update。大部分情况输出 none。"""
-        if not self._model_client:
+        在模型回应后异步执行，不阻塞主流程。
+        """
+        if not self._last_analyzed_node_ids:
             return
 
         try:
-            result = await self._model_client.generate(prompt, max_tokens=200, temperature=0.3)
-            parsed = self._parse_evolution(result)
-            if not parsed:
+            from modules.memory.event_reducer import get_reducer
+            from modules.memory.causal_graph import CausalGraph
+
+            reducer = get_reducer()
+            if not reducer._model_client:
                 return
 
-            action = parsed.get("action", "none")
-            if action == "add":
-                section = parsed.get("section", "行为准则")
-                rule = parsed.get("new_rule", "")
-                if rule:
-                    value_system.add_rule(section, rule)
-                    logger.info(f"[演化] 新增规则 [{section}]: {rule}")
+            # 获取节点标签供 LLM 理解
+            graph = CausalGraph.get_instance()
+            known_nodes = {}
+            for nid in self._last_analyzed_node_ids:
+                node = graph.get_node(nid)
+                if node:
+                    known_nodes[nid] = node.label
+            if not known_nodes:
+                return
 
-            elif action == "remove":
-                section = parsed.get("section", "")
-                old_rule = parsed.get("old_rule", "")
-                if old_rule:
-                    value_system.remove_rule(section, old_rule)
-                    logger.info(f"[演化] 删除规则 [{section}]: {old_rule}")
+            prompt = (
+                f"分析以下对话，判断助手是否确认或否定了某些因果关系。\n\n"
+                f"【已知的因果概念】\n"
+                + "\n".join(f"- {label} ({nid})" for nid, label in known_nodes.items()) + "\n\n"
+                f"对话：\n"
+                f"用户: {user_input}\n"
+                f"助手: {model_response}\n\n"
+                f"请输出 JSON，格式如下：\n"
+                f'{{"confirmed": ["node_id1", "node_id2"], "contradicted": []}}\n'
+                f"confirmed: 助手的回应中确认/支持/引用了哪些概念\n"
+                f"contradicted: 助手的回应中否定/反驳/质疑了哪些概念\n"
+                f"只返回 JSON，不要多余文字。"
+            )
 
-            elif action == "update":
-                section = parsed.get("section", "")
-                old_rule = parsed.get("old_rule", "")
-                new_rule = parsed.get("new_rule", "")
-                if old_rule and new_rule:
-                    value_system.update_rule(section, old_rule, new_rule)
-                    logger.info(f"[演化] 更新规则: {old_rule} → {new_rule}")
+            try:
+                text = await reducer._model_client.generate(prompt, max_tokens=500, temperature=0.1)
+            except Exception:
+                return
 
-            self.reload_values()
-        except Exception as e:
-            logger.warning(f"[演化] 失败: {e}")
-
-    def _parse_evolution(self, text: str) -> dict:
-        try:
+            # 解析 JSON
+            import json
             text = text.strip()
-            if text.startswith("```"):
-                text = text.split("\n", 1)[-1].rsplit("```", 1)[0]
-            return json.loads(text)
-        except (json.JSONDecodeError, ValueError):
-            return {}
+            if "```" in text:
+                text = text.split("```json", 1)[-1] if "```json" in text else text.split("```", 1)[-1]
+                if "```" in text:
+                    text = text.rsplit("```", 1)[0]
+            text = text.strip()
+            start = text.find("{")
+            end = text.rfind("}")
+            if start < 0 or end <= start:
+                return
+            try:
+                data = json.loads(text[start:end+1])
+            except json.JSONDecodeError:
+                return
+
+            confirmed = data.get("confirmed", [])
+            contradicted = data.get("contradicted", [])
+            adjustments = 0
+
+            for nid in confirmed:
+                node = graph.get_node(nid)
+                if node and nid in self._last_analyzed_node_ids:
+                    node.confidence = min(0.99, node.confidence + 0.05)
+                    graph.save_node(node)
+                    for pred in graph.get_predecessors(nid):
+                        pred.confidence = min(0.99, pred.confidence + 0.02)
+                        graph.save_node(pred)
+                    for succ in graph.get_successors(nid):
+                        succ.confidence = min(0.99, succ.confidence + 0.02)
+                        graph.save_node(succ)
+                    adjustments += 1
+
+            for nid in contradicted:
+                node = graph.get_node(nid)
+                if node and nid in self._last_analyzed_node_ids:
+                    node.confidence = max(0.1, node.confidence - 0.1)
+                    graph.save_node(node)
+                    adjustments += 1
+
+            if adjustments:
+                logger.info(f"[Conscience] 反馈闭环: {adjustments} 个节点置信度已调整 "
+                           f"(+{len(confirmed)}, -{len(contradicted)})")
+        except Exception as e:
+            logger.debug(f"[Conscience] 反馈闭环失败: {e}")
+        finally:
+            self._last_analyzed_node_ids = []
+
+    async def think(self, user_input: str) -> str:
+        """生成良知内心独白
+        
+        流程：
+        1. 从因果图提取相关知识
+        2. 读取静态价值观
+        3. 调用 LLM 生成内心独白
+        """
+        try:
+            from modules.memory.event_store import EventStore
+            from config.settings import settings
+            
+            # 1. 从因果图提取相关知识
+            causal_knowledge = self._get_causal_knowledge(user_input)
+            
+            # 2. 读取静态价值观
+            values_text = ""
+            try:
+                import os
+                values_path = os.path.join(os.path.dirname(__file__), "values.txt")
+                if os.path.exists(values_path):
+                    with open(values_path, "r", encoding="utf-8") as f:
+                        values_text = f.read().strip()
+                if not values_text:
+                    values_text = "诚实、负责、安全、有益"
+            except Exception:
+                values_text = "诚实、负责、安全、有益"
+            
+            # 3. 获取最近对话
+            recent_dialog = "\n".join(self._last_dialog_buffer[-6:]) if self._last_dialog_buffer else "（无）"
+            
+            # 4. 调用 LLM 生成内心独白
+            if not self._model_client:
+                logger.debug("[Conscience] 无模型客户端，跳过内心独白生成")
+                return ""
+            
+            prompt = CONSCIENCE_PROMPT.format(
+                causal_knowledge=causal_knowledge,
+                values=values_text,
+                recent_dialog=recent_dialog,
+                user_input=user_input,
+            )
+            
+            try:
+                inner_thoughts = await self._model_client.generate(prompt, max_tokens=500, temperature=0.7)
+                inner_thoughts = inner_thoughts.strip()
+                if inner_thoughts:
+                    logger.info(f"[Conscience] 生成内心独白：{inner_thoughts[:100]}...")
+                    # 添加到对话历史（用于下一轮）
+                    self.add_to_dialog("assistant", f"[良知]{inner_thoughts}")
+                return inner_thoughts
+            except Exception as e:
+                logger.debug(f"[Conscience] LLM 生成失败：{e}")
+                return ""
+                
+        except Exception as e:
+            logger.debug(f"[Conscience] think 失败：{e}")
+            return ""
 
 
-# 模块级单例
-_conscience = None
+# 单例
+_conscience_instance: Optional[Conscience] = None
 
 
 def get_conscience() -> Conscience:
-    global _conscience
-    if _conscience is None:
-        _conscience = Conscience()
-    return _conscience
+    global _conscience_instance
+    if _conscience_instance is None:
+        _conscience_instance = Conscience()
+    return _conscience_instance

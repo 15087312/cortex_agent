@@ -188,16 +188,26 @@ def probe_start(
                     mgr = m
                     break
             if mgr:
-                model_id = await mgr.start_runner(
-                    identity_key=identity_key,
-                    task_description=task_description,
-                    probe_id=probe_id,
-                    task_id=task_id,
-                    return_to_model_id=return_to_model_id,
-                    return_to_session_id=return_to_session_id,
-                    skill_id=kwargs.get("skill_id", ""),
-                )
-                logger.info(f"[probe_start] runner 已激活: probe={probe_id} → model={model_id}")
+                try:
+                    import asyncio
+                    loop = asyncio.get_event_loop()
+                    coro = mgr.start_runner(
+                        identity_key=identity_key,
+                        task_description=task_description,
+                        probe_id=probe_id,
+                        task_id=task_id,
+                        return_to_model_id=return_to_model_id,
+                        return_to_session_id=return_to_session_id,
+                        skill_id=kwargs.get("skill_id", ""),
+                    )
+                    if loop.is_running():
+                        asyncio.ensure_future(coro)
+                        logger.info(f"[probe_start] runner 激活已调度: probe={probe_id}")
+                    else:
+                        model_id = loop.run_until_complete(coro)
+                        logger.info(f"[probe_start] runner 已激活: probe={probe_id} → model={model_id}")
+                except Exception as e:
+                    logger.debug(f"[probe_start] 激活 runner 失败 (非致命): {e}")
             else:
                 logger.warning(f"[probe_start] 未找到 session={sid_prefix} 的 runner_manager")
         except Exception as e:
@@ -276,8 +286,17 @@ def probe_stop(probe_id: str, **kwargs) -> Dict[str, Any]:
             for mgr in _runner_managers.values():
                 if hasattr(mgr, '_probe_to_model') and probe_id in mgr._probe_to_model:
                     model_id = mgr._probe_to_model[probe_id]
-                    await mgr.stop_runner(model_id)
-                    logger.info(f"[probe_stop] runner 已停止: probe={probe_id} → model={model_id}")
+                    try:
+                        import asyncio
+                        loop = asyncio.get_event_loop()
+                        if loop.is_running():
+                            asyncio.ensure_future(mgr.stop_runner(model_id))
+                            logger.info(f"[probe_stop] runner 停止已调度: probe={probe_id}")
+                        else:
+                            loop.run_until_complete(mgr.stop_runner(model_id))
+                            logger.info(f"[probe_stop] runner 已停止: probe={probe_id} → model={model_id}")
+                    except Exception as e:
+                        logger.debug(f"[probe_stop] 停止 runner 失败 (非致命): {e}")
                     break
         except Exception as e:
             logger.debug(f"[probe_stop] 直接停止 runner 失败 (非致命): {e}")

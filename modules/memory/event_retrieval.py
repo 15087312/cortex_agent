@@ -79,6 +79,7 @@ class EventRetrieval:
         threshold: float = 0.06,
         min_importance: float = 0.0,
         types: Optional[List[str]] = None,
+        owner_id: Optional[str] = None,
     ) -> List[MemoryEvent]:
         """根据查询检索最相关的记忆事件
 
@@ -88,13 +89,15 @@ class EventRetrieval:
             threshold: 归一化分数阈值，低于此值的淘汰
             min_importance: 最低重要性过滤
             types: 可选，只返回指定类型
+            owner_id: 可选，只返回指定模型所有者的记忆
+                      "large_primary" / "supervisor_xx" / "expert_xx"
+                      None 表示全部（Large 总指挥可看全部）
 
         流程:
-        1. FAISS 向量搜索 + 关键词搜索
-        2. 加权和公式计算总分
-        3. 批内 min-max 归一化
-        4. 阈值过滤 + 降序截断
-        5. touch 最终入选的事件
+        1. 向量语义搜索
+        2. 关键词搜索
+        3. 因果图扩散（通过边关系找关联事件）
+        4. 合并 + 打分 + 排序
         """
         # 1. 向量语义搜索
         vector_results = await self._vector_search(query, top_k=max_results * 3)
@@ -103,9 +106,25 @@ class EventRetrieval:
         query_keywords = self._extract_keywords(query)
         keyword_results = self._keyword_search(query_keywords)
 
-        # 3. 逐条算分
+        # 3. 因果图扩散：通过边关系找关联事件
+        causal_results = self._causal_search(query)
+
+        # 4. 合并去重 + 打分
         now = datetime.now(timezone.utc)
         scored = self._calculate_all_scores(vector_results, keyword_results, now)
+
+        # 将因果检索结果注入评分（已有则取 max，没有则新增）
+        seen_ids = {ev.id for ev, _ in scored}
+        for ev, causal_score in causal_results:
+            if ev.id not in seen_ids:
+                scored.append((ev, causal_score))
+                seen_ids.add(ev.id)
+            else:
+                # 已有：取向量分和因果分的较高值
+                for i, (existing_ev, existing_score) in enumerate(scored):
+                    if existing_ev.id == ev.id:
+                        scored[i] = (existing_ev, max(existing_score, causal_score))
+                        break
 
         # 4. type 过滤 + 重要性过滤
         if types:
@@ -113,6 +132,11 @@ class EventRetrieval:
             scored = [(ev, s) for ev, s in scored if ev.type in types_set]
         if min_importance > 0:
             scored = [(ev, s) for ev, s in scored if ev.importance >= min_importance]
+
+        # owner_id 过滤：各模型只看自己的记忆
+        # large_primary 作为总指挥可以看到所有记忆（shared + 自己的）
+        if owner_id and owner_id != "large_primary":
+            scored = [(ev, s) for ev, s in scored if ev.owner_id == owner_id]
 
         # 5. 归一化 + 阈值 + 排序 + 截断
         top_events = self._rank_and_filter(scored, threshold, max_results)
@@ -125,6 +149,7 @@ class EventRetrieval:
         max_results: int = 10,
         threshold: float = 0.06,
         types: Optional[List[str]] = None,
+        owner_id: Optional[str] = None,
     ) -> List[MemoryEvent]:
         """按主题配比多路检索合并"""
         if not mix:
@@ -156,6 +181,11 @@ class EventRetrieval:
                     all_scored[ev.id] = (ev, adjusted)
 
         scored_list = list(all_scored.values())
+
+        # owner_id 过滤（暂不支持共享记忆）
+        if owner_id:
+            scored_list = [(ev, s) for ev, s in scored_list if ev.owner_id == owner_id]
+
         return self._rank_and_filter(scored_list, threshold, max_results)
 
     # ------------------------------------------------------------------
@@ -264,6 +294,39 @@ class EventRetrieval:
         events = store.search_by_keywords(keywords, limit=20)
         return [(ev, 0.0) for ev in events]
 
+    def _causal_search(self, query: str) -> List[Tuple[MemoryEvent, float]]:
+        """因果关系检索：通过因果图的边关系找关联事件"""
+        try:
+            from modules.memory.causal_graph import CausalGraph
+            graph = CausalGraph.get_instance()
+            store = self._get_store()
+
+            # 找锚点节点
+            anchors = graph.find_anchor_nodes(query, top_k=3)
+            if not anchors:
+                return []
+
+            # 收集锚点及其邻居的 ID
+            node_ids = set()
+            for node, score in anchors:
+                node_ids.add(node.id)
+                neighbors = graph.get_neighbors(node.id, hops=1)
+                for n, _, _ in neighbors:
+                    node_ids.add(n.id)
+
+            # 通过因果节点 ID 找关联事件
+            all_events = store.list_events(limit=500)
+            results = []
+            for ev in all_events:
+                if ev.causal_node_ids and set(ev.causal_node_ids) & node_ids:
+                    # 因果关联分数：0.3（低于向量但高于关键词）
+                    results.append((ev, 0.3))
+
+            return results
+        except Exception as e:
+            self.logger.debug(f"[因果检索] 失败: {e}")
+            return []
+
     # ------------------------------------------------------------------
     # 工具
     # ------------------------------------------------------------------
@@ -293,6 +356,13 @@ class EventRetrieval:
         keywords.update(w.lower() for w in eng_words if len(w) >= 2)
         chn_parts = re.findall(r'[\u4e00-\u9fff]{2,}', text)
         keywords.update(chn_parts)
+        # 对中文词取关键部分（4字及以上拆 bigram，与 Conscience 保持一致）
+        for kw in list(chn_parts):
+            if len(kw) >= 4:
+                for i in range(len(kw) - 1):
+                    bigram = kw[i:i+2]
+                    if bigram not in keywords:
+                        keywords.add(bigram)
         return list(keywords)
 
     def _get_store(self) -> EventStore:
