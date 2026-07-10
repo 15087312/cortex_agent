@@ -44,7 +44,7 @@ class SecurityApiAdapter:
 class PreGenExpertGuidanceAdapter:
     """由良知系统支持的指导端口。"""
 
-    async def run(self, user_input: str) -> Dict[str, Any]:
+    async def run(self, user_input: str, owner_id: str = "large_primary") -> Dict[str, Any]:
         try:
             from modules.thinking.conscience import get_conscience
             from infra.model.small_model_client import SmallModelClient
@@ -56,7 +56,7 @@ class PreGenExpertGuidanceAdapter:
             )
             conscience = get_conscience()
             conscience._model_client = client
-            thoughts = await conscience.think(user_input)
+            thoughts = await conscience.think(user_input, owner_id=owner_id)
             return {"inner_thoughts": thoughts} if thoughts else {}
         except Exception as e:
             logger.warning(f"良知系统失败: {e}")

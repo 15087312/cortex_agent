@@ -29,6 +29,7 @@ class MemoryEvent:
     last_accessed: 上次被成功召回的 ISO 时间戳（用于 recency_decay）
     access_count: 被成功召回的次数（用于 reinforcement）
     mention_count: 话题在对话中被提及的累计次数（用于 frequency）
+    owner_id: 记忆所属模型 ID: "large_primary" / "large_coder" / "supervisor_xx" / "expert_xx" / "shared"
     """
     id: str = ""
     fact: str = ""          # 发生了什么
@@ -46,7 +47,8 @@ class MemoryEvent:
     access_count: int = 0        # 被成功检索的次数
     mention_count: int = 1       # 话题累计提及次数
 
-    # ── 因果树关联 ──
+    # ── 归属 & 因果 ──
+    owner_id: str = "shared"                      # 记忆所属模型
     causal_node_ids: List[str] = field(default_factory=list)  # 关联的因果节点 ID 列表
 
     def to_dict(self) -> Dict[str, Any]:
@@ -70,6 +72,8 @@ class MemoryEvent:
             type=row.get("type", "fact"),
             last_accessed=row.get("last_accessed", row.get("time", "")),
             access_count=row.get("access_count", 0),
+            mention_count=row.get("mention_count", 1),
+            owner_id=row.get("owner_id", "shared"),
             causal_node_ids=json.loads(row.get("causal_node_ids", "[]")),
         )
 
@@ -81,6 +85,9 @@ class EventStore:
     _lock = threading.Lock()
 
     def __init__(self, db_path: str = None, faiss_index_path: str = None, id_map_path: str = None):
+        self._write_lock = threading.Lock()  # 写操作互斥锁
+        self._pending_embeddings: List[str] = []  # 待向量化的事件 ID
+        self._embedding_worker_started = False
         db_path = db_path or getattr(settings, "MEMORY_DB_PATH", "data/memory.db")
         faiss_index_path = faiss_index_path or getattr(settings, "MEMORY_FAISS_INDEX", "data/events_faiss.index")
         id_map_path = id_map_path or getattr(settings, "MEMORY_ID_MAP", "data/events_id_map.json")
@@ -115,10 +122,19 @@ class EventStore:
 
     def _get_conn(self) -> sqlite3.Connection:
         if self._conn is None:
-            self._conn = sqlite3.connect(self._db_path)
+            self._conn = sqlite3.connect(self._db_path, check_same_thread=False)
             self._conn.row_factory = sqlite3.Row
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._init_db()
+        else:
+            # 确保 DB 文件存在（可能被外部删除后重建）
+            if not os.path.exists(self._db_path):
+                try:
+                    self._conn.close()
+                except Exception:
+                    pass
+                self._conn = None
+                return self._get_conn()
         return self._conn
 
     def _init_db(self):
@@ -146,6 +162,9 @@ class EventStore:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_events_type ON events(type)")
         conn.commit()
         self._migrate_schema(conn)
+        # 迁移后再建索引（确保字段已存在）
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_events_owner ON events(owner_id)")
+        conn.commit()
 
     def _migrate_schema(self, conn: sqlite3.Connection):
         """增量迁移旧表，添加新字段"""
@@ -160,6 +179,8 @@ class EventStore:
             conn.execute("ALTER TABLE events ADD COLUMN mention_count INTEGER DEFAULT 1")
         if "causal_node_ids" not in existing:
             conn.execute("ALTER TABLE events ADD COLUMN causal_node_ids TEXT DEFAULT '[]'")
+        if "owner_id" not in existing:
+            conn.execute("ALTER TABLE events ADD COLUMN owner_id TEXT DEFAULT 'shared'")
         conn.commit()
 
     # ------------------------------------------------------------------
@@ -167,7 +188,12 @@ class EventStore:
     # ------------------------------------------------------------------
 
     def save_event(self, event: MemoryEvent) -> str:
-        """保存事件到 SQLite"""
+        """保存事件到 SQLite，并自动向量化写入 FAISS"""
+        with self._write_lock:
+            return self._save_event_inner(event)
+
+    def _save_event_inner(self, event: MemoryEvent) -> str:
+        """内部保存逻辑（无锁，调用方需持有锁）"""
         if not event.id:
             event.id = uuid.uuid4().hex[:12]
         if not event.time:
@@ -180,8 +206,8 @@ class EventStore:
         conn.execute(
             """INSERT OR REPLACE INTO events
                (id, fact, thought, lesson, keywords, importance, time, session_id,
-                type, last_accessed, access_count, causal_node_ids)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                type, last_accessed, access_count, mention_count, owner_id, causal_node_ids)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 event.id,
                 event.fact,
@@ -194,12 +220,70 @@ class EventStore:
                 event.type,
                 event.last_accessed,
                 event.access_count,
+                event.mention_count,
+                event.owner_id,
                 json.dumps(event.causal_node_ids, ensure_ascii=False),
             ),
         )
         conn.commit()
+
+        # 自动向量化 — 确保每个事件都有 FAISS 向量
+        if event.embedding is None:
+            try:
+                from modules.memory.embedding import EmbeddingEngine
+                eng = EmbeddingEngine.get_instance()
+                # 模型已加载时直接向量化；未加载时跳过（由 EventReducer 或后台线程处理）
+                if eng._loaded:
+                    text = f"{event.fact} {event.thought} {event.lesson} {' '.join(event.keywords)}".strip()
+                    if text:
+                        vec = eng.embed(text)
+                        if vec:
+                            self._add_embedding_inner(event.id, vec)
+                            event.embedding = vec
+                            return event.id
+                elif not eng._attempted:
+                    # 模型从未尝试加载：加入待处理队列
+                    self._pending_embeddings.append(event.id)
+                    self._start_embedding_worker()
+            except Exception as e:
+                self.logger.debug(f"[EventStore] 自动向量化失败 (非致命): {e}")
+
         self.logger.debug(f"[EventStore] 保存事件 {event.id} (type={event.type}, imp={event.importance})")
         return event.id
+
+    def _start_embedding_worker(self):
+        """启动后台向量化线程（处理待向量化的事件）"""
+        if self._embedding_worker_started or not self._pending_embeddings:
+            return
+        self._embedding_worker_started = True
+
+        def _worker():
+            try:
+                import time
+                time.sleep(2)  # 等待模型可能加载完成
+                from modules.memory.embedding import EmbeddingEngine
+                eng = EmbeddingEngine.get_instance()
+                if not (eng._loaded or eng._attempted):
+                    self._embedding_worker_started = False
+                    return
+
+                pending = list(self._pending_embeddings)
+                self._pending_embeddings.clear()
+                for eid in pending:
+                    ev = self.get_event(eid)
+                    if ev and ev.embedding is None:
+                        text = f"{ev.fact} {ev.thought} {ev.lesson} {' '.join(ev.keywords)}".strip()
+                        if text:
+                            vec = eng.embed(text)
+                            if vec:
+                                self.add_embedding(eid, vec)
+            except Exception as e:
+                self.logger.debug(f"[EventStore] 后台向量化失败: {e}")
+            finally:
+                self._embedding_worker_started = False
+
+        t = threading.Thread(target=_worker, daemon=True)
+        t.start()
 
     def touch_event(self, event_id: str) -> bool:
         """标记事件被成功召回——更新 last_accessed 和递增 access_count"""
@@ -301,7 +385,12 @@ class EventStore:
             self.logger.warning(f"[EventStore] 保存 FAISS 索引失败: {e}")
 
     def add_embedding(self, event_id: str, embedding: List[float]):
-        """向 FAISS 添加向量"""
+        """向 FAISS 添加向量（外部调用时加锁）"""
+        with self._write_lock:
+            self._add_embedding_inner(event_id, embedding)
+
+    def _add_embedding_inner(self, event_id: str, embedding: List[float]):
+        """内部添加向量（调用方需持有锁）"""
         try:
             import numpy as np
             import faiss

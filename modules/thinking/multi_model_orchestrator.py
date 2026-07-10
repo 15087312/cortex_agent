@@ -143,8 +143,12 @@ class MultiModelOrchestrator:
         short_term_memory: List[str] = None,
         event_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
         session_id: Optional[str] = None,
+        model_id: str = "large_primary",
     ) -> Dict:
         """异步处理入口 — 通过队列确保同一会话的请求串行处理（防止 WebSocket 消息丢失）
+
+        Args:
+            model_id: 大模型标识（如 large_primary, large_coder），用于隔离记忆/guidance
 
         Returns:
             与 process() 相同的返回格式
@@ -160,6 +164,7 @@ class MultiModelOrchestrator:
             "context": context,
             "short_term_memory": short_term_memory,
             "event_callback": event_callback,
+            "model_id": model_id,
         }
         await queue.put((user_input, kwargs, result_queue))
 
@@ -194,9 +199,14 @@ class MultiModelOrchestrator:
         short_term_memory: List[str] = None,
         event_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
         session_id: Optional[str] = None,
+        no_tools: bool = False,
+        model_id: str = "large_primary",
     ) -> Dict:
         """
         处理用户输入 — 主入口（纯异步）
+
+        Args:
+            model_id: 大模型标识，用于隔离记忆、guidance 和身份配置
 
         Returns:
             调度结果 dict:
@@ -204,6 +214,7 @@ class MultiModelOrchestrator:
              module_results, decisions, resource_status, security_passed,
              elapsed_ms, trace_id}
         """
+        self._current_model_id = model_id
         if context is None:
             context = []
         if short_term_memory is None:
@@ -251,7 +262,7 @@ class MultiModelOrchestrator:
         # ---- 3. 专家引导 (情绪 + 价值观) ----
         # 由激活的 Skill 决定是否运行，目前默认始终运行
         expert_guidance = await self._run_expert_pipeline(
-            user_input
+            user_input, owner_id=model_id
         )
 
         # ---- 3.5 技能匹配：基于关键词自动匹配用户输入与技能标题 ----
@@ -267,6 +278,8 @@ class MultiModelOrchestrator:
             event_callback=event_callback,
             skill_id=skill_id,
             context=context,  # 传递对话历史用于短期记忆
+            no_tools=no_tools,
+            model_id=model_id,
         )
 
         raw_response = thinking_result.get("response", "")
@@ -278,7 +291,10 @@ class MultiModelOrchestrator:
         # ---- 5. 输出审查 (专家系统) ----
         final_response = await self._review_output(raw_response, user_input, expert_guidance, blackboard)
 
-        # ---- 6. 价值观演化 (fire-and-forget, 不阻塞主流程) ----
+        # ---- 6. 反馈闭环：良知系统分析模型回应，调整因果图置信度 ----
+        asyncio.create_task(self._conscience_feedback(user_input, final_response))
+
+        # ---- 7. 价值观演化 (fire-and-forget, 不阻塞主流程) ----
         asyncio.create_task(self._maybe_evolve_values(user_input, final_response))
 
         elapsed_ms = (time.time() - start_time) * 1000
@@ -341,8 +357,8 @@ class MultiModelOrchestrator:
     # 3. 专家引导
     # ------------------------------------------------------------------
 
-    async def _run_expert_pipeline(self, user_input: str) -> dict:
-        return await self._get_guidance_service().run(user_input)
+    async def _run_expert_pipeline(self, user_input: str, owner_id: str = "large_primary") -> dict:
+        return await self._get_guidance_service().run(user_input, owner_id=owner_id)
 
     # ------------------------------------------------------------------
     # 3.5 技能匹配
@@ -372,6 +388,8 @@ class MultiModelOrchestrator:
         event_callback,
         skill_id: str = "",
         context: List[Dict] = None,
+        no_tools: bool = False,
+        model_id: str = "large_primary",
     ) -> Dict:
         """执行多模型思考 — 统一探针驱动流程
 
@@ -404,6 +422,9 @@ class MultiModelOrchestrator:
                     turn_id=turn_context.turn_id,
                 )
                 blackboard.set_goal(user_input)
+                # 传递 no_tools 标志到黑板运行时状态
+                if no_tools:
+                    blackboard.runtime_state["no_tools"] = True
                 # 注册到全局会话表（供管理 API）
                 with _session_registry_lock:
                     _session_registry[session_id or ""] = {
@@ -531,7 +552,7 @@ class MultiModelOrchestrator:
                     )
                 try:
                     from modules.thinking.probes.probe_tools import set_session_guidance
-                    set_session_guidance(session_id or "", {"inner_thoughts": inner_thoughts})
+                    set_session_guidance(session_id or "", {"inner_thoughts": inner_thoughts}, model_id=model_id)
                 except Exception as e:
                     logger.debug(f"[编排器] 会话引导注入失败 (非致命): {e}")
 
@@ -776,8 +797,16 @@ class MultiModelOrchestrator:
     # 工具方法
     # ------------------------------------------------------------------
 
-    @staticmethod
-    async def _maybe_evolve_values(user_input: str, response: str):
+    async def _conscience_feedback(self, user_input: str, model_response: str):
+        """良知反馈闭环（fire-and-forget）：分析模型回应是否采纳因果建议"""
+        try:
+            from modules.thinking.conscience import get_conscience
+            cons = get_conscience()
+            await cons.analyze_feedback(user_input, model_response)
+        except Exception as e:
+            logger.debug(f"[良知反馈] 非致命错误: {e}")
+
+    async def _maybe_evolve_values(self, user_input: str, response: str):
         """价值观演化（fire-and-forget）：高风险对话后自动反思"""
         try:
             from modules.thinking.conscience import get_conscience

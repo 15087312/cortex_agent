@@ -69,7 +69,7 @@ class Conscience:
             if len(self._last_dialog_buffer) > 20:
                 self._last_dialog_buffer = self._last_dialog_buffer[-20:]
 
-    def _get_causal_knowledge(self, user_input: str) -> str:
+    def _get_causal_knowledge(self, user_input: str, owner_id: str = "large_primary") -> str:
         """从因果图中提取与当前输入相关的经验知识
 
         改进：先通过 EventStore 检索相关事件，从事件的 causal_node_ids 找到因果节点，
@@ -82,8 +82,8 @@ class Conscience:
             graph = CausalGraph.get_instance()
             tree = CausalTree(graph)
 
-            # Step 1: 检索相关事件，提取 causal_node_ids
-            node_ids = self._get_node_ids_from_events(user_input)
+            # Step 1: 检索相关事件（按 owner_id 隔离），提取 causal_node_ids
+            node_ids = self._get_node_ids_from_events(user_input, owner_id=owner_id)
 
             # Step 2: 用节点 ID 做因果树分析
             parts = []
@@ -134,8 +134,8 @@ class Conscience:
             logger.debug(f"[Conscience] 因果知识提取失败: {e}")
             return "（暂无相关因果经验）"
 
-    def _get_node_ids_from_events(self, user_input: str) -> List[str]:
-        """从 EventRetrieval 检索事件，提取 causal_node_ids
+    def _get_node_ids_from_events(self, user_input: str, owner_id: str = "large_primary") -> List[str]:
+        """从 EventRetrieval 检索事件（按 owner_id 隔离），提取 causal_node_ids
 
         使用完整的 RAG 评分管道（语义+重要性+时效性+效用+频率），
         替代原先的纯关键词/LIKE 搜索。
@@ -149,16 +149,13 @@ class Conscience:
             # 使用 EventRetrieval 的完整评分管道
             loop = asyncio.get_event_loop()
             if loop.is_running():
-                task = asyncio.ensure_future(
-                    retrieval.retrieve(user_input, max_results=10, threshold=0.0)
-                )
                 events = asyncio.run_coroutine_threadsafe(
-                    retrieval.retrieve(user_input, max_results=10, threshold=0.0),
+                    retrieval.retrieve(user_input, max_results=10, threshold=0.0, owner_id=owner_id),
                     loop,
                 ).result(timeout=10)
             else:
                 events = loop.run_until_complete(
-                    retrieval.retrieve(user_input, max_results=10, threshold=0.0)
+                    retrieval.retrieve(user_input, max_results=10, threshold=0.0, owner_id=owner_id)
                 )
 
             if not events:
@@ -291,20 +288,20 @@ class Conscience:
         finally:
             self._last_analyzed_node_ids = []
 
-    async def think(self, user_input: str) -> str:
+    async def think(self, user_input: str, owner_id: str = "large_primary") -> str:
         """生成良知内心独白
-        
+
         流程：
-        1. 从因果图提取相关知识
+        1. 从因果图提取相关知识（按 owner_id 隔离）
         2. 读取静态价值观
         3. 调用 LLM 生成内心独白
         """
         try:
             from modules.memory.event_store import EventStore
             from config.settings import settings
-            
+
             # 1. 从因果图提取相关知识
-            causal_knowledge = self._get_causal_knowledge(user_input)
+            causal_knowledge = self._get_causal_knowledge(user_input, owner_id=owner_id)
             
             # 2. 读取静态价值观
             values_text = ""

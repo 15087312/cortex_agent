@@ -168,6 +168,7 @@ class StreamThinkingSystem:
                     "messages": [],
                     "running": True,
                     "processing": False,
+                    "_last_extracted": 0,  # 上次提取事件时处理到的消息数
                 }
                 # 从 SQLite 恢复历史消息（重连场景）
                 repo = self._get_session_repo()
@@ -476,6 +477,13 @@ class StreamThinkingSystem:
             except Exception as e:
                 logger.debug(f"[安全门控] 设置事件回调失败 (非致命): {e}")
 
+            # 从 session 获取 no_tools 标志
+            no_tools = False
+            async with self._lock:
+                session_data = self.sessions.get(session_id, {})
+                no_tools = session_data.get("no_tools", False)
+                model_id = session_data.get("model_id", "large_primary")
+
             scheduler_task = asyncio.create_task(
                 self._orchestrator.process(
                     user_input,
@@ -483,6 +491,8 @@ class StreamThinkingSystem:
                     short_term_memory,
                     scheduler_event_callback,
                     session_id,
+                    no_tools=no_tools,
+                    model_id=model_id,
                 )
             )
             # 存储任务引用以便 stop() 可以取消
@@ -817,56 +827,102 @@ class StreamThinkingSystem:
             await self._set_processing(session_id, False)
 
     async def _post_task_extraction(
-            self, session_id: str, user_input: str, final_response: str
+        self, session_id: str, user_input: str, final_response: str, owner_id: str = None
     ):
-        """会话结束后生成记忆事件（不阻塞）"""
-        await asyncio.sleep(30)  # 延迟 30 秒，确保所有流式输出已刷入
+        """任务完成后提取记忆事件（hash 去重，重启安全）
+        
+        Args:
+            session_id: 会话 ID
+            user_input: 用户输入
+            final_response: 模型回复
+            owner_id: 记忆所属模型 ID（如 "large::large_primary", "supervisor::pm_001"）
+                      None 时自动从会话消息角色推断
+        """
+        await asyncio.sleep(30 if owner_id is None else 0)
         try:
-            # 构造完整对话文本
-            conversation_text = (
-                f"用户: {user_input}\n"
-                f"助手: {final_response}"
-            )
-            if len(conversation_text.strip()) < 50:
-                logger.debug(f"[事件记忆] 会话 {session_id} 太短，跳过")
+            session = self.sessions.get(session_id)
+            if not session:
                 return
 
-            # 获取 EventReducer
-            from modules.memory import get_reducer
-            reducer = get_reducer()
+            messages = session.get("messages", [])
+            # 取最近 20 条消息构造文本
+            parts = []
+            for msg in messages[-20:]:
+                role = msg.get("role", "unknown")
+                content = msg.get("content", "")
+                if content and isinstance(content, str):
+                    parts.append(f"{role}: {content}")
 
+            conversation_text = "\n".join(parts)
+            if len(conversation_text.strip()) < 50:
+                return
+
+            # hash 去重：同一段对话只处理一次
+            import hashlib
+            text_hash = hashlib.md5(conversation_text.encode()).hexdigest()[:16]
+            processed = session.setdefault("_processed_hashes", set())
+            if text_hash in processed:
+                logger.debug(f"[事件记忆] 会话 {session_id} 已处理过，跳过")
+                return
+            processed.add(text_hash)
+
+            # 自动推断 owner_id（如果未提供）
+            if owner_id is None:
+                # 从消息角色中提取模型 ID
+                for msg in messages[-10:]:
+                    role = msg.get("role", "")
+                    # 格式: "assistant::large_primary" 或 "supervisor_code_001"
+                    if "::" in role:
+                        parts = role.split("::", 1)
+                        if len(parts) == 2:
+                            owner_id = f"{parts[0]}::{parts[1]}"
+                            break
+                    elif role.startswith("supervisor_") or role.startswith("expert_"):
+                        owner_id = role
+                        break
+                    elif role.startswith("assistant"):
+                        # 尝试从 session 元数据获取 model_id
+                        owner_id = session.get("model_id", "large::large_primary")
+                        break
+                if not owner_id:
+                    owner_id = "large::large_primary"
+
+            # 获取 EventReducer（依赖注入）
+            from modules.memory.event_reducer import EventReducer
+            from modules.memory.event_store import EventStore
+            from modules.memory.embedding import EmbeddingEngine
+            
+            # 尝试创建模型客户端
+            model_client = None
             try:
                 from infra.model.small_model_client import SmallModelClient
                 from config.settings import settings
-                client = SmallModelClient(
+                model_client = SmallModelClient(
                     api_key=settings.SMALL_MODEL_API_KEY or settings.LARGE_MODEL_API_KEY,
                     api_url=settings.SMALL_MODEL_API_URL or settings.LARGE_MODEL_API_URL,
                 )
-                if client:
-                    reducer.set_model(client)
             except Exception as e:
-                logger.debug(f"[事件记忆] 模型注入失败 (非致命): {e}")
+                logger.debug(f"[事件记忆] 模型客户端创建失败: {e}")
+            
+            # 使用依赖注入创建 reducer
+            reducer = EventReducer(
+                model_client=model_client,
+                store=EventStore.get_instance(),
+                embedder=EmbeddingEngine.get_instance(),
+            )
+            # 同步到模块级单例，供 Conscience 反馈闭环复用
+            if model_client:
+                try:
+                    from modules.memory.event_reducer import get_reducer
+                    get_reducer()._model_client = model_client
+                except Exception:
+                    pass
 
-            # 还原完整对话（从 session 中获取更完整的上下文）
-            session = self.sessions.get(session_id)
-            if session:
-                messages = session.get("messages", [])
-                parts = []
-                for msg in messages[-20:]:  # 最近 20 条
-                    role = msg.get("role", "unknown")
-                    content = msg.get("content", "")
-                    if content and isinstance(content, str):
-                        parts.append(f"{role}: {content}")
-                if parts:
-                    conversation_text = "\n".join(parts)
-
-            events = await reducer.reduce(session_id, conversation_text)
+            events = await reducer.reduce(session_id, conversation_text, owner_id=owner_id)
             if events:
-                logger.info(f"[事件记忆] 会话 {session_id} 生成 {len(events)} 个事件")
-            else:
-                logger.debug(f"[事件记忆] 会话 {session_id} 无事件生成")
+                logger.info(f"[事件记忆] 会话 {session_id} 提取 {len(events)} 个事件 (hash={text_hash})")
         except Exception as e:
-            logger.debug(f"[事件记忆] 后处理失败 (非致命): {e}")
+            logger.debug(f"[事件记忆] 后处理失败: {e}")
 
     def get_context(self, session_id: str) -> List[Dict[str, Any]]:
         session = self.sessions.get(session_id)
@@ -899,6 +955,19 @@ def get_thinking_system() -> StreamThinkingSystem:
 async def initialize_system():
     """初始化流式思考系统"""
     return get_thinking_system()
+
+
+async def _post_task_extraction_helper(
+    session_id: str, user_input: str, final_response: str, owner_id: str
+):
+    """供 ModelRunner 调用的记忆提取入口（fire-and-forget）"""
+    system = get_thinking_system()
+    await system._post_task_extraction(
+        session_id=session_id,
+        user_input=user_input,
+        final_response=final_response,
+        owner_id=owner_id,
+    )
 
 
 @router.post("/session")
@@ -959,6 +1028,19 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
                                 logger.info(f"[API] WebSocket 消息设置模式: {exec_mode}")
                         except Exception as e:
                             logger.warning(f"WebSocket 消息设置执行模式 '{exec_mode}' 失败: {e}")
+
+                    # 如果消息中带了 no_tools 标志，存入 session
+                    no_tools = msg_data.get("no_tools", False)
+                    if no_tools:
+                        async with system._lock:
+                            if session_id in system.sessions:
+                                system.sessions[session_id]["no_tools"] = True
+                        logger.info(f"[API] 会话禁用工具: session={session_id[:8]}")
+                    else:
+                        async with system._lock:
+                            if session_id in system.sessions:
+                                system.sessions[session_id]["no_tools"] = False
+
                     asyncio.create_task(system.think(session_id, user_content))
 
             elif msg_type == "stop":

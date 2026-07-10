@@ -94,8 +94,8 @@ class EventRetrieval:
             min_importance: 最低重要性过滤
             types: 可选，只返回指定类型
             owner_id: 可选，只返回指定模型所有者的记忆
-                      "large_primary" / "supervisor_xx" / "expert_xx"
-                      None 表示全部（Large 总指挥可看全部）
+                      "large_primary" / "large_coder" / "supervisor_xx" / "expert_xx"
+                      "large" 开头的表示 Large 系列总指挥（可看全部记忆）
 
         流程:
         1. 向量语义搜索

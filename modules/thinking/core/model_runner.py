@@ -642,6 +642,19 @@ class ModelRunner:
                     logger.info(
                         f"[ModelRunner] {self.model_id} 写入观察: {observation_id}"
                     )
+
+            # ── 专家/主管：异步触发记忆提取 ──
+            if self.tier in ("supervisor", "expert"):
+                try:
+                    from modules.thinking.api_stream import _post_task_extraction_helper
+                    await _post_task_extraction_helper(
+                        session_id=self.session_id,
+                        user_input=self._task_description,
+                        final_response=final_thought,
+                        owner_id=f"{self.tier}::{self.model_id}",
+                    )
+                except Exception as e:
+                    logger.debug(f"[ModelRunner] 专家记忆提取失败: {e}")
         except Exception as e:
             logger.debug(f"[ModelRunner] 最终响应写入失败: {e}")
 
@@ -1206,12 +1219,23 @@ class ModelRunner:
                 logger.info(f"[ModelRunner] blackboard 为 None")
 
             logger.info(f"[ModelRunner] 构建系统提示词: mode={mode}, tier={self.tier}")
+            # 读取良知内心独白并注入到 system prompt 顶部
+            conscience_guidance = ""
+            try:
+                from modules.thinking.probes.probe_tools import _session_guidance
+                guidance = _session_guidance.get((self.model_id, self.session_id), {})
+                inner = guidance.get("inner_thoughts", "")
+                if inner:
+                    conscience_guidance = inner
+            except Exception:
+                pass
             result = composer.build_system(PromptRequest(
                 tier=self.tier,
                 role=self.identity.role,
                 mode=mode,
                 skill_id=skill_id,
                 tool_count=len(self._visible_tool_whitelist()),
+                conscience_guidance=conscience_guidance,
             ))
             # 非核心工具名称列表
             non_core_section = ""
@@ -1363,6 +1387,20 @@ class ModelRunner:
         """原生工具调用：chat → tool_calls → execute → chat → final"""
         from infra.tool_manager.tool_registry import ToolRegistry
         from infra.model.base_model import ChatMessage
+
+        # 检查 no_tools 标志 — 纯聊天模式，跳过工具加载
+        no_tools = False
+        if self.blackboard:
+            no_tools = self.blackboard.runtime_state.get("no_tools", False)
+
+        if no_tools:
+            logger.info(f"[ModelRunner] {self.model_id} 纯聊天模式，跳过工具加载")
+            response = await client.generate(prompt=user_prompt, max_tokens=4096)
+            result = response.content if hasattr(response, 'content') else str(response)
+            # 写入 blackboard 供编排器读取
+            if self.blackboard:
+                self.blackboard.set_final_response(result)
+            return result
 
         from infra.mcp.factory import get_mcp_tool_service
         mcp = get_mcp_tool_service()
@@ -1835,6 +1873,14 @@ class ModelRunner:
                         for tc in normal_calls:
                             try:
                                 args = json.loads(tc.arguments) if isinstance(tc.arguments, str) and tc.arguments.strip() else {}
+                                # 注入 session_id 和 model_id 到所有工具（供 recall_guidance 等查询）
+                                args["_session_id"] = self.session_id or "default"
+                                args["_model_id"] = self.model_id or "default"
+                                # 注入 session_id 到文件历史/计划工具
+                                _history_tools = {"record_file_change", "rollback_file",
+                                                   "rollback_session_files", "list_file_versions", "plan"}
+                                if tc.name in _history_tools:
+                                    pass  # 已注入
                                 missing = self._missing_required_tool_args(tc.name, args)
                                 if missing:
                                     # 生成友好提示，告诉模型正确的参数名

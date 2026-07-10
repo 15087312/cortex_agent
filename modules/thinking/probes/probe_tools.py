@@ -615,17 +615,18 @@ def request_intermediate_response(
 # ============================================================================
 
 # 模块级存储：编排器注入的当前会话引导文本
-_session_guidance: Dict[str, Dict[str, str]] = {}
+# 按 (model_id, session_id) 双键存储，支持多 Large 模型共存
+_session_guidance: Dict[tuple, Dict[str, str]] = {}
 
 
-def set_session_guidance(session_id: str, guidance: Dict[str, str]) -> None:
+def set_session_guidance(session_id: str, guidance: Dict[str, str], model_id: str = "large_primary") -> None:
     """编排器调用，写入当前会话的引导文本供 recall_guidance 查询"""
-    _session_guidance[session_id] = guidance
+    _session_guidance[(model_id, session_id)] = guidance
 
 
-def clear_session_guidance(session_id: str) -> None:
+def clear_session_guidance(session_id: str, model_id: str = "large_primary") -> None:
     """会话结束时清理"""
-    _session_guidance.pop(session_id, None)
+    _session_guidance.pop((model_id, session_id), None)
 
 
 @ToolRegistry.register(
@@ -671,7 +672,8 @@ def recall_guidance(topic: str = "delegation", **kwargs) -> Dict[str, Any]:
         }
 
     if topic in ("expert_context", "expert", "context", "专家", "上下文"):
-        guidance = _session_guidance.get(session_id, {})
+        model_id = kwargs.get("_model_id", "large_primary")
+        guidance = _session_guidance.get((model_id, session_id), {})
         if not guidance:
             return {
                 "success": True,
