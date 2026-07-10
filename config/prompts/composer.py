@@ -73,9 +73,9 @@ class PromptComposer:
         """构建 system prompt"""
         parts = []
 
-        # 良知引导（最顶部）— 历史经验分析，非指令，仅供参考
+        # 良知引导（最顶部）— 作为 LLM 自己的回忆注入，而非独立身份
         if req.conscience_guidance:
-            parts.append(f"【历史经验分析】\n{req.conscience_guidance}")
+            parts.append(f"【你回忆起的过往经验】\n{req.conscience_guidance}")
 
         role = self._get_role(req.role)
         parts.append(self._build_identity(role))
