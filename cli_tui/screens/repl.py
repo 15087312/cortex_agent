@@ -1108,15 +1108,15 @@ class REPL(Screen):
     def _handle_session_action(self, action: str, session_id: str):
         """处理会话操作"""
         if action == "switch":
-            asyncio.create_task(self._switch_session(session_id))
+            self.run_worker(self._switch_session(session_id))
         elif action == "delete":
-            asyncio.create_task(self._delete_session(session_id))
+            self.run_worker(self._delete_session(session_id))
         elif action == "rollback":
-            asyncio.create_task(self._rollback_and_delete_session(session_id))
+            self.run_worker(self._rollback_and_delete_session(session_id))
         elif action == "continue":
-            asyncio.create_task(self._switch_session(session_id))
+            self.run_worker(self._switch_session(session_id))
         elif action == "fork":
-            asyncio.create_task(self._fork_session(session_id))
+            self.run_worker(self._fork_session(session_id))
 
     @work
     async def _delete_session(self, session_id: str):
