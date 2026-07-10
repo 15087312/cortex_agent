@@ -597,60 +597,33 @@ class ContinuousThinker:
         if history_output:
             pool.add(ContextFragment("history", history_output, ("large",), "历史输出（不得重复）", 20))
 
-        # 记忆检索（深度回忆 + 浅层回退）
+        # 记忆检索（浅层 RAG，深度因果由 Conscience 在专家引导阶段处理）
         try:
             from modules.memory.event_retrieval import get_event_retrieval
             retrieval = get_event_retrieval()
+            # 各模型只看自己的记忆，加上 owner_id 过滤
+            owner_id = f"{self._tier}::{self._model_id}" if self._tier and self._model_id else None
             if self._memory_focus:
-                events = await _asyncio_thinker.wait_for(retrieval.retrieve_mixed(mix=self._memory_focus, max_results=10), timeout=10)
+                events = await _asyncio_thinker.wait_for(
+                    retrieval.retrieve_mixed(mix=self._memory_focus, max_results=5, threshold=0.10, owner_id=owner_id),
+                    timeout=10,
+                )
             else:
-                events = await _asyncio_thinker.wait_for(retrieval.retrieve(query=initial_question, max_results=10), timeout=10)
+                events = await _asyncio_thinker.wait_for(
+                    retrieval.retrieve(query=initial_question, max_results=5, threshold=0.10, owner_id=owner_id),
+                    timeout=10,
+                )
 
-            # 尝试深度因果回忆（仅对逻辑类查询，每轮用最新黑板对话补充查询）
-            deep_text = ""
-            try:
-                from modules.memory.depth_recall import DepthRecallScheduler, should_trigger_deep_recall
-
-                # 构建更完整的查询：结合初始问题与当前轮对话焦点
-                recall_query = initial_question
-                if round_num > 1:
-                    try:
-                        from modules.thinking.cognition import ContextSlicer
-                        slicer = ContextSlicer()
-                        if self._external_prompt_builder:
-                            dialog = self._external_prompt_builder(round_num=round_num)
-                            if dialog:
-                                recall_query = f"{initial_question} {dialog[:300]}"
-                    except Exception:
-                        pass
-
-                trigger, reason = should_trigger_deep_recall(recall_query)
-                if trigger and not getattr(self, '_depth_recall_done', False):
-                    scheduler = DepthRecallScheduler()
-                    deep_result = await _asyncio_thinker.wait_for(
-                        scheduler.deep_recall(recall_query, max_results=5, depth_level=1),
-                        timeout=15,
-                    )
-                    if deep_result.success and not deep_result.fallback:
-                        from modules.memory.result_fusion import format_deep_recall_result
-                        deep_text = format_deep_recall_result(deep_result, max_events=3)
-                        self._depth_recall_done = True
-            except Exception as e:
-                self.logger.debug(f"[深度回忆] 失败: {e}")
-
-            if events or deep_text:
+            if events:
                 parts = []
-                if deep_text:
-                    parts.append(deep_text)
-                if events:
-                    for i, ev in enumerate(events, 1):
-                        parts.append(f"[历史事件 {i}] (类型={ev.type}, 重要性={ev.importance:.1f})")
-                        parts.append(f"  事实: {ev.fact}")
-                        if ev.lesson:
-                            parts.append(f"  经验: {ev.lesson}")
-                        if ev.keywords:
-                            parts.append(f"  标签: {', '.join(ev.keywords)}")
-                pool.add(ContextFragment("memory", "\n".join(parts), ("large", "supervisor", "expert"), "历史记忆", 30))
+                for i, ev in enumerate(events, 1):
+                    parts.append(f"[历史事件 {i}] (类型={ev.type}, 重要性={ev.importance:.1f})")
+                    parts.append(f"  事实: {ev.fact}")
+                    if ev.lesson:
+                        parts.append(f"  经验: {ev.lesson}")
+                    if ev.keywords:
+                        parts.append(f"  标签: {', '.join(ev.keywords)}")
+                pool.add(ContextFragment("memory", "\n".join(parts), ("orchestrator", "supervisor", "expert"), "历史记忆", 30))
         except Exception as e:
             self.logger.debug(f"[事件检索] 失败: {e}")
 
@@ -1024,7 +997,6 @@ class ContinuousThinker:
         min_rounds_required = min_rounds if min_rounds is not None else 1
         results = []
         self._running = True
-        self._depth_recall_done = False
         previous_task_context = self._task_context
         if task_context is not None:
             self._task_context = task_context

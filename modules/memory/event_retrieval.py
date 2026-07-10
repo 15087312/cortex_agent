@@ -47,6 +47,10 @@ SCORE_WEIGHTS = {
     "frequency": 0.10,    # 话题被提及次数
 }
 
+# 最小原始语义相似度：低于此值的事件视为不相关，直接过滤
+# 余弦相似度 < 0.20 表示向量几乎正交，无语义关联
+MIN_SEMANTIC_SIMILARITY = 0.20
+
 SECONDS_PER_DAY = 86400.0
 
 
@@ -212,6 +216,10 @@ class EventRetrieval:
         for sid, data in seen.items():
             ev = data["event"]
             semantic = data["semantic"]
+
+            # 原始语义相似度过滤：去除无关事件
+            if semantic < MIN_SEMANTIC_SIMILARITY:
+                continue
 
             days = self._days_since(ev.last_accessed or ev.time, now)
             λ = TYPE_DECAY_LAMBDA.get(ev.type, 0.0005)

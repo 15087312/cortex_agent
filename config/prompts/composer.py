@@ -73,9 +73,9 @@ class PromptComposer:
         """构建 system prompt"""
         parts = []
 
-        # 良知引导（最顶部）
+        # 良知引导（最顶部）— 历史经验分析，非指令，仅供参考
         if req.conscience_guidance:
-            parts.append(req.conscience_guidance)
+            parts.append(f"【历史经验分析】\n{req.conscience_guidance}")
 
         role = self._get_role(req.role)
         parts.append(self._build_identity(role))
