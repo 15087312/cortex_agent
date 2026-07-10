@@ -183,6 +183,16 @@ class REPL(Screen):
         if self._suggestions:
             self._suggestions.set_on_select(self._on_command_selected)
 
+    def on_unmount(self):
+        """TUI 退出时清理 aiohttp 会话，避免 'Event loop is closed' 错误"""
+        try:
+            import asyncio
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                asyncio.ensure_future(self.api.close())
+        except Exception:
+            pass
+
     def _on_command_selected(self, cmd: Command):
         """命令建议选中回调 — 执行选中的命令"""
         self._handle_command(cmd.name)
@@ -738,7 +748,28 @@ class REPL(Screen):
         ml = self._ml
         if ml:
             ml.reset_for_new_input()
-            ml.write(f"[cyan]👤 用户[/cyan]: {text}")
+
+        # 注入已编辑的对话历史（来自 .opencode/edits/）
+        injected = ""
+        try:
+            from cli_tui.services.cordex_store import read_edit_history
+            edits = read_edit_history(self.state.session_id)
+            if edits:
+                history_lines = ["【用户已修正的对话历史 — 以此为准】"]
+                for e in edits:
+                    idx = e.get("index", 0)
+                    modified = e.get("modified", "")
+                    original = e.get("original", "")
+                    if modified and modified != original:
+                        history_lines.append(f"  [{idx}] {modified}")
+                if len(history_lines) > 1:
+                    injected = "\n".join(history_lines) + "\n\n"
+        except Exception:
+            pass
+
+        full_text = injected + text
+        if ml:
+            ml.write(f"[cyan]👤 用户[/cyan]: {full_text}")
 
         # 停止后台监听，避免与 process_input 的接收循环冲突
         self.ws.stop_background_listener()
@@ -748,7 +779,7 @@ class REPL(Screen):
             await self._load_context_and_memory()
 
             await self.ws.process_input(
-                text,
+                full_text,
                 state=self.state,
                 warn_callback=self._warn_to_ml,
             )
@@ -775,42 +806,22 @@ class REPL(Screen):
             self._ml.write(markup)
 
     async def _load_context_and_memory(self):
-        """加载上下文和记忆信息（显示为系统提示）"""
+        """加载事件记忆上下文（显示为系统提示）"""
         ml = self._ml
         if not ml:
             return
 
         try:
-            # 并行加载上下文、个性和记忆
-            context_data, personality, emotion = await asyncio.gather(
-                self.api.get_context(limit=5),
-                self.api.get_personality(),
-                self.api.get_user_emotion(),
-                return_exceptions=True
-            )
-
-            # 显示加载的上下文信息
-            if context_data and isinstance(context_data, dict):
-                messages = context_data.get("messages", [])
-                if messages:
-                    ml.write("[dim]📚 已加载上下文:[/dim]")
-                    for msg in messages[-3:]:  # 显示最近3条
-                        sender = msg.get("role", "unknown")
-                        content = msg.get("content", "")[:100]
-                        ml.write(f"  [dim]• {sender}: {content}...[/dim]")
-
-            # 显示人格和情绪
-            if personality and isinstance(personality, dict):
-                traits = personality.get("traits", {})
-                if traits:
-                    ml.write(f"[dim]⚙️ 人格特质: {', '.join(list(traits.keys())[:3])}[/dim]")
-
-            if emotion and isinstance(emotion, dict):
-                emotion_type = emotion.get("type", "neutral")
-                ml.write(f"[dim]😊 当前情绪: {emotion_type}[/dim]")
-
+            from modules.memory import EventStore
+            store = EventStore.get_instance()
+            total = store.count_events()
+            if total > 0:
+                recent = store.list_events(limit=3)
+                ml.write(f"[dim]📚 事件记忆: {total} 条[/dim]")
+                for ev in recent:
+                    ml.write(f"  [dim]• [{ev.type}] {ev.fact[:80]}[/dim]")
         except Exception as e:
-            logger.debug("Failed to load context/memory (non-critical): %s", e)
+            logger.debug("Failed to load event memory (non-critical): %s", e)
 
     # ── 命令处理 ──
 
@@ -830,13 +841,25 @@ class REPL(Screen):
             self.notify("已清屏", timeout=1)
         elif cmd.action == "status":
             self._show_status()
-        elif cmd.action == "memory":
-            self._show_memory()
         elif cmd.action == "session":
-            # 支持 /session <主管名> 查看副会话详情
             parts = text.split(" ", 1)
-            supervisor_name = parts[1].strip() if len(parts) > 1 else ""
-            self._show_sessions(supervisor_name)
+            arg = parts[1].strip().lower() if len(parts) > 1 else ""
+            if arg:
+                self._show_sessions(arg)
+            else:
+                self.notify("加载会话列表...", timeout=1)
+                self._show_sessions()
+        elif cmd.action == "history":
+            parts = text.split(" ", 2)
+            sub = parts[1].strip().lower() if len(parts) > 1 else ""
+            if sub == "edit" and len(parts) >= 3:
+                try:
+                    idx = int(parts[2].strip())
+                    self._edit_history_entry(idx)
+                except ValueError:
+                    self.notify("用法: /history edit <编号>", severity="warning", timeout=2)
+            else:
+                self._show_history()
         elif cmd.action == "tools":
             self.state.show_tools = not self.state.show_tools
             state_str = "开" if self.state.show_tools else "关"
@@ -867,18 +890,6 @@ class REPL(Screen):
             self.state.show_thinking = not self.state.show_thinking
             state_str = "开" if self.state.show_thinking else "关"
             self.notify(f"思考显示: {state_str}", timeout=1)
-        elif cmd.action == "export":
-            self._do_export()
-        elif cmd.action == "search":
-            # 支持 /search <query> 搜索记忆
-            parts = text.split(" ", 1)
-            query = parts[1].strip() if len(parts) > 1 else ""
-            if query:
-                self._search_memory(query)
-            else:
-                self.notify("用法: /search <查询词>", severity="warning", timeout=2)
-        elif cmd.action == "context":
-            self._show_context()
         elif cmd.action == "stop":
             self._pause_thinking()
         elif cmd.action == "mode":
@@ -887,9 +898,6 @@ class REPL(Screen):
             toggle_value = parts[1].strip().lower() if len(parts) > 1 else None
             if toggle_value in ("plan", "edit", "yolo", "control"):
                 asyncio.create_task(self._set_execution_mode(toggle_value))
-            elif toggle_value and toggle_value.startswith("skill:"):
-                skill_id = toggle_value[6:]
-                self.notify(f"技能激活请求: {skill_id}（通过 WebSocket 发送）", severity="information", timeout=2)
             else:
                 self.notify(f"用法: /mode plan/edit/yolo/control", severity="information", timeout=2)
         elif cmd.action == "config":
@@ -900,16 +908,10 @@ class REPL(Screen):
                 self._manage_config(config_args)
             else:
                 self._show_config()
-        elif cmd.action == "setup":
-            # /setup [component] — 直接下载或显示状态
-            parts = text.strip().split(maxsplit=1)
-            arg = parts[1].strip() if len(parts) > 1 else ""
-            if arg in ("all", "omniparser", "qwen-vl-2b", "qwen-vl-7b-mlx"):
-                self._run_setup_download(arg)
-            elif arg == "status":
-                self._show_setup_guide()
-            else:
-                self._show_setup_guide()
+        elif cmd.action == "notools":
+            self.state.no_tools = not self.state.no_tools
+            state_str = "禁用（纯聊天）" if self.state.no_tools else "启用"
+            self.notify(f"AI工具: {state_str}", timeout=2)
         else:
             self.notify(f"未知命令: {text}", severity="warning")
 
@@ -933,46 +935,27 @@ class REPL(Screen):
             self.notify("无法获取状态", severity="error", timeout=3)
 
     @work
-    async def _show_memory(self):
-        data = await self.api.get_memory()
-        if data:
-            st = data.get("short_term", {})
-            bb = data.get("blackbox", {})
-            self.notify(
-                f"短期记忆轮数: {st.get('context_turns', '?')}\n"
-                f"黑盒日志: {bb.get('total_size_kb', '?')} KB",
-                title="记忆状态", timeout=5,
-            )
-        else:
-            self.notify("无法获取记忆状态", severity="error", timeout=3)
-
-    @work
-    async def _show_sessions(self, supervisor_name: str = ""):
+    async def _show_sessions(self, filter_name: str = ""):
+        """列出会话并弹出选择器"""
         sessions = await self.api.get_sessions()
-        if sessions is None:
-            self.notify("无法获取会话信息", severity="error", timeout=3)
-            return
-
-        ml = self._ml
         if not sessions:
+            ml = self._ml
             if ml:
-                ml.add_response("当前没有活跃会话。")
+                ml.add_response("当前没有可用会话。")
             return
 
-        if supervisor_name:
-            # 查看指定副会话详情
+        if filter_name:
+            # 按主管名过滤 — 保持原有文本显示逻辑
+            ml = self._ml
             target = None
             for s in sessions:
-                if s.get("supervisor_name", "") == supervisor_name:
+                if s.get("supervisor_name", "") == filter_name:
                     target = s
                     break
             if not target:
-                names = [s["supervisor_name"] for s in sessions if s.get("supervisor_name")]
-                msg = f"未找到副会话「{supervisor_name}」。可用主管: {', '.join(names) if names else '无'}"
                 if ml:
-                    ml.add_response(msg)
+                    ml.add_response(f"未找到副会话「{filter_name}」")
                 return
-
             lines = [f"=== 副会话 [{target['supervisor_name']}] ==="]
             entries = target.get("dialog_entries", [])
             if not entries:
@@ -987,94 +970,333 @@ class REPL(Screen):
                     lines.append(f"  [{label}] {e.get('model_id','')} ({etype}): {e.get('content','')[:200]}")
             if ml:
                 ml.add_response("\n".join(lines))
-        else:
-            # 显示所有会话概览
+            return
+
+        # 弹出会话选择器
+        try:
+            from cli_tui.screens.session_picker import SessionPicker
+            picker = SessionPicker(
+                sessions,
+                on_switch=self._switch_session,
+                on_actions=self._show_session_actions,
+            )
+            self.app.push_screen(picker)
+        except Exception as e:
+            logger.error(f"会话选择器显示失败: {e}")
+            # 回退文本展示
+            ml = self._ml
+            if not ml:
+                return
             lines = ["=== 会话列表 ==="]
             for s in sessions:
-                markers = []
-                if s.get("is_main"):
-                    markers.append("主会话")
-                if s.get("supervisor_name"):
-                    markers.append(f"主管: {s['supervisor_name']}")
-                participants = s.get("participant_count", 0)
-                dialog_size = s.get("dialog_size", 0)
-                sid = s["session_id"][:20]
-                lines.append(f"  {sid} | {' | '.join(markers)} | {participants}参与者 | {dialog_size}条消息")
-            lines.append("")
-            lines.append("查看副会话详情: /session <主管名>")
+                sid = s.get("session_id", "?")[:20]
+                created = s.get("created_at", "")[:16]
+                n = s.get("dialog_size", s.get("message_count", 0))
+                marker = "★  " if s.get("is_main") else "   "
+                lines.append(f"  {marker}{sid}  ({created})  {n}条消息")
+            ml.add_response("\n".join(lines))
+
+    def _show_history(self):
+        """显示当前对话历史列表（本地 dialog_entries + edits）"""
+        ml = self._ml
+        if not ml:
+            return
+        entries = self.state.dialog_entries
+        if not entries:
+            ml.write("[dim]暂无对话历史[/dim]")
+            return
+
+        # 加载本地编辑记录
+        from cli_tui.services.cordex_store import read_edit_history
+        edits = read_edit_history(self.state.session_id)
+        edited_indices = {e.get("index") for e in edits}
+
+        lines = ["=== 对话历史（/history edit <n> 编辑） ==="]
+        for i, e in enumerate(entries):
+            tier = e.get("tier", "?")
+            icon = {"user": "👤", "large": "🧠", "supervisor": "📊", "expert": "🔧"}.get(tier, "❓")
+            content = e.get("content", "")[:120]
+            tag = " [bold yellow]✎已编辑[/bold yellow]" if i in edited_indices else ""
+            lines.append(f"  [{i}] {icon} {content}{tag}")
+        ml.add_response("\n".join(lines))
+
+    def _edit_history_entry(self, idx: int):
+        """打开历史编辑器修改指定条目"""
+        entries = self.state.dialog_entries
+        if idx < 0 or idx >= len(entries):
+            self.notify(f"编号 {idx} 超出范围 (0-{len(entries)-1})", severity="warning", timeout=2)
+            return
+
+        entry = entries[idx]
+        content = entry.get("content", "")
+        from cli_tui.screens.history_editor import HistoryEditor
+
+        def on_save(index: int, new_text: str):
+            # 更新内存
+            self.state.dialog_entries[index]["content"] = new_text
+            # 持久化到 .opencode/edits/（合并已有编辑）
+            from cli_tui.services.cordex_store import write_edit_history, read_edit_history
+            edits = read_edit_history(self.state.session_id)
+            # 移除同 index 旧条目
+            edits = [e for e in edits if e.get("index") != index]
+            edits.append({
+                "index": index,
+                "original": content,
+                "modified": new_text,
+                "timestamp": time.time(),
+            })
+            write_edit_history(self.state.session_id, edits)
+            # 显示到消息列表
+            ml = self._ml
             if ml:
-                ml.add_response("\n".join(lines))
+                ml.write(f"[bold green]✓ 第 {index} 条已编辑[/bold green]")
+            self.notify(f"第 {index} 条已保存（下次对话生效）", timeout=2)
+
+        self.app.push_screen(HistoryEditor(idx, content, on_save))
 
     @work
-    async def _search_memory(self, query: str):
-        """搜索长期记忆"""
+    async def _switch_session(self, target_id: str):
+        """切换到指定会话"""
+        if self.state.processing:
+            self.notify("请先等当前处理完成或按 ESC 停止", severity="warning", timeout=3)
+            return
+
         ml = self._ml
         if not ml:
             return
 
-        self.notify(f"搜索中: {query}", timeout=1)
-        results = await self.api.search_memory(query, memory_type="thought", limit=5)
+        # 断开当前连接
+        self.ws.stop_background_listener()
+        await self.ws.close()
 
-        if results and isinstance(results, list):
-            ml.write(f"[bold cyan]📚 记忆搜索结果: '{query}' ({len(results)} 条)[/bold cyan]")
-            for i, result in enumerate(results[:5], 1):
-                content = result.get("content", "")[:150]
-                created_at = result.get("created_at", "")
-                ml.write(f"  [{i}] {content}")
-                ml.write(f"      [dim]时间: {created_at}[/dim]")
+        # 连接到目标会话
+        ok = await self.ws.connect(session_id=target_id)
+        if not ok:
+            self.notify(f"切换到会话 {target_id[:12]}... 失败", severity="error", timeout=3)
+            self.state.connected = False
+            return
+
+        self.state.session_id = target_id
+        self.state.connected = True
+
+        # 获取历史消息并显示
+        messages = await self.api.get_session_messages(target_id, limit=50)
+        ml.clear()
+        if messages:
+            ml.write(f"[dim]📋 会话 {target_id[:16]}... 历史 ({len(messages)} 条)[/dim]")
+            for msg in messages[-20:]:
+                role = msg.get("role", "system")
+                content = str(msg.get("content", ""))[:200]
+                ml.write(f"  [dim][{role}] {content}[/dim]")
         else:
-            ml.write(f"[dim]未找到相关记忆: '{query}'[/dim]")
+            ml.write(f"[dim]📋 会话 {target_id[:16]}... (空)[/dim]")
+
+        self.ws._event_callbacks.clear()
+        self.ws.on_event(self._persistent_ws_callback)
+        self.ws.start_background_listener()
+        self.notify(f"已切换到会话 {target_id[:12]}...", severity="information", timeout=3)
+
+    # ── 会话操作菜单 ──
+
+    def _show_session_actions(self, session_id: str, session_title: str = ""):
+        """弹出会话操作菜单"""
+        from cli_tui.screens.session_action_menu import SessionActionMenu
+        menu = SessionActionMenu(session_id, session_title)
+        menu.set_on_action(self._handle_session_action)
+        self.app.push_screen(menu)
+
+    def _handle_session_action(self, action: str, session_id: str):
+        """处理会话操作"""
+        if action == "switch":
+            asyncio.create_task(self._switch_session(session_id))
+        elif action == "delete":
+            asyncio.create_task(self._delete_session(session_id))
+        elif action == "rollback":
+            asyncio.create_task(self._rollback_and_delete_session(session_id))
+        elif action == "continue":
+            asyncio.create_task(self._switch_session(session_id))
+        elif action == "fork":
+            asyncio.create_task(self._fork_session(session_id))
 
     @work
-    async def _show_context(self):
-        """加载并显示当前上下文"""
+    async def _delete_session(self, session_id: str):
+        """删除会话"""
         ml = self._ml
-        if not ml:
-            return
+        try:
+            from modules.database.session_repo import get_session_repo
+            repo = get_session_repo()
+            ok = repo.delete_session(session_id)
+            if ok:
+                if ml:
+                    ml.write(f"[bold red]🗑 已删除会话 {session_id[:16]}...[/bold red]")
+                self.notify(f"会话已删除", severity="information", timeout=2)
+                # 如果删除的是当前会话，切换到新会话
+                if session_id == self.state.session_id:
+                    await self.ws.close()
+                    self.state.session_id = ""
+                    self.state.connected = False
+                    if ml:
+                        ml.write("[dim]当前会话已删除，输入消息将自动创建新会话[/dim]")
+            else:
+                if ml:
+                    ml.write(f"[yellow]会话 {session_id[:16]}... 不存在或已删除[/yellow]")
+        except Exception as e:
+            logger.error(f"删除会话失败: {e}")
+            self.notify(f"删除失败: {e}", severity="error", timeout=3)
 
-        self.notify("加载上下文中...", timeout=1)
-        ml.write("[bold cyan]📖 当前上下文:[/bold cyan]")
+    @work
+    async def _rollback_and_delete_session(self, session_id: str):
+        """回滚文件操作 + 删除会话（用户消息→剪贴板）"""
+        ml = self._ml
+        try:
+            from modules.database.session_repo import get_session_repo
+            from modules.cortex.file_history import get_file_history
 
-        context_data, personality, emotion = await asyncio.gather(
-            self.api.get_context(limit=10),
-            self.api.get_personality(),
-            self.api.get_user_emotion(),
-            return_exceptions=True
-        )
+            repo = get_session_repo()
+            history = get_file_history()
 
-        if context_data and isinstance(context_data, dict):
-            messages = context_data.get("messages", [])
-            ml.write(f"[dim]对话历史 ({len(messages)} 条):[/dim]")
-            for msg in messages[-5:]:
-                role = msg.get("role", "unknown")
-                content = msg.get("content", "")[:100]
-                ml.write(f"  [{role}]: {content}...")
+            # 1. 获取用户消息
+            messages = repo.get_messages(session_id, limit=200)
+            user_msgs = [m["content"] for m in messages if m.get("role") == "user" and m.get("content")]
+            clipboard_text = "\n".join(user_msgs)
 
-        if personality and isinstance(personality, dict):
-            traits = personality.get("traits", {})
-            if traits:
-                ml.write(f"[dim]人格特质: {', '.join(f'{k}={v}' for k, v in list(traits.items())[:3])}[/dim]")
+            # 2. 通过文件历史系统回滚
+            rollback_results = history.rollback_session(session_id)
+            restored = sum(1 for v in rollback_results.values() if v == "restored")
+            failed = sum(1 for v in rollback_results.values() if "error" in str(v))
 
-        if emotion and isinstance(emotion, dict):
-            emotion_type = emotion.get("type", "neutral")
-            intensity = emotion.get("intensity", 0)
-            ml.write(f"[dim]情绪状态: {emotion_type} (强度: {intensity})[/dim]")
+            # 3. 删除会话和文件历史
+            repo.delete_session(session_id)
+            history.delete_session_history(session_id)
 
-    def _do_export(self):
-        import json
-        from datetime import datetime
+            # 4. 复制用户消息到剪贴板
+            if clipboard_text:
+                try:
+                    process = await asyncio.create_subprocess_exec(
+                        "pbcopy",
+                        stdin=asyncio.subprocess.PIPE,
+                        stdout=asyncio.subprocess.DEVNULL,
+                        stderr=asyncio.subprocess.DEVNULL,
+                    )
+                    await process.communicate(input=clipboard_text.encode("utf-8"))
+                    clipboard_msg = f"用户消息已复制到剪贴板 ({len(user_msgs)} 条)"
+                except Exception:
+                    clipboard_msg = "剪贴板复制失败（pbcopy 不可用）"
+            else:
+                clipboard_msg = "无用户消息"
 
-        if not self.state.tool_calls:
-            self.notify("暂无工具调用可导出", severity="warning")
-            return
+            # 5. 显示结果
+            if ml:
+                lines = [f"[bold yellow]⏪ 回滚完成[/bold yellow]"]
+                if restored > 0:
+                    lines.append(f"  已恢复 {restored} 个文件" + (f"，{failed} 个失败" if failed else ""))
+                else:
+                    lines.append(f"  无文件需要回滚")
+                lines.append(f"  {clipboard_msg}")
+                lines.append(f"  [red]🗑 会话 {session_id[:16]}... 已删除[/red]")
+                ml.write("\n".join(lines))
+            self.notify(f"回滚完成，{clipboard_msg}", severity="information", timeout=3)
 
-        filename = f"tool_trace_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-        with open(filename, "w") as f:
-            json.dump(
-                {"stats": self.state.tool_stats, "tool_calls": self.state.tool_calls},
-                f, indent=2, ensure_ascii=False,
+            # 如果删除的是当前会话
+            if session_id == self.state.session_id:
+                await self.ws.close()
+                self.state.session_id = ""
+                self.state.connected = False
+
+        except Exception as e:
+            logger.error(f"回滚+删除会话失败: {e}")
+            self.notify(f"操作失败: {e}", severity="error", timeout=3)
+
+    async def _rollback_file_changes(self) -> str:
+        """通过 git 回滚文件变更，返回描述信息"""
+        import os
+        try:
+            # 检查是否在 git 仓库中
+            proc = await asyncio.create_subprocess_exec(
+                "git", "rev-parse", "--is-inside-work-tree",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=os.getcwd(),
             )
-        self.notify(f"已导出到 {filename} ({len(self.state.tool_calls)} 条)", timeout=3)
+            stdout, _ = await proc.communicate()
+            if proc.returncode != 0:
+                return "非 git 仓库，跳过文件回滚"
+
+            # 获取当前未提交的变更
+            proc = await asyncio.create_subprocess_exec(
+                "git", "status", "--porcelain",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=os.getcwd(),
+            )
+            stdout, _ = await proc.communicate()
+            changes = stdout.decode().strip()
+
+            if not changes:
+                return "无文件变更需要回滚"
+
+            # 统计变更文件数
+            changed_files = [line[3:] for line in changes.split("\n") if line.strip()]
+
+            # 回滚：丢弃工作区变更
+            proc = await asyncio.create_subprocess_exec(
+                "git", "checkout", "--", ".",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=os.getcwd(),
+            )
+            await proc.communicate()
+
+            # 清理未跟踪文件（可选，仅清理新增的文件）
+            proc = await asyncio.create_subprocess_exec(
+                "git", "clean", "-fd",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=os.getcwd(),
+            )
+            await proc.communicate()
+
+            return f"已回滚 {len(changed_files)} 个文件的变更"
+
+        except Exception as e:
+            return f"文件回滚失败: {e}"
+
+    @work
+    async def _fork_session(self, session_id: str):
+        """分叉会话到新会话"""
+        ml = self._ml
+        try:
+            import uuid
+            from modules.database.session_repo import get_session_repo
+            repo = get_session_repo()
+
+            # 获取源会话信息
+            summary = repo.get_session_summary(session_id)
+            source_title = summary.get("title", "") if summary else ""
+
+            # 创建新会话
+            new_id = str(uuid.uuid4())
+            repo.create_session(new_id)
+            if source_title:
+                repo.set_session_title(new_id, f"{source_title} (分叉)")
+
+            # 复制消息
+            count = repo.copy_messages_to_session(session_id, new_id)
+
+            if ml:
+                ml.write(
+                    f"[bold cyan]🔀 已分叉到新会话[/bold cyan]\n"
+                    f"  源: {session_id[:16]}... ({source_title or '无标题'})\n"
+                    f"  新: {new_id[:16]}... ({count} 条消息)"
+                )
+            self.notify(f"已分叉 {count} 条消息到新会话", severity="information", timeout=2)
+
+            # 切换到新会话
+            await self._switch_session(new_id)
+
+        except Exception as e:
+            logger.error(f"分叉会话失败: {e}")
+            self.notify(f"分叉失败: {e}", severity="error", timeout=3)
 
     # ── 思考控制和配置管理 ──
 
@@ -1242,88 +1464,4 @@ class REPL(Screen):
         else:
             self.notify(f"✗ 更新失败: {key}", severity="error", timeout=2)
 
-    def _show_setup_guide(self):
-        """显示模型下载引导并提供直接下载选项"""
-        import os
-        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        script_path = os.path.join(project_root, "scripts", "setup_models.py")
 
-        if not os.path.exists(script_path):
-            self.notify("setup_models.py 未找到", title="错误", severity="error", timeout=5)
-            return
-
-        # 检查组件是否已安装
-        status_lines = []
-        components = {
-            "omniparser": ("OmniParser UI 检测", "OmniParser/weights"),
-            "qwen-vl-2b": ("Qwen2-VL-2B", "models/qwen2-vl-2b"),
-            "qwen-vl-7b-mlx": ("Qwen2-VL-7B MLX", "models/qwen2-vl-7b-mlx"),
-        }
-        for key, (name, target) in components.items():
-            full_path = os.path.join(project_root, target)
-            installed = os.path.exists(full_path) and os.listdir(full_path)
-            icon = "✅" if installed else "⬜"
-            status_lines.append(f"  {icon} {name} {'已安装' if installed else '未安装'}")
-
-        guide = (
-            "可选模型组件下载\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            + "\n".join(status_lines) + "\n\n"
-            "选择操作:\n"
-            "  /setup all          下载全部组件\n"
-            "  /setup omniparser   只下载 OmniParser\n"
-            "  /setup qwen-vl-2b   只下载 Qwen-VL 2B\n"
-            "  /setup qwen-vl-7b-mlx  只下载 MLX 模型\n"
-            "  /setup status       查看安装状态"
-        )
-        self.notify(guide, title="模型下载", timeout=15)
-
-    @work
-    async def _run_setup_download(self, component: str):
-        """在后台执行模型下载脚本"""
-        import asyncio
-        import os
-        import sys as _sys
-
-        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        script_path = os.path.join(project_root, "scripts", "setup_models.py")
-
-        args = [_sys.executable, script_path]
-        if component != "all":
-            args.append(component)
-
-        self.notify(f"开始下载: {component} ...", title="模型下载", timeout=5)
-
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                *args,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-                cwd=project_root,
-            )
-
-            output_lines = []
-            async for line in proc.stdout:
-                decoded = line.decode("utf-8", errors="replace").rstrip()
-                output_lines.append(decoded)
-                # 实时显示最后 3 行
-                recent = "\n".join(output_lines[-3:])
-                self.notify(f"下载中...\n{recent}", title="模型下载", timeout=30)
-
-            await proc.wait()
-
-            if proc.returncode == 0:
-                self.notify(
-                    f"✅ {component} 下载完成\n\n" + "\n".join(output_lines[-5:]),
-                    title="模型下载",
-                    timeout=10,
-                )
-            else:
-                self.notify(
-                    f"❌ {component} 下载失败 (exit={proc.returncode})\n\n" + "\n".join(output_lines[-5:]),
-                    title="模型下载",
-                    severity="error",
-                    timeout=10,
-                )
-        except Exception as e:
-            self.notify(f"下载异常: {e}", title="模型下载", severity="error", timeout=10)
