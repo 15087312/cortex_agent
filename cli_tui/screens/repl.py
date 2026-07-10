@@ -1108,15 +1108,15 @@ class REPL(Screen):
     def _handle_session_action(self, action: str, session_id: str):
         """处理会话操作"""
         if action == "switch":
-            self.run_worker(self._switch_session(session_id))
+            self._switch_session(session_id)
         elif action == "delete":
-            self.run_worker(self._delete_session(session_id))
+            self._delete_session(session_id)
         elif action == "rollback":
-            self.run_worker(self._rollback_and_delete_session(session_id))
+            self._rollback_and_delete_session(session_id)
         elif action == "continue":
-            self.run_worker(self._switch_session(session_id))
+            self._switch_session(session_id)
         elif action == "fork":
-            self.run_worker(self._fork_session(session_id))
+            self._fork_session(session_id)
 
     @work
     async def _delete_session(self, session_id: str):
