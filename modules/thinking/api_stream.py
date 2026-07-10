@@ -1229,9 +1229,9 @@ async def get_session_messages(session_id: str, limit: int = 100):
 
 
 @router.post("/stop")
-async def stop_thinking(body: dict = None):
+async def stop_thinking(body: dict = None, session_id: str = ""):
     """停止当前思考（HTTP 入口，内部转发到 WebSocket stop）"""
-    session_id = (body or {}).get("session_id", "")
+    session_id = session_id or (body or {}).get("session_id", "")
     system = get_thinking_system()
     if session_id:
         await system.stop(session_id)

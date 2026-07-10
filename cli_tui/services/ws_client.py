@@ -94,12 +94,19 @@ class WSClient:
 
     # ── WebSocket ──
 
-    async def connect(self) -> bool:
-        """建立 WebSocket 连接"""
+    async def connect(self, session_id: str = "") -> bool:
+        """建立 WebSocket 连接
+
+        Args:
+            session_id: 已有会话 ID，为空则创建新会话
+        """
         if not await self._check_api():
             return False
 
-        self.session_id = await self._create_session()
+        if session_id:
+            self.session_id = session_id
+        else:
+            self.session_id = await self._create_session()
         if self._session and not self._session.closed:
             await self._session.close()
         self._session = aiohttp.ClientSession(headers=self._make_headers())
@@ -161,12 +168,15 @@ class WSClient:
         except asyncio.CancelledError:
             pass
 
-    async def send_input(self, content: str, execution_mode: str = "edit") -> bool:
-        """发送用户输入（附带当前执行模式）"""
+    async def send_input(self, content: str, execution_mode: str = "edit", no_tools: bool = False) -> bool:
+        """发送用户输入（附带当前执行模式和工具开关）"""
         if not self._ws or self._ws.closed:
             return False
         try:
-            await self._ws.send_json({"type": "input", "content": content, "execution_mode": execution_mode})
+            msg = {"type": "input", "content": content, "execution_mode": execution_mode}
+            if no_tools:
+                msg["no_tools"] = True
+            await self._ws.send_json(msg)
             return True
         except Exception as e:
             logger.warning("send_input failed: %s", e)
@@ -248,7 +258,7 @@ class WSClient:
                 dialog_text = raw_content.get("content", "")
                 entry_type = raw_content.get("entry_type", "")
                 model_id = raw_content.get("model_id", "")
-                tier = raw_content.get("tier", "")
+                tier = role  # 从事件信封获取 tier，不在 content 内部
                 round_num = raw_content.get("round", 0)
             else:
                 dialog_text = str(raw_content)
@@ -481,9 +491,10 @@ class WSClient:
         while True:  # 外层重试循环
             # ── 发送 ──
             mode = state.execution_mode if state else "edit"
-            if not await self.send_input(user_input, mode):
+            no_tools = state.no_tools if state else False
+            if not await self.send_input(user_input, mode, no_tools=no_tools):
                 if await self.connect():
-                    if not await self.send_input(user_input, mode):
+                    if not await self.send_input(user_input, mode, no_tools=no_tools):
                         await self._emit({"type": "error", "content": "发送失败"})
                         return
                 else:

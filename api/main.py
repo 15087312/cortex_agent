@@ -295,9 +295,10 @@ _AUTH_WHITELIST = {
     "/", "/health", "/docs", "/openapi.json", "/redoc", "/favicon.ico",
     "/dashboard", "/dashboard/",
     "/stream/sessions", "/stream/sessions/",
+    "/config", "/config/",
 }
 _AUTH_WHITELIST_PREFIXES = ("/management/causal-graph", "/management/memory",
-                             "/stream/sessions/")
+                             "/stream/sessions/", "/config/")
 
 
 @app.middleware("http")

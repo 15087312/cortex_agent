@@ -102,6 +102,7 @@ class ApprovalSelect(Widget):
         **kwargs,
     ):
         super().__init__(**kwargs)
+        self.can_focus = True
         self.tool_name = tool_name
         self.tool_detail = tool_detail
         self.options = options or [
@@ -234,6 +235,7 @@ class ApprovalSelect(Widget):
 
     def on_key(self, event):
         """处理数字键直接选择"""
+        event.stop()  # 防止事件冒泡到父 Screen（避免双重处理）
         if self.input_mode:
             return
         if event.key in ("1", "2", "3", "4", "5", "6", "7", "8", "9"):
