@@ -70,36 +70,15 @@ class APIClient:
 
     async def get_sessions(self) -> Optional[List[Dict[str, Any]]]:
         result = await self._get("/stream/sessions", timeout=5)
-        if result and result.get("success"):
-            return result["data"].get("sessions", [])
+        if result and result.get("success") and isinstance(result.get("data"), list):
+            return result["data"]
         return None
 
-    async def get_context(self, limit: int = 20) -> Optional[Dict[str, Any]]:
-        """获取短期记忆上下文"""
-        result = await self._get(f"/memory/short-term/context?limit={limit}", timeout=5)
-        return result.get("data", {}) if result else None
-
-    async def get_personality(self) -> Optional[Dict[str, Any]]:
-        """获取用户个性配置"""
-        result = await self._get("/memory/personality", timeout=5)
-        return result.get("data", {}) if result else None
-
-    async def get_user_emotion(self) -> Optional[Dict[str, Any]]:
-        """获取当前用户情绪状态"""
-        result = await self._get("/memory/short-term/emotion", timeout=5)
-        return result.get("data", {}) if result else None
-
-    async def search_memory(self, query: str, memory_type: str = "thought", limit: int = 10) -> Optional[List[Dict[str, Any]]]:
-        """搜索长期记忆"""
-        try:
-            s = await self._get_session()
-            params = {"query": query, "memory_type": memory_type, "limit": limit}
-            async with s.get(f"{self.api_url}/memory/long-term/{memory_type}/search", params=params, timeout=5) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    return data.get("data", {}).get("results", []) if data else None
-        except Exception as e:
-            logger.warning("search_memory request failed: %s", e)
+    async def get_session_messages(self, session_id: str, limit: int = 100) -> Optional[List[Dict[str, Any]]]:
+        """获取指定会话的历史消息"""
+        result = await self._get(f"/stream/sessions/{session_id}/messages?limit={limit}", timeout=5)
+        if result and result.get("success"):
+            return result.get("data", [])
         return None
 
     # ── 思考控制 ──
