@@ -263,6 +263,7 @@ class ToolPermissionController:
             RESPOND_TO_USER_TOOL, REQUEST_SKILL_TOOL,
             LIST_SKILLS_TOOL, STOP_SKILL_TOOL,
             REQUEST_MODE_CHANGE_TOOL, ASK_USER_INTENT_TOOL,
+            SWITCH_PERSONALITY_TOOL, LIST_PERSONALITIES_TOOL,
         )
 
         tools = [CONTINUE_THINKING_TOOL, QUERY_TOOL_DETAILS_TOOL]
@@ -276,6 +277,7 @@ class ToolPermissionController:
                 RESPOND_TO_USER_TOOL, REQUEST_SKILL_TOOL,
                 LIST_SKILLS_TOOL, STOP_SKILL_TOOL,
                 REQUEST_MODE_CHANGE_TOOL, ASK_USER_INTENT_TOOL,
+                SWITCH_PERSONALITY_TOOL, LIST_PERSONALITIES_TOOL,
             ])
         return tools
 

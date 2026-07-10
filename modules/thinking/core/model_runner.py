@@ -34,6 +34,8 @@ from modules.thinking.core.control_tools import (
     QUERY_TOOL_DETAILS_TOOL,
     REQUEST_MODE_CHANGE_TOOL,
     ASK_USER_INTENT_TOOL,
+    SWITCH_PERSONALITY_TOOL,
+    LIST_PERSONALITIES_TOOL,
     ThinkingTaskContext,
 )
 
@@ -108,6 +110,7 @@ class ModelRunner:
         self._thinker: Optional[Any] = None  # ContinuousThinker, 延迟创建
         self._active_skill: Any = None  # 当前激活的技能（Skill 实例）
         self._active_skill_tool_rules: Any = None  # 技能的工具范围规则
+        self._active_personality: Any = None  # 当前激活的人格（Personality 实例）
         self._wakeup_event: Optional[threading.Event] = None  # 事件驱动唤醒
 
         logger.info(
@@ -1573,6 +1576,8 @@ class ModelRunner:
                             control_calls.append(tc)
                         elif tc.name in ("request_mode_change", "ask_user_intent"):
                             control_calls.append(tc)
+                        elif tc.name in ("switch_personality", "list_personalities"):
+                            control_calls.append(tc)
                         elif tc.name == "query_tool_details":
                             query_calls.append(tc)
                         else:
@@ -1638,7 +1643,24 @@ class ModelRunner:
                                 mix = args.get("mix", {})
                                 if self._thinker and isinstance(mix, dict):
                                     self._thinker._memory_focus = mix
-                                    logger.info(f"[ModelRunner] 记忆配比已设置: {mix}")
+                            elif tc.name == "switch_personality":
+                                personality_id = str(args.get("personality_id", "")).strip()
+                                if personality_id:
+                                    from modules.thinking.personality import get_personality
+                                    p = get_personality(personality_id)
+                                    if p:
+                                        self._active_personality = p
+                                        logger.info(f"[ModelRunner] 人格已切换: {personality_id} ({p.name})")
+                                    else:
+                                        content = f"人格 {personality_id} 不存在，使用 list_personalities 查看可用人格"
+                            elif tc.name == "list_personalities":
+                                from modules.thinking.personality import list_personalities
+                                all_p = list_personalities()
+                                if all_p:
+                                    lines = [f"- {p.id}: {p.name} — {p.style}" for p in all_p.values()]
+                                    content = "【可用人格】\n" + "\n".join(lines)
+                                else:
+                                    content = "【可用人格】暂无其他人格，当前为默认人格"
                             elif tc.name == "stop_skill":
                                 if self._active_skill:
                                     reason = args.get("reason", "")
@@ -1793,6 +1815,7 @@ class ModelRunner:
                         has_respond = False
                         respond_content = ""
                         skill_feedback = ""
+                        personality_feedback = ""
                         for tc in control_calls:
                             try:
                                 args = json.loads(tc.arguments) if isinstance(tc.arguments, str) and tc.arguments.strip() else {}
@@ -1820,6 +1843,22 @@ class ModelRunner:
                                         skill_feedback = "【可用技能】\n" + "\n".join(lines)
                                     else:
                                         skill_feedback = "【可用技能】暂无可用技能"
+                                elif tc.name == "switch_personality":
+                                    personality_id = args.get("personality_id", "")
+                                    from modules.thinking.personality import get_personality
+                                    p = get_personality(personality_id)
+                                    if p:
+                                        personality_feedback = f"【人格已切换】{p.name}\n风格：{p.style}"
+                                    else:
+                                        personality_feedback = f"【人格不存在】{personality_id}，使用 list_personalities 查看可用人格"
+                                elif tc.name == "list_personalities":
+                                    from modules.thinking.personality import list_personalities
+                                    all_p = list_personalities()
+                                    if all_p:
+                                        lines = [f"- {p.id}: {p.name} — {p.style}" for p in all_p.values()]
+                                        personality_feedback = "【可用人格】\n" + "\n".join(lines)
+                                    else:
+                                        personality_feedback = "【可用人格】暂无其他人格"
                                 elif tc.name == "request_mode_change":
                                     # 请求模式切换 — 暂停等待用户选择
                                     reason = args.get("reason", "")
@@ -1849,6 +1888,8 @@ class ModelRunner:
                             return respond_content
                         if skill_feedback:
                             return skill_feedback
+                        if personality_feedback:
+                            return personality_feedback
                         # continue_thinking(continue=false): 优先返回模型的实际内容
                         if ctrl_notifications:
                             # 如果模型有实际内容（非空），返回内容而非控制摘要
@@ -2111,6 +2152,11 @@ class ModelRunner:
         if self._active_skill and self.tier == "large":
             skill = self._active_skill
             parts.append(f"你是 {skill.name}。\n{skill.description}")
+
+        # 人格叠加（覆盖说话风格，放在技能之后）
+        if self._active_personality and self.tier == "large":
+            p = self._active_personality
+            parts.append(f"【当前人格】{p.name}\n风格: {p.style}\n说话规则: {p.voice_rules}")
 
         if dialog_context:
             parts.append(dialog_context)
