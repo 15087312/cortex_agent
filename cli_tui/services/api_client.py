@@ -11,13 +11,17 @@ logger = setup_logger("tui_api_client")
 class APIClient:
     """后端 REST API 客户端"""
 
-    def __init__(self, api_url: str = "http://localhost:8080"):
+    def __init__(self, api_url: str = "http://localhost:8080", api_key: str = ""):
         self.api_url = api_url.rstrip("/")
+        self._api_key = api_key
         self._session: Optional[aiohttp.ClientSession] = None
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession()
+            headers = {}
+            if self._api_key:
+                headers["X-API-Key"] = self._api_key
+            self._session = aiohttp.ClientSession(headers=headers)
         return self._session
 
     async def close(self):

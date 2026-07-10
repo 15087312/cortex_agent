@@ -3,6 +3,7 @@
 from textual.app import App
 
 from .screens.help_screen import HelpScreen
+from .screens.session_picker import SessionPicker
 from .screens.repl import REPL
 from .services.api_client import APIClient
 from .services.ws_client import WSClient
@@ -21,7 +22,7 @@ class AICLIApp(App):
         self.api_url = api_url
         self.app_state = AppState(api_url=api_url)
         self.ws_client = WSClient(api_url=api_url, api_key=api_key)
-        self.api_client = APIClient(api_url=api_url)
+        self.api_client = APIClient(api_url=api_url, api_key=api_key)
 
     def on_mount(self):
         """启动后安装 screen"""

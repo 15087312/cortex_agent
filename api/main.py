@@ -3,7 +3,7 @@ FastAPI 主入口 - 挂载所有模块的路由、全局中间件
 """
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse, HTMLResponse
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
@@ -48,10 +48,39 @@ async def lifespan(app: FastAPI):
     # 校验生产环境关键配置
     settings.validate_production()
 
+    # 初始化 ~/.cordex/ 本地存储目录
+    try:
+        from pathlib import Path
+        base = Path.home() / ".cordex"
+        for sub in ("debug", "skills", "plans", "todos", "edits", "memories", "projects"):
+            (base / sub).mkdir(parents=True, exist_ok=True)
+        logger.info("✓ ~/.cordex/ 本地存储目录已就绪")
+    except Exception as e:
+        logger.warning(f"~/.cordex/ 目录初始化失败 (非致命): {e}")
+
+    # 检测屏幕录制权限（一次检测，全局生效）
+    try:
+        from utils.screen_capture import init_screen_permission
+        init_screen_permission()
+    except Exception as e:
+        logger.debug(f"屏幕权限检测跳过: {e}")
+
+    # 预加载 Embedding 模型（阻塞启动，加载失败则启动失败）
+    import sys
+    from modules.memory.embedding import EmbeddingEngine
+    eng = EmbeddingEngine.get_instance()
+    print("[DEBUG] 开始加载 Embedding 模型...", flush=True)
+    if not eng._load_model():
+        raise RuntimeError("Embedding 模型加载失败，无法启动（请检查网络或代理，模型自动下载需要访问 huggingface.co）")
+    print(f"[DEBUG] Embedding 模型加载完成，dim={eng.dim}", flush=True)
+    logger.info(f"✓ Embedding 模型已预加载 (dim={eng.dim})")
+    print("[DEBUG] 继续后续初始化...", flush=True)
+
     # 初始化模型调度管理器
     try:
         from modules.thinking.model_factory import get_model_factory
         get_model_factory().ensure_ready()
+        print("[DEBUG] 模型实例工厂就绪", flush=True)
         logger.info("✓ 模型实例工厂已就绪")
     except Exception as e:
         logger.error(f"✗ 模型调度管理器初始化失败: {e}")
@@ -59,7 +88,9 @@ async def lifespan(app: FastAPI):
     # 初始化流式思考系统
     try:
         from modules.thinking.api_stream import initialize_system
+        print("[DEBUG] 开始初始化流式思考系统...", flush=True)
         await initialize_system()
+        print("[DEBUG] 流式思考系统就绪", flush=True)
         logger.info("✓ 流式思考系统已初始化")
     except Exception as e:
         logger.error(f"✗ 流式思考系统初始化失败: {e}")
@@ -218,6 +249,19 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# ── Dashboard 静态文件 ──
+_DASHBOARD_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "dashboard")
+
+@app.get("/dashboard", response_class=HTMLResponse)
+@app.get("/dashboard/", response_class=HTMLResponse)
+async def serve_dashboard():
+    """因果图可视化 Dashboard"""
+    index_path = os.path.join(_DASHBOARD_DIR, "causal_graph.html")
+    if os.path.exists(index_path):
+        with open(index_path, "r", encoding="utf-8") as f:
+            return HTMLResponse(content=f.read())
+    return HTMLResponse(content="<h1>Dashboard not found</h1>", status_code=404)
+
 # SEC-14: HTTPS redirect middleware (production only)
 if settings.APP_ENV == "production" and getattr(settings, 'ENABLE_HTTPS_REDIRECT', False):
     @app.middleware("http")
@@ -247,13 +291,19 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 
 _SIMPLE_API_KEY = settings.SIMPLE_API_KEY
-_AUTH_WHITELIST = {"/", "/health", "/docs", "/openapi.json", "/redoc", "/favicon.ico"}
+_AUTH_WHITELIST = {
+    "/", "/health", "/docs", "/openapi.json", "/redoc", "/favicon.ico",
+    "/dashboard", "/dashboard/",
+    "/stream/sessions", "/stream/sessions/",
+}
+_AUTH_WHITELIST_PREFIXES = ("/management/causal-graph", "/management/memory",
+                             "/stream/sessions/")
 
 
 @app.middleware("http")
 async def api_key_middleware(request: Request, call_next):
     # 白名单路径跳过
-    if request.url.path in _AUTH_WHITELIST or request.url.path.startswith("/docs") or request.url.path.startswith("/redoc"):
+    if request.url.path in _AUTH_WHITELIST or request.url.path.startswith("/docs") or request.url.path.startswith("/redoc") or any(request.url.path.startswith(p) for p in _AUTH_WHITELIST_PREFIXES):
         return await call_next(request)
     # 未配置 API Key 时跳过认证（开发模式）
     if not _SIMPLE_API_KEY:
