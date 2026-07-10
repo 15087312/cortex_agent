@@ -35,28 +35,33 @@ def _parse_importance(value) -> float:
     return 0.40
 
 
-# LLM 提示词：将一段对话提炼为结构化记忆事件
-REDUCE_PROMPT_TEMPLATE = """你是一个记忆分析专家。请分析以下对话，提炼出有价值的记忆事件。
+# LLM 提示词：将一段对话提炼为结构化记忆事件 + 因果关系
+REDUCE_PROMPT_TEMPLATE = """你是一个记忆分析专家。请分析以下对话，提炼出记忆事件和因果关系。
 
-每段对话可能包含 1~3 个值得记住的事件。请以 JSON 数组格式输出，每个事件包含：
+请以 JSON 对象格式输出，包含两个字段：
 
-- fact: 发生了什么（客观描述，20-80 字）
-- thought: 你的思考和分析（20-100 字）
-- lesson: 学到了什么，可复用的经验教训（10-60 字）
-- keywords: 关键词列表（2-6 个，用于检索匹配）
-- importance: 重要性（选一个：critical / high / medium / low / trivial）
-  - critical: 用户明确表达的硬约束、安全相关、不可逆决策
-  - high: 对后续工作有指导意义的经验教训、技术决策
-  - medium: 一般信息、偏好、状态
-  - low: 临时性、一次性信息
-  - trivial: 无关紧要的闲聊（优先不生成事件）
-- type: 事件类型（emotion | thought | fact | strategy）
-  - emotion: 情绪感受、用户偏好、痛点
-  - thought: 分析推理、反思、见解
-  - fact: 客观事实、技术细节、配置信息
-  - strategy: 方法论、架构决策、长期经验
+1. events: 记忆事件数组（1-3 个），每个事件包含：
+   - fact: 发生了什么（客观描述，20-80 字）
+   - thought: 你的思考和分析（20-100 字）
+   - lesson: 学到了什么，可复用的经验教训（10-60 字）
+   - keywords: 关键词列表（2-6 个，用于检索匹配）
+   - importance: 重要性（critical / high / medium / low / trivial）
+   - type: 事件类型（emotion | thought | fact | strategy）
 
-只返回 JSON 数组，不要多余的文字说明。
+2. causal_nodes: 因果节点数组（从对话中识别的概念/事件/原因/结果）
+   - label: 节点名称（简短，2-10 字，如"性能问题""需求变更"）
+   - node_type: 类型（root / cause / effect / condition）
+   - keywords: 关键词（用于匹配）
+
+3. causal_edges: 因果边数组（节点之间的因果关系）
+   - from_label: 起始节点 label（原因方）
+   - to_label: 目标节点 label（结果方）
+   - relation: 关系类型（causes / prevents / requires）
+
+规则：
+- 如果对话中没有明确的因果关系，causal_nodes 和 causal_edges 可以为空数组
+- 节点 label 要简洁，边要体现"因为 A 所以 B"的关系
+- 只返回 JSON 对象，不要多余文字
 
 对话：
 {conversation_text}
@@ -66,21 +71,34 @@ REDUCE_PROMPT_TEMPLATE = """你是一个记忆分析专家。请分析以下对�
 class EventReducer:
     """会话 → 事件提炼器"""
 
-    def __init__(self, model_client=None):
+    def __init__(self, model_client=None, store: EventStore = None, embedder: EmbeddingEngine = None):
+        """
+        Args:
+            model_client: LLM 客户端（依赖注入）
+            store: EventStore 实例（依赖注入，测试用）
+            embedder: EmbeddingEngine 实例（依赖注入，测试用）
+        """
         self._model_client = model_client
-        self._store: Optional[EventStore] = None
-        self._embedder: Optional[EmbeddingEngine] = None
+        self._store = store
+        self._embedder = embedder
 
     def set_model(self, client):
-        """注入 LLM 客户端"""
+        """注入 LLM 客户端（兼容旧 API）"""
         self._model_client = client
 
     # ------------------------------------------------------------------
     # 核心方法
     # ------------------------------------------------------------------
 
-    async def reduce(self, session_id: str, conversation_text: str) -> List[MemoryEvent]:
-        """分析对话并生成记忆事件"""
+    async def reduce(self, session_id: str, conversation_text: str, owner_id: str = None) -> List[MemoryEvent]:
+        """分析对话并生成记忆事件 + 因果图
+
+        Args:
+            session_id: 会话 ID
+            conversation_text: 对话文本
+            owner_id: 记忆所属模型 ID（如 "large::large_primary"），默认 "large::large_primary"
+        """
+        owner_id = owner_id or "large::large_primary"
         logger.info(f"[EventReducer] 分析会话 {session_id} ({len(conversation_text)} 字)")
 
         # 检测是否有值得提炼的内容（少于 50 字跳过）
@@ -88,30 +106,61 @@ class EventReducer:
             logger.debug("[EventReducer] 对话太短，跳过")
             return []
 
-        # 调用 LLM
-        events = await self._call_llm(conversation_text)
-        if not events:
-            logger.debug("[EventReducer] LLM 未生成事件")
+        # 调用 LLM（返回事件 + 因果关系）
+        result = await self._call_llm(conversation_text)
+        events = result.get("events", [])
+        causal_nodes = result.get("causal_nodes", [])
+        causal_edges = result.get("causal_edges", [])
+
+        if not events and not causal_nodes:
+            logger.debug("[EventReducer] LLM 未生成任何内容")
             return []
 
-        # 填充元数据 + 向量化 + 存储
+        # 保存因果图
+        if causal_nodes or causal_edges:
+            self._save_causal_graph(causal_nodes, causal_edges)
+
+        if not events:
+            return []
+
+        # 填充元数据 + 去重 + 存储
         store = self._get_store()
-        embedder = self._get_embedder()
+
+        # 去重：检查已有事件，跳过 fact 相似的
+        existing_facts = set()
+        try:
+            existing = store.list_events(limit=500)
+            existing_facts = {e.fact[:60] for e in existing}
+        except Exception as e:
+            logger.warning(f"[EventReducer] 去重查询失败: {e}")
 
         saved = []
         for ev in events:
             ev.session_id = session_id
-            ev_id = store.save_event(ev)
+            ev.owner_id = owner_id  # 标记所属模型
 
-            # 向量化并存入 FAISS
-            text_for_embedding = f"{ev.fact} {ev.thought} {ev.lesson} {' '.join(ev.keywords)}"
-            embedding = embedder.embed(text_for_embedding)
-            if embedding:
-                store.add_embedding(ev_id, embedding)
-                ev.embedding = embedding
+            # 跳过重复事件
+            fact_key = ev.fact[:60]
+            if fact_key in existing_facts:
+                logger.debug(f"[EventReducer] 跳过重复事件: {fact_key}")
+                continue
+            existing_facts.add(fact_key)
+
+            # save_event 内部会自动向量化 + 写 FAISS
+            ev_id = store.save_event(ev)
 
             saved.append(ev)
             logger.info(f"[EventReducer] 保存事件 {ev_id}: {ev.fact[:50]}... (重要性={ev.importance})")
+
+        # 共现统计：自动发现因果边
+        if saved:
+            try:
+                from modules.memory.causal_graph import CausalGraph
+                graph = CausalGraph.get_instance()
+                saved_ids = [ev.id for ev in saved]
+                graph.update_cooccurrence(event_ids=saved_ids, min_cooccur=2)
+            except Exception as e:
+                logger.debug(f"[EventReducer] 共现统计失败 (非致命): {e}")
 
         return saved
 
@@ -119,11 +168,11 @@ class EventReducer:
     # 内部方法
     # ------------------------------------------------------------------
 
-    async def _call_llm(self, conversation_text: str) -> List[MemoryEvent]:
-        """调用 LLM 生成事件列表"""
+    async def _call_llm(self, conversation_text: str) -> dict:
+        """调用 LLM 生成事件 + 因果关系"""
         if not self._model_client:
-            logger.warning("[EventReducer] 无模型客户端，回退到基础摘要")
-            return self._fallback_summary(conversation_text)
+            logger.warning("[EventReducer] 无模型客户端，跳过记忆提取")
+            return {"events": [], "causal_nodes": [], "causal_edges": []}
 
         prompt = REDUCE_PROMPT_TEMPLATE.format(conversation_text=conversation_text)
 
@@ -133,13 +182,13 @@ class EventReducer:
                 max_tokens=2048,
                 temperature=0.3,
             )
-            return self._parse_events(response)
+            return self._parse_response(response)
         except Exception as e:
             logger.warning(f"[EventReducer] LLM 调用失败: {e}")
-            return self._fallback_summary(conversation_text)
+            return {"events": [], "causal_nodes": [], "causal_edges": []}
 
-    def _parse_events(self, text: str) -> List[MemoryEvent]:
-        """解析 LLM 返回的 JSON"""
+    def _parse_response(self, text: str) -> dict:
+        """解析 LLM 返回的 JSON（包含 events + causal_nodes + causal_edges）"""
         # 清理可能的 markdown 包裹
         text = text.strip()
         if text.startswith("```"):
@@ -148,36 +197,42 @@ class EventReducer:
                 text = text.rsplit("```", 1)[0]
         text = text.strip()
 
+        # 尝试解析 JSON 对象
         try:
             data = json.loads(text)
-            if isinstance(data, dict):
-                data = [data]
         except json.JSONDecodeError:
-            logger.warning(f"[EventReducer] JSON 解析失败，尝试截取 [...]")
-            # 尝试从文本中提取 JSON 数组
-            start = text.find("[")
-            end = text.rfind("]")
+            # 尝试提取 JSON 对象
+            start = text.find("{")
+            end = text.rfind("}")
             if start >= 0 and end > start:
                 try:
                     data = json.loads(text[start:end+1])
                 except json.JSONDecodeError:
-                    logger.warning("[EventReducer] 仍无法解析")
-                    return []
+                    logger.warning("[EventReducer] JSON 解析失败")
+                    return {"events": [], "causal_nodes": [], "causal_edges": []}
             else:
-                return []
+                return {"events": [], "causal_nodes": [], "causal_edges": []}
 
+        # 兼容旧格式（纯数组）
+        if isinstance(data, list):
+            return {"events": self._parse_events_list(data),
+                    "causal_nodes": [], "causal_edges": []}
+
+        events = self._parse_events_list(data.get("events", []))
+        causal_nodes = data.get("causal_nodes", [])
+        causal_edges = data.get("causal_edges", [])
+
+        return {"events": events, "causal_nodes": causal_nodes, "causal_edges": causal_edges}
+
+    def _parse_events_list(self, items: list) -> List[MemoryEvent]:
+        """解析事件列表"""
         events = []
-        for item in data:
+        for item in items:
             if not isinstance(item, dict) or not item.get("fact"):
                 continue
             t = str(item.get("type", "fact")).strip().lower()
             if t not in ("emotion", "thought", "fact", "strategy"):
                 t = "fact"
-            causal_ids = item.get("causal_node_ids")
-            if isinstance(causal_ids, list):
-                causal_ids = [str(cid) for cid in causal_ids[:10]]
-            else:
-                causal_ids = []
             ev = MemoryEvent(
                 fact=str(item["fact"])[:500],
                 thought=str(item.get("thought", ""))[:500],
@@ -185,24 +240,138 @@ class EventReducer:
                 keywords=item.get("keywords", [])[:10],
                 importance=_parse_importance(item.get("importance", "medium")),
                 type=t,
-                causal_node_ids=causal_ids,
             )
             events.append(ev)
-
         return events
 
+    def _save_causal_graph(self, nodes_data: list, edges_data: list):
+        """保存因果节点和边到 CausalGraph"""
+        if not nodes_data and not edges_data:
+            return
+
+        try:
+            from modules.memory.causal_graph import CausalGraph, CausalNode, CausalEdge
+            graph = CausalGraph.get_instance()
+
+            # 保存节点（按 label 去重，已存在的更新 confidence）
+            label_to_id = {}
+            for nd in nodes_data:
+                label = nd.get("label", "").strip()
+                if not label or len(label) < 2:
+                    continue
+                node_type = nd.get("node_type", "cause")
+                if node_type not in ("root", "cause", "effect", "condition"):
+                    node_type = "cause"
+                keywords = nd.get("keywords", [])
+                if isinstance(keywords, str):
+                    keywords = [keywords]
+
+                # 查找已有节点
+                existing = graph.find_nodes_by_label(label)
+                if existing:
+                    node = existing[0]
+                    node.confidence = min(0.99, node.confidence + 0.02)
+                    node.event_count += 1
+                    graph.save_node(node)
+                else:
+                    node = CausalNode(
+                        label=label,
+                        node_type=node_type,
+                        keywords=keywords,
+                        importance=0.5,
+                        confidence=0.5,
+                        event_count=1,
+                    )
+                    graph.save_node(node)
+
+                label_to_id[label] = node.id
+
+            # 保存边
+            for ed in edges_data:
+                from_label = ed.get("from_label", "").strip()
+                to_label = ed.get("to_label", "").strip()
+                relation = ed.get("relation", "causes")
+                if relation not in ("causes", "prevents", "requires", "alternatives"):
+                    relation = "causes"
+
+                from_id = label_to_id.get(from_label)
+                to_id = label_to_id.get(to_label)
+                if not from_id or not to_id or from_id == to_id:
+                    continue
+
+                # 检查边是否已存在
+                existing_edges = graph._get_conn().execute(
+                    "SELECT * FROM edges WHERE from_id=? AND to_id=? AND relation=?",
+                    (from_id, to_id, relation),
+                ).fetchall()
+                if existing_edges:
+                    # 已存在，提升置信度
+                    edge = CausalEdge.from_dict(dict(existing_edges[0]))
+                    edge.confidence = min(0.99, edge.confidence + 0.03)
+                    graph.save_edge(edge)
+                else:
+                    edge = CausalEdge(
+                        from_id=from_id,
+                        to_id=to_id,
+                        relation=relation,
+                        edge_type="causal",
+                        confidence=0.5,
+                    )
+                    graph.save_edge(edge)
+
+            logger.info(f"[EventReducer] 因果图更新: {len(nodes_data)} 节点, {len(edges_data)} 边")
+
+        except Exception as e:
+            logger.warning(f"[EventReducer] 因果图保存失败 (非致命): {e}")
+
     def _fallback_summary(self, conversation_text: str) -> List[MemoryEvent]:
-        """无 LLM 时的降级策略：截取摘要为一个事件"""
-        truncated = conversation_text[:200]
-        return [
-            MemoryEvent(
-                fact=f"对话摘要: {truncated}",
-                thought="",
-                lesson="",
-                keywords=["对话"],
-                importance=0.3,
-            )
+        """无 LLM 时的降级策略：规则引擎提取结构化事件"""
+        events = []
+
+        # 提取含因果/动作关键词的句子
+        causal_patterns = [
+            r"(.{5,60}(?:导致|造成|引起|引发).{5,60})",
+            r"(.{5,60}(?:解决|修复|优化|改进|提升).{5,60})",
+            r"(.{5,60}(?:问题|故障|错误|bug|崩溃).{5,60})",
         ]
+        import re
+        sentences = re.split(r'[。！？\n]', conversation_text)
+        for sent in sentences:
+            sent = sent.strip()
+            if len(sent) < 5:
+                continue
+            for pattern in causal_patterns:
+                m = re.search(pattern, sent)
+                if m:
+                    fact = m.group(1)[:200]
+                    # 判断类型
+                    if any(w in fact for w in ["修复", "优化", "改进", "提升", "解决"]):
+                        etype = "strategy"
+                        imp = 0.7
+                    elif any(w in fact for w in ["问题", "故障", "错误", "崩溃"]):
+                        etype = "fact"
+                        imp = 0.6
+                    else:
+                        etype = "fact"
+                        imp = 0.5
+                    # 提取关键词
+                    kws = re.findall(r'[\u4e00-\u9fff]{2,}', fact)[:5]
+                    kws += re.findall(r'[a-zA-Z_]{3,}', fact.lower())[:3]
+                    events.append(MemoryEvent(
+                        fact=fact, type=etype, importance=imp,
+                        keywords=kws[:6],
+                    ))
+                    break
+
+        if not events:
+            # 没有找到结构化句子，用截断摘要
+            truncated = conversation_text[:200]
+            events.append(MemoryEvent(
+                fact=f"对话摘要: {truncated}",
+                keywords=["对话"], importance=0.3,
+            ))
+
+        return events
 
     # ------------------------------------------------------------------
     # 工具

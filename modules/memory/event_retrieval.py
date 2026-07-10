@@ -134,8 +134,8 @@ class EventRetrieval:
             scored = [(ev, s) for ev, s in scored if ev.importance >= min_importance]
 
         # owner_id 过滤：各模型只看自己的记忆
-        # large_primary 作为总指挥可以看到所有记忆（shared + 自己的）
-        if owner_id and owner_id != "large_primary":
+        # large 系列（large_primary / large::large_primary）作为总指挥可以看到所有记忆
+        if owner_id and not owner_id.startswith("large"):
             scored = [(ev, s) for ev, s in scored if ev.owner_id == owner_id]
 
         # 5. 归一化 + 阈值 + 排序 + 截断

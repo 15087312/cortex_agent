@@ -133,24 +133,32 @@ class Conscience:
             return "（暂无相关因果经验）"
 
     def _get_node_ids_from_events(self, user_input: str) -> List[str]:
-        """从 EventStore 检索事件，提取 causal_node_ids"""
+        """从 EventRetrieval 检索事件，提取 causal_node_ids
+
+        使用完整的 RAG 评分管道（语义+重要性+时效性+效用+频率），
+        替代原先的纯关键词/LIKE 搜索。
+        """
         try:
-            from modules.memory.event_store import EventStore
+            import asyncio
+            from modules.memory.event_retrieval import EventRetrieval
 
-            store = EventStore.get_instance()
+            retrieval = EventRetrieval.get_instance()
 
-            # 先用关键词搜索事件（不依赖 Embedding 模型）
-            keywords = self._extract_keywords(user_input)
-            if not keywords:
-                return []
+            # 使用 EventRetrieval 的完整评分管道
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                task = asyncio.ensure_future(
+                    retrieval.retrieve(user_input, max_results=10, threshold=0.0)
+                )
+                events = asyncio.run_coroutine_threadsafe(
+                    retrieval.retrieve(user_input, max_results=10, threshold=0.0),
+                    loop,
+                ).result(timeout=10)
+            else:
+                events = loop.run_until_complete(
+                    retrieval.retrieve(user_input, max_results=10, threshold=0.0)
+                )
 
-            events = store.search_by_keywords(keywords, limit=20)
-
-            # 关键词搜索找不到时，用事实文本 LIKE 搜索兜底
-            if not events:
-                events = self._search_fact_text(store, keywords, limit=20)
-
-            # 关键词和事实文本都搜不到 → 确实无关，不兜底
             if not events:
                 return []
 
@@ -166,44 +174,6 @@ class Conscience:
 
         except Exception as e:
             logger.debug(f"[Conscience] 事件检索失败: {e}")
-            return []
-
-    def _search_fact_text(self, store, keywords: List[str], limit: int = 20) -> list:
-        """LIKE 搜索事实文本作为兜底
-
-        策略：先用长关键词（原文，非 bigram）搜索，命中即返回。
-        长关键词搜不到才用 bigram 短词，但只取 1 个最长的，减少噪音。
-        """
-        from modules.memory.event_store import MemoryEvent
-
-        if not keywords:
-            return []
-
-        conn = store._get_conn()
-
-        # 长关键词：长度 >= 4 的（原文匹配，噪音最小）
-        long_kws = sorted([kw for kw in keywords if len(kw) >= 4], key=len, reverse=True)[:3]
-        if long_kws:
-            params_long = [f"%{kw}%" for kw in long_kws] + [limit]
-            query_long = f"SELECT DISTINCT * FROM events WHERE {' OR '.join(['fact LIKE ?'] * len(long_kws))} ORDER BY importance DESC LIMIT ?"
-            try:
-                rows = conn.execute(query_long, params_long).fetchall()
-                if rows:
-                    return [MemoryEvent.from_dict(dict(r)) for r in rows]
-            except Exception:
-                pass
-
-        # 短关键词兜底：只取最长的 1 个，避免"不足"这种泛词造成 false positive
-        short_kws = sorted([kw for kw in keywords if 2 <= len(kw) < 4], key=len, reverse=True)[:1]
-        if not short_kws:
-            return []
-        try:
-            rows = conn.execute(
-                f"SELECT DISTINCT * FROM events WHERE fact LIKE ? ORDER BY importance DESC LIMIT ?",
-                [f"%{short_kws[0]}%"] + [limit],
-            ).fetchall()
-            return [MemoryEvent.from_dict(dict(r)) for r in rows]
-        except Exception:
             return []
 
     @staticmethod
