@@ -360,8 +360,26 @@ class BaseModelClient(ABC):
         )
 
     def _log_payload(self, payload: dict):
-        """记录完整请求体（INFO 级别 — 用 --debug 启动时可见）"""
-        logger.info(f"[API PAYLOAD #{self._request_count + 1}]\n{json.dumps(payload, ensure_ascii=False, indent=2)}")
+        """记录完整请求体（INFO 级别）
+
+        tools 字段压缩为单行，避免占用过多屏幕空间。
+        """
+        # 复制一份，不影响原始 payload
+        log_data = {k: v for k, v in payload.items() if k != "tools"}
+        tools = payload.get("tools")
+
+        main_part = json.dumps(log_data, ensure_ascii=False, indent=2)
+
+        if tools:
+            tools_line = json.dumps(tools, ensure_ascii=False, separators=(',', ':'))
+            if len(tools_line) > 200:
+                tools_line = tools_line[:200] + f"...] ({len(tools)} tools, {len(json.dumps(tools))}B)"
+            logger.info(
+                f"[API PAYLOAD #{self._request_count + 1}]\n{main_part}\n"
+                f"\"tools\": {tools_line}"
+            )
+        else:
+            logger.info(f"[API PAYLOAD #{self._request_count + 1}]\n{main_part}")
 
     def _log_response_body(self, status: int, elapsed_ms: float, text: str, tokens: int = 0):
         """记录完整响应体（INFO 级别）"""
