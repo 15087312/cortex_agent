@@ -217,9 +217,13 @@ class ProactiveTrigger:
         """调用大模型"""
         try:
             from modules.thinking.model_factory import get_model_factory
-            client = get_model_factory().get_client("large")
-            response = await client.chat([{"role": "user", "content": prompt}])
-            return response.get("content", "") if isinstance(response, dict) else str(response)
+            from infra.model.base_model import ChatMessage
+            factory = get_model_factory()
+            factory.ensure_ready()
+            client = factory.get_client("large")
+            messages = [ChatMessage(role="user", content=prompt)]
+            response = await client.chat(messages=messages)
+            return response.message.content if response and response.message else ""
         except Exception as e:
             logger.error(f"LLM 调用失败: {e}")
             return ""
