@@ -19,23 +19,56 @@ from utils.logger import setup_logger
 
 logger = setup_logger("perception_proactive_trigger")
 
-# 主动搭话专用 system prompt — 保留人格，去除工具规则
-_OUTREACH_SYSTEM_PROMPT = """你是一个有人格的 AI 助手，正在观察用户的工作环境。
 
-【人格】可爱、温暖、有人情味的助手，像一个贴心的伙伴
-【风格】简洁自然，像真人朋友一样说话，不要过于正式或机械
-【任务】主动关心用户，询问是否需要帮助，或提醒用户注意屏幕上的变化
+def _build_outreach_system_prompt() -> str:
+    """构建主动搭话的 system prompt — 复用总指挥人格，跳过工具规则"""
+    from config.prompts.composer import PromptComposer, PromptRequest
+    from config.settings import settings
 
-【约束】
-- 不要暴露内部结构（如 MessageBus、delegate_task 等）
-- 不要编造不存在的信息
-- 回复简短，1-2 句话即可
-- 如果没有明确需要帮助的场景，可以简单问候或提醒休息
+    composer = PromptRequest(
+        tier="large",
+        role="orchestrator",
+        mode=settings.effective_execution_mode,
+    )
+    # 构建完整 system prompt
+    full_prompt = PromptComposer().build_system(composer)
 
-【核心价值观】
-- 安全第一：不伤害用户或系统安全
-- 诚实守信：不欺骗用户
-- 保护隐私：不泄露敏感信息"""
+    # 需要跳过的段落关键词
+    skip_keywords = ["【工具调用规则】", "【可委托的主管】", "【工具使用】"]
+
+    # 需要过滤的行关键词
+    skip_line_keywords = ["tools_search", "delegate_task", "编造、推测或假设存在未列出的工具"]
+
+    # 去除工具相关段落和行
+    lines = full_prompt.split("\n")
+    filtered = []
+    skip_section = False
+    for line in lines:
+        # 检查是否进入需要跳过的段落
+        if any(kw in line for kw in skip_keywords):
+            skip_section = True
+            continue
+        # 检查是否离开跳过段落
+        if skip_section:
+            if line.startswith("【"):
+                skip_section = False
+            else:
+                continue
+        # 跳过包含工具关键词的行
+        if any(kw in line for kw in skip_line_keywords):
+            continue
+        filtered.append(line)
+
+    # 在末尾追加搭话专用指令
+    outreach_instruction = """
+【主动搭话模式】
+你正在主动关心用户。用户已空闲一段时间，屏幕发生了变化。
+- 回复简短自然，1-2 句话
+- 根据屏幕信息和对话历史，判断用户可能需要什么帮助
+- 如果没有明确需要帮助的场景，简单问候或提醒休息
+- 不要调用任何工具，直接回复"""
+
+    return "\n".join(filtered) + outreach_instruction
 
 
 class IdleTimer:
@@ -284,15 +317,16 @@ class ProactiveTrigger:
         return "\n".join(parts)
 
     async def _call_llm(self, prompt: str) -> str:
-        """调用大模型（带人格 system prompt）"""
+        """调用大模型（复用总指挥人格，单次调用）"""
         try:
             from modules.thinking.model_factory import get_model_factory
             from infra.model.base_model import ChatMessage
             factory = get_model_factory()
             factory.ensure_ready()
             client = factory.get_client("large")
+            system_prompt = _build_outreach_system_prompt()
             messages = [
-                ChatMessage(role="system", content=_OUTREACH_SYSTEM_PROMPT),
+                ChatMessage(role="system", content=system_prompt),
                 ChatMessage(role="user", content=prompt),
             ]
             response = await client.chat(messages=messages)
