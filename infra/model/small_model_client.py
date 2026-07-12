@@ -206,7 +206,14 @@ class SmallModelClient(BaseModelClient):
                             return "\n".join(texts).strip() if texts else ""
                         choices = data.get("choices", [])
                         if choices:
-                            return choices[0].get("message", {}).get("content", "").strip()
+                            message = choices[0].get("message", {})
+                            content = message.get("content", "").strip()
+                            # 处理 Reasoner 模型响应：如果 content 为空但有 reasoning_content，使用推理内容
+                            if not content and "reasoning_content" in message:
+                                reasoning = message.get("reasoning_content", "")
+                                if reasoning:
+                                    content = reasoning.strip()
+                            return content
                         raise Exception("No choices in response")
                     else:
                         error_text = await response.text()

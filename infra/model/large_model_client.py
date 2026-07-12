@@ -340,6 +340,7 @@ class LargeModelClient(BaseModelClient):
                 session = await self._get_session()
                 self._log_request("POST", self.api_url, len(json.dumps(payload)))
                 self._log_payload(payload)
+                request_start = time.time()
                 async with session.post(
                     self.api_url,
                     headers=headers,
