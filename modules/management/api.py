@@ -31,9 +31,7 @@ from utils.logger import setup_logger
 logger = setup_logger("management_api")
 
 # 统一认证：使用 X-API-Key
-from api.auth import require_api_key
-
-router = APIRouter(prefix="/management", tags=["管理控制台"], dependencies=[Depends(require_api_key)])
+router = APIRouter(prefix="/management", tags=["管理控制台"])
 
 # 全局实例
 _registry = ModuleRegistry()
@@ -172,6 +170,124 @@ async def get_memory_full():
     }
 
 
+@router.get("/memory/events")
+async def list_events(
+    limit: int = Query(50, description="返回条数"),
+    type: str = Query("", description="按类型过滤: fact/strategy/thought/emotion"),
+    keyword: str = Query("", description="按关键词过滤"),
+):
+    """查看记忆库中的事件列表"""
+    from modules.memory.event_store import EventStore
+    store = EventStore.get_instance()
+    events = store.list_events(limit=limit)
+
+    # 过滤
+    if type:
+        events = [e for e in events if e.type == type]
+    if keyword:
+        kw = keyword.lower()
+        events = [e for e in events if kw in e.fact.lower() or any(kw in k.lower() for k in e.keywords)]
+
+    items = []
+    for ev in events:
+        items.append({
+            "id": ev.id,
+            "type": ev.type,
+            "fact": ev.fact[:150],
+            "thought": ev.thought[:100] if ev.thought else "",
+            "lesson": ev.lesson[:100] if ev.lesson else "",
+            "keywords": ev.keywords,
+            "importance": ev.importance,
+            "time": ev.time,
+            "session_id": ev.session_id[:16] if ev.session_id else "",
+            "causal_node_ids": ev.causal_node_ids or [],
+        })
+
+    return {
+        "success": True,
+        "data": {
+            "total": store.count_events(),
+            "returned": len(items),
+            "events": items,
+        }
+    }
+
+
+@router.post("/memory/events")
+async def create_event(
+    fact: str = Query(..., description="事件事实"),
+    keywords: str = Query("", description="关键词，逗号分隔"),
+    importance: float = Query(0.5, description="重要性 0-1"),
+    event_type: str = Query("fact", description="类型: fact/strategy/thought/emotion"),
+    thought: str = Query("", description="思考"),
+    lesson: str = Query("", description="经验教训"),
+):
+    """创建新事件"""
+    from modules.memory.event_store import EventStore, MemoryEvent
+    store = EventStore.get_instance()
+    kw_list = [k.strip() for k in keywords.split(",") if k.strip()] if keywords else []
+    ev = MemoryEvent(
+        fact=fact, keywords=kw_list, importance=importance,
+        type=event_type, thought=thought, lesson=lesson,
+    )
+    eid = store.save_event(ev)
+    return {"success": True, "data": {"id": eid, "fact": fact[:100]}}
+
+
+@router.get("/memory/events/{event_id}")
+async def get_event(event_id: str = Path(...)):
+    """获取单个事件详情"""
+    from modules.memory.event_store import EventStore
+    store = EventStore.get_instance()
+    ev = store.get_event(event_id)
+    if not ev:
+        raise AppError(ErrorCode.NOT_FOUND, f"事件 {event_id} 不存在")
+    return {
+        "success": True,
+        "data": {
+            "id": ev.id, "type": ev.type, "fact": ev.fact,
+            "thought": ev.thought, "lesson": ev.lesson,
+            "keywords": ev.keywords, "importance": ev.importance,
+            "time": ev.time, "session_id": ev.session_id,
+            "causal_node_ids": ev.causal_node_ids or [],
+            "access_count": ev.access_count, "mention_count": ev.mention_count,
+        }
+    }
+
+
+@router.put("/memory/events/{event_id}")
+async def update_event(
+    event_id: str = Path(...),
+    fact: str = Query(None),
+    keywords: str = Query(None),
+    importance: float = Query(None),
+    event_type: str = Query(None),
+):
+    """更新事件"""
+    from modules.memory.event_store import EventStore
+    store = EventStore.get_instance()
+    ev = store.get_event(event_id)
+    if not ev:
+        raise AppError(ErrorCode.NOT_FOUND, f"事件 {event_id} 不存在")
+    if fact is not None: ev.fact = fact
+    if keywords is not None: ev.keywords = [k.strip() for k in keywords.split(",") if k.strip()]
+    if importance is not None: ev.importance = importance
+    if event_type is not None: ev.type = event_type
+    store.save_event(ev)
+    return {"success": True, "data": {"id": event_id}}
+
+
+@router.delete("/memory/events/{event_id}")
+async def delete_event(event_id: str = Path(...)):
+    """删除事件"""
+    from modules.memory.event_store import EventStore
+    store = EventStore.get_instance()
+    ok = store.delete_event(event_id)
+    if not ok:
+        raise AppError(ErrorCode.NOT_FOUND, f"事件 {event_id} 不存在")
+    return {"success": True, "data": {"deleted": event_id}}
+
+
 @router.get("/memory/tool-skills")
 async def get_tool_skills():
     """获取工具熟练度（旧版 MemoryManager 已废弃）"""
@@ -218,6 +334,229 @@ async def clear_memory(
     return {
         "success": True,
         "data": {"message": f"事件记忆已清空"}
+    }
+
+
+@router.get("/causal-graph")
+async def get_causal_graph(
+    time_window: str = Query("", description="时间窗口过滤，如 30d/7d/24h"),
+):
+    """获取因果图数据（用于可视化）- O(1) 索引查询"""
+    from modules.memory.causal_graph import CausalGraph
+    from modules.memory.event_store import EventStore
+    graph = CausalGraph.get_instance()
+
+    nodes = graph.list_nodes(limit=200)
+    nodes_data = []
+    for n in nodes:
+        nodes_data.append({
+            "id": n.id,
+            "label": n.label,
+            "type": n.node_type,
+            "confidence": round(n.confidence, 3),
+            "event_count": n.event_count,
+            "keywords": n.keywords,
+        })
+
+    # 优化：使用 list_all_edges O(1) 索引查询，非 O(N²) 遍历
+    edges = graph.list_all_edges(time_window=time_window or None)
+    edges_data = []
+    for e in edges:
+        edges_data.append({
+            "id": e.id,
+            "from": e.from_id,
+            "to": e.to_id,
+            "relation": e.relation,
+            "confidence": round(e.confidence, 3),
+            "label": e.label or "",
+        })
+
+    # 统计
+    event_store = EventStore.get_instance()
+    total_events = event_store.count_events()
+    linked_events = 0
+    try:
+        events = event_store.list_events(limit=500)
+        linked_events = sum(1 for e in events if e.causal_node_ids)
+    except Exception:
+        pass
+
+    # 使用优化的统计查询
+    edge_stats = graph.get_edge_stats()
+
+    return {
+        "success": True,
+        "data": {
+            "nodes": nodes_data,
+            "edges": edges_data,
+            "stats": {
+                "total_nodes": len(nodes_data),
+                "total_edges": len(edges_data),
+                "total_events": total_events,
+                "linked_events": linked_events,
+                "root_nodes": sum(1 for n in nodes_data if n["type"] == "root"),
+                "cause_nodes": sum(1 for n in nodes_data if n["type"] == "cause"),
+                "effect_nodes": sum(1 for n in nodes_data if n["type"] == "effect"),
+                "edge_stats": edge_stats,
+            }
+        }
+    }
+
+
+@router.get("/causal-graph/{node_id}")
+async def get_causal_node_detail(node_id: str = Path(..., description="节点 ID")):
+    """获取单个因果节点的详情（包括关联事件和因果链）"""
+    from modules.memory.causal_graph import CausalGraph
+    from modules.memory.event_store import EventStore
+
+    graph = CausalGraph.get_instance()
+    node = graph.get_node(node_id)
+    if not node:
+        raise AppError(ErrorCode.NOT_FOUND, f"节点 {node_id} 不存在")
+
+    # 前驱和后继
+    predecessors = graph.get_predecessors(node_id)
+    successors = graph.get_successors(node_id)
+
+    # 关联事件
+    store = EventStore.get_instance()
+    linked_events = []
+    events = store.list_events(limit=200)
+    for ev in events:
+        if node_id in (ev.causal_node_ids or []):
+            linked_events.append({
+                "id": ev.id,
+                "fact": ev.fact[:100],
+                "importance": ev.importance,
+                "type": ev.type,
+            })
+
+    return {
+        "success": True,
+        "data": {
+            "node": {
+                "id": node.id,
+                "label": node.label,
+                "type": node.node_type,
+                "confidence": node.confidence,
+                "event_count": node.event_count,
+                "keywords": node.keywords,
+            },
+            "predecessors": [{"id": p.id, "label": p.label} for p in predecessors],
+            "successors": [{"id": s.id, "label": s.label} for s in successors],
+            "linked_events": linked_events,
+        }
+    }
+
+
+@router.get("/causal-graph/tree/{node_id}")
+async def get_causal_tree_from_node(
+    node_id: str = Path(..., description="锚点节点 ID"),
+    depth: int = Query(3, description="遍历深度"),
+):
+    """从指定节点展开因果树（用于树形可视化）"""
+    from modules.memory.causal_graph import CausalGraph
+    from modules.memory.causal_tree import CausalTree
+
+    graph = CausalGraph.get_instance()
+    tree = CausalTree(graph)
+
+    node = graph.get_node(node_id)
+    if not node:
+        raise AppError(ErrorCode.NOT_FOUND, f"节点 {node_id} 不存在")
+
+    # 上溯（溯源链）
+    up_chains = tree.trace_up(node_id, max_depth=depth)
+    # 下钻（预测链）
+    down_chains = tree.trace_down(node_id, max_depth=depth)
+
+    def chain_to_dict(chain):
+        # 过滤掉只包含锚点自身的自环链
+        if len(chain.nodes) <= 1 and chain.nodes[0].id == node_id:
+            return None
+        return {
+            "nodes": [{"id": n.id, "label": n.label, "type": n.node_type} for n in chain.nodes],
+            "edges": [{"relation": e.relation, "confidence": e.confidence} for e in chain.edges],
+            "confidence": round(chain.confidence, 3),
+            "direction": chain.direction,
+        }
+
+    return {
+        "success": True,
+        "data": {
+            "anchor": {"id": node.id, "label": node.label, "type": node.node_type},
+            "trace_up": [c for c in (chain_to_dict(ch) for ch in up_chains) if c],
+            "trace_down": [c for c in (chain_to_dict(ch) for ch in down_chains) if c],
+        }
+    }
+
+
+@router.get("/causal-graph/what-if/{node_id}")
+async def get_causal_what_if(
+    node_id: str = Path(..., description="锚点节点 ID"),
+    target_node_id: str = Query(..., description="假设连接的目标节点 ID"),
+    relation: str = Query("causes", description="假设关系类型: causes/prevents/requires"),
+    confidence: float = Query(0.5, description="假设边的置信度"),
+    depth: int = Query(3, description="遍历深度"),
+):
+    """反事实推理：假设两个节点之间存在因果边"""
+    from modules.memory.causal_graph import CausalGraph, CausalEdge
+    from modules.memory.causal_tree import CausalTree
+
+    graph = CausalGraph.get_instance()
+    tree = CausalTree(graph)
+
+    node = graph.get_node(node_id)
+    target = graph.get_node(target_node_id)
+    if not node:
+        raise AppError(ErrorCode.NOT_FOUND, f"节点 {node_id} 不存在")
+    if not target:
+        raise AppError(ErrorCode.NOT_FOUND, f"目标节点 {target_node_id} 不存在")
+
+    hypothetical_edge = CausalEdge(
+        from_id=node_id, to_id=target_node_id,
+        relation=relation, confidence=float(confidence),
+    )
+
+    chains = tree.what_if(
+        node_id=node_id,
+        hypothetical_edge=hypothetical_edge,
+        max_depth=depth,
+    )
+
+    def chain_to_dict(chain):
+        return {
+            "nodes": [{"id": n.id, "label": n.label, "type": n.node_type} for n in chain.nodes],
+            "edges": [{"relation": e.relation, "confidence": e.confidence} for e in chain.edges],
+            "confidence": round(chain.confidence, 3),
+            "direction": chain.direction,
+        }
+
+    return {
+        "success": True,
+        "data": {
+            "anchor": {"id": node.id, "label": node.label},
+            "target": {"id": target.id, "label": target.label},
+            "hypothetical_edge": {
+                "relation": relation,
+                "confidence": confidence,
+            },
+            "chains": [chain_to_dict(c) for c in chains],
+        }
+    }
+
+
+@router.get("/causal-graph/metrics")
+async def get_causal_graph_metrics():
+    """获取因果图监控指标（Prometheus 格式）"""
+    from modules.memory.causal_graph import CausalGraph
+    graph = CausalGraph.get_instance()
+    return {
+        "success": True,
+        "data": {
+            "metrics": graph.get_metrics(),
+            "prometheus": graph.get_metrics_prometheus(),
+        }
     }
 
 

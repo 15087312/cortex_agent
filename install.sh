@@ -155,23 +155,63 @@ setup_env() {
     echo "  支持的模型服务:"
     echo "    • DeepSeek  — https://platform.deepseek.com"
     echo "    • OpenAI    — https://platform.openai.com"
-    echo "    • 兼容 OpenAI 格式的任何服务"
+    echo "    • ModelScope — https://modelscope.cn"
+    echo "    • Groq / Mistral / 兼容 OpenAI 格式的任何服务"
     echo ""
-    echo "  你可以稍后编辑 .env 文件来修改配置。"
+    echo "  配置三档模型（大/中/小），共需 9 个值。"
+    echo "  直接回车跳过，稍后编辑 .env 文件。"
     echo ""
 
-    read -rp "  请输入 API Key（直接回车跳过）: " api_key
-    if [[ -n "$api_key" ]]; then
-        # 替换 .env 中的 LARGE_MODEL_API_KEY
-        if [[ "$OS" == "macos" ]]; then
-            sed -i '' "s|^LARGE_MODEL_API_KEY=.*|LARGE_MODEL_API_KEY=$api_key|" .env
-        else
-            sed -i "s|^LARGE_MODEL_API_KEY=.*|LARGE_MODEL_API_KEY=$api_key|" .env
-        fi
-        ok "API Key 已写入 .env"
+    local sed_inplace
+    if [[ "$OS" == "macos" ]]; then
+        sed_inplace="sed -i ''"
     else
-        warn "跳过配置，请稍后编辑 $INSTALL_DIR/.env"
+        sed_inplace="sed -i"
     fi
+
+    replace_env() {
+        local key="$1" value="$2"
+        if [[ -n "$value" ]]; then
+            $sed_inplace "s|^${key}=.*|${key}=${value}|" .env
+        fi
+    }
+
+    echo -e "${CYAN}  [1/3] 大模型（主协调）${NC}"
+    read -rp "    API Key: " large_key
+    read -rp "    API URL (回车=https://api.deepseek.com/v1/chat/completions): " large_url
+    large_url="${large_url:-https://api.deepseek.com/v1/chat/completions}"
+    read -rp "    模型名 (回车=deepseek-v4-flash): " large_name
+    large_name="${large_name:-deepseek-v4-flash}"
+    replace_env "LARGE_MODEL_API_KEY" "$large_key"
+    replace_env "LARGE_MODEL_API_URL" "$large_url"
+    replace_env "LARGE_MODEL_NAME" "$large_name"
+
+    echo ""
+    echo -e "${CYAN}  [2/3] 中模型（推理增强）${NC}"
+    read -rp "    API Key（回车=复用大模型）: " medium_key
+    medium_key="${medium_key:-$large_key}"
+    read -rp "    API URL（回车=复用大模型）: " medium_url
+    medium_url="${medium_url:-$large_url}"
+    read -rp "    模型名（回车=复用大模型）: " medium_name
+    medium_name="${medium_name:-$large_name}"
+    replace_env "MEDIUM_MODEL_API_KEY" "$medium_key"
+    replace_env "MEDIUM_MODEL_API_URL" "$medium_url"
+    replace_env "MEDIUM_MODEL_NAME" "$medium_name"
+
+    echo ""
+    echo -e "${CYAN}  [3/3] 小模型（轻量推理）${NC}"
+    read -rp "    API Key（回车=复用大模型）: " small_key
+    small_key="${small_key:-$large_key}"
+    read -rp "    API URL（回车=复用大模型）: " small_url
+    small_url="${small_url:-$large_url}"
+    read -rp "    模型名（回车=复用大模型）: " small_name
+    small_name="${small_name:-$large_name}"
+    replace_env "SMALL_MODEL_API_KEY" "$small_key"
+    replace_env "SMALL_MODEL_API_URL" "$small_url"
+    replace_env "SMALL_MODEL_NAME" "$small_name"
+
+    echo ""
+    ok "模型配置已写入 .env"
 }
 
 # ── 完成 ──

@@ -104,6 +104,15 @@ function Setup-OmniParser {
     }
 }
 
+function Replace-Env {
+    param([string]$Key, [string]$Value)
+    if ($Value) {
+        $content = Get-Content ".env" -Raw
+        $content = [regex]::Replace($content, "(?m)^$Key=.*", "$Key=$Value")
+        Set-Content ".env" $content -NoNewline
+    }
+}
+
 function Setup-Env {
     if (Test-Path ".env") {
         Write-OK ".env already exists, skipping"
@@ -124,20 +133,51 @@ function Setup-Env {
     Write-Host "========================================" -ForegroundColor Cyan
     Write-Host ""
     Write-Host "  Supported services:"
-    Write-Host "    - DeepSeek  https://platform.deepseek.com"
-    Write-Host "    - OpenAI    https://platform.openai.com"
-    Write-Host "    - Compatible OpenAI-format services"
+    Write-Host "    - DeepSeek   https://platform.deepseek.com"
+    Write-Host "    - OpenAI     https://platform.openai.com"
+    Write-Host "    - ModelScope https://modelscope.cn"
+    Write-Host "    - Groq / Mistral / Any OpenAI-compatible service"
+    Write-Host ""
+    Write-Host "  Configure 3 tiers (large/medium/small), 9 values total."
+    Write-Host "  Press Enter to skip, edit .env later."
     Write-Host ""
 
-    $apiKey = Read-Host "  Enter API Key (press Enter to skip)"
-    if ($apiKey) {
-        $content = Get-Content ".env"
-        $content = $content -replace '^LARGE_MODEL_API_KEY=.*', "LARGE_MODEL_API_KEY=$apiKey"
-        Set-Content ".env" $content
-        Write-OK "API Key saved to .env"
-    } else {
-        Write-Warn "Skipped, edit .env manually later"
-    }
+    Write-Host "  [1/3] Large model (orchestrator)" -ForegroundColor Cyan
+    $largeKey = Read-Host "    API Key"
+    $largeUrl = Read-Host "    API URL (Enter=https://api.deepseek.com/v1/chat/completions)"
+    if (-not $largeUrl) { $largeUrl = "https://api.deepseek.com/v1/chat/completions" }
+    $largeName = Read-Host "    Model name (Enter=deepseek-v4-flash)"
+    if (-not $largeName) { $largeName = "deepseek-v4-flash" }
+    Replace-Env "LARGE_MODEL_API_KEY" $largeKey
+    Replace-Env "LARGE_MODEL_API_URL" $largeUrl
+    Replace-Env "LARGE_MODEL_NAME" $largeName
+
+    Write-Host ""
+    Write-Host "  [2/3] Medium model (reasoning)" -ForegroundColor Cyan
+    $mediumKey = Read-Host "    API Key (Enter=use large model)"
+    if (-not $mediumKey) { $mediumKey = $largeKey }
+    $mediumUrl = Read-Host "    API URL (Enter=use large model)"
+    if (-not $mediumUrl) { $mediumUrl = $largeUrl }
+    $mediumName = Read-Host "    Model name (Enter=use large model)"
+    if (-not $mediumName) { $mediumName = $largeName }
+    Replace-Env "MEDIUM_MODEL_API_KEY" $mediumKey
+    Replace-Env "MEDIUM_MODEL_API_URL" $mediumUrl
+    Replace-Env "MEDIUM_MODEL_NAME" $mediumName
+
+    Write-Host ""
+    Write-Host "  [3/3] Small model (lightweight)" -ForegroundColor Cyan
+    $smallKey = Read-Host "    API Key (Enter=use large model)"
+    if (-not $smallKey) { $smallKey = $largeKey }
+    $smallUrl = Read-Host "    API URL (Enter=use large model)"
+    if (-not $smallUrl) { $smallUrl = $largeUrl }
+    $smallName = Read-Host "    Model name (Enter=use large model)"
+    if (-not $smallName) { $smallName = $largeName }
+    Replace-Env "SMALL_MODEL_API_KEY" $smallKey
+    Replace-Env "SMALL_MODEL_API_URL" $smallUrl
+    Replace-Env "SMALL_MODEL_NAME" $smallName
+
+    Write-Host ""
+    Write-OK "Model config saved to .env"
 }
 
 function Print-Done {

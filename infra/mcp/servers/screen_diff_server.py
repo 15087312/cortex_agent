@@ -48,6 +48,10 @@ _frame_count: int = 0
 
 def _capture_screen() -> np.ndarray | None:
     """截图并返回 numpy array (BGR)"""
+    from utils.screen_capture import SCREENSHOT_ENABLED
+    if not SCREENSHOT_ENABLED:
+        return None
+
     try:
         tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
         tmp_path = tmp.name

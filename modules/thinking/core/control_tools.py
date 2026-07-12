@@ -292,45 +292,6 @@ ASK_USER_INTENT_TOOL = {
 }
 
 
-SWITCH_PERSONALITY_TOOL = {
-    "type": "function",
-    "function": {
-        "name": "switch_personality",
-        "description": (
-            "切换当前说话风格/人格。切换后后续回复使用该人格的语气和视角。"
-            "可用人格：使用 list_personalities 查看。"
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "personality_id": {
-                    "type": "string",
-                    "description": "人格 ID，如 default(默认猫娘), analyst(冷静分析师), roaster(毒舌吐槽者)",
-                },
-                "reason": {
-                    "type": "string",
-                    "description": "切换原因，例如「用户需要深入分析」",
-                },
-            },
-            "required": ["personality_id"],
-        },
-    },
-}
-
-
-LIST_PERSONALITIES_TOOL = {
-    "type": "function",
-    "function": {
-        "name": "list_personalities",
-        "description": "查看所有可用人格及其风格描述。在不确定使用哪个人格时先调用此工具。",
-        "parameters": {
-            "type": "object",
-            "properties": {},
-        },
-    },
-}
-
-
 @dataclass
 class ThinkingTaskContext:
     """一次连续思考循环的任务上下文。"""

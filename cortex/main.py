@@ -109,7 +109,7 @@ def start_backend(args) -> subprocess.Popen:
         "--log-level", "info",
     ]
     return subprocess.Popen(cmd, cwd=str(project_root), env=env,
-                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
 
 
 def launch_tui(args):
@@ -171,6 +171,17 @@ def main():
     # 启动后端
     print(f"🚀 启动 Cortex Agent (:{args.port})...")
     backend_proc = start_backend(args)
+
+    # 读取后端初始化日志（配置目录创建、WARNING 等）
+    import threading
+    def _drain_stderr(proc):
+        try:
+            for line in proc.stderr:
+                sys.stderr.write(line.decode(errors="replace"))
+                sys.stderr.flush()
+        except (ValueError, OSError):
+            pass
+    threading.Thread(target=_drain_stderr, args=(backend_proc,), daemon=True).start()
 
     # 清理函数
     def cleanup(signum=None, frame=None):

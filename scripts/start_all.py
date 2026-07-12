@@ -1,12 +1,21 @@
 """
 一键启动所有模块的脚本
+
+为什么不用 uvicorn.run()：
+uvicorn.run() 在 macOS 上即使传 workers=None 也会启动 parent process，
+子进程中 SentenceTransformer/transformers 的模型加载行为与主进程不一致，
+导致 Embedding 模型初始化卡死（[Errno 60] Operation timed out）。
+
+为什么不用 multiprocessing / workers：
+子进程会丢失主进程的 os.environ 设置（HF_HUB_OFFLINE、TRANSFORMERS_OFFLINE），
+导致 huggingface hub 发起网络连接请求，国内环境连 huggingface.co 超时。
+
+解法：直接用 subprocess 执行 python -m uvicorn，与终端命令行为完全一致。
 """
 import signal
 import sys
 import os
-
-# 添加项目根目录到路径
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import subprocess
 
 _memory_scheduler = None
 
@@ -31,26 +40,31 @@ def main():
     args = parser.parse_args()
 
     log_level = "debug" if args.debug else os.environ.get("LOG_LEVEL", "info")
+    log_level = log_level.lower()  # uvicorn 只认小写
 
     # 注册信号处理器
     signal.signal(signal.SIGINT, _graceful_shutdown)
     signal.signal(signal.SIGTERM, _graceful_shutdown)
 
-    print(f"Starting Humanoid AGI server (log={log_level})...")
-
-    # 后台记忆由 EventReducer 在每次会话结束后自动处理，无需独立调度器
-    print("记忆系统: 事件驱动 (EventReducer + EventStore)")
-
-    import uvicorn
-    workers = int(os.environ.get("MAX_WORKERS", "1"))
-    uvicorn.run(
+    port = int(os.environ.get("SERVER_PORT", "8080"))
+    host = "0.0.0.0"
+    cmd = [
+        sys.executable, "-m", "uvicorn",
         "api.main:app",
-        host="0.0.0.0",
-        port=int(os.environ.get("SERVER_PORT", "8080")),
-        workers=workers,
-        reload=False,
-        log_level=log_level,
-    )
+        "--host", host,
+        "--port", str(port),
+        "--log-level", log_level,
+    ]
+
+    print(f"Starting Humanoid AGI server (log={log_level})...")
+    print(f"  → http://{host}:{port}")
+    print(f"  → Ctrl+C 停止")
+
+    # 直接 subprocess 调用 uvicorn，与终端命令行为完全一致
+    # 不用 uvicorn.run() 的原因是它在 macOS 上会启动额外子进程，
+    # 导致 Embedding 模型初始化环境不一致而卡死
+    process = subprocess.run(cmd, cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    sys.exit(process.returncode)
 
 
 if __name__ == "__main__":

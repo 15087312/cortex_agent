@@ -23,6 +23,11 @@ class Settings(BaseSettings):
         "PROACTIVE_OUTREACH_ENABLED", "PROACTIVE_OUTREACH_COOLDOWN_MINUTES",
         "PROACTIVE_OUTREACH_IDLE_MINUTES",
         "MEMORY_TTL_SHORT", "MEMORY_TTL_LONG",
+        "CAUSAL_MAX_NODES", "CAUSAL_MAX_ANCHORS", "CAUSAL_MAX_NEIGHBORS_PER_HOP",
+        "CAUSAL_MAX_TREE_DEPTH", "CAUSAL_MAX_EVENTS_RECALL", "CAUSAL_MIN_CONFIDENCE",
+        "CAUSAL_MIN_COOCCUR", "CAUSAL_HOT_CACHE_TTL",
+        "CAUSAL_CONFIDENCE_BOOST_DELTA", "CAUSAL_CONFIDENCE_MAX",
+        "CAUSAL_UPDATE_STATS_INTERVAL",
         "EXECUTION_MODE",
     }
 
@@ -33,21 +38,21 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = ""
     OPENAI_API_BASE_URL: str = "https://api.openai.com/v1"
 
-    # 大模型
+    # 大模型（必须在 .env 或 ~/.cortex/settings.json 中配置）
     LARGE_MODEL_API_KEY: str = ""
-    LARGE_MODEL_API_URL: str = "https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation"
-    LARGE_MODEL_NAME: str = "deepseek-v4-flash"
+    LARGE_MODEL_API_URL: str = ""
+    LARGE_MODEL_NAME: str = ""
     LARGE_MODEL_API_FORMAT: str = ""  # "dashscope" / "openai" / 留空自动检测
 
-    # 中模型
+    # 中模型（必须在 .env 或 ~/.cortex/settings.json 中配置）
     MEDIUM_MODEL_API_KEY: str = ""
-    MEDIUM_MODEL_API_URL: str = "https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation"
-    MEDIUM_MODEL_NAME: str = "deepseek-v4-flash"
+    MEDIUM_MODEL_API_URL: str = ""
+    MEDIUM_MODEL_NAME: str = ""
 
-    # 小模型
+    # 小模型（必须在 .env 或 ~/.cortex/settings.json 中配置）
     SMALL_MODEL_API_KEY: str = ""
     SMALL_MODEL_API_URL: str = ""
-    SMALL_MODEL_NAME: str = "deepseek-v4-flash"
+    SMALL_MODEL_NAME: str = ""
 
 
 
@@ -75,7 +80,8 @@ class Settings(BaseSettings):
     EMBEDDING_MODEL: str = "paraphrase-multilingual-MiniLM-L12-v2"
     EMBEDDING_DEVICE: str = "cpu"
     EMBEDDING_CACHE_FOLDER: str = "data/memory/embeddings/models"
-    EMBEDDING_LOCAL_FILES_ONLY: bool = True
+    EMBEDDING_LOCAL_FILES_ONLY: bool = False
+    HF_MIRROR: str = ""
 
     # SQLite 数据库配置（默认，可直接打包）
     SQLITE_PATH: str = str(Path(__file__).resolve().parents[1] / "data" / "memory.db")
@@ -223,6 +229,20 @@ class Settings(BaseSettings):
                     f"Production deployment requires: {', '.join(missing)}"
                 )
 
+        # 任何环境下都校验模型配置完整性
+        missing_model = []
+        for tier in ("LARGE", "MEDIUM", "SMALL"):
+            for field in ("API_KEY", "API_URL", "NAME"):
+                key = f"{tier}_MODEL_{field}"
+                if not getattr(self, key, ""):
+                    missing_model.append(key)
+        if missing_model:
+            import sys
+            print(
+                f"[WARNING] 以下模型配置项未设置，请在 .env 中配置: {', '.join(missing_model)}",
+                file=sys.stderr,
+            )
+
     # 模型配置
     MODEL_TIMEOUT: int = 180  # 模型 HTTP 请求超时（秒），可被各模型配置覆盖
 
@@ -271,6 +291,19 @@ class Settings(BaseSettings):
     MEMORY_TTL_LONG: int = 86400  # 24 小时
     MEMORY_VECTOR_DIMENSION: int = 768
 
+    # ── 因果系统配置 ──
+    CAUSAL_MAX_NODES: int = 500             # 因果图最大节点数
+    CAUSAL_MAX_ANCHORS: int = 3             # 深度回忆最大锚点数
+    CAUSAL_MAX_NEIGHBORS_PER_HOP: int = 10  # 每跳最大邻居数
+    CAUSAL_MAX_TREE_DEPTH: int = 4          # 因果树最大深度
+    CAUSAL_MAX_EVENTS_RECALL: int = 30      # 单轮事件召回上限
+    CAUSAL_MIN_CONFIDENCE: float = 0.2      # 最小因果置信度（低于此的边不参与推理）
+    CAUSAL_MIN_COOCCUR: int = 2             # 共现统计最小阈值
+    CAUSAL_HOT_CACHE_TTL: int = 300         # 热缓存 TTL（秒）
+    CAUSAL_CONFIDENCE_BOOST_DELTA: float = 0.05  # 每次回忆边置信度增量
+    CAUSAL_CONFIDENCE_MAX: float = 0.99     # 最大置信度上限
+    CAUSAL_UPDATE_STATS_INTERVAL: int = 10  # 增量更新统计推送（秒）
+
     # 注意力配置
     ATTENTION_WEIGHT_THRESHOLD: float = 0.7
     INTERRUPT_URGENCY_THRESHOLD: float = 0.9
@@ -292,13 +325,42 @@ class Settings(BaseSettings):
     )
 
     _USER_CONFIG_PATH = Path.home() / ".cortex" / "settings.json"
+    _USER_CONFIG_TEMPLATE = {
+        "_comment": "Cortex 用户级配置，覆盖 .env 中的同名项。删除此项可恢复 .env 配置。",
+        "LARGE_MODEL_API_KEY": "",
+        "LARGE_MODEL_API_URL": "",
+        "LARGE_MODEL_NAME": "",
+        "MEDIUM_MODEL_API_KEY": "",
+        "MEDIUM_MODEL_API_URL": "",
+        "MEDIUM_MODEL_NAME": "",
+        "SMALL_MODEL_API_KEY": "",
+        "SMALL_MODEL_API_URL": "",
+        "SMALL_MODEL_NAME": "",
+    }
+
+    def _ensure_user_config(self) -> None:
+        """确保 ~/.cortex/settings.json 存在，不存在则自动创建模板"""
+        import json
+        cortex_dir = self._USER_CONFIG_PATH.parent
+        if not cortex_dir.exists():
+            cortex_dir.mkdir(parents=True, exist_ok=True)
+            print(f"[INFO] 已创建用户配置目录: {cortex_dir}", file=sys.stderr)
+        if not self._USER_CONFIG_PATH.exists():
+            self._USER_CONFIG_PATH.write_text(
+                json.dumps(self._USER_CONFIG_TEMPLATE, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            print(f"[INFO] 已创建用户配置模板: {self._USER_CONFIG_PATH}", file=sys.stderr)
+            print(f"[INFO] 可编辑此文件覆盖 .env 中的模型配置", file=sys.stderr)
 
     def model_post_init(self, __context) -> None:
         """创建必要的数据目录，并加载用户级配置覆盖"""
+        import sys
         db_dir = os.path.dirname(self.SQLITE_PATH)
         if db_dir:
             os.makedirs(db_dir, exist_ok=True)
 
+        self._ensure_user_config()
         self._load_user_config()
 
     def _load_user_config(self):

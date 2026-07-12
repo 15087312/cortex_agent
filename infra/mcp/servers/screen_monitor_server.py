@@ -114,6 +114,10 @@ def _handle_list_tools(req: dict):
 
 def _capture_screen():
     """截图并返回 numpy array (BGR)"""
+    from utils.screen_capture import SCREENSHOT_ENABLED
+    if not SCREENSHOT_ENABLED:
+        return None
+
     import tempfile
     import os
     try:

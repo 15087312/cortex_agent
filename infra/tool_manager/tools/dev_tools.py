@@ -7,7 +7,7 @@ import sys
 import os
 import re
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, List, Optional
 
 from infra.tool_manager.tool_registry import ToolRegistry
 from utils.logger import setup_logger
@@ -322,3 +322,128 @@ def generate_documentation(path: str, function_name: Optional[str] = None) -> Di
                 docs.append({"name": node.name, "line": node.lineno, "generated_docstring": doc, "has_docstring": bool(ast.get_docstring(node))})
         return {"success": True, "file": str(p), "total": len(docs), "documentation": docs}
     except Exception as e: return {"error": str(e)}
+
+
+# ── 目录探索 ──
+
+@ToolRegistry.register(
+    "directory_tree",
+    description="递归列出指定目录的树形结构，快速了解项目布局。返回格式为缩进树（├── │   └──）。",
+    params={
+        "path": "可选，起始目录（默认项目根目录）",
+        "max_depth": "可选，最大递归深度（默认 3，最大 6）",
+        "include_hidden": "可选，是否包含隐藏文件/目录（默认 False）",
+        "exclude_patterns": "可选，排除的目录/文件名称列表，如 ['node_modules', '.git', '__pycache__']",
+    },
+    risk_level="LOW",
+    category="query",
+    core=True,
+)
+def directory_tree(path: Optional[str] = None, max_depth: int = 3, include_hidden: bool = False,
+                   exclude_patterns: Optional[List[str]] = None, **kwargs) -> Dict[str, Any]:
+    """递归列出目录的树形结构。未知参数自动忽略（兼容模型生成的灵活调用）。"""
+    max_depth = max(1, min(6, int(max_depth or 3)))
+    exclude = set(exclude_patterns or [])
+    if not include_hidden:
+        exclude.add("__pycache__")
+
+    # 确定起始路径
+    if path:
+        start = Path(path).expanduser()
+        if not start.is_absolute():
+            start = Path(__file__).resolve().parents[3] / path
+    else:
+        start = Path(__file__).resolve().parents[3]
+
+    if not start.exists():
+        return {"error": f"路径不存在: {start}"}
+    if not start.is_dir():
+        return {"error": f"路径不是目录: {start}"}
+
+    lines: list[str] = []
+    lines.append(str(start))
+
+    def _walk(current: Path, prefix: str, depth: int) -> None:
+        if depth > max_depth:
+            return
+        try:
+            entries = sorted(current.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower()))
+        except PermissionError:
+            lines.append(f"{prefix}[权限拒绝]")
+            return
+        except OSError:
+            lines.append(f"{prefix}[读取错误]")
+            return
+
+        for i, entry in enumerate(entries):
+            if entry.name in exclude:
+                continue
+            if not include_hidden and entry.name.startswith("."):
+                continue
+
+            is_last = i == len(entries) - 1
+            connector = "└── " if is_last else "├── "
+            lines.append(f"{prefix}{connector}{entry.name}{'/' if entry.is_dir() else ''}")
+
+            if entry.is_dir() and depth < max_depth:
+                extension = "    " if is_last else "│   "
+                _walk(entry, prefix + extension, depth + 1)
+
+    _walk(start, "", 1)
+    total = len(lines) - 1
+    return {"success": True, "tree": "\n".join(lines), "total_entries": total, "path": str(start), "max_depth": max_depth}
+
+
+# ── MCP 文件工具的本地兜底 ──
+
+@ToolRegistry.register(
+    "list_directory",
+    description="列出指定目录的内容（文件名列表）。替代 MCP filesystem 的同名工具，更快更稳定。",
+    params={
+        "path": "目录路径（必填）",
+    },
+    risk_level="LOW",
+    category="query",
+    core=True,
+)
+def list_directory(path: str, **kwargs) -> Dict[str, Any]:
+    """列出目录内容"""
+    target = Path(path).expanduser()
+    if not target.exists():
+        return {"error": f"路径不存在: {target}"}
+    if not target.is_dir():
+        return {"error": f"不是目录: {target}"}
+    try:
+        entries = sorted(target.iterdir(), key=lambda x: x.name.lower())
+    except PermissionError:
+        return {"error": f"权限拒绝: {target}"}
+    files = [e.name for e in entries if e.is_file()]
+    dirs = [e.name + "/" for e in entries if e.is_dir()]
+    return {"success": True, "path": str(target), "directories": dirs, "files": files, "total": len(entries)}
+
+
+@ToolRegistry.register(
+    "read_text_file",
+    description="读取文本文件的内容。替代 MCP filesystem 的同名工具，更快更稳定。",
+    params={
+        "path": "文件路径（必填）",
+        "max_length": "可选，最大读取字符数（默认 50000）",
+    },
+    risk_level="LOW",
+    category="query",
+    core=True,
+)
+def read_text_file(path: str, max_length: int = 50000, **kwargs) -> Dict[str, Any]:
+    """读取文本文件内容"""
+    target = Path(path).expanduser()
+    if not target.exists():
+        return {"error": f"文件不存在: {target}"}
+    if not target.is_file():
+        return {"error": f"不是文件: {target}"}
+    try:
+        content = target.read_text(encoding="utf-8", errors="replace")
+    except Exception as e:
+        return {"error": f"读取失败: {e}"}
+    truncated = len(content) > max_length
+    text = content[:max_length] + ("\n... [截断]" if truncated else "")
+    return {"success": True, "path": str(target), "content": text, "truncated": truncated, "size": len(content)}

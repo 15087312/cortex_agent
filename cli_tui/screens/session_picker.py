@@ -31,15 +31,16 @@ class SessionPicker(ModalScreen):
             yield ListView(*items, id="session-list")
 
     def on_list_view_selected(self, event):
-        idx = event.list_view.index
-        if 0 <= idx < len(self._sessions):
-            target = self._sessions[idx]
-            session_id = target["session_id"]
-            session_title = target.get("title", "")
-            if self._on_actions:
-                # 先关闭 picker，再弹出 action menu
-                self.dismiss()
-                self._on_actions(session_id, session_title)
-            else:
-                self._on_switch(session_id)
-                self.dismiss()
+        idx = event.index
+        if idx is None or idx < 0 or idx >= len(self._sessions):
+            return
+        target = self._sessions[idx]
+        session_id = target["session_id"]
+        session_title = target.get("title", "")
+        if self._on_actions:
+            # 先关闭 picker，再弹出 action menu
+            self.dismiss()
+            self._on_actions(session_id, session_title)
+        else:
+            self._on_switch(session_id)
+            self.dismiss()

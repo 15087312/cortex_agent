@@ -1107,16 +1107,12 @@ class REPL(Screen):
 
     def _handle_session_action(self, action: str, session_id: str):
         """处理会话操作"""
-        if action == "switch":
-            self._switch_session(session_id)
-        elif action == "delete":
+        if action == "delete":
             self._delete_session(session_id)
         elif action == "rollback":
             self._rollback_and_delete_session(session_id)
         elif action == "continue":
             self._switch_session(session_id)
-        elif action == "fork":
-            self._fork_session(session_id)
 
     @work
     async def _delete_session(self, session_id: str):
@@ -1291,8 +1287,8 @@ class REPL(Screen):
                 )
             self.notify(f"已分叉 {count} 条消息到新会话", severity="information", timeout=2)
 
-            # 切换到新会话
-            await self._switch_session(new_id)
+            # 切换到新会话（@work 方法不能 await，直接调用即可）
+            self._switch_session(new_id)
 
         except Exception as e:
             logger.error(f"分叉会话失败: {e}")

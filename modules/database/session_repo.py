@@ -1,6 +1,5 @@
 """
 会话持久化仓库 — 读写 SQLite
-
 提供会话和消息的 CRUD 操作，供 api_stream.py 调用。
 """
 from datetime import datetime
@@ -155,6 +154,40 @@ class SessionRepository:
                 "is_active": session_row.is_active,
                 "execution_mode": session_row.execution_mode,
             }
+
+    def delete_session(self, session_id: str) -> bool:
+        """删除会话及其所有消息"""
+        with self._session() as s:
+            msg_count = s.query(ChatMessage).filter_by(session_id=session_id).delete()
+            session_row = s.query(ChatSession).filter_by(session_id=session_id).first()
+            if session_row:
+                s.delete(session_row)
+                logger.info(f"[SessionRepo] 删除会话: {session_id[:12]}... ({msg_count} 条消息)")
+                return True
+            return False
+
+    def copy_messages_to_session(self, source_id: str, target_id: str) -> int:
+        """将源会话的所有消息复制到目标会话，返回复制条数"""
+        with self._session() as s:
+            source_msgs = s.query(ChatMessage).filter_by(
+                session_id=source_id
+            ).order_by(ChatMessage.created_at).all()
+            if not source_msgs:
+                return 0
+            for msg in source_msgs:
+                s.add(ChatMessage(
+                    session_id=target_id,
+                    role=msg.role,
+                    content=msg.content,
+                    round_num=msg.round_num,
+                    tier=msg.tier,
+                ))
+            # 更新目标会话的消息计数
+            target_session = s.query(ChatSession).filter_by(session_id=target_id).first()
+            if target_session:
+                target_session.message_count = len(source_msgs)
+            logger.info(f"[SessionRepo] 复制 {len(source_msgs)} 条消息: {source_id[:12]} → {target_id[:12]}")
+            return len(source_msgs)
 
 
 # 全局单例

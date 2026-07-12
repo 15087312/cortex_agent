@@ -30,6 +30,10 @@ class StatusLine(Static):
         icon, label, style = _MODE_LABELS.get(mode, ("✏️ ", "Edit", "bold yellow"))
         parts.append(f"[{style}]{icon} {label}[/{style}]")
 
+        # 工具开关
+        if s.no_tools:
+            parts.append("[bold magenta]🔇 无工具[/bold magenta]")
+
         if s.trace_id:
             parts.append(f"trace: {s.trace_id[:12]}")
         if s.tool_stats["total"]:

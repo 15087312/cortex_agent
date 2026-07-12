@@ -198,6 +198,9 @@ class PyAutoGUIController(HardwareInputController):
     def screenshot(self, region: Tuple[int, int, int, int] = None) -> Optional[bytes]:
         if not self._initialized:
             return None
+        from utils.screen_capture import SCREENSHOT_ENABLED
+        if not SCREENSHOT_ENABLED:
+            return None
         try:
             import io
             from PIL import Image

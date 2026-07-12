@@ -34,8 +34,6 @@ from modules.thinking.core.control_tools import (
     QUERY_TOOL_DETAILS_TOOL,
     REQUEST_MODE_CHANGE_TOOL,
     ASK_USER_INTENT_TOOL,
-    SWITCH_PERSONALITY_TOOL,
-    LIST_PERSONALITIES_TOOL,
     ThinkingTaskContext,
 )
 
@@ -110,7 +108,6 @@ class ModelRunner:
         self._thinker: Optional[Any] = None  # ContinuousThinker, 延迟创建
         self._active_skill: Any = None  # 当前激活的技能（Skill 实例）
         self._active_skill_tool_rules: Any = None  # 技能的工具范围规则
-        self._active_personality: Any = None  # 当前激活的人格（Personality 实例）
         self._wakeup_event: Optional[threading.Event] = None  # 事件驱动唤醒
 
         logger.info(
@@ -542,7 +539,7 @@ class ModelRunner:
             prefix += "]\n\n"
             final_text = prefix + partial_text
 
-            # 写入黑板
+            # 写入黑板（例外：取消/中断路径，不经过正常输出流）
             if self.blackboard:
                 self.blackboard.set_final_response(final_text)
                 self.blackboard.add_observation(
@@ -563,7 +560,17 @@ class ModelRunner:
             logger.warning(f"[ModelRunner] 保存部分输出失败: {e}")
 
     async def _write_final_result(self) -> None:
-        """写入最终结果到 CognitiveBlackboard（新架构）"""
+        """
+        写入最终结果到 CognitiveBlackboard——最终回复的唯一输出点。
+
+        规范: 所有正常终止路径（continue_thinking、respond_to_user、直接文本、强制结束）
+        必须通过 record_control_decision 设置 result_summary，由本方法统一写入。
+        禁止在其他路径中直接调用 set_final_response。
+
+        例外（保持现状）:
+          - _save_partial_result: 取消/中断路径，不走正常输出流
+          - no_tools 模式: 独立模式，不经过 thinking 循环
+        """
         final_thought = ""
         try:
             snapshot = None
@@ -612,9 +619,8 @@ class ModelRunner:
                 if self.tier == "large":
                     if has_final_result:
                         # 大模型：使用 result_summary（精炼结果）
-                        self.blackboard.set_final_response(
-                            control_decision.result_summary[:8000]
-                        )
+                        response = control_decision.result_summary[:8000]
+                        self.blackboard.set_final_response(response)
                         logger.info(
                             f"[ModelRunner] {self.model_id} 写入最终回复到黑板 "
                             f"({len(control_decision.result_summary)} 字符)"
@@ -1400,7 +1406,7 @@ class ModelRunner:
             logger.info(f"[ModelRunner] {self.model_id} 纯聊天模式，跳过工具加载")
             response = await client.generate(prompt=user_prompt, max_tokens=4096)
             result = response.content if hasattr(response, 'content') else str(response)
-            # 写入 blackboard 供编排器读取
+            # 写入 blackboard（例外：no_tools 模式不走 thinking 循环，直接输出）
             if self.blackboard:
                 self.blackboard.set_final_response(result)
             return result
@@ -1519,8 +1525,6 @@ class ModelRunner:
 
                     if not tool_calls:
                         if self.tier == "large" and content.strip():
-                            if self.blackboard:
-                                self.blackboard.set_final_response(content)
                             if self._thinker:
                                 self._thinker.record_control_decision({"continue": False, "result_summary": content})
                             return content
@@ -1550,8 +1554,6 @@ class ModelRunner:
                         logger.info(f"[ModelRunner] {self.model_id} 多次拒绝仍无工具调用，强制结束思考循环")
                         # 直接写入黑板作为最终回复
                         response_text = content or f"[{self.identity.role}] 已处理：{self._task_description}"
-                        if self.blackboard:
-                            self.blackboard.set_final_response(response_text)
                         if self._thinker:
                             self._thinker.record_control_decision({"continue": False, "result_summary": response_text})
                         return response_text
@@ -1575,8 +1577,6 @@ class ModelRunner:
                         elif tc.name in ("request_skill", "list_skills", "stop_skill", "set_memory_focus"):
                             control_calls.append(tc)
                         elif tc.name in ("request_mode_change", "ask_user_intent"):
-                            control_calls.append(tc)
-                        elif tc.name in ("switch_personality", "list_personalities"):
                             control_calls.append(tc)
                         elif tc.name == "query_tool_details":
                             query_calls.append(tc)
@@ -1624,8 +1624,6 @@ class ModelRunner:
                                     self._thinker.record_control_decision(ctrl)
                             elif tc.name == "respond_to_user":
                                 content = args.get("content", "")
-                                if self.blackboard:
-                                    self.blackboard.set_final_response(content)
                                 if self._thinker:
                                     self._thinker.record_control_decision({"continue": False, "result_summary": content})
                             elif tc.name == "request_skill":
@@ -1643,24 +1641,6 @@ class ModelRunner:
                                 mix = args.get("mix", {})
                                 if self._thinker and isinstance(mix, dict):
                                     self._thinker._memory_focus = mix
-                            elif tc.name == "switch_personality":
-                                personality_id = str(args.get("personality_id", "")).strip()
-                                if personality_id:
-                                    from modules.thinking.personality import get_personality
-                                    p = get_personality(personality_id)
-                                    if p:
-                                        self._active_personality = p
-                                        logger.info(f"[ModelRunner] 人格已切换: {personality_id} ({p.name})")
-                                    else:
-                                        content = f"人格 {personality_id} 不存在，使用 list_personalities 查看可用人格"
-                            elif tc.name == "list_personalities":
-                                from modules.thinking.personality import list_personalities
-                                all_p = list_personalities()
-                                if all_p:
-                                    lines = [f"- {p.id}: {p.name} — {p.style}" for p in all_p.values()]
-                                    content = "【可用人格】\n" + "\n".join(lines)
-                                else:
-                                    content = "【可用人格】暂无其他人格，当前为默认人格"
                             elif tc.name == "stop_skill":
                                 if self._active_skill:
                                     reason = args.get("reason", "")
@@ -1815,7 +1795,6 @@ class ModelRunner:
                         has_respond = False
                         respond_content = ""
                         skill_feedback = ""
-                        personality_feedback = ""
                         for tc in control_calls:
                             try:
                                 args = json.loads(tc.arguments) if isinstance(tc.arguments, str) and tc.arguments.strip() else {}
@@ -1843,22 +1822,6 @@ class ModelRunner:
                                         skill_feedback = "【可用技能】\n" + "\n".join(lines)
                                     else:
                                         skill_feedback = "【可用技能】暂无可用技能"
-                                elif tc.name == "switch_personality":
-                                    personality_id = args.get("personality_id", "")
-                                    from modules.thinking.personality import get_personality
-                                    p = get_personality(personality_id)
-                                    if p:
-                                        personality_feedback = f"【人格已切换】{p.name}\n风格：{p.style}"
-                                    else:
-                                        personality_feedback = f"【人格不存在】{personality_id}，使用 list_personalities 查看可用人格"
-                                elif tc.name == "list_personalities":
-                                    from modules.thinking.personality import list_personalities
-                                    all_p = list_personalities()
-                                    if all_p:
-                                        lines = [f"- {p.id}: {p.name} — {p.style}" for p in all_p.values()]
-                                        personality_feedback = "【可用人格】\n" + "\n".join(lines)
-                                    else:
-                                        personality_feedback = "【可用人格】暂无其他人格"
                                 elif tc.name == "request_mode_change":
                                     # 请求模式切换 — 暂停等待用户选择
                                     reason = args.get("reason", "")
@@ -1888,8 +1851,6 @@ class ModelRunner:
                             return respond_content
                         if skill_feedback:
                             return skill_feedback
-                        if personality_feedback:
-                            return personality_feedback
                         # continue_thinking(continue=false): 优先返回模型的实际内容
                         if ctrl_notifications:
                             # 如果模型有实际内容（非空），返回内容而非控制摘要
@@ -1914,14 +1875,6 @@ class ModelRunner:
                         for tc in normal_calls:
                             try:
                                 args = json.loads(tc.arguments) if isinstance(tc.arguments, str) and tc.arguments.strip() else {}
-                                # 注入 session_id 和 model_id 到所有工具（供 recall_guidance 等查询）
-                                args["_session_id"] = self.session_id or "default"
-                                args["_model_id"] = self.model_id or "default"
-                                # 注入 session_id 到文件历史/计划工具
-                                _history_tools = {"record_file_change", "rollback_file",
-                                                   "rollback_session_files", "list_file_versions", "plan"}
-                                if tc.name in _history_tools:
-                                    pass  # 已注入
                                 missing = self._missing_required_tool_args(tc.name, args)
                                 if missing:
                                     # 生成友好提示，告诉模型正确的参数名
@@ -1989,7 +1942,7 @@ class ModelRunner:
                                         if mcp_result.success:
                                             result = str(mcp_result.result) if mcp_result.result is not None else "(无返回值)"
                                         else:
-                                            error_msg = mcp_result.error or "(未知错误)"
+                                            error_msg = mcp_result.error or f"MCP 执行失败（无错误信息）: {tc.name}"
                                             result = f"[错误: {error_msg}]"
                                             if self.tier == "expert":
                                                 expert_errors.append(f"{tc.name}: {mcp_result.error}")
@@ -2152,11 +2105,6 @@ class ModelRunner:
         if self._active_skill and self.tier == "large":
             skill = self._active_skill
             parts.append(f"你是 {skill.name}。\n{skill.description}")
-
-        # 人格叠加（覆盖说话风格，放在技能之后）
-        if self._active_personality and self.tier == "large":
-            p = self._active_personality
-            parts.append(f"【当前人格】{p.name}\n风格: {p.style}\n说话规则: {p.voice_rules}")
 
         if dialog_context:
             parts.append(dialog_context)

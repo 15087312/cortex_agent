@@ -15,22 +15,20 @@ HELP_TEXT = """
 [bold]命令[/bold]
   /help, /h, /?     查看帮助
   /status, /s       查看系统状态
-  /memory, /mem     查看记忆状态
-  /context, /ctx    加载并显示当前上下文
-  /search <query>   搜索长期记忆 (示例: /search 编程)
-  /session <主管>   查看副会话内容
+  /session          查看会话列表并选择切换
+  /history          查看对话历史
+  /history edit <n>  编辑第 n 条对话（保存后下次生效）
   /tools, /t        切换工具调用面板
   /debug, /d        切换调试面板
   /thinking, /th    切换思考过程显示
   /clear, /c        清空显示
-  /export, /e       导出工具调用为 JSON
+  /mode <模式>      切换执行模式 (plan / edit / yolo / control)
+  /notools, /nt     临时禁用AI工具（纯聊天，减少token消耗）
+  /config           查看或修改配置
+  /stop             停止当前思考
   /exit, /q, /quit  退出
-
-[bold]功能说明[/bold]
-  • 每次对话时自动加载相关上下文和个性配置
-  • 系统提示词已隐去，仅显示核心对话内容
-  • 使用 /context 查看当前加载的记忆和配置
-  • 使用 /search 搜索过去的对话记录和思考
+  Ctrl+Y            重试上一次请求
+  Shift+Tab         循环切换执行模式
 
 [bold]层级说明[/bold]
   🧠 总指挥 - 大模型 (统筹全局)

@@ -36,14 +36,44 @@ _TRIGGER_PATTERNS = [
 
 # ── 查询意图分类 ──
 _INTENT_PATTERNS: Dict[str, List[str]] = {
-    "trace":     [r"为什么", r"原因", r"root cause", r"溯源", r"起因"],
-    "predict":   [r"后果", r"会导致", r"结果", r"predict", r"forecast"],
-    "generalize":[r"规律", r"pattern", r"类似情况", r"归纳", r"共同点"],
+    "trace":     [r"为什么", r"原因", r"root cause", r"溯源", r"起因", r"导致", r"造成"],
+    "predict":   [r"后果", r"会导致", r"结果", r"predict", r"forecast", r"风险", r"影响"],
+    "generalize":[r"规律", r"pattern", r"类似情况", r"归纳", r"共同点", r"总结"],
     "counterfactual": [r"如果当时", r"假如", r"what if", r"otherwise"],
+    "analyze":   [r"分析", r"根因", r"诊断", r"排查", r"调试", r"debug", r"定位", r"怎么解决"],
+    "optimize":  [r"优化", r"改进", r"提升", r"加速", r"性能", r"效率", r"怎么.*好"],
+    "evaluate":  [r"评估", r"比较", r"对比", r"优劣", r"哪个更好"],
 }
 
+# ── 限流常量（从 settings 读取，支持运行时修改）──
+from config.settings import settings as _settings
 
-_intent_cache: Dict[str, str] = {}
+def _get_max_anchors() -> int:
+    return getattr(_settings, "CAUSAL_MAX_ANCHORS", 3)
+
+def _get_max_neighbors() -> int:
+    return getattr(_settings, "CAUSAL_MAX_NEIGHBORS_PER_HOP", 10)
+
+def _get_max_tree_depth() -> int:
+    return getattr(_settings, "CAUSAL_MAX_TREE_DEPTH", 4)
+
+def _get_max_events_recall() -> int:
+    return getattr(_settings, "CAUSAL_MAX_EVENTS_RECALL", 30)
+
+def _get_min_confidence() -> float:
+    return getattr(_settings, "CAUSAL_MIN_CONFIDENCE", 0.2)
+
+def _get_hot_cache_ttl() -> float:
+    return float(getattr(_settings, "CAUSAL_HOT_CACHE_TTL", 300))
+
+def _get_confidence_boost_delta() -> float:
+    return float(getattr(_settings, "CAUSAL_CONFIDENCE_BOOST_DELTA", 0.05))
+
+def _get_confidence_max() -> float:
+    return float(getattr(_settings, "CAUSAL_CONFIDENCE_MAX", 0.99))
+
+
+_intent_cache: Dict[str, Tuple[str, float]] = {}
 _intent_cache_ttl: float = 60.0
 
 
@@ -52,13 +82,16 @@ def classify_intent(query: str) -> str:
     now = time.time()
     cached = _intent_cache.get(query)
     if cached:
-        return cached
+        intent, ts = cached
+        if now - ts < _intent_cache_ttl:
+            return intent
     q = query.lower()
     for intent, patterns in _INTENT_PATTERNS.items():
         for p in patterns:
             if re.search(p, q):
-                _intent_cache[query] = intent
+                _intent_cache[query] = (intent, now)
                 return intent
+    _intent_cache[query] = ("shallow", now)
     return "shallow"
 
 
@@ -150,14 +183,14 @@ class DepthRecallScheduler:
 
         # 缓存热门因果树结果
         self._hot_cache: Dict[str, Tuple[DeepRecallResult, float]] = {}
-        self._hot_cache_ttl = 300.0  # 5 分钟
+        self._hot_cache_ttl = _get_hot_cache_ttl()
 
         # 增量更新统计（供日志）
         self._update_stats: Dict[str, int] = {"linked": 0, "boosted": 0}
 
         # 边置信度提升的衰减因子：每次 recall 后每条边最多 + δ
-        self._confidence_boost_delta = 0.05
-        self._confidence_max = 0.99
+        self._confidence_boost_delta = _get_confidence_boost_delta()
+        self._confidence_max = _get_confidence_max()
 
     # ── 主入口 ──
 
@@ -183,8 +216,8 @@ class DepthRecallScheduler:
         result = DeepRecallResult(intent=classify_intent(query))
         hops = 2 if depth_level >= 2 else 1
 
-        # Step 1: 因果图定位
-        anchors = self._graph.find_anchor_nodes(query, top_k=3)
+        # Step 1: 因果图定位（限流：最多 _get_max_anchors() 个锚点）
+        anchors = self._graph.find_anchor_nodes(query, top_k=_get_max_anchors())
         if not anchors:
             logger.info("[DepthRecall] 未找到锚点节点，回退到浅层检索")
             return self._fallback(query, max_results, "no_anchor_nodes")
@@ -193,43 +226,43 @@ class DepthRecallScheduler:
         result.confidence = anchors[0][1]
         logger.info(f"[DepthRecall] 锚点: {result.anchor.label} (置信度 {result.confidence})")
 
-        # 按意图定向扩散
+        # 按意图定向扩散（限流：每跳最多 _get_max_neighbors()）
         intent = result.intent
         neighbor_nodes: List[CausalNode] = []
         if intent == "trace":
             neighbor_nodes = self._graph.get_predecessors(
                 result.anchor.id, min_confidence,
-            )[:8]
+            )[:_get_max_neighbors()]
         elif intent == "predict":
             neighbor_nodes = self._graph.get_successors(
                 result.anchor.id, min_confidence,
-            )[:8]
+            )[:_get_max_neighbors()]
         else:
             neighbors = self._graph.get_neighbors(
                 result.anchor.id, hops=hops, min_confidence=min_confidence,
             )
-            neighbor_nodes = [n for n, _, _ in neighbors][:12]
+            neighbor_nodes = [n for n, _, _ in neighbors][:_get_max_neighbors()]
 
         all_anchor_ids = [result.anchor.id] + [n.id for n in neighbor_nodes]
 
-        # Step 2: 因果树下钻
+        # Step 2: 因果树下钻（限流：最大深度 _get_max_tree_depth()）
         chains: List[CausalChain] = []
         if intent == "trace":
             for nid in all_anchor_ids:
-                chains.extend(self._tree.trace_up(nid, max_depth=5, min_confidence=min_confidence))
+                chains.extend(self._tree.trace_up(nid, max_depth=_get_max_tree_depth(), min_confidence=min_confidence))
         elif intent == "predict":
             for nid in all_anchor_ids:
-                chains.extend(self._tree.trace_down(nid, max_depth=5, min_confidence=min_confidence))
+                chains.extend(self._tree.trace_down(nid, max_depth=_get_max_tree_depth(), min_confidence=min_confidence))
         elif intent == "generalize":
             for nid in all_anchor_ids:
-                chains.extend(self._tree.trace_up(nid, max_depth=3, min_confidence=min_confidence))
-                chains.extend(self._tree.trace_down(nid, max_depth=3, min_confidence=min_confidence))
+                chains.extend(self._tree.trace_up(nid, max_depth=_get_max_tree_depth(), min_confidence=min_confidence))
+                chains.extend(self._tree.trace_down(nid, max_depth=_get_max_tree_depth(), min_confidence=min_confidence))
             result.shared_factors = self._tree.compare_lateral(
-                all_anchor_ids, max_depth=3, min_confidence=min_confidence,
+                all_anchor_ids, max_depth=_get_max_tree_depth(), min_confidence=min_confidence,
             )
         else:
             for nid in all_anchor_ids:
-                chains.extend(self._tree.trace_up(nid, max_depth=5, min_confidence=min_confidence))
+                chains.extend(self._tree.trace_up(nid, max_depth=_get_max_tree_depth(), min_confidence=min_confidence))
                 chains.extend(self._tree.trace_down(nid, max_depth=5, min_confidence=min_confidence))
 
         chains.sort(key=lambda c: c.confidence, reverse=True)
@@ -239,9 +272,10 @@ class DepthRecallScheduler:
             logger.info("[DepthRecall] 未找到因果链，回退")
             return self._fallback(query, max_results, "no_causal_chains")
 
-        # Step 3: 事件池召回
+        # Step 3: 事件池召回（限流：最多 _get_max_events_recall() 条）
+        actual_max = min(max_results, _get_max_events_recall())
         supporting, counter = await self._recall_events(
-            query, chains, neighbor_nodes, max_results,
+            query, chains, neighbor_nodes, actual_max, intent,
         )
         result.supporting_events = supporting
         result.counter_examples = counter
@@ -268,12 +302,22 @@ class DepthRecallScheduler:
 
     # ── 事件召回 ──
 
+    # ── 动态权重模板（按意图调整）──
+    _WEIGHT_TEMPLATES = {
+        "trace":            {"semantic": 0.20, "causal": 0.45, "importance": 0.20, "time": 0.15},
+        "predict":          {"semantic": 0.20, "causal": 0.45, "importance": 0.20, "time": 0.15},
+        "generalize":       {"semantic": 0.30, "causal": 0.30, "importance": 0.25, "time": 0.15},
+        "counterfactual":   {"semantic": 0.25, "causal": 0.40, "importance": 0.20, "time": 0.15},
+        "default":          {"semantic": 0.30, "causal": 0.35, "importance": 0.20, "time": 0.15},
+    }
+
     async def _recall_events(
         self,
         query: str,
         chains: List[CausalChain],
         neighbor_nodes: List[CausalNode],
         max_results: int,
+        intent: str = "default",
     ) -> Tuple[List[MemoryEvent], List[MemoryEvent]]:
         """用因果链约束召回事件，区分佐证与反例"""
         # 收集因果节点 ID 集合
@@ -324,12 +368,13 @@ class DepthRecallScheduler:
                 if se.id == ev_id:
                     semantic = 0.5
                     break
-            # 复合排序: 语义(0.3) + 因果关联(0.4) + 重要性(0.2) + 时间(0.1)
+            # 动态权重打分（按意图调整各维度权重）
+            w = self._WEIGHT_TEMPLATES.get(intent, self._WEIGHT_TEMPLATES["default"])
             final_score = (
-                0.3 * semantic +
-                0.4 * causal_rel +
-                0.2 * ev.importance +
-                0.1 * self._time_decay(ev.time)
+                w["semantic"]   * semantic +
+                w["causal"]     * causal_rel +
+                w["importance"] * ev.importance +
+                w["time"]       * self._time_decay(ev.time)
             )
             # 因果关联低且语义低则视为反例候选
             is_counter = causal_rel < 0.2 and semantic < 0.2 and ev.importance < 0.4
@@ -346,7 +391,8 @@ class DepthRecallScheduler:
 
         基于:
         - 事件已关联的 causal_node_ids 直接命中率（最高 1.0）
-        - 事件文本关键词与节点 label/keywords 的匹配率
+        - 事件向量与节点向量的余弦相似度（向量匹配）
+        - 事件文本关键词与节点 label/keywords 的匹配率（兜底）
         """
         # 直接命中：事件已显式关联到这些因果节点
         if causal_node_ids and event.causal_node_ids:
@@ -354,7 +400,30 @@ class DepthRecallScheduler:
             if direct_hits > 0:
                 return min(1.0, 0.4 + 0.6 * direct_hits / max(len(causal_node_ids), 1))
 
-        # 文本关键词匹配
+        # 向量匹配：计算事件向量与节点向量的余弦相似度
+        try:
+            from modules.memory.embedding import EmbeddingEngine
+            eng = EmbeddingEngine.get_instance()
+            if eng._loaded:
+                event_text = f"{event.fact} {event.thought} {event.lesson}"
+                event_vec = eng.embed(event_text)
+                if event_vec:
+                    max_sim = 0.0
+                    for nid in causal_node_ids:
+                        node = CausalGraph.get_instance().get_node(nid)
+                        if node:
+                            node_text = f"{node.label} {' '.join(node.keywords)}"
+                            node_vec = eng.embed(node_text)
+                            if node_vec:
+                                # 余弦相似度（向量已归一化，直接点积）
+                                sim = sum(a * b for a, b in zip(event_vec, node_vec))
+                                max_sim = max(max_sim, sim)
+                    if max_sim > 0:
+                        return min(1.0, max_sim)
+        except Exception:
+            pass
+
+        # 文本关键词匹配（兜底）
         text = f"{event.fact} {event.thought} {event.lesson} {' '.join(event.keywords)}".lower()
         if not text:
             return 0.0

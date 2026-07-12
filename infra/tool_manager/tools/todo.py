@@ -15,7 +15,7 @@ from utils.logger import setup_logger
 
 logger = setup_logger("todo")
 
-TODOS_FILE = str(Path.home() / ".hermes" / "todos.json")
+TODOS_FILE = str(Path.home() / ".cortex" / "todos" / "todos.json")
 
 
 def _load_todos() -> list:

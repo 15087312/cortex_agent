@@ -75,7 +75,7 @@ class WSClient:
     async def _check_api(self) -> bool:
         try:
             async with aiohttp.ClientSession(headers=self._make_headers()) as s:
-                async with s.get(f"{self.api_url}/health", timeout=3) as resp:
+                async with s.get(f"{self.api_url}/health", timeout=3, ssl=False) as resp:
                     return resp.status == 200
         except Exception as e:
             logger.debug("API health check failed (degradation): %s", e)
@@ -84,7 +84,7 @@ class WSClient:
     async def _create_session(self) -> Optional[str]:
         try:
             async with aiohttp.ClientSession(headers=self._make_headers()) as s:
-                async with s.post(f"{self.api_url}/stream/session", timeout=5) as resp:
+                async with s.post(f"{self.api_url}/stream/session", timeout=5, ssl=False) as resp:
                     if resp.status == 200:
                         data = await resp.json()
                         return data.get("data", {}).get("session_id", str(uuid.uuid4()))
@@ -115,7 +115,7 @@ class WSClient:
         try:
             self._ws = await self._session.ws_connect(
                 ws_url, heartbeat=15, receive_timeout=300,
-                headers=self._make_headers()
+                headers=self._make_headers(), ssl=False,
             )
         except Exception as e:
             logger.warning("WebSocket connect failed: %s", e)
@@ -205,7 +205,12 @@ class WSClient:
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            return {"type": "error", "content": f"接收失败: {e}"}
+            err_str = str(e)
+            if "SSL" in err_str or "ssl" in err_str or "certificate" in err_str:
+                hint = f"接收失败: {err_str} — 请检查代理(Clash/VPN)是否拦截了 localhost 连接"
+            else:
+                hint = f"接收失败: {err_str}"
+            return {"type": "error", "content": hint}
 
         if msg.type == aiohttp.WSMsgType.TEXT:
             try:

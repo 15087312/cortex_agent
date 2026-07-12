@@ -58,8 +58,8 @@ class PerceptionPool:
         if not recent:
             return ContextFragment(
                 source="perception",
-                content="",
-                target_roles=("large",),
+                content="当前无感知数据（系统运行正常，但最近无屏幕/文件/语音变化）",
+                target_roles=("orchestrator",),
                 section_title="环境感知",
                 priority=5,
             )
@@ -101,8 +101,8 @@ class PerceptionPool:
 
         return ContextFragment(
             source="perception",
-            content="【环境感知】\n" + "\n\n".join(parts),
-            target_roles=("large",),
+            content="\n\n".join(parts),
+            target_roles=("orchestrator",),
             section_title="环境感知",
             priority=5,
             ttl_turns=1,

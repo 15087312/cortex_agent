@@ -172,16 +172,31 @@ class CombinedToolExecutor(ToolExecutorPort):
         self._server_manager = server_manager
 
     def execute(self, request: ToolCallRequest) -> ToolCallResult:
-        """执行工具调用"""
+        """执行工具调用
+
+        优先级：本地工具 > MCP 远程工具
+        本地工具更可靠（无网络/npx 依赖），同名时优先使用本地实现。
+        """
         start = time.time()
 
-        # 检查是否是 MCP 工具
+        # 优先本地工具（更快、更可靠）
+        from infra.tool_manager.tool_registry import ToolRegistry
+        if ToolRegistry.get_func(request.tool_name):
+            return self._execute_local(request, start)
+
+        # 回退：MCP 远程工具
         mcp_tool = self._server_manager.get_tool(request.tool_name)
         if mcp_tool:
             return self._execute_mcp(mcp_tool, request, start)
 
-        # 本地工具
-        return self._execute_local(request, start)
+        # 不存在
+        return ToolCallResult(
+            success=False,
+            error=f"工具不存在: {request.tool_name}",
+            tool_name=request.tool_name,
+            source=request.source,
+            latency_ms=(time.time() - start) * 1000,
+        )
 
     def _execute_local(self, request: ToolCallRequest, start: float) -> ToolCallResult:
         """执行本地工具（async 函数在当前事件循环执行，sync 函数走线程池）"""
@@ -235,11 +250,20 @@ class CombinedToolExecutor(ToolExecutorPort):
             pool = _get_async_pool()
             future = pool.submit(_run_async_in_thread, _call, {})
             result = future.result(timeout=30)
+        except concurrent.futures.TimeoutError:
+            latency_ms = (time.time() - start) * 1000
+            return ToolCallResult(
+                success=False,
+                error=f"MCP 工具超时 (30s): {request.tool_name}",
+                tool_name=request.tool_name,
+                source="mcp",
+                latency_ms=latency_ms,
+            )
         except Exception as e:
             latency_ms = (time.time() - start) * 1000
             return ToolCallResult(
                 success=False,
-                error=str(e),
+                error=str(e) or f"MCP 工具执行异常: {request.tool_name}",
                 tool_name=request.tool_name,
                 source="mcp",
                 latency_ms=latency_ms,

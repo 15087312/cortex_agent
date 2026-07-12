@@ -56,6 +56,7 @@ class SessionActionMenu(ModalScreen):
         self.app.pop_screen()
 
     def on_button_pressed(self, event: Button.Pressed):
+        event.stop()
         action_map = {
             "btn-delete": "delete",
             "btn-rollback": "rollback",

@@ -89,7 +89,11 @@ class UIInteractor:
         """截图"""
         if self.controller:
             return self.controller.screenshot(region)
-        
+
+        from utils.screen_capture import SCREENSHOT_ENABLED
+        if not SCREENSHOT_ENABLED:
+            return None
+
         try:
             import pyautogui
             import io
