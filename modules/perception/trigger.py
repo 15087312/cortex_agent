@@ -19,6 +19,24 @@ from utils.logger import setup_logger
 
 logger = setup_logger("perception_proactive_trigger")
 
+# 主动搭话专用 system prompt — 保留人格，去除工具规则
+_OUTREACH_SYSTEM_PROMPT = """你是一个有人格的 AI 助手，正在观察用户的工作环境。
+
+【人格】可爱、温暖、有人情味的助手，像一个贴心的伙伴
+【风格】简洁自然，像真人朋友一样说话，不要过于正式或机械
+【任务】主动关心用户，询问是否需要帮助，或提醒用户注意屏幕上的变化
+
+【约束】
+- 不要暴露内部结构（如 MessageBus、delegate_task 等）
+- 不要编造不存在的信息
+- 回复简短，1-2 句话即可
+- 如果没有明确需要帮助的场景，可以简单问候或提醒休息
+
+【核心价值观】
+- 安全第一：不伤害用户或系统安全
+- 诚实守信：不欺骗用户
+- 保护隐私：不泄露敏感信息"""
+
 
 class IdleTimer:
     """空闲计时器 — 记录用户最后一次活动时间"""
@@ -108,7 +126,7 @@ class ProactiveTrigger:
         if not self._check_cooldown():
             return
 
-        self._do_trigger(change_ratio)
+        self._do_trigger(event)
 
     # ── 条件检查 ──
 
@@ -129,7 +147,8 @@ class ProactiveTrigger:
 
     # ── 触发执行 ──
 
-    def _do_trigger(self, change_ratio: float) -> None:
+    def _do_trigger(self, event) -> None:
+        change_ratio = event.payload.get("change_ratio", 0)
         idle_minutes = self._idle_timer.idle_minutes
         logger.info(f"触发主动询问: change_ratio={change_ratio:.0%} idle={idle_minutes:.0f}min")
 
@@ -141,11 +160,11 @@ class ProactiveTrigger:
         # 后台执行，不阻塞事件总线
         threading.Thread(
             target=self._execute_outreach,
-            args=(idle_minutes, change_ratio, count),
+            args=(idle_minutes, event, count),
             daemon=True,
         ).start()
 
-    def _execute_outreach(self, idle_minutes: float, change_ratio: float, trigger_count: int):
+    def _execute_outreach(self, idle_minutes: float, event, trigger_count: int):
         """执行主动询问（在 daemon 线程中）"""
         try:
             session_id, conversation = self._get_session_info()
@@ -153,8 +172,21 @@ class ProactiveTrigger:
                 logger.warning(f"[主动触发 #{trigger_count}] 无活跃 session，跳过")
                 return
 
-            prompt = self._build_prompt(idle_minutes, change_ratio, conversation)
-            # _run_async 适配不同线程环境：有 loop 则 submit 到线程池，否则 asyncio.run
+            # 获取屏幕变化详情
+            change_ratio = event.payload.get("change_ratio", 0)
+            changed_regions = event.payload.get("changed_regions", [])
+
+            # 获取当前窗口信息
+            current_app, current_window = self._get_current_window()
+
+            prompt = self._build_prompt(
+                idle_minutes=idle_minutes,
+                change_ratio=change_ratio,
+                changed_regions=changed_regions,
+                current_app=current_app,
+                current_window=current_window,
+                conversation=conversation,
+            )
             response = _run_async(self._call_llm(prompt))
             if not response:
                 return
@@ -197,31 +229,72 @@ class ProactiveTrigger:
         except Exception:
             return "", ""
 
-    def _build_prompt(self, idle_minutes: float, change_ratio: float, conversation: str) -> str:
+    def _get_current_window(self) -> tuple:
+        """获取当前活动窗口信息"""
+        try:
+            from modules.perception.state.world_state import get_world_state
+            state = get_world_state()
+            return state.active_app or "", state.active_window or ""
+        except Exception:
+            return "", ""
+
+    def _build_prompt(
+        self,
+        idle_minutes: float,
+        change_ratio: float,
+        changed_regions: list,
+        current_app: str,
+        current_window: str,
+        conversation: str,
+    ) -> str:
         """构建主动询问 prompt"""
         from config.settings import settings
+
+        # 用户自定义 prompt
         if settings.PROACTIVE_OUTREACH_WORK_PROMPT:
             return settings.PROACTIVE_OUTREACH_WORK_PROMPT.format(
                 idle_minutes=idle_minutes,
                 change_ratio=change_ratio,
+                current_app=current_app or "(未知)",
+                current_window=current_window or "(未知)",
                 conversation=conversation or "(无历史对话)",
             )
-        return (
-            f"【环境变化】屏幕发生 {change_ratio:.0%} 的大幅变化，"
-            f"且用户已空闲 {idle_minutes:.0f} 分钟。\n"
-            "请根据当前场景和历史对话（如有），主动询问用户是否需要帮助或注意某些变化。\n"
-            "回复应简短自然，像真人助手一样说话。"
-        )
+
+        # 构建屏幕变化描述
+        screen_info = f"屏幕发生了 {change_ratio:.0%} 的变化"
+        if current_app:
+            screen_info += f"，当前应用: {current_app}"
+        if current_window:
+            screen_info += f"，窗口: {current_window[:50]}"
+        if changed_regions:
+            region_count = len(changed_regions)
+            screen_info += f"，共 {region_count} 个区域变化"
+
+        # 构建完整 prompt
+        parts = [
+            f"【环境变化】{screen_info}",
+            f"【用户状态】已空闲 {idle_minutes:.0f} 分钟",
+        ]
+
+        if conversation:
+            parts.append(f"【最近对话】\n{conversation}")
+
+        parts.append("\n请根据以上信息，主动询问用户是否需要帮助或提醒用户注意变化。回复简短自然。")
+
+        return "\n".join(parts)
 
     async def _call_llm(self, prompt: str) -> str:
-        """调用大模型"""
+        """调用大模型（带人格 system prompt）"""
         try:
             from modules.thinking.model_factory import get_model_factory
             from infra.model.base_model import ChatMessage
             factory = get_model_factory()
             factory.ensure_ready()
             client = factory.get_client("large")
-            messages = [ChatMessage(role="user", content=prompt)]
+            messages = [
+                ChatMessage(role="system", content=_OUTREACH_SYSTEM_PROMPT),
+                ChatMessage(role="user", content=prompt),
+            ]
             response = await client.chat(messages=messages)
             return response.message.content if response and response.message else ""
         except Exception as e:

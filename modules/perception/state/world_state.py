@@ -130,3 +130,26 @@ class WorldStateManager:
         self._state.recent_events.append(event.to_dict())
         if len(self._state.recent_events) > self._MAX_RECENT_EVENTS:
             self._state.recent_events = self._state.recent_events[-self._MAX_RECENT_EVENTS:]
+
+
+# ---------------------------------------------------------------------------
+# 全局单例
+# ---------------------------------------------------------------------------
+
+_world_state_manager: Optional[WorldStateManager] = None
+_world_state_lock = threading.Lock()
+
+
+def get_world_state_manager() -> WorldStateManager:
+    """获取世界状态管理器全局单例"""
+    global _world_state_manager
+    if _world_state_manager is None:
+        with _world_state_lock:
+            if _world_state_manager is None:
+                _world_state_manager = WorldStateManager()
+    return _world_state_manager
+
+
+def get_world_state() -> WorldState:
+    """获取当前世界状态快照（便捷函数）"""
+    return get_world_state_manager().get_state()
