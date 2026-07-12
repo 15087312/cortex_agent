@@ -1635,24 +1635,33 @@ class ModelRunner:
                                         self._active_skill = skill
                                         self._active_skill_tool_rules = skill.tool_rules
                                         logger.info(f"[ModelRunner] 技能已切换: {skill_id}")
+                                        preview = skill.description[:120].replace("\n", " ")
+                                        return f"【技能已激活】{skill.name}\n{preview}"
                                     else:
-                                        content = f"技能 {skill_id} 不存在"
+                                        return f"【技能未找到】skill_id={skill_id} 不存在。使用 list_skills 查看可用技能。"
                             elif tc.name == "set_memory_focus":
                                 mix = args.get("mix", {})
                                 if self._thinker and isinstance(mix, dict):
                                     self._thinker._memory_focus = mix
                             elif tc.name == "stop_skill":
                                 if self._active_skill:
+                                    skill_name = self._active_skill.name
                                     reason = args.get("reason", "")
                                     logger.info(f"[ModelRunner] 技能已停用: {self._active_skill.id} ({reason})")
                                     self._active_skill = None
                                     self._active_skill_tool_rules = None
+                                    return f"【技能已停用】{skill_name}，已恢复默认角色。"
                                 else:
-                                    logger.debug(f"[ModelRunner] stop_skill 无活跃技能")
+                                    return "【无活跃技能】当前没有激活的技能。"
                             elif tc.name == "list_skills":
                                 from modules.thinking.skills import skill_manager
                                 skills = skill_manager.list_skills()
                                 logger.info(f"[ModelRunner] 列出技能: {len(skills)} 个")
+                                if skills:
+                                    lines = [f"- {s.id}: {s.name} — {s.description[:80]}" for s in skills]
+                                    return "【可用技能】\n" + "\n".join(lines)
+                                else:
+                                    return "【可用技能】暂无可用技能"
                         except Exception as e:
                             logger.debug(f"[ModelRunner] 控制工具处理异常 (非致命): {e}")
 
