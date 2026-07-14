@@ -76,6 +76,30 @@ async def lifespan(app: FastAPI):
     logger.info(f"✓ Embedding 模型已预加载 (dim={eng.dim})")
     print("[DEBUG] 继续后续初始化...", flush=True)
 
+    # 预加载 MLX-VLM 视觉模型（后台加载，不阻塞启动）
+    if settings.VISION_BACKEND in ("mlx", "auto"):
+        import threading
+        def _preload_vision():
+            try:
+                from utils.logger import setup_logger
+                vision_logger = setup_logger("vision_preload")
+                vision_logger.info("开始预加载 MLX-VLM 视觉模型...")
+                from infra.data_process.core.image_analyzer import ImageAnalyzer
+                analyzer = ImageAnalyzer(model_type="auto")
+                # 同步加载（在后台线程中）
+                import asyncio
+                loop = asyncio.new_event_loop()
+                loop.run_until_complete(analyzer.initialize())
+                loop.close()
+                vision_logger.info(f"✓ MLX-VLM 视觉模型预加载完成 (type={analyzer.model_type})")
+            except Exception as e:
+                from utils.logger import setup_logger
+                vision_logger = setup_logger("vision_preload")
+                vision_logger.warning(f"MLX-VLM 预加载失败 (非致命): {e}")
+
+        threading.Thread(target=_preload_vision, daemon=True, name="vision-preload").start()
+        logger.info("✓ 视觉模型预加载已启动（后台）")
+
     # 初始化模型调度管理器
     try:
         from modules.thinking.model_factory import get_model_factory
