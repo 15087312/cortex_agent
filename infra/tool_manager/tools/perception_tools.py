@@ -240,87 +240,148 @@ def detect_ui_elements(
     named_only: bool = True,
     app: str = "",
 ) -> Dict[str, Any]:
-    """通过 macOS 无障碍 API 检测 UI 元素"""
+    """检测 UI 元素 — 自动选择无障碍 API 或 CDP"""
+    # Chromium 应用列表（需要用 CDP 扫描）
+    CHROMIUM_APPS = {"microsoft edge", "google chrome", "brave", "chromium", "opera", "vivaldi"}
+
+    # 确定目标应用
+    target_app = app
+    is_chromium = False
+
     try:
         import touchpoint as tp
-        from touchpoint import Role
+        wins = tp.windows()
 
-        # 角色映射
-        role_map = {
-            "button": Role.BUTTON,
-            "text": Role.TEXT,
-            "text_field": Role.TEXT_FIELD,
-            "group": Role.GROUP,
-            "panel": Role.PANEL,
-            "tab_list": Role.TAB_LIST,
-            "scroll_bar": Role.SCROLL_BAR,
-            "image": Role.IMAGE,
-            "table_row": Role.TABLE_ROW,
-        }
-
-        # 获取目标窗口
-        window_id = None
-        if app:
-            wins = tp.windows()
-            for w in wins:
-                if app.lower() in w.app.lower():
-                    window_id = w.id
-                    break
-            if not window_id:
-                return {"success": False, "error": f"未找到应用: {app}"}
-        else:
-            wins = tp.windows()
+        if not target_app:
             active = [w for w in wins if w.is_active]
             if not active:
                 return {"success": False, "error": "无活跃窗口"}
-            window_id = active[0].id
-            app = active[0].app
+            target_app = active[0].app
 
-        # 构建查询参数
-        kwargs = {"window_id": window_id, "named_only": named_only}
-        if depth > 0:
-            kwargs["max_depth"] = depth
-        if role_filter and role_filter.lower() in role_map:
-            kwargs["role"] = role_map[role_filter.lower()]
+        # 检查是否是 Chromium 应用
+        is_chromium = any(c in target_app.lower() for c in CHROMIUM_APPS)
 
-        # 执行查询
-        t0 = time.time()
-        elements = tp.elements(**kwargs)
-        elapsed = time.time() - t0
+        if is_chromium:
+            return _detect_chromium_ui(target_app, depth, role_filter)
+        else:
+            return _detect_native_ui(target_app, depth, role_filter, named_only, wins)
 
-        # 格式化输出
-        formatted = []
-        for e in elements:
-            x, y = e.position
-            w, h = e.size
-            formatted.append({
-                "element_id": f"{e.role.name}_{x}_{y}",
-                "type": e.role.name.lower(),
-                "label": str(e.name or "")[:100],
-                "bbox": [x, y, x + w, y + h],
-                "center_x": x + w // 2,
-                "center_y": y + h // 2,
-                "actions": e.actions if hasattr(e, "actions") else [],
-            })
-
-        # 按角色统计
-        from collections import Counter
-        role_counts = Counter(e["type"] for e in formatted)
-
-        return {
-            "success": True,
-            "app": app,
-            "depth": depth,
-            "elements": formatted,
-            "count": len(formatted),
-            "role_summary": dict(role_counts.most_common(10)),
-            "elapsed_ms": round(elapsed * 1000),
-            "backend": "touchpoint",
-            "hint": "使用 mouse_click(x=center_x, y=center_y) 点击对应元素",
-        }
     except ImportError:
         return {"success": False, "error": "touchpoint 未安装，无法使用无障碍 API"}
     except Exception as e:
         logger.error(f"UI 元素检测失败: {e}")
         return {"success": False, "error": str(e)}
+
+
+def _detect_chromium_ui(app: str, depth: int, role_filter: str) -> Dict[str, Any]:
+    """通过 CDP 扫描 Chromium 应用 UI"""
+    from infra.data_process.core.cdp_scanner import get_cdp_scanner
+
+    t0 = time.time()
+    scanner = get_cdp_scanner()
+    result = scanner.scan_active_chromium(app_name=app, max_depth=depth or 3)
+    elapsed = time.time() - t0
+
+    if not result.get("success"):
+        # CDP 不可用，降级到 touchpoint
+        logger.info(f"CDP 不可用，降级到无障碍 API")
+        try:
+            import touchpoint as tp
+            wins = tp.windows()
+            return _detect_native_ui(app, depth, role_filter, True, wins)
+        except Exception:
+            return result
+
+    # 整合 CDP 结果
+    all_elements = []
+    for r in result.get("results", []):
+        for e in r.get("elements", []):
+            if role_filter and e.get("type") != role_filter.lower():
+                continue
+            all_elements.append(e)
+
+    from collections import Counter
+    role_counts = Counter(e.get("type", "unknown") for e in all_elements)
+
+    return {
+        "success": True,
+        "app": app,
+        "depth": depth,
+        "elements": all_elements,
+        "count": len(all_elements),
+        "role_summary": dict(role_counts.most_common(10)),
+        "elapsed_ms": round(elapsed * 1000),
+        "backend": "cdp",
+        "hint": "CDP 扫描 — 元素无坐标，需配合 mouse_click 的 CSS 选择器使用",
+    }
+
+
+def _detect_native_ui(app: str, depth: int, role_filter: str, named_only: bool, wins) -> Dict[str, Any]:
+    """通过无障碍 API 检测原生应用 UI"""
+    import touchpoint as tp
+    from touchpoint import Role
+
+    # 角色映射
+    role_map = {
+        "button": Role.BUTTON,
+        "text": Role.TEXT,
+        "text_field": Role.TEXT_FIELD,
+        "group": Role.GROUP,
+        "panel": Role.PANEL,
+        "tab_list": Role.TAB_LIST,
+        "scroll_bar": Role.SCROLL_BAR,
+        "image": Role.IMAGE,
+        "table_row": Role.TABLE_ROW,
+    }
+
+    # 获取目标窗口
+    window_id = None
+    for w in wins:
+        if app.lower() in w.app.lower():
+            window_id = w.id
+            break
+    if not window_id:
+        return {"success": False, "error": f"未找到应用: {app}"}
+
+    # 构建查询参数
+    kwargs = {"window_id": window_id, "named_only": named_only}
+    if depth > 0:
+        kwargs["max_depth"] = depth
+    if role_filter and role_filter.lower() in role_map:
+        kwargs["role"] = role_map[role_filter.lower()]
+
+    # 执行查询
+    t0 = time.time()
+    elements = tp.elements(**kwargs)
+    elapsed = time.time() - t0
+
+    # 格式化输出
+    formatted = []
+    for e in elements:
+        x, y = e.position
+        w, h = e.size
+        formatted.append({
+            "element_id": f"{e.role.name}_{x}_{y}",
+            "type": e.role.name.lower(),
+            "label": str(e.name or "")[:100],
+            "bbox": [x, y, x + w, y + h],
+            "center_x": x + w // 2,
+            "center_y": y + h // 2,
+            "actions": e.actions if hasattr(e, "actions") else [],
+        })
+
+    from collections import Counter
+    role_counts = Counter(e["type"] for e in formatted)
+
+    return {
+        "success": True,
+        "app": app,
+        "depth": depth,
+        "elements": formatted,
+        "count": len(formatted),
+        "role_summary": dict(role_counts.most_common(10)),
+        "elapsed_ms": round(elapsed * 1000),
+        "backend": "touchpoint",
+        "hint": "使用 mouse_click(x=center_x, y=center_y) 点击对应元素",
+    }
 
