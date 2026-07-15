@@ -164,13 +164,13 @@ class PerceptionSystem:
                 time.sleep(0.1)
 
     def _setup_ocr_detector(self) -> None:
-        """启动 OCR 检测器后台线程"""
+        """启动 OCR 检测器，订阅 SCREEN_DIFF 事件"""
         try:
             from modules.perception.detectors.ocr_detector import OCRDetector
-            self.ocr_detector = OCRDetector(interval=10.0)  # 10秒间隔
+            self.ocr_detector = OCRDetector(threshold=0.15)
             if self.ocr_detector.is_available():
-                self.ocr_detector.start()
-                logger.info("OCR 检测器: 已启动 (10s → SCREEN_OCR 事件)")
+                self.ocr_detector.start(event_bus=self.event_bus)
+                logger.info("OCR 检测器: 已启动 (变化>=15% 时触发)")
             else:
                 self.ocr_detector = None
                 logger.info("OCR 检测器: 依赖不可用 (rapidocr)")

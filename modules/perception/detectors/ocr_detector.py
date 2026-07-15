@@ -1,7 +1,7 @@
 """
 OCR 检测器 — 屏幕文字识别
 
-被动感知组件，定时截图并识别文字，发布 OCR 事件。
+被动感知组件，监听 SCREEN_DIFF 事件，大幅变化时触发 OCR。
 """
 import time
 import threading
@@ -15,26 +15,26 @@ from utils.logger import setup_logger
 
 logger = setup_logger("perception_ocr_detector")
 
+# 触发 OCR 的最小变化比例
+OCR_TRIGGER_THRESHOLD = 0.15
+
 
 class OCRDetector(PerceptionDetector):
     """OCR 检测器
 
-    后台线程定时截图 + OCR，识别文字变化并发布事件。
+    监听 SCREEN_DIFF 事件，变化比例 >= 15% 时触发 OCR 识别。
     """
 
-    def __init__(self, interval: float = 10.0, min_confidence: float = 0.6):
-        """
-        Args:
-            interval: 检测间隔（秒）
-            min_confidence: 最小置信度阈值
-        """
-        self._interval = interval
-        self._min_confidence = min_confidence
+    def __init__(self, threshold: float = OCR_TRIGGER_THRESHOLD, cooldown: float = 5.0):
+        self._threshold = threshold
+        self._cooldown = cooldown
         self._running = False
-        self._thread: Optional[threading.Thread] = None
         self._ocr_engine = None
         self._last_texts: List[str] = []
-        self._stop_event = threading.Event()
+        self._last_trigger_time: float = 0.0
+        self._sub_id: str = ""
+        self._event_bus = None
+        self._lock = threading.Lock()
 
     @property
     def detector_type(self) -> str:
@@ -47,56 +47,59 @@ class OCRDetector(PerceptionDetector):
         except ImportError:
             return False
 
-    def start(self) -> None:
-        """启动后台 OCR 检测线程"""
+    def start(self, event_bus=None) -> None:
+        """启动 OCR 检测器，订阅 SCREEN_DIFF 事件"""
         if not self.is_available() or self._running:
             return
 
+        self._event_bus = event_bus
+        if event_bus:
+            self._sub_id = event_bus.subscribe(
+                PerceptionEventType.SCREEN_DIFF,
+                handler=self._on_screen_diff,
+            )
+
         self._running = True
-        self._stop_event.clear()
-        self._thread = threading.Thread(
-            target=self._ocr_loop,
-            daemon=True,
-            name="perception-ocr",
-        )
-        self._thread.start()
-        logger.info(f"OCR 检测器: 已启动 (间隔 {self._interval}s)")
+        logger.info(f"OCR 检测器: 已启动 (阈值={self._threshold:.0%}, 冷却={self._cooldown}s)")
 
     def stop(self) -> None:
-        """停止检测"""
         self._running = False
-        self._stop_event.set()
-        if self._thread:
-            self._thread.join(timeout=3)
-            self._thread = None
+        if self._event_bus and self._sub_id:
+            self._event_bus.unsubscribe(self._sub_id)
+            self._sub_id = ""
         logger.info("OCR 检测器: 已停止")
 
-    def _ocr_loop(self) -> None:
-        """后台 OCR 循环"""
-        while not self._stop_event.is_set():
-            try:
-                self._run_ocr()
-            except Exception as e:
-                logger.debug(f"OCR 检测异常: {e}")
+    def _on_screen_diff(self, event) -> None:
+        """屏幕变化事件回调"""
+        change_ratio = event.payload.get("change_ratio", 0)
 
-            # 等待，支持提前唤醒
-            self._stop_event.wait(self._interval)
+        if change_ratio < self._threshold:
+            return
+
+        with self._lock:
+            now = time.time()
+            if now - self._last_trigger_time < self._cooldown:
+                return
+            self._last_trigger_time = now
+
+        logger.info(f"触发 OCR: change_ratio={change_ratio:.0%}")
+        threading.Thread(
+            target=self._run_ocr,
+            daemon=True,
+            name="ocr-trigger",
+        ).start()
 
     def _run_ocr(self) -> None:
-        """执行一次 OCR"""
         from utils.screen_capture import capture_screen
 
-        # 截图
         screenshot = capture_screen()
         if not screenshot:
             return
 
-        # OCR 识别
         texts = self._ocr识别(screenshot)
         if not texts:
             return
 
-        # 检测文字变化
         new_texts = [t for t in texts if t not in self._last_texts]
         removed_texts = [t for t in self._last_texts if t not in texts]
 
@@ -105,7 +108,6 @@ class OCRDetector(PerceptionDetector):
             self._publish_event(new_texts, removed_texts, texts)
 
     def _ocr识别(self, screenshot_b64: str) -> List[str]:
-        """执行 OCR 识别"""
         import base64
         import tempfile
         import os
@@ -126,12 +128,11 @@ class OCRDetector(PerceptionDetector):
                 if not result:
                     return []
 
-                # 过滤低置信度并提取文字
                 texts = []
                 for item in result:
                     text = item[1]
                     confidence = float(item[2])
-                    if confidence >= self._min_confidence and text.strip():
+                    if confidence >= 0.6 and text.strip():
                         texts.append(text.strip())
                 return texts
             finally:
@@ -142,10 +143,8 @@ class OCRDetector(PerceptionDetector):
             return []
 
     def _publish_event(self, new_texts: List[str], removed_texts: List[str], all_texts: List[str]) -> None:
-        """发布 OCR 事件"""
         from modules.perception.events.bus import get_event_bus
 
-        # 构建描述
         desc_parts = []
         if new_texts:
             desc_parts.append(f"新增文字: {', '.join(new_texts[:5])}")
@@ -174,11 +173,9 @@ class OCRDetector(PerceptionDetector):
             pass
 
     def detect(self, roi_image: np.ndarray, roi_name: str, context: Optional[Dict] = None) -> List[PerceptionEvent]:
-        """PerceptionDetector 接口实现"""
         return []
 
 
-# 全局单例
 _detector: Optional[OCRDetector] = None
 
 
