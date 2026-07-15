@@ -31,8 +31,8 @@ class PerceptionSystem:
         self.voice_llm_handler = None
         self.proactive_trigger = None
         self.window_detector = None
+        self.ocr_detector = None
         self._window_detector_thread = None
-        self._window_stop_event = threading.Event()
         self._started = False
 
     def setup(self, **overrides) -> None:
@@ -42,6 +42,7 @@ class PerceptionSystem:
         self.voice_detector = None
         self.voice_llm_handler = None
         self.proactive_trigger = None
+        self.ocr_detector = None
 
         from config.settings import settings
         from modules.perception.events.bus import get_event_bus
@@ -92,6 +93,9 @@ class PerceptionSystem:
 
         # 6. 窗口检测器（定时 publish SCREEN_WINDOW 到事件总线）
         self._setup_window_detector()
+
+        # 7. OCR 检测器（定时截图 + 识别文字）
+        self._setup_ocr_detector()
 
         logger.info("感知系统组装完成")
 
@@ -159,6 +163,21 @@ class PerceptionSystem:
                     return
                 time.sleep(0.1)
 
+    def _setup_ocr_detector(self) -> None:
+        """启动 OCR 检测器后台线程"""
+        try:
+            from modules.perception.detectors.ocr_detector import OCRDetector
+            self.ocr_detector = OCRDetector(interval=10.0)  # 10秒间隔
+            if self.ocr_detector.is_available():
+                self.ocr_detector.start()
+                logger.info("OCR 检测器: 已启动 (10s → SCREEN_OCR 事件)")
+            else:
+                self.ocr_detector = None
+                logger.info("OCR 检测器: 依赖不可用 (rapidocr)")
+        except Exception as e:
+            self.ocr_detector = None
+            logger.debug(f"OCR 检测器初始化失败 (非致命): {e}")
+
     def start(self) -> None:
         if self._started:
             return
@@ -168,6 +187,8 @@ class PerceptionSystem:
     def stop(self) -> None:
         if not self._started:
             return
+        if self.ocr_detector:
+            self.ocr_detector.stop()
         if self.voice_llm_handler:
             self.voice_llm_handler.stop()
         if self.proactive_trigger:
@@ -189,6 +210,7 @@ class PerceptionSystem:
             "voice_detector_type": self.voice_detector.detector_type if self.voice_detector else None,
             "voice_llm_handler_active": self.voice_llm_handler.is_active if self.voice_llm_handler else False,
             "window_detector_available": self.window_detector is not None and self.window_detector.is_available(),
+            "ocr_detector_available": self.ocr_detector is not None and self.ocr_detector.is_available(),
             "proactive_trigger": self.proactive_trigger.get_stats() if self.proactive_trigger else None,
             "world_state": self.world_state.get_state().to_dict() if self.world_state else None,
             "event_bus": self.event_bus.get_stats() if self.event_bus else None,
