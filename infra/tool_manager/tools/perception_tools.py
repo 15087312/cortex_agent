@@ -3,11 +3,13 @@
 
 - transcribe_audio: 语音转文字（上传音频文件）
 - understand_screen: 截图 + OCR + LLM 抽象理解
+- detect_ui_elements: 无障碍 API 检测 UI 元素
 """
 import asyncio
 import base64
 import io
 import os
+import time
 from typing import Dict, Any
 
 from infra.tool_manager.tool_registry import ToolRegistry
@@ -169,7 +171,7 @@ async def _vision_understand(
 
         analyzer = await get_default_analyzer()
 
-        prompt = "描述这个屏幕截图：当前应用、界面布局、可见文字按钮。"
+        prompt = "请用一句话概括当前屏幕：什么应用、主要界面。"
         if focus:
             prompt += f" 重点关注：{focus}"
 
@@ -194,8 +196,13 @@ async def _vision_understand(
 @ToolRegistry.register(
     "detect_ui_elements",
     description=(
-        "检测当前屏幕上的所有 UI 元素（按钮、输入框、文字、图标等），返回每个元素的类型、"
-        "文字标签和精确像素坐标。\n\n"
+        "通过 macOS 无障碍 API 检测当前屏幕上的所有 UI 元素（按钮、输入框、文字、图标等），"
+        "返回每个元素的类型、文字标签和精确像素坐标。\n\n"
+        "支持深度控制：depth 越大，获取的元素层级越深。\n"
+        "  depth=1: 顶层容器（8个左右）\n"
+        "  depth=2: 包含子面板（50个左右）\n"
+        "  depth=3: 包含按钮等控件（75个左右）\n"
+        "  depth=0: 全部元素（400+个）\n\n"
         "【操作流程】\n"
         "1. detect_ui_elements() → 获取所有元素的坐标\n"
         "2. mouse_click(x=center_x, y=center_y) → 点击目标元素（如输入框）\n"
@@ -205,13 +212,21 @@ async def _vision_understand(
         "坐标说明：返回的 center_x/center_y 可直接传给 mouse_click。"
     ),
     params={
-        "focus": {
+        "depth": {
+            "type": "integer",
+            "description": "可选，检测深度（1=顶层容器，2=子面板，3=按钮控件，0=全部，默认 3）",
+        },
+        "role_filter": {
             "type": "string",
-            "description": "可选，关注重点描述，如「关注错误信息」「关注搜索栏」",
+            "description": "可选，只返回指定角色的元素（如 button/text_field/text），为空则返回全部",
+        },
+        "named_only": {
+            "type": "boolean",
+            "description": "可选，是否只返回有名字的元素（默认 true，过滤无意义元素）",
         },
         "app": {
             "type": "string",
-            "description": "可选，指定应用名（如 Safari、Edge、网易云音乐），为空则自动扫描当前活跃窗口",
+            "description": "可选，指定应用名（如 Safari、PyCharm），为空则自动扫描当前活跃窗口",
         },
     },
     risk_level="LOW",
@@ -219,34 +234,92 @@ async def _vision_understand(
     core=True,
     tags=["learning"],
 )
-def detect_ui_elements(focus: str = "", app: str = "") -> Dict[str, Any]:
-    """检测当前屏幕 UI 元素并返回坐标"""
+def detect_ui_elements(
+    depth: int = 3,
+    role_filter: str = "",
+    named_only: bool = True,
+    app: str = "",
+) -> Dict[str, Any]:
+    """通过 macOS 无障碍 API 检测 UI 元素"""
     try:
-        from modules.perception.difference.sources.screen_monitor_source import get_screen_monitor_source
-        source = get_screen_monitor_source()
-        result = source.analyze_ui_elements()
-        raw_elements = result.get("elements", [])
+        import touchpoint as tp
+        from touchpoint import Role
 
+        # 角色映射
+        role_map = {
+            "button": Role.BUTTON,
+            "text": Role.TEXT,
+            "text_field": Role.TEXT_FIELD,
+            "group": Role.GROUP,
+            "panel": Role.PANEL,
+            "tab_list": Role.TAB_LIST,
+            "scroll_bar": Role.SCROLL_BAR,
+            "image": Role.IMAGE,
+            "table_row": Role.TABLE_ROW,
+        }
+
+        # 获取目标窗口
+        window_id = None
+        if app:
+            wins = tp.windows()
+            for w in wins:
+                if app.lower() in w.app.lower():
+                    window_id = w.id
+                    break
+            if not window_id:
+                return {"success": False, "error": f"未找到应用: {app}"}
+        else:
+            wins = tp.windows()
+            active = [w for w in wins if w.is_active]
+            if not active:
+                return {"success": False, "error": "无活跃窗口"}
+            window_id = active[0].id
+            app = active[0].app
+
+        # 构建查询参数
+        kwargs = {"window_id": window_id, "named_only": named_only}
+        if depth > 0:
+            kwargs["max_depth"] = depth
+        if role_filter and role_filter.lower() in role_map:
+            kwargs["role"] = role_map[role_filter.lower()]
+
+        # 执行查询
+        t0 = time.time()
+        elements = tp.elements(**kwargs)
+        elapsed = time.time() - t0
+
+        # 格式化输出
         formatted = []
-        for e in raw_elements:
-            x, y, w, h = e.get("x", 0), e.get("y", 0), e.get("w", 0), e.get("h", 0)
+        for e in elements:
+            x, y = e.position
+            w, h = e.size
             formatted.append({
-                "element_id": f"{e['type']}_{x}_{y}",
-                "type": e["type"],
-                "label": e.get("text", ""),
+                "element_id": f"{e.role.name}_{x}_{y}",
+                "type": e.role.name.lower(),
+                "label": str(e.name or "")[:100],
                 "bbox": [x, y, x + w, y + h],
                 "center_x": x + w // 2,
                 "center_y": y + h // 2,
-                "confidence": round(e.get("confidence", 0), 2),
+                "actions": e.actions if hasattr(e, "actions") else [],
             })
+
+        # 按角色统计
+        from collections import Counter
+        role_counts = Counter(e["type"] for e in formatted)
 
         return {
             "success": True,
+            "app": app,
+            "depth": depth,
             "elements": formatted,
             "count": len(formatted),
-            "backend": "screen_monitor",
+            "role_summary": dict(role_counts.most_common(10)),
+            "elapsed_ms": round(elapsed * 1000),
+            "backend": "touchpoint",
             "hint": "使用 mouse_click(x=center_x, y=center_y) 点击对应元素",
         }
+    except ImportError:
+        return {"success": False, "error": "touchpoint 未安装，无法使用无障碍 API"}
     except Exception as e:
         logger.error(f"UI 元素检测失败: {e}")
         return {"success": False, "error": str(e)}
