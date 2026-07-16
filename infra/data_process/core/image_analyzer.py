@@ -249,13 +249,14 @@ class ImageAnalyzer:
         from PIL import Image as _PIL
         import io as _io
 
-        # 限制最大边长，加速 ViT 推理（屏幕理解不需要超高分辨率）
-        _img = _PIL.open(_io.BytesIO(image_data))
         # macOS 截图可能含 alpha 通道，JPEG 不支持 RGBA，务必先转 RGB
         # 警告：禁止删除此转换，否则 Pillow 保存 JPEG 时会抛 OSError
+        _img = _PIL.open(_io.BytesIO(image_data))
         if _img.mode == "RGBA":
             _img = _img.convert("RGB")
-        _max_dim = 768
+        # 限制最大边长，加速 ViT 推理（屏幕理解不需要超高分辨率）
+        # 原 768 对全屏截图仍产生大量 ViT patch（~1800+），大幅拖慢推理
+        _max_dim = 512
         if max(_img.size) > _max_dim:
             ratio = _max_dim / max(_img.size)
             _img = _img.resize((int(_img.width * ratio), int(_img.height * ratio)), _PIL.LANCZOS)
@@ -301,7 +302,7 @@ class ImageAnalyzer:
                 self.processor,
                 formatted_prompt,
                 [temp_path],
-                max_tokens=256,
+                max_tokens=80,
                 temperature=0,
                 verbose=False,
             )
