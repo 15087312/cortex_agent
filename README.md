@@ -173,30 +173,39 @@ cortex --api-key your-secret-key
 
 ## 记忆系统
 
-### T1-T6 多阶段记忆管线
+### 事件记忆架构
 
-| 阶段 | 触发时机 | 作用 |
-|------|---------|------|
-| **T1** | 会话预加载 | 4 路并行读取过去对话、笔记、技能、行为准则 |
-| **T2** | 输入后检索 | Per-turn 缓存，FAISS 向量搜索相关历史对话 |
-| **T3** | 工具后关联 | 执行工具后立即检索相关知识 |
-| **T4** | 水位线压缩 | 对话长度达 70% 时触发，5 级压缩引擎（LIGHT→AGGRESSIVE） |
-| **T5** | 任务后沉淀 | 任务完成后 30 秒，沉淀关键发现到长期记忆 |
-| **T6** | 深度整合 | 每 12 小时运行，跨会话知识融合与演化 |
+会话结束时，LLM 将对话提炼为结构化事件，存入向量数据库供后续检索。
 
-所有 T1-T6 都用 `fire-and-forget` 异步，**不阻塞**主请求流程。失败自动降级，永不抛异常中断上游。
+| 组件 | 作用 |
+|------|------|
+| **EventReducer** | 会话结束时调用 LLM，将对话提炼为 MemoryEvent（fact/thought/lesson/keywords） |
+| **EventStore** | SQLite + FAISS 存储事件，支持向量相似度检索 |
+| **EventRetrieval** | 混合检索：语义×0.35 + 重要性×0.20 + 时效×0.20 + 使用频率×0.15 + 提及频率×0.10 |
+| **CausalGraph** | 事件因果关系图，支持多跳推理 |
+| **CausalTree** | 因果树深度回忆，按因果链召回相关事件 |
 
-### 7 层存储
+### 记忆事件结构
 
-| 层级 | 存储方式 | 用途 |
-|------|---------|------|
-| 短期记忆 | 内存 deque | 当前会话上下文 |
-| 长期记忆 | JSONL 文件 | 跨会话持久化 |
-| 分类记忆 | JSONL + 索引 | 按主题分类存储 |
-| 人格记忆 | YAML 配置 | 用户偏好、交互风格 |
-| 黑匣子 | JSONL 审计 | 所有决策可追溯 |
-| 笔记本 | JSON 文件 | 专家笔记和发现 |
-| 向量 RAG | FAISS 索引 | 语义相似度检索 |
+```python
+MemoryEvent = {
+    fact: "发生了什么",
+    thought: "思考/反思",
+    lesson: "学到了什么（可复用经验）",
+    keywords: ["关键词1", "关键词2"],
+    importance: 0.7,  # 0.0-1.0
+    type: "fact",     # emotion | thought | fact | strategy
+    owner_id: "large_primary",  # 记忆归属
+}
+```
+
+### 存储层
+
+| 存储 | 用途 |
+|------|------|
+| SQLite | 事件元数据、会话历史 |
+| FAISS | 向量索引，语义相似度检索 |
+| JSONL | 审计日志、黑匣子 |
 
 ---
 
@@ -226,7 +235,7 @@ cortex --api-key your-secret-key
 
 | 层级 | 来源 | 说明 |
 |------|------|------|
-| **ToolRegistry（内置）** | `infra/tool_manager/` | 50+ 内置工具：文件操作、搜索、感知、代码执行等 |
+| **ToolRegistry（内置）** | `infra/tool_manager/` | 86+ 内置工具：文件操作、搜索、感知、代码执行、UI 检测等 |
 | **MCP（远程）** | `infra/mcp/` | 通过 stdio/SSE 连接的 MCP 服务器（文件系统、数据库、浏览器等） |
 | **create_tool（AI 自创）** | `infra/tool_manager/tools/create_tool.py` | 模型在运行时动态创建/编辑/删除工具，持久化到磁盘 |
 
@@ -301,41 +310,36 @@ ai_backend/
 ├── cortex/                 # CLI 入口（cortex 命令）
 ├── api/                    # FastAPI 应用 + WebSocket/SSE
 ├── modules/                # 业务逻辑模块
-│   ├── thinking/           # 核心编排引擎（50+ 文件）
+│   ├── thinking/           # 核心编排引擎
 │   │   ├── cognition/      # 认知黑板、会话生命周期、领域事件
 │   │   ├── communication/  # MessageBus（点对点、广播、RPC、订阅）
 │   │   ├── context/        # 上下文管理（GCP、压缩、同步、审计）
-│   │   ├── core/           # ContinuousThinker、ModelRunner、ModelManager
-│   │   ├── evolution/      # 价值观系统、反思状态机
-│   │   ├── experts/        # RuntimeExpert 基类 + 5 个专家实现
-│   │   ├── integration/    # 感知/探针集成
-│   │   ├── intent/         # 委托编译器（角色名→身份映射）
+│   │   ├── core/           # ContinuousThinker、ModelRunner
 │   │   ├── probes/         # 探针系统（注册、缓存、权限、工具）
 │   │   └── skills/         # 技能管理器（YAML 技能加载）
-│   ├── memory/             # 7 层记忆系统（短期/长期/分类/人格/黑匣/笔记本/向量RAG）
-│   ├── security_system/    # 5 层安全（5 个 AST 验证器 + 审计）
-│   ├── perception/         # 感知系统（文件/对话/屏幕 + 规范违反检测 + 差异检测）
-│   ├── attention/          # TF-IDF + 注意力评分
-│   ├── output_system/      # 输出管线（多通道分发、情感样式）
-│   ├── management/         # GlobalMonitor、AlertEngine、HealthChecker
-│   └── database/           # SQLAlchemy + SQLite WAL、DiskCache
+│   ├── memory/             # 事件记忆系统（EventStore + FAISS + 因果树）
+│   ├── security_system/    # 安全系统（分级审批 + 审计）
+│   ├── perception/         # 感知系统
+│   │   ├── detectors/      # 检测器（窗口、帧差、OCR、语音）
+│   │   ├── screen/         # 屏幕理解（touchpoint + CDP + 视觉模型）
+│   │   ├── events/         # 事件总线
+│   │   └── state/          # 世界状态管理
+│   ├── attention/          # 注意力评分
+│   ├── output_system/      # 输出管线（多通道分发）
+│   ├── management/         # 监控、告警、健康检查
+│   └── database/           # SQLite + DiskCache
 ├── infra/                  # 基础设施层
-│   ├── model/              # 模型客户端（Large/Medium/Small/Lite，三格式自动检测）
-│   ├── tool_manager/       # 工具注册/管理 + 50+ 内置工具 + AI 自创工具
+│   ├── model/              # 模型客户端（Large/Medium/Small，三格式自动检测）
+│   ├── tool_manager/       # 工具注册/管理 + 86+ 内置工具
 │   │   └── tools/          # 工具实现（搜索、感知、文件、MCP、create_tool 等）
 │   ├── mcp/                # MCP 协议集成
-│   │   ├── transport.py    # stdio/SSE 传输层
-│   │   ├── server_manager.py  # MCP 服务器生命周期管理
-│   │   ├── combined_provider.py  # 本地+远程工具合并
-│   │   ├── perception_client.py  # MCP 感知客户端
-│   │   └── factory.py      # MCP 连接工厂
-│   ├── data_process/       # 语音识别 + 图像分析
-│   └── hardware_input/     # 硬件输入（PyAutoGUI + Serial）
+│   ├── data_process/       # 语音识别 + 图像分析 + CDP 扫描
+│   └── hardware_input/     # 硬件输入（PyAutoGUI）
 ├── config/                 # 配置系统（Pydantic Settings）
 ├── cli_tui/                # Textual TUI 终端界面
 ├── utils/                  # 共享工具（日志、异步、JSON、时间）
 ├── skills/                 # YAML 技能定义文件
-├── tests/                  # 测试（21 个测试文件）
+├── tests/                  # 测试
 ├── docs/                   # 文档
 ├── scripts/                # 部署和运维脚本
 ├── data/                   # 运行时数据（记忆、缓存、索引）
