@@ -16,7 +16,7 @@ from utils.logger import setup_logger
 logger = setup_logger("perception_ocr_detector")
 
 # 触发 OCR 的最小变化比例
-OCR_TRIGGER_THRESHOLD = 0.15
+OCR_TRIGGER_THRESHOLD = 0.35
 
 
 class OCRDetector(PerceptionDetector):

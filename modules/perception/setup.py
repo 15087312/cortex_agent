@@ -33,6 +33,7 @@ class PerceptionSystem:
         self.window_detector = None
         self.ocr_detector = None
         self._window_detector_thread = None
+        self._window_stop_event = threading.Event()
         self._started = False
 
     def setup(self, **overrides) -> None:
@@ -167,7 +168,7 @@ class PerceptionSystem:
         """启动 OCR 检测器，订阅 SCREEN_DIFF 事件"""
         try:
             from modules.perception.detectors.ocr_detector import OCRDetector
-            self.ocr_detector = OCRDetector(threshold=0.15)
+            self.ocr_detector = OCRDetector(threshold=0.35)
             if self.ocr_detector.is_available():
                 self.ocr_detector.start(event_bus=self.event_bus)
                 logger.info("OCR 检测器: 已启动 (变化>=15% 时触发)")
