@@ -10,11 +10,17 @@ MCP Screen Monitor Server — 纯视觉的屏幕分析（Touchpoint 降级方案
 import base64
 import io
 import json
+import os
 import subprocess
 import sys
 import traceback
 
 import numpy as np
+
+# 将项目根目录加入 path，使得 from utils.screen_capture import SCREENSHOT_ENABLED 等导入可用
+_project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
 
 _available = True
 _cv2 = None
