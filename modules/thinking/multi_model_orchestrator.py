@@ -638,8 +638,8 @@ class MultiModelOrchestrator:
 
             completed = False
             consecutive_idle = 0
-            MAX_IDLE_CHECKS = 4  # 连续 4 次（60s）无进展则超时
-            MAX_WALL_TIME = 600  # 硬上限 10 分钟
+            MAX_IDLE_CHECKS = 999999  # 注释掉超时，让模型无限思考直到完成
+            MAX_WALL_TIME = 86400  # 硬上限 24 小时（实际由连接生命周期决定）
 
             try:
                 await bus.subscribe(orch_channel, _on_orchestrator_msg)
@@ -674,13 +674,13 @@ class MultiModelOrchestrator:
                     if _has_pending_delegations():
                         consecutive_idle = 0
                         logger.info(f"[编排器] 大模型等待委托中，延长等待 (+{elapsed:.0f}s)")
-                    else:
-                        consecutive_idle += 1
-                        logger.debug(f"[编排器] 无进展 ({consecutive_idle}/{MAX_IDLE_CHECKS}) +{elapsed:.0f}s")
-
-                    if consecutive_idle >= MAX_IDLE_CHECKS:
-                        logger.warning(f"[编排器] 连续 {consecutive_idle} 次无进展，判定超时 (+{elapsed:.0f}s)")
-                        break
+                    # else:
+                    #     consecutive_idle += 1
+                    #     logger.debug(f"[编排器] 无进展 ({consecutive_idle}/{MAX_IDLE_CHECKS}) +{elapsed:.0f}s")
+                    #
+                    # if consecutive_idle >= MAX_IDLE_CHECKS:
+                    #     logger.warning(f"[编排器] 连续 {consecutive_idle} 次无进展，判定超时 (+{elapsed:.0f}s)")
+                    #     break
 
                 t_wait_elapsed = time.time() - t_wait_start
                 timings['WaitLargeModel'] = (t_wait_elapsed, f'等待大模型完成' + (f' (完成)' if completed else f' (超时或中止)'))
