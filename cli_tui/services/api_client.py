@@ -21,7 +21,7 @@ class APIClient:
             headers = {}
             if self._api_key:
                 headers["X-API-Key"] = self._api_key
-            self._session = aiohttp.ClientSession(headers=headers)
+            self._session = aiohttp.ClientSession(headers=headers, trust_env=True)
         return self._session
 
     async def close(self):
@@ -32,7 +32,7 @@ class APIClient:
     async def _get(self, path: str, timeout: int = 5) -> Optional[Dict[str, Any]]:
         try:
             s = await self._get_session()
-            async with s.get(f"{self.api_url}{path}", timeout=timeout) as resp:
+            async with s.get(f"{self.api_url}{path}") as resp:
                 if resp.status == 200:
                     return await resp.json()
         except Exception as e:
@@ -42,7 +42,7 @@ class APIClient:
     async def _post(self, path: str, timeout: int = 3, **kwargs) -> Optional[aiohttp.ClientResponse]:
         try:
             s = await self._get_session()
-            return await s.post(f"{self.api_url}{path}", timeout=timeout, **kwargs)
+            return await s.post(f"{self.api_url}{path}", **kwargs)
         except Exception as e:
             logger.warning("API POST %s failed: %s", path, e)
             return None
@@ -50,15 +50,15 @@ class APIClient:
     async def _put(self, path: str, timeout: int = 3, **kwargs) -> Optional[aiohttp.ClientResponse]:
         try:
             s = await self._get_session()
-            return await s.put(f"{self.api_url}{path}", timeout=timeout, **kwargs)
+            return await s.put(f"{self.api_url}{path}", **kwargs)
         except Exception as e:
             logger.warning("API PUT %s failed: %s", path, e)
-            return None
+        return None
 
     async def health(self) -> bool:
         try:
             s = await self._get_session()
-            async with s.get(f"{self.api_url}/health", timeout=3) as resp:
+            async with s.get(f"{self.api_url}/health") as resp:
                 return resp.status == 200
         except Exception as e:
             logger.debug("Health check failed (degradation): %s", e)

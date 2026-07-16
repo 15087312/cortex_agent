@@ -74,8 +74,8 @@ class WSClient:
 
     async def _check_api(self) -> bool:
         try:
-            async with aiohttp.ClientSession(headers=self._make_headers()) as s:
-                async with s.get(f"{self.api_url}/health", timeout=3, ssl=False) as resp:
+            async with aiohttp.ClientSession(headers=self._make_headers(), trust_env=True) as s:
+                async with s.get(f"{self.api_url}/health", ssl=False) as resp:
                     return resp.status == 200
         except Exception as e:
             logger.debug("API health check failed (degradation): %s", e)
@@ -83,8 +83,8 @@ class WSClient:
 
     async def _create_session(self) -> Optional[str]:
         try:
-            async with aiohttp.ClientSession(headers=self._make_headers()) as s:
-                async with s.post(f"{self.api_url}/stream/session", timeout=5, ssl=False) as resp:
+            async with aiohttp.ClientSession(headers=self._make_headers(), trust_env=True) as s:
+                async with s.post(f"{self.api_url}/stream/session", ssl=False) as resp:
                     if resp.status == 200:
                         data = await resp.json()
                         return data.get("data", {}).get("session_id", str(uuid.uuid4()))
@@ -109,7 +109,10 @@ class WSClient:
             self.session_id = await self._create_session()
         if self._session and not self._session.closed:
             await self._session.close()
-        self._session = aiohttp.ClientSession(headers=self._make_headers())
+        self._session = aiohttp.ClientSession(
+            headers=self._make_headers(),
+            trust_env=True,
+        )
         ws_url = f"{self.api_url.replace('http', 'ws')}/stream/ws/{self.session_id}"
 
         try:
@@ -127,10 +130,12 @@ class WSClient:
         self._running = True
         # 等待 session_ready
         try:
-            first_msg = await self._ws.receive(timeout=5)
+            first_msg = await asyncio.wait_for(self._ws.receive(), timeout=5)
             if first_msg.type == aiohttp.WSMsgType.TEXT:
                 data = json.loads(first_msg.data)
                 await self._emit(data)
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            pass
         except Exception as e:
             logger.debug("Did not receive session_ready message: %s", e)
 
@@ -199,7 +204,7 @@ class WSClient:
             return {"type": "error", "content": "WebSocket 未连接"}
         try:
             async with self._receive_lock:
-                msg = await self._ws.receive(timeout=timeout)
+                msg = await asyncio.wait_for(self._ws.receive(), timeout=timeout)
         except asyncio.TimeoutError:
             raise                          # 让 process_input 统一处理
         except asyncio.CancelledError:
