@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "ai-backend-cli"
+version = "0.1.0"
+description = "Humanoid AGI — CLI 终端界面"
+requires-python = ">=3.9"
+dependencies = [
+    "textual>=8.0.0",
+    "httpx>=0.25.0",
+]
+
+[project.scripts]
+ai-backend = "cli_tui.main:main"
+
+[tool.setuptools.packages.find]
+include = ["cli_tui", "cli_tui.*"]

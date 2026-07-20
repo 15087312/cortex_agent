@@ -1,0 +1,233 @@
+"""感知系统编排入口 — 根据配置组装所有模块
+
+从 config.settings 读取配置，选择性启动各子系统。
+
+屏幕 UI 检测由 TouchpointDetector（检测工具）和 ScreenMonitorMCP（MCP server）处理。
+"""
+import threading
+from typing import Optional
+
+from utils.logger import setup_logger
+
+logger = setup_logger("perception_setup")
+
+
+class PerceptionSystem:
+    """感知系统编排器
+
+    持有所有子模块实例，管理生命周期。
+    从 config.settings 读取子系统开关。
+
+    当前子系统：
+    - 语音检测器（可选）
+    - 世界状态管理器
+    - 主动触发（基于差异检测事件）
+    """
+
+    def __init__(self):
+        self.world_state = None
+        self.event_bus = None
+        self.voice_detector = None
+        self.voice_llm_handler = None
+        self.proactive_trigger = None
+        self.window_detector = None
+        self.ocr_detector = None
+        self._window_detector_thread = None
+        self._window_stop_event = threading.Event()
+        self._started = False
+
+    def setup(self, **overrides) -> None:
+        if self._started:
+            self.stop()
+
+        self.voice_detector = None
+        self.voice_llm_handler = None
+        self.proactive_trigger = None
+        self.ocr_detector = None
+
+        from config.settings import settings
+        from modules.perception.events.bus import get_event_bus
+        from modules.perception.state.world_state import WorldStateManager
+
+        cfg = {
+            "voice_enabled": getattr(settings, "PERCEPTION_VOICE_ENABLED", False),
+            "voice_llm_trigger_enabled": getattr(settings, "PERCEPTION_VOICE_LLM_TRIGGER_ENABLED", False),
+            "voice_wake_prefix": getattr(settings, "PERCEPTION_VOICE_WAKE_PREFIX", "科特"),
+            "voice_wake_suffix": getattr(settings, "PERCEPTION_VOICE_WAKE_SUFFIX", "完毕"),
+            "proactive_enabled": getattr(settings, "PROACTIVE_OUTREACH_ENABLED", False),
+            "voice_device": getattr(settings, "PERCEPTION_VOICE_DEVICE", None),
+            "voice_model": getattr(settings, "PERCEPTION_VOICE_MODEL", "tiny"),
+            "voice_language": getattr(settings, "PERCEPTION_VOICE_LANGUAGE", "zh"),
+            "voice_energy": getattr(settings, "PERCEPTION_VOICE_ENERGY_THRESHOLD", 300),
+            "voice_timeout": getattr(settings, "PERCEPTION_VOICE_TIMEOUT", 10.0),
+        }
+        cfg.update(overrides)
+
+        # 1. 事件总线
+        self.event_bus = get_event_bus()
+
+        # 2. 语音检测器
+        if cfg["voice_enabled"]:
+            self._setup_voice_detector(cfg)
+        else:
+            logger.info("语音感知已禁用")
+
+        # 3. 语音 LLM 指令处理器（语音识别后自动触发大模型）
+        if cfg.get("voice_llm_trigger_enabled", False):
+            self._setup_voice_llm_handler()
+        else:
+            logger.info("语音 LLM 触发已禁用")
+
+        # 4. 世界状态管理器
+        self.world_state = WorldStateManager()
+        if self.event_bus:
+            self.world_state.start(self.event_bus)
+
+        # 5. 主动触发
+        if cfg["proactive_enabled"]:
+            from modules.perception.trigger import ProactiveTrigger
+            self.proactive_trigger = ProactiveTrigger()
+            self.proactive_trigger.start(self.event_bus)
+            logger.info("主动触发已启动")
+        else:
+            logger.info("主动触发已禁用")
+
+        # 6. 窗口检测器（定时 publish SCREEN_WINDOW 到事件总线）
+        self._setup_window_detector()
+
+        # 7. OCR 检测器（定时截图 + 识别文字）
+        self._setup_ocr_detector()
+
+        logger.info("感知系统组装完成")
+
+    def _setup_voice_detector(self, cfg: dict):
+        from modules.perception.detectors.voice_detector import VoiceDetector
+        self.voice_detector = VoiceDetector(
+            device_index=cfg["voice_device"],
+            model_size=cfg["voice_model"],
+            language=cfg["voice_language"],
+            energy_threshold=cfg["voice_energy"],
+            timeout=cfg["voice_timeout"],
+        )
+        if self.voice_detector and self.voice_detector.is_available():
+            self.voice_detector.start()
+            logger.info("语音检测器: 已启动")
+        else:
+            logger.warning("语音检测器: 依赖不可用")
+            self.voice_detector = None
+
+    def _setup_voice_llm_handler(self):
+        """设置语音 LLM 指令处理器"""
+        from modules.perception.voice_llm_handler import VoiceLLMHandler
+        self.voice_llm_handler = VoiceLLMHandler(event_bus=self.event_bus)
+        self.voice_llm_handler.start()
+        logger.info("语音 LLM 处理器: 已启动")
+
+    def _setup_window_detector(self) -> None:
+        """启动窗口检测器后台线程，定时 publish SCREEN_WINDOW 到事件总线"""
+        self._window_stop_event.clear()
+        try:
+            import numpy as np
+            from modules.perception.detectors.window_detector import WindowDetector
+            self.window_detector = WindowDetector()
+            if self.window_detector.is_available():
+                self._window_detector_thread = threading.Thread(
+                    target=self._window_detector_loop,
+                    daemon=True,
+                    name="perception-window",
+                )
+                self._window_detector_thread.start()
+                logger.info("窗口检测器: 已启动 (1Hz → SCREEN_WINDOW 事件)")
+            else:
+                self.window_detector = None
+                logger.info("窗口检测器: 依赖不可用")
+        except Exception as e:
+            self.window_detector = None
+            logger.debug(f"窗口检测器初始化失败 (非致命): {e}")
+
+    def _window_detector_loop(self) -> None:
+        """窗口检测器后台循环"""
+        import time
+        import numpy as np
+        interval = 1.0
+        while not self._window_stop_event.is_set():
+            try:
+                if self.window_detector:
+                    events = self.window_detector.detect(np.empty(0), "_system")
+                    for evt in events:
+                        if self.event_bus:
+                            self.event_bus.publish(evt)
+            except Exception:
+                pass
+            for _ in range(int(interval * 10)):
+                if self._window_stop_event.is_set():
+                    return
+                time.sleep(0.1)
+
+    def _setup_ocr_detector(self) -> None:
+        """启动 OCR 检测器，订阅 SCREEN_DIFF 事件"""
+        try:
+            from modules.perception.detectors.ocr_detector import OCRDetector
+            self.ocr_detector = OCRDetector(threshold=0.35)
+            if self.ocr_detector.is_available():
+                self.ocr_detector.start(event_bus=self.event_bus)
+                logger.info("OCR 检测器: 已启动 (变化>=15% 时触发)")
+            else:
+                self.ocr_detector = None
+                logger.info("OCR 检测器: 依赖不可用 (rapidocr)")
+        except Exception as e:
+            self.ocr_detector = None
+            logger.debug(f"OCR 检测器初始化失败 (非致命): {e}")
+
+    def start(self) -> None:
+        if self._started:
+            return
+        self._started = True
+        logger.info("感知系统已启动")
+
+    def stop(self) -> None:
+        if not self._started:
+            return
+        if self.ocr_detector:
+            self.ocr_detector.stop()
+        if self.voice_llm_handler:
+            self.voice_llm_handler.stop()
+        if self.proactive_trigger:
+            self.proactive_trigger.stop()
+        if self._window_detector_thread:
+            self._window_stop_event.set()
+            self._window_detector_thread.join(timeout=3)
+            self._window_detector_thread = None
+        if self.world_state:
+            from modules.perception.events.bus import get_event_bus
+            self.world_state.stop(get_event_bus())
+        self._started = False
+        logger.info("感知系统已停止")
+
+    def get_status(self) -> dict:
+        return {
+            "started": self._started,
+            "voice_available": self.voice_detector is not None,
+            "voice_detector_type": self.voice_detector.detector_type if self.voice_detector else None,
+            "voice_llm_handler_active": self.voice_llm_handler.is_active if self.voice_llm_handler else False,
+            "window_detector_available": self.window_detector is not None and self.window_detector.is_available(),
+            "ocr_detector_available": self.ocr_detector is not None and self.ocr_detector.is_available(),
+            "proactive_trigger": self.proactive_trigger.get_stats() if self.proactive_trigger else None,
+            "world_state": self.world_state.get_state().to_dict() if self.world_state else None,
+            "event_bus": self.event_bus.get_stats() if self.event_bus else None,
+        }
+
+
+
+_system: Optional[PerceptionSystem] = None
+_system_lock = threading.Lock()
+
+
+def get_perception_system() -> PerceptionSystem:
+    """获取感知系统全局单例（线程安全，双重检查锁）"""
+    global _system
+    if _system is None:
+        with _system_lock:
+            if _system is None:
+                _system = PerceptionSystem()
+    return _system

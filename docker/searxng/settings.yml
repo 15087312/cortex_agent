@@ -1,0 +1,24 @@
+general:
+  debug: false
+  instance_name: "AI Backend Search"
+
+search:
+  safe_search: 0
+  autocomplete: ""
+  default_lang: "auto"
+  formats:
+    - html
+    - json
+    - csv
+
+server:
+  secret_key: "change-this-to-a-random-string"
+  port: 8080
+  bind_address: "0.0.0.0"
+  limiter: false
+
+outgoing:
+  request_timeout: 10.0
+  max_request_timeout: 30.0
+
+use_default_settings: true

@@ -1,0 +1,29 @@
+version: "3.8"
+
+services:
+  backend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: humanoid-agi-backend:latest
+    container_name: humanoid-agi-backend
+    restart: unless-stopped
+    ports:
+      - "${BACKEND_PORT:-8080}:8080"
+    env_file:
+      - ../.env
+    environment:
+      - APP_ENV=production
+      - PYTHONPATH=/app
+    volumes:
+      # Persist SQLite DB & memory data across restarts
+      - agi_data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  agi_data:

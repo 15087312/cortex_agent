@@ -1,0 +1,24 @@
+# 开发工具
+pytest==7.4.3
+pytest-cov==4.1.0
+pytest-asyncio==0.21.1
+black==23.11.0
+flake8==6.1.0
+mypy==1.7.1
+isort==5.12.0
+
+# 调试
+pdbpp==0.10.3
+debugpy==1.8.0
+
+# 代码质量
+pre-commit==3.6.0
+pylint==3.0.2
+
+# 文档
+sphinx==7.2.6
+sphinx-rtd-theme==2.0.0
+
+# 测试辅助
+faker==20.1.0
+factory-boy==3.3.0
