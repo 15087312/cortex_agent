@@ -43,6 +43,8 @@ logs/
 *.log
 
 # Runtime data (all)
+data/events_faiss.index
+data/events_id_map.json
 data/cache/
 data/memory/
 data/experience/

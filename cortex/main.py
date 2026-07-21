@@ -80,6 +80,8 @@ def parse_args():
     parser.add_argument("--model", default=None, help="指定主模型")
     parser.add_argument("--no-tui", action="store_true",
                         help="只启动后端，不启动 TUI")
+    parser.add_argument("--qt", "--desktop", action="store_true",
+                        help="启动后端 + Qt 桌面客户端 (macOS)")
     parser.add_argument("--workers", type=int,
                         default=int(os.environ.get("MAX_WORKERS", "1")),
                         help="后端 worker 数 (默认: 1，限流依赖单进程内存计数，强制最大为 1)")
@@ -206,7 +208,42 @@ def main():
         backend_proc.terminate()
         sys.exit(1)
 
-    if args.no_tui:
+    if args.qt:
+        # 启动 Qt 桌面客户端
+        project_root = _get_project_root()
+        frontend_dir = project_root / "frontend"
+        server_script = str(frontend_dir / "server.py")
+        main_script = str(frontend_dir / "main.py")
+
+        print("🚀 启动前端代理 (server.py)...")
+        import subprocess as _sp
+        front_server = _sp.Popen(
+            [sys.executable, server_script],
+            cwd=str(project_root),
+            stdout=_sp.DEVNULL, stderr=_sp.DEVNULL
+        )
+        time.sleep(1)
+
+        print("🪟 打开桌面窗口...")
+        import subprocess as _sp2
+        desktop_proc = _sp2.Popen(
+            [sys.executable, main_script],
+            cwd=str(project_root)
+        )
+
+        def qt_cleanup(signum=None, frame=None):
+            print("\n⏹ 停止...")
+            front_server.terminate()
+            desktop_proc.terminate()
+            cleanup()
+        signal.signal(signal.SIGINT, qt_cleanup)
+        signal.signal(signal.SIGTERM, qt_cleanup)
+
+        try:
+            desktop_proc.wait()
+        except KeyboardInterrupt:
+            qt_cleanup()
+    elif args.no_tui:
         print(f"\n📡 API: {api_url}")
         print(f"   健康检查: {api_url}/health")
         print(f"   指标:     {api_url}/metrics")

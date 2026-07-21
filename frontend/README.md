@@ -4,13 +4,30 @@ Cortex Agent 的 Web 控制台，包含 12 个功能页面，通过 WebSocket �
 
 ## 启动方式
 
+### macOS（推荐）
+
+```bash
+# 一键启动（双击或在终端运行）
+./frontend/start.command
+```
+
+或手动启动：
 ```bash
 # 确保后端已在 localhost:8080 运行
-python frontend/server.py
-
-# 浏览器打开
-# http://localhost:8765
+# 启动 Qt 桌面客户端
+python frontend/main.py
 ```
+
+### 浏览器访问（无 Qt）
+
+```bash
+python frontend/server.py
+# 打开 http://localhost:8765
+```
+
+### Windows
+
+双击 `frontend/start.bat`
 
 ## 功能页面
 
