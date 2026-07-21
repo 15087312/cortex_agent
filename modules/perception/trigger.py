@@ -183,12 +183,17 @@ class ProactiveTrigger:
     def _do_trigger(self, event) -> None:
         change_ratio = event.payload.get("change_ratio", 0)
         idle_minutes = self._idle_timer.idle_minutes
-        logger.info(f"触发主动询问: change_ratio={change_ratio:.0%} idle={idle_minutes:.0f}min")
 
         with self._lock:
+            elapsed = time.time() - self._last_trigger_time
+            if elapsed < self._cooldown_seconds:
+                logger.debug(f"跳过重复触发: 距上次仅 {elapsed:.0f}s")
+                return
             self._last_trigger_time = time.time()
             self._trigger_count += 1
             count = self._trigger_count
+
+        logger.info(f"触发主动询问 #{count}: change_ratio={change_ratio:.0%} idle={idle_minutes:.0f}min")
 
         # 后台执行，不阻塞事件总线
         threading.Thread(
