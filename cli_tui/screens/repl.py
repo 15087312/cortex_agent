@@ -602,7 +602,6 @@ class REPL(Screen):
     async def _reconnect_after_cancel(self):
         """取消后异步重连"""
         self.ws._cancel_flag = False
-        self.ws.stop_background_listener()
         await self.ws.close()
         ok = await self.ws.connect()
         if ok:
@@ -764,15 +763,12 @@ class REPL(Screen):
                         history_lines.append(f"  [{idx}] {modified}")
                 if len(history_lines) > 1:
                     injected = "\n".join(history_lines) + "\n\n"
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("读取编辑历史失败: %s", e)
 
         full_text = injected + text
         if ml:
             ml.write(f"[cyan]👤 用户[/cyan]: {full_text}")
-
-        # 停止后台监听，避免与 process_input 的接收循环冲突
-        self.ws.stop_background_listener()
 
         try:
             # 加载上下文和记忆（在发送前）
@@ -797,7 +793,6 @@ class REPL(Screen):
                     f"\n[dim]耗时: {self.state.elapsed_ms:.0f}ms  "
                     f"trace: {self.state.trace_id[:12] if self.state.trace_id else '-'}[/dim]"
                 )
-            # 重启后台监听，空闲时继续接收主动消息
             self.ws.start_background_listener()
 
     async def _warn_to_ml(self, markup: str):
@@ -1066,7 +1061,6 @@ class REPL(Screen):
             return
 
         # 断开当前连接
-        self.ws.stop_background_listener()
         await self.ws.close()
 
         # 连接到目标会话

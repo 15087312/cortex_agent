@@ -4,7 +4,8 @@ const App = {
         this.initTheme(); this.setupKeyboard();
         setInterval(() => { if(Date.now()-this._backendCheckTime>30000) this.updateHealth(); }, 15000); },
     initTheme() {
-        const saved = localStorage.getItem('cortex_theme') || 'light';
+        let saved = 'light';
+        try { saved = localStorage.getItem('cortex_theme') || 'light'; } catch {}
         document.body.setAttribute('data-theme', saved);
         const btn = document.getElementById('themeToggle');
         if (btn) btn.textContent = saved === 'dark' ? '☀️' : '🌙';
@@ -19,7 +20,7 @@ const App = {
         const current = document.body.getAttribute('data-theme') || 'light';
         const next = current === 'dark' ? 'light' : 'dark';
         document.body.setAttribute('data-theme', next);
-        localStorage.setItem('cortex_theme', next);
+        try { localStorage.setItem('cortex_theme', next); } catch {}
         const btn = document.getElementById('themeToggle');
         if (btn) btn.textContent = next === 'dark' ? '☀️' : '🌙';
         this._switchHljsTheme(next);

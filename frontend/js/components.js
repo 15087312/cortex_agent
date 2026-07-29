@@ -22,7 +22,7 @@ const UI = {
 
     // ── 统计卡片 ──
     statCard(icon, value, label, onClick) {
-        const click = onClick ? ` onclick="${onClick}"` : '';
+        const click = onClick ? ` onclick="${this.jsStr(onClick)}"` : '';
         const cur = onClick ? ' cursor:pointer' : '';
         return `<div class="stat-card"${click} style="${cur}">
             ${icon ? `<div class="stat-icon">${icon}</div>` : ''}
@@ -55,11 +55,11 @@ const UI = {
     // ── 按钮 ──
     btn(text, onClick, type = '') {
         const cls = type ? `btn btn-${type}` : 'btn';
-        return `<button class="${cls}" onclick="${this.e(onClick)}">${this.e(text)}</button>`;
+        return `<button class="${cls}" onclick="${this.jsStr(onClick)}">${this.e(text)}</button>`;
     },
     btnSm(text, onClick, type = '') {
         const cls = type ? `btn btn-${type} btn-sm` : 'btn btn-sm';
-        return `<button class="${cls}" onclick="${this.e(onClick)}">${this.e(text)}</button>`;
+        return `<button class="${cls}" onclick="${this.jsStr(onClick)}">${this.e(text)}</button>`;
     },
 
     // ── 输入框 ──

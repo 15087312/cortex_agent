@@ -11,7 +11,6 @@ DepthRecall — 深度回忆调度模块
   - 浅层召回置信度低于阈值
   - 当前任务为决策/分析类
 """
-import logging
 import re
 import time
 from dataclasses import dataclass, field
@@ -22,7 +21,8 @@ from modules.memory.causal_tree import CausalTree, CausalChain, CausalTreeResult
 from modules.memory.event_store import EventStore, MemoryEvent
 from modules.memory.event_retrieval import EventRetrieval, SCORE_WEIGHTS
 
-logger = logging.getLogger(__name__)
+from utils.logger import get_logger
+logger = get_logger(__name__)
 
 # ── 触发词 ──
 _TRIGGER_PATTERNS = [

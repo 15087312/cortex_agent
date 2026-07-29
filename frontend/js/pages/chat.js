@@ -246,13 +246,8 @@ const actions = `<button onclick="App._pages.chat.copyMsg(${idx})" title="复制
 ${isU?'':`<button onclick="App._pages.chat.deleteMsg(${idx})" title="删除">🗑</button>`}`;
 return `<div class="message ${cls}" data-idx="${idx}"><div class="message-avatar">${avatar}</div><div class="message-bubble">${content}<div class="message-actions">${actions}</div></div></div>`;
 },
-// Lightweight message shell for streaming
 _renderMsgShell(msgIndex){
 return `<div class="message ai" data-idx="${msgIndex}"><div class="message-avatar">AI</div><div class="message-bubble"><div class="streaming-cursor">▊</div></div></div>`;
-},
-// Lightweight message shell for typing effect (no content)
-_renderMsgShell(msgIndex){
-return `<div class="message ai" data-idx="${msgIndex}"><div class="message-avatar">AI</div><div class="message-bubble"></div></div>`;
 },
 
 copyMsg(idx){

@@ -467,8 +467,8 @@ class MultiModelOrchestrator:
                 try:
                     from modules.security_system.tool_security_gate import get_tool_security_gate
                     get_tool_security_gate().set_active_blackboard(blackboard)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("注入 Blackboard 到 SecurityGate 失败: %s", e)
 
             # ---- ModelRunnerManager: 监听 probe_start/probe_stop 命令 ----
             try:
@@ -632,8 +632,8 @@ class MultiModelOrchestrator:
                             for r in runners.values():
                                 if r.tier == "large" and r._thinker:
                                     return bool(getattr(r._thinker, '_pending_delegations', None))
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("检查 pending_delegations 失败: %s", e)
                 return False
 
             completed = False
@@ -788,8 +788,8 @@ class MultiModelOrchestrator:
                         f"风险级别: {block.get('risk_level', 'high')}\n"
                         f"如需继续，请检查操作是否安全后重试。"
                     )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("检查安全拦截信号失败: %s", e)
 
         return cleaned
 

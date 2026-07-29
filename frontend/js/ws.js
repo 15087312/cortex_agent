@@ -10,7 +10,7 @@ const WS = {
     },
     _doConnect() {
         if (!this._sessionId) { this._connectReject?.('no session'); return; }
-        try { this._conn = new WebSocket('ws://localhost:8080/stream/ws/'+this._sessionId); } catch (e) { this._connectReject?.(e); this._scheduleRetry(); return; }
+        try { const host = window.location.hostname || 'localhost'; this._conn = new WebSocket('ws://'+host+':8080/stream/ws/'+this._sessionId); } catch (e) { this._connectReject?.(e); this._scheduleRetry(); return; }
         this._conn.onopen = () => { this._attempt = 0; this._connectResolve?.(); };
         this._conn.onmessage = (e) => { try { const d = JSON.parse(e.data); this._dispatch(d.type||d.event, d); } catch {} };
         this._conn.onclose = () => { if (this._shouldReconnect) this._scheduleRetry(); };
@@ -20,11 +20,6 @@ const WS = {
     },
     _scheduleRetry() {
         if (this._attempt >= this._maxRetry) { this._connectReject?.('max retries'); return; }
-        const d = [1,2,4][this._attempt]*1000; this._attempt++;
-        setTimeout(() => this._doConnect(), d);
-    },
-    _scheduleRetry() {
-        if (this._attempt >= this._maxRetry) return;
         const d = [1,2,4][this._attempt]*1000; this._attempt++;
         setTimeout(() => this._doConnect(), d);
     },

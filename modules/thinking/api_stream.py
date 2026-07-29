@@ -109,8 +109,8 @@ def _resolve_identity_name(model_id: str) -> str:
             name = identity.get("name", "")
             _identity_name_cache[model_id] = name
             return name
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("获取模型身份名称失败: %s", e)
     _identity_name_cache[model_id] = ""
     return ""
 
@@ -614,8 +614,8 @@ class StreamThinkingSystem:
                         rm = _runner_managers.get(session_id)
                     if rm and rm.blackboard:
                         partial_response = rm.blackboard.final_response or ""
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("获取取消后的部分响应失败: %s", e)
 
                 if partial_response:
                     await self._emit(

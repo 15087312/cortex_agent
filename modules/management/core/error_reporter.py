@@ -1,13 +1,14 @@
 """
 统一错误报告模块。
 
-提供：
+提供:
 - ErrorReport: 结构化错误报告数据
 - report_error: 统一错误上报入口
 - report_exception: 异常对象快捷上报
 - report_api_error: HTTP/API 错误快捷上报
 
-默认只做本地结构化日志和 error_bus 转发，不引入外部依赖。
+注意: 此模块仅做结构化日志，不依赖 ErrorBus。
+如需推送到 WebSocket，请直接调用 error_bus.report_error()。
 """
 from __future__ import annotations
 
@@ -36,6 +37,8 @@ class ErrorReport:
 
 
 class ErrorReporter:
+    """结构化错误报告器 — 仅写入日志，不涉及 ErrorBus/WS。"""
+
     def __init__(self):
         self.logger = logger
 
@@ -49,25 +52,6 @@ class ErrorReporter:
                 self.logger.error("[ERROR_REPORT] %s", str(payload))
             except Exception as e:
                 logger.debug("错误报告字符串序列化也失败: %s", e)
-
-        try:
-            from modules.management.core.error_bus import error_bus, ErrorContext
-            if getattr(report, "source", "") != "error_bus":
-                error_bus.report_error(
-                    Exception(f"{report.error_type}: {report.message}"),
-                    ErrorContext(
-                        module=report.module,
-                        function=report.function,
-                        extra={
-                            **(report.context or {}),
-                            "source": report.source,
-                            "severity": report.severity,
-                            "code": report.code,
-                        },
-                    ),
-                )
-        except Exception as e:
-            logger.debug("错误总线转发失败 (非致命): %s", e)
 
 
 _reporter = ErrorReporter()

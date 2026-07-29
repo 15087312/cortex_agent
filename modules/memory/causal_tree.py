@@ -6,14 +6,14 @@ CausalTree — 因果树：两种推理能力
 
 因果图存抽象概念和关系，因果树提供两种查询视角。
 """
-import logging
 import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple, Set
 
 from modules.memory.causal_graph import CausalGraph, CausalNode, CausalEdge
 
-logger = logging.getLogger(__name__)
+from utils.logger import get_logger
+logger = get_logger(__name__)
 
 
 @dataclass

@@ -16,7 +16,6 @@ import asyncio
 from api.errors import (
     ErrorCode, ErrorResponse, ErrorDetail, error_response, AppError,
 )
-from modules.management import report_exception
 from cortex.version import __version__ as _CORTEX_VERSION
 from infra.data_process.api import router as data_process_router
 from infra.tool_manager.api import router as tool_router
@@ -492,12 +491,14 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 async def general_exception_handler(request: Request, exc: Exception):
     """未预期异常 → 500 通用响应，过滤敏感信息"""
     logger.error(f"[未处理异常] {request.method} {request.url.path}: {type(exc).__name__}: {exc}")
-    report_exception(
+    from modules.management.core.error_bus import error_bus, ErrorContext
+    error_bus.report_error(
         exc,
-        module="api.main",
-        function="general_exception_handler",
-        context={"method": request.method, "path": request.url.path},
-        source="fastapi_exception_handler",
+        ErrorContext(
+            module="api.main",
+            function="general_exception_handler",
+            extra={"method": request.method, "path": request.url.path},
+        )
     )
     return JSONResponse(
         status_code=500,

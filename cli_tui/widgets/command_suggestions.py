@@ -6,7 +6,6 @@
 - 实时过滤
 """
 
-import logging
 from typing import List, Optional
 
 from rich.text import Text
@@ -15,9 +14,10 @@ from textual.binding import Binding
 from textual.containers import VerticalScroll
 from textual.widgets import Static
 
+from utils.logger import get_logger
 from ..commands import Command, get_all
 
-logger = logging.getLogger("tui_command_suggestions")
+logger = get_logger("tui_command_suggestions")
 
 
 class SuggestionItem(Static):

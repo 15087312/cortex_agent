@@ -1,23 +1,28 @@
 """
 全局日志工具 - 统一日志格式、日志级别
+
+使用方式：
+    logger = setup_logger("my_module")     # 第一选择 - 带 console + file handler
+    logger = get_logger("my_module")       # 第二选择 - 防重复初始化（推荐）
 """
+
 import json
 import logging
 from logging.handlers import TimedRotatingFileHandler
 import os
 from pathlib import Path
 
-# 项目根目录
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
-# 全局开关，CLI 模式设为 False 可禁用所有日志
 from config.settings import settings as _settings
 LOGGING_ENABLED = _settings.LOGGING_ENABLED
 
 
-class _JsonFormatter(logging.Formatter):
-    """Outputs each log record as a single-line JSON object."""
+# 已初始化的 logger 缓存，防止 setup_logger 重复清空 handlers
+_logger_cache: dict[str, logging.Logger] = {}
 
+
+class _JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         log_entry = {
             "timestamp": self.formatTime(record, self.datefmt),
@@ -31,7 +36,6 @@ class _JsonFormatter(logging.Formatter):
 
 
 def _make_formatter(use_json: bool) -> logging.Formatter:
-    """Return a JSON or text formatter."""
     if use_json:
         return _JsonFormatter(datefmt='%Y-%m-%d %H:%M:%S')
     return logging.Formatter(
@@ -41,7 +45,6 @@ def _make_formatter(use_json: bool) -> logging.Formatter:
 
 
 def _make_file_formatter(use_json: bool) -> logging.Formatter:
-    """Return a JSON or text formatter (file variant includes filename:lineno)."""
     if use_json:
         return _JsonFormatter(datefmt='%Y-%m-%d %H:%M:%S')
     return logging.Formatter(
@@ -50,19 +53,14 @@ def _make_file_formatter(use_json: bool) -> logging.Formatter:
     )
 
 
-# 第三方库日志配置（只执行一次）
 _third_party_configured = False
 
 def _configure_third_party_loggers():
-    """配置第三方库的日志级别（只执行一次）"""
     global _third_party_configured
     if _third_party_configured:
         return
     _third_party_configured = True
-    
-    # 第三方库降级为 WARNING
     noisy_loggers = [
-        "diskcache",
         "sentence_transformers",
         "faiss",
         "urllib3",
@@ -80,12 +78,14 @@ def setup_logger(
     log_level: str = "INFO",
     log_dir: str = None
 ) -> logging.Logger:
-    """设置日志器"""
+    """设置日志器 — 带 console + file handler。
 
+    注意：同一 name 第二次调用会清空 handlers 重建。
+    推荐使用 get_logger(name) 来自动缓存。
+    """
     if log_dir is None:
         log_dir = str(PROJECT_ROOT / "data" / "logs")
 
-    # 如果全局禁用，直接返回静默 logger
     if not LOGGING_ENABLED:
         logger = logging.getLogger(name)
         logger.handlers.clear()
@@ -93,29 +93,24 @@ def setup_logger(
         logger.propagate = False
         return logger
 
-    # 设置第三方库日志级别（减少噪音）
     _configure_third_party_loggers()
-
-    # 正常创建日志目录
     os.makedirs(log_dir, exist_ok=True)
 
     logger = logging.getLogger(name)
     logger.setLevel(getattr(logging, log_level.upper()))
-
-    # 清除已有处理器
     logger.handlers.clear()
 
-    # 判断是否使用 JSON 格式
     use_json = os.environ.get("LOG_FORMAT", "").lower() == "json"
 
-    # 控制台处理器（级别与配置一致）
     console_handler = logging.StreamHandler()
     console_handler.setLevel(getattr(logging, log_level.upper()))
     console_handler.setFormatter(_make_formatter(use_json))
     logger.addHandler(console_handler)
 
-    # 文件处理器（按天轮转，文件名带日期）
-    log_file = os.path.join(log_dir, f"{name}.log")
+    log_file = os.path.join(log_dir, f"{name.replace('.', '/')}.log")
+    log_dir_path = os.path.dirname(log_file)
+    if log_dir_path:
+        os.makedirs(log_dir_path, exist_ok=True)
     file_handler = TimedRotatingFileHandler(
         log_file,
         when='midnight',
@@ -127,17 +122,24 @@ def setup_logger(
     file_handler.suffix = '%Y%m%d.log'
     file_handler.setFormatter(_make_file_formatter(use_json))
     logger.addHandler(file_handler)
-    logger.propagate = False  # 阻止传播到根 logger，防止双重输出
+    logger.propagate = False
 
     return logger
 
 
-# 全局默认日志器（延迟初始化，避免 import 时创建目录）
-_default_logger = None
+def get_logger(name: str, log_level: str = "INFO") -> logging.Logger:
+    """获取日志器（带缓存，防止重复初始化）。"""
+    if name in _logger_cache:
+        return _logger_cache[name]
+    logger = setup_logger(name, log_level=log_level)
+    _logger_cache[name] = logger
+    return logger
 
+
+_default_logger = None
 
 def get_default_logger():
     global _default_logger
     if _default_logger is None:
-        _default_logger = setup_logger("humanoid_agi")
+        _default_logger = get_logger("humanoid_agi")
     return _default_logger

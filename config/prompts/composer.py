@@ -1,9 +1,9 @@
 """Prompt 组装器 — 所有 prompt 的唯一出口"""
-import logging
 from dataclasses import dataclass, field
 from typing import Optional, List
 
-logger = logging.getLogger(__name__)
+from utils.logger import get_logger
+logger = get_logger(__name__)
 
 
 @dataclass

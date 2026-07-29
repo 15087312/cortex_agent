@@ -6,11 +6,11 @@
   无需手动 import，自动发现并注册。
 """
 import importlib
-import logging
 import pkgutil
 from pathlib import Path
 
-logger = logging.getLogger(__name__)
+from utils.logger import get_logger
+logger = get_logger(__name__)
 
 _package_dir = Path(__file__).parent
 

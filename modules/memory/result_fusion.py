@@ -4,13 +4,13 @@ ResultFusion — 深度回忆结果融合与格式组装
 把因果结论（因果链路 + 置信度 + 共享因子）与事件列表
 按统一格式装配，供 ContinuousThinker 注入 prompt。
 """
-import logging
 from typing import List, Optional
 
 from modules.memory.depth_recall import DeepRecallResult, DepthRecallScheduler
 from modules.memory.event_store import MemoryEvent
 
-logger = logging.getLogger(__name__)
+from utils.logger import get_logger
+logger = get_logger(__name__)
 
 # ── 输出模板 ──
 

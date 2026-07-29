@@ -345,8 +345,13 @@ class ProactiveTrigger:
         try:
             from modules.thinking.api_stream import connection_manager
             from modules.thinking.api_stream import _build_event
-            event = _build_event("proactive_outreach", {"content": text})
-            connection_manager.send_json(session_id, event)
+            event = _build_event(
+                session_id=session_id,
+                msg_type="proactive",
+                event="proactive_outreach",
+                content=text,
+            )
+            connection_manager.send_json_from_thread(session_id, event)
         except Exception as e:
             logger.error(f"WebSocket 推送失败: {e}")
 

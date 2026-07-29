@@ -9,12 +9,11 @@ import json
 import re
 import ssl
 import time
-import logging
 from config.settings import settings
 from modules.management import report_api_error, report_exception
+from utils.logger import get_logger
 
-# Q-12: Module-level logger to avoid repeated creation
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class LargeModelClient(BaseModelClient):

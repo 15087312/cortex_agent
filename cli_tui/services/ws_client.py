@@ -1,15 +1,33 @@
-"""WebSocket 客户端 — 与后端 stream API 通信"""
+"""WebSocket 客户端 — 与后端 stream API 通信
+
+架构: Single Producer / Switchable Consumer
+  _receive_loop (唯一调 _ws.receive()) → asyncio.Queue → receive_event()
+                                                              ↑
+                                                    consumer == "background" → _background_receive_loop
+                                                    consumer == "processing" → process_input
+"""
 
 import asyncio
 import json
-import logging
 import time
 import uuid
 from typing import Any, Callable, Coroutine, Dict, List, Optional
 
 import aiohttp
 
-logger = logging.getLogger("ws_client")
+from utils.logger import get_logger
+
+
+async def _safe_wait_for(coro, timeout):
+    """替代 asyncio.wait_for，兜底 Python 3.13 任务上下文检查异常。"""
+    try:
+        return await asyncio.wait_for(coro, timeout=timeout)
+    except RuntimeError as e:
+        if "Timeout context manager" in str(e):
+            return await coro
+        raise
+
+logger = get_logger("ws_client")
 
 EventCallback = Callable[[Dict[str, Any]], Coroutine[Any, Any, None]]
 
@@ -39,7 +57,9 @@ class WSClient:
         self._cancel_flag: bool = False
         self._event_callbacks: List[EventCallback] = []
         self._bg_listener_task: Optional[asyncio.Task] = None
-        self._receive_lock = asyncio.Lock()  # 防止并发 receive()
+        self._receive_task: Optional[asyncio.Task] = None
+        self._incoming: asyncio.Queue = asyncio.Queue(maxsize=1000)
+        self._consumer: str = "idle"  # "idle" | "background" | "processing"
 
         # 数据收集
         self.dialog_entries: List[Dict[str, Any]] = []
@@ -92,6 +112,68 @@ class WSClient:
             logger.debug("Session creation failed, falling back to local UUID: %s", e)
         return str(uuid.uuid4())
 
+    # ── 接收循环（唯一对 _ws.receive() 的调用者）──
+
+    async def _receive_loop(self):
+        """持续读取 _ws.receive()，解析后入队 _incoming。
+        连接生命周期内始终运行，异常退出后不再重启（由 connect / process_input 处理）。"""
+        try:
+            while self._running and self._ws and not self._ws.closed:
+                try:
+                    msg = await self._ws.receive()
+                except asyncio.CancelledError:
+                    break
+                except Exception as e:
+                    await self._incoming.put({"type": "error", "content": str(e)})
+                    break
+
+                event = None
+                if msg.type == aiohttp.WSMsgType.TEXT:
+                    try:
+                        event = json.loads(msg.data)
+                    except Exception as e:
+                        logger.debug("Failed to parse WS message as JSON: %s", e)
+                        event = {"type": "error", "content": str(msg.data)[:200]}
+                elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
+                    event = {"type": "error", "content": "连接已关闭"}
+                    break
+
+                if event:
+                    await self._incoming.put(event)
+        except asyncio.CancelledError:
+            pass
+        finally:
+            logger.debug("Receive loop ended")
+
+    async def _start_receive_loop(self):
+        """启动接收循环（使用新队列，旧 receive_task 先取消）。"""
+        await self._stop_task(self._receive_task)
+        self._incoming = asyncio.Queue(maxsize=1000)
+        self._receive_task = asyncio.ensure_future(self._receive_loop())
+
+    @staticmethod
+    async def _stop_task(task: Optional[asyncio.Task], timeout: float = 3.0):
+        if task and not task.done():
+            task.cancel()
+            try:
+                await asyncio.wait_for(task, timeout=timeout)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                pass
+
+    # ── Consumer 交接（不依赖取消协调）──
+
+    async def _acquire_consumer(self, consumer: str):
+        """切换 consumer。从 background 切换时取消背景循环，防止并发消费队列。"""
+        old = self._consumer
+        self._consumer = consumer
+        if old == "background" and consumer != "background":
+            await self._stop_task(self._bg_listener_task)
+            self._bg_listener_task = None
+
+    def _release_consumer(self):
+        """释放 consumer。调用者（process_input 结束后）应视情况重启 background。"""
+        self._consumer = "idle"
+
     # ── WebSocket ──
 
     async def connect(self, session_id: str = "") -> bool:
@@ -128,37 +210,35 @@ class WSClient:
             return False
 
         self._running = True
-        # 等待 session_ready
+        # 启动接收循环（以后所有消息都从队列读）
+        await self._start_receive_loop()
+
+        # 等待 session_ready（从队列消费，不直接调 _ws.receive）
         try:
-            first_msg = await asyncio.wait_for(self._ws.receive(), timeout=5)
-            if first_msg.type == aiohttp.WSMsgType.TEXT:
-                data = json.loads(first_msg.data)
-                await self._emit(data)
+            first_event = await _safe_wait_for(self._incoming.get(), timeout=5)
+            if first_event:
+                await self._emit(first_event)
         except (asyncio.TimeoutError, asyncio.CancelledError):
             pass
-        except Exception as e:
-            logger.debug("Did not receive session_ready message: %s", e)
 
         return True
 
     # ── 后台监听（空闲时接收主动消息）──
 
     def start_background_listener(self):
-        """启动后台 WebSocket 监听 — 空闲时接收服务端主动推送的消息"""
+        """启动后台监听 — 仅当 consumer == 'processing' 时不生效"""
         if self._bg_listener_task and not self._bg_listener_task.done():
             return
+        self._consumer = "background"
         self._bg_listener_task = asyncio.ensure_future(self._background_receive_loop())
 
-    def stop_background_listener(self):
-        """停止后台监听（process_input 开始前调用）"""
-        if self._bg_listener_task and not self._bg_listener_task.done():
-            self._bg_listener_task.cancel()
-            self._bg_listener_task = None
-
     async def _background_receive_loop(self):
-        """后台接收循环 — 空闲时持续监听 WebSocket 消息"""
+        """后台接收循环 — 仅在 consumer == 'background' 时消费队列并 emit 事件。"""
         try:
-            while self._running and self._ws and not self._ws.closed:
+            while self._running and self._consumer == "background":
+                if not self._ws or self._ws.closed:
+                    await asyncio.sleep(5)
+                    continue
                 try:
                     event = await self.receive_event(timeout=30.0)
                     if event:
@@ -169,7 +249,7 @@ class WSClient:
                     break
                 except Exception as e:
                     logger.debug("Background receive error (will retry): %s", e)
-                    await asyncio.sleep(1)
+                    await asyncio.sleep(5)
         except asyncio.CancelledError:
             pass
 
@@ -199,14 +279,11 @@ class WSClient:
             return False
 
     async def receive_event(self, timeout: float = 45.0) -> Dict[str, Any]:
-        """接收一个 WebSocket 事件，timeout 秒内无数据则抛出 asyncio.TimeoutError"""
-        if not self._ws or self._ws.closed:
-            return {"type": "error", "content": "WebSocket 未连接"}
+        """从队列读下一个事件（不直接调 _ws.receive）。"""
         try:
-            async with self._receive_lock:
-                msg = await asyncio.wait_for(self._ws.receive(), timeout=timeout)
+            return await _safe_wait_for(self._incoming.get(), timeout=timeout)
         except asyncio.TimeoutError:
-            raise                          # 让 process_input 统一处理
+            raise
         except asyncio.CancelledError:
             raise
         except Exception as e:
@@ -216,16 +293,6 @@ class WSClient:
             else:
                 hint = f"接收失败: {err_str}"
             return {"type": "error", "content": hint}
-
-        if msg.type == aiohttp.WSMsgType.TEXT:
-            try:
-                return json.loads(msg.data)
-            except Exception as e:
-                logger.debug("Failed to parse WS message as JSON: %s", e)
-                return {"type": "error", "content": str(msg.data)[:200]}
-        if msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
-            return {"type": "error", "content": "连接已关闭"}
-        return {}
 
     # ── 事件解析 ──
 
@@ -420,6 +487,20 @@ class WSClient:
                 "timestamp": time.time(),
             }
 
+        # ── 主动搭话: proactive_outreach ──
+        if msg_type == "proactive" and event_name == "proactive_outreach" and content:
+            return {
+                "kind": "dialog",
+                "tier": "system",
+                "icon": "🤖",
+                "label": "助手",
+                "model_id": "proactive",
+                "content": content,
+                "entry_type": "proactive",
+                "round_num": 0,
+                "timestamp": time.time(),
+            }
+
         return None
 
     async def send_security_response(self, request_id: str, approved: bool, reason: str = ""):
@@ -463,6 +544,8 @@ class WSClient:
         """
         发送用户输入并等待完整响应。
 
+        接管 consumer（停止背景监听），结束后释放。
+
         参数：
           state — AppState，用于跟踪进度和 cancel_requested 标志
           warn_callback — async callable(str)，向 TUI 注入进度提示
@@ -470,6 +553,24 @@ class WSClient:
           max_retries — 连续超时后整体重连最多次数
           consecutive_limit — 连续超时多少次后触发重连
         """
+        await self._acquire_consumer("processing")
+        try:
+            await self._process_input_impl(
+                user_input, state, warn_callback,
+                per_event_timeout, max_retries, consecutive_limit,
+            )
+        finally:
+            self._release_consumer()
+
+    async def _process_input_impl(
+        self,
+        user_input: str,
+        state=None,
+        warn_callback=None,
+        per_event_timeout: float = 45.0,
+        max_retries: int = 2,
+        consecutive_limit: int = 2,
+    ):
         start = time.time()
         self._cancel_flag = False
 
@@ -673,7 +774,11 @@ class WSClient:
     async def close(self):
         """关闭连接"""
         self._running = False
-        self.stop_background_listener()
+        await self._stop_task(self._receive_task)
+        await self._stop_task(self._bg_listener_task)
+        self._bg_listener_task = None
+        self._receive_task = None
+        self._consumer = "idle"
         if self._ws and not self._ws.closed:
             await self._ws.close()
         if self._session:
