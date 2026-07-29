@@ -1,101 +1,51 @@
-# Cortex
+# Cortex Agent
 
-Simplified chat-only AI with memory system, based on Cortex Agent (ai_backend).
+AI Agent 管理控制台前端。基于 **Vue 3 + Pinia + Vue Router**，12 个功能页面，WebSocket 流式聊天。
 
-## Features
-
-- **Memory System**: Hybrid RAG (semantic + keyword + causal graph) with deep causal reasoning
-- **Multi-Provider**: OpenAI, Anthropic, DashScope auto-detection
-- **WebSocket Streaming**: Real-time token-by-token response
-- **Session Persistence**: SQLite-backed conversation history
-- **React Frontend**: Dark-themed chat UI with markdown support
-
-## Quick Start
-
-### 1. Setup
+## 启动
 
 ```bash
-cd cortex
-cp .env.example .env
-# Edit .env with your model API key and URL
-```
-
-### 2. Backend
-
-```bash
-pip install -r requirements.txt
-uvicorn backend.main:app --reload --port 8000
-```
-
-### 3. Frontend
-
-```bash
-cd frontend
+# 开发模式
+cd frontend-dev
 npm install
-npm run dev
+npm run dev          # http://localhost:5173
+
+# 构建
+npm run build        # 输出 frontend-dev/dist/
+
+# Qt 桌面版
+python frontend/main.py
 ```
 
-Open http://localhost:5173
-
-### 4. Docker
-
-```bash
-docker-compose -f docker/docker-compose.yml up --build
-```
-
-## Configuration
-
-Key `.env` variables:
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `MODEL_API_KEY` | API key | (required) |
-| `MODEL_API_URL` | API endpoint | (required) |
-| `MODEL_NAME` | Model name | (required) |
-| `MODEL_API_FORMAT` | `openai` / `anthropic` / `dashscope` | auto-detect |
-| `MODEL_TEMPERATURE` | Temperature | 0.7 |
-| `MODEL_MAX_TOKENS` | Max tokens | 4096 |
-| `MEMORY_REDUCE_ENABLED` | Enable memory extraction | true |
-| `PORT` | Server port | 8000 |
-
-## Architecture
+## 架构
 
 ```
-Backend (FastAPI)
-├── API Layer (REST + WebSocket)
-├── Chat Engine (single-model thinker)
-├── Memory System (8 modules)
-│   ├── Event Store (SQLite + FAISS)
-│   ├── Event Retriever (hybrid RAG)
-│   ├── Causal Graph (knowledge graph)
-│   ├── Causal Tree (reasoning)
-│   ├── Deep Recall (3-step pipeline)
-│   └── Event Reducer (LLM extraction)
-├── Model Client (OpenAI/Anthropic/DashScope)
-└── Database (SQLite sessions)
-
-Frontend (React)
-├── SessionSidebar
-├── ChatWindow
-├── MessageList + MessageBubble
-└── WebSocket streaming
+frontend-dev/
+└── src/
+    ├── api/          REST 封装 (fetch + sessionStorage)
+    ├── ws/           WebSocket 状态机
+    ├── stores/       Pinia (chat, session, health, theme, toast, config)
+    ├── components/   14 个通用组件
+    ├── pages/        12 个路由页面 (懒加载)
+    ├── utils/        markdown + format + escape
+    └── css/          设计令牌 (128 变量, 暗/亮)
 ```
 
-## Project Structure
+## 功能
 
-```
-cortex/
-├── backend/
-│   ├── main.py           # FastAPI entry
-│   ├── config/           # Settings + prompts
-│   ├── memory/           # 8 memory modules
-│   ├── chat/             # Chat engine
-│   ├── api/              # REST + WS routes
-│   ├── database/         # SQLite persistence
-│   └── utils/            # Logger + exceptions
-├── infra/
-│   └── model/            # LLM client
-├── frontend/             # React chat UI
-├── docker/               # Docker configs
-└── data/                 # Runtime data (gitignored)
-```
+| 页面 | 说明 |
+|------|------|
+| 对话 | WebSocket 流式聊天，markdown + 代码高亮，多模态 |
+| 仪表盘 | 系统健康度，模块状态 |
+| 记忆 | 事件 CRUD + 搜索 |
+| 工具 | 工具注册 + 在线调用 |
+| 安全 | L0-L4 开关 + 审计日志 |
+| 感知 | 传感器启停 + 10s 轮询 |
+| 设置 | API Key + 运行时配置 + 模型状态 |
+
+## 依赖
+
+- Node.js >= 18
+- Vue 3, Pinia, Vue Router
+- markdown-it, highlight.js
+- 后端: localhost:8080

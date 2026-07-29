@@ -1,44 +1,12 @@
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-*.egg-info/
+node_modules/
 dist/
-build/
-.eggs/
-
-# Virtual environment
-.venv/
-venv/
-ENV/
-
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
-
-# Environment
 .env
-.env.local
-
-# Data
-data/
-logs/
-*.db
-*.index
-
-# Node
-frontend/node_modules/
-frontend/dist/
-
-# OS
+*.pyc
+__pycache__/
 .DS_Store
 Thumbs.db
-
-# PyInstaller
-*.spec
-
 .omo/
 .mimocode/
+backend/data/
+backend/logs/
+backend/chat/logs/

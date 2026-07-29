@@ -1,0 +1,31 @@
+<script setup>
+import { ref, onMounted } from 'vue'
+import { endpoints } from '@/api.js'
+import { useToastStore } from '@/stores/toast.js'
+import { formatTime } from '@/utils/format.js'
+
+const toast = useToastStore()
+const state = ref({})
+const logs = ref([])
+const labels = { 'L0': '基础校验', 'L1': '内容审核', 'L2': '输出审查', 'L3': '工具安全', 'L4': '执行保护' }
+
+onMounted(loadData)
+async function loadData() { try { const [sr, ar] = await Promise.all([endpoints.securityStatus().catch(() => null), endpoints.securityAudit(50).catch(() => null)]); state.value = sr?.data?.state || {}; logs.value = ar?.data?.logs || [] } catch {} }
+async function handleToggle(lv, en) { try { await endpoints.setSecuritySwitch(lv, en); toast.show(`${lv}已${en?'开启':'关闭'}`, 'success'); loadData() } catch { toast.show('切换失败', 'error') } }
+</script>
+
+<template>
+  <div>
+    <div class="page-header"><h2>🛡 安全审计</h2></div>
+    <div class="page-body">
+      <div class="card"><div class="card-header">安全开关</div>
+        <div v-if="Object.keys(state).length === 0"><div class="empty-state" style="padding:40px"><span class="empty-icon">🔘</span><p class="empty-text">安全策略加载后将显示于此</p></div></div>
+        <div v-else style="display:flex;flex-wrap:wrap;gap:8px"><span v-for="(en, lv) in state" :key="lv" class="badge" :class="en?'badge-green':'badge-gray'" style="padding:8px 12px;cursor:pointer;font-size:13px" @click="handleToggle(lv, !en)">{{ labels[lv] || lv }}: {{ en ? '●开' : '○关' }}</span></div>
+      </div>
+      <div class="card" style="margin-top:12px"><div class="card-header">审计日志</div>
+        <table class="data-table" v-if="logs.length > 0"><thead><tr><th>时间</th><th>操作</th><th>内容</th><th>结果</th></tr></thead><tbody><tr v-for="l in logs" :key="l.id || l.timestamp"><td>{{ formatTime(l.timestamp || l.time) }}</td><td>{{ l.action || l.type || '' }}</td><td><span style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block">{{ (l.content||l.message||l.input||'').slice(0,80) }}</span></td><td><span class="badge" :class="(l.passed||l.result===true)?'badge-green':'badge-red'">{{ (l.passed||l.result===true)?'通过':'拦截' }}</span></td></tr></tbody></table>
+        <div v-else class="empty-state" style="padding:40px"><span class="empty-icon">📋</span><p class="empty-text">审计日志将在此显示</p></div>
+      </div>
+    </div>
+  </div>
+</template>
