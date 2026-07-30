@@ -16,11 +16,19 @@ async function handleToggle(lv, en) { try { await endpoints.setSecuritySwitch(lv
 
 <template>
   <div>
-    <div class="page-header"><h2>🛡 安全审计</h2></div>
+    <div class="page-header">      <h2>安全审计</h2></div>
     <div class="page-body">
       <div class="card"><div class="card-header">安全开关</div>
         <div v-if="Object.keys(state).length === 0"><div class="empty-state" style="padding:40px"><span class="empty-icon">🔘</span><p class="empty-text">安全策略加载后将显示于此</p></div></div>
-        <div v-else style="display:flex;flex-wrap:wrap;gap:8px"><span v-for="(en, lv) in state" :key="lv" class="badge" :class="en?'badge-green':'badge-gray'" style="padding:8px 12px;cursor:pointer;font-size:13px" @click="handleToggle(lv, !en)">{{ labels[lv] || lv }}: {{ en ? '●开' : '○关' }}</span></div>
+        <div v-else style="display:flex;flex-wrap:wrap;gap:12px">
+            <div v-for="(en, lv) in state" :key="lv" style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--bg-tertiary);border-radius:var(--radius-md)">
+              <span style="font-size:13px;font-weight:600;min-width:72px">{{ labels[lv] || lv }}</span>
+              <label class="toggle-switch">
+                <input type="checkbox" :checked="en" @change="handleToggle(lv, !en)" />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+          </div>
       </div>
       <div class="card" style="margin-top:12px"><div class="card-header">审计日志</div>
         <table class="data-table" v-if="logs.length > 0"><thead><tr><th>时间</th><th>操作</th><th>内容</th><th>结果</th></tr></thead><tbody><tr v-for="l in logs" :key="l.id || l.timestamp"><td>{{ formatTime(l.timestamp || l.time) }}</td><td>{{ l.action || l.type || '' }}</td><td><span style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block">{{ (l.content||l.message||l.input||'').slice(0,80) }}</span></td><td><span class="badge" :class="(l.passed||l.result===true)?'badge-green':'badge-red'">{{ (l.passed||l.result===true)?'通过':'拦截' }}</span></td></tr></tbody></table>

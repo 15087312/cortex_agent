@@ -19,18 +19,26 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # Fields modifiable at runtime via PUT /api/config/{key}
+    # Fields modifiable at runtime via PUT /config/{key}
     _MODIFIABLE_FIELDS: Set[str] = {
         "LOG_LEVEL",
         "MODEL_TEMPERATURE",
         "MODEL_MAX_TOKENS",
         "CHAT_MAX_ROUNDS",
         "MEMORY_REDUCE_ENABLED",
+        # Frontend UI settings (persisted to settings.json)
+        "launch_at_startup",
+        "prevent_sleep",
+        "show_filename_in_gallery",
+        "allow_geolocation",
+        "shortcut_keys",
+        "storage_path",
     }
 
     # ── Model Provider ──
     MODEL_API_KEY: str = ""
     MODEL_API_URL: str = ""
+    PROXY_URL: str = ""
     MODEL_NAME: str = ""
     MODEL_API_FORMAT: str = ""  # "openai" / "anthropic" / "dashscope" / auto-detect
     MODEL_MAX_TOKENS: int = 4096
@@ -72,6 +80,14 @@ class Settings(BaseSettings):
     ASSISTANT_NAME: str = "Cortex"
     USER_NAME: str = "User"
 
+    # ── Frontend UI (persisted via PUT /config/{key}) ──
+    launch_at_startup: bool = True
+    prevent_sleep: bool = False
+    show_filename_in_gallery: bool = False
+    allow_geolocation: bool = False
+    shortcut_keys: str = "⌥ + T"
+    storage_path: str = ""
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._load_user_overrides()
@@ -88,6 +104,21 @@ class Settings(BaseSettings):
                         setattr(self, key, value)
             except Exception:
                 pass
+
+    def save_overrides(self):
+        """Persist modifiable fields from _MODIFIABLE_FIELDS to ~/.cortex-mini/settings.json"""
+        user_settings_path = Path.home() / ".cortex-mini" / "settings.json"
+        user_settings_path.parent.mkdir(parents=True, exist_ok=True)
+        overrides = {
+            key: getattr(self, key)
+            for key in self._MODIFIABLE_FIELDS
+            if hasattr(self, key)
+        }
+        try:
+            with open(user_settings_path, "w", encoding="utf-8") as f:
+                json.dump(overrides, f, indent=2, ensure_ascii=False)
+        except Exception:
+            pass
 
     @field_validator("PORT")
     @classmethod

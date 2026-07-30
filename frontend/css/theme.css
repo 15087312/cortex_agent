@@ -92,6 +92,11 @@
     --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', sans-serif;
     --font-mono: 'SF Mono', 'JetBrains Mono', 'Fira Code', 'Consolas', 'Courier New', monospace;
 
+    /* ── Glass / Acrylic ── */
+    --glass-bg: rgba(255, 255, 255, 0.7);
+    --glass-border: rgba(0, 0, 0, 0.06);
+    --glass-blur: 12px;
+
     /* ── Layout ── */
     --sidebar-width: 220px;
     --statusbar-height: 32px;
@@ -103,42 +108,47 @@
 }
 
 [data-theme="dark"] {
-    --bg-primary: #0d1117;
-    --bg-secondary: #161b22;
-    --bg-tertiary: #1c2333;
-    --bg-elevated: #21262d;
-    --bg-hover: #30363d;
-    --bg-inset: #090c10;
+    --bg-primary: #08080c;
+    --bg-secondary: #0f0f14;
+    --bg-tertiary: #16161d;
+    --bg-elevated: #1c1c24;
+    --bg-hover: #252530;
+    --bg-inset: #06060a;
 
-    --border: #30363d;
-    --border-accent: #484f58;
-    --border-light: #21262d;
+    --border: #1e1e28;
+    --border-accent: #2e2e3a;
+    --border-light: #16161d;
 
-    --text-primary: #e6edf3;
-    --text-secondary: #8b949e;
-    --text-muted: #6e7681;
+    --text-primary: #ededf0;
+    --text-secondary: #9494a0;
+    --text-muted: #636374;
 
-    --accent: #58a6ff;
-    --accent-hover: #79c0ff;
-    --accent-light: #79c0ff;
-    --accent-bg: rgba(88, 166, 255, 0.1);
+    --accent: #818cf8;
+    --accent-hover: #a5b4fc;
+    --accent-light: #c7d2fe;
+    --accent-bg: rgba(129, 140, 248, 0.1);
 
-    --success: #3fb950;
-    --success-bg: rgba(63, 185, 80, 0.15);
-    --warning: #d29922;
-    --warning-bg: rgba(210, 153, 34, 0.15);
-    --danger: #f85149;
-    --danger-bg: rgba(248, 81, 73, 0.15);
-    --purple: #bc8cff;
-    --info: #58a6ff;
-    --info-bg: rgba(88, 166, 255, 0.15);
+    --success: #34d399;
+    --success-bg: rgba(52, 211, 153, 0.12);
+    --warning: #fbbf24;
+    --warning-bg: rgba(251, 191, 36, 0.12);
+    --danger: #f87171;
+    --danger-bg: rgba(248, 113, 113, 0.12);
+    --purple: #a78bfa;
+    --info: #818cf8;
+    --info-bg: rgba(129, 140, 248, 0.12);
 
-    --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.2);
-    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.25);
-    --shadow: 0 1px 3px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2);
-    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.3);
-    --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.35);
-    --shadow-xl: 0 12px 40px rgba(0, 0, 0, 0.4);
+    --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.3);
+    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.35);
+    --shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+    --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.35);
+    --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.4);
+    --shadow-xl: 0 12px 48px rgba(0, 0, 0, 0.45);
+
+    /* ── Glass / Acrylic (dark only) ── */
+    --glass-bg: rgba(15, 15, 20, 0.75);
+    --glass-border: rgba(46, 46, 58, 0.5);
+    --glass-blur: 12px;
 }
 
 /* ── Base ── */

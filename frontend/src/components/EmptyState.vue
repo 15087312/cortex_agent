@@ -7,7 +7,7 @@ defineProps({
 </script>
 
 <template>
-  <div class="empty-state">
+  <div class="empty-state empty-state-glow">
     <span class="empty-icon">{{ icon }}</span>
     <p class="empty-text">{{ text }}</p>
     <p v-if="subtitle" class="empty-subtitle">{{ subtitle }}</p>

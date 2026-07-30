@@ -97,13 +97,18 @@ class BaseModelClient(ABC):
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
+            import os
+            from backend.config.settings import settings
+            if settings.PROXY_URL:
+                os.environ["HTTPS_PROXY"] = settings.PROXY_URL
+                os.environ["HTTP_PROXY"] = settings.PROXY_URL
             timeout = aiohttp.ClientTimeout(total=self.timeout)
             ssl_ctx = self._create_ssl_context()
             connector = aiohttp.TCPConnector(ssl=ssl_ctx, enable_cleanup_closed=True)
             self._session = aiohttp.ClientSession(
                 timeout=timeout,
                 connector=connector,
-                trust_env=False,
+                trust_env=True,
             )
         return self._session
 

@@ -61,7 +61,7 @@ class ContinuousThinker:
             def on_token(token: str):
                 full_response.append(token)
                 try:
-                    message_queue.put_nowait({"type": "token", "content": token})
+                    message_queue.put_nowait({"type": "message", "content": token})
                 except asyncio.QueueFull:
                     pass
 

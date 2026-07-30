@@ -141,11 +141,12 @@ function handleDeleteMessage(idx) {
       <div class="chat-messages chat-messages-virtual">
         <!-- 空状态 -->
         <div v-if="cortex.messages.length === 0 && !cortex.processing" class="chat-welcome">
-          <div class="chat-welcome-icon">🧠</div>
-          <div class="chat-welcome-text">Cortex 对话</div>
-          <div class="chat-welcome-hint">
-            Cortex 会记住你说的每件事<br>
-            试试告诉它"我喜欢吃辣"，下次问"推荐餐厅"它会想起来
+          <div class="welcome-icon">🧠</div>
+          <h2>Cortex 对话</h2>
+          <p>Cortex 具备持久化记忆，会记住你的偏好。<br>试试告诉它"我喜欢吃辣"，下次问"推荐餐厅"它会想起来。</p>
+          <div class="quick-actions">
+            <div class="quick-action" @click="handleSend({ text: '你好，介绍一下你的能力' })">了解能力</div>
+            <div class="quick-action" @click="handleSend({ text: '帮我记住一个偏好' })">存储偏好</div>
           </div>
         </div>
 

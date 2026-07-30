@@ -115,9 +115,14 @@ function handleDeleteMessage(idx) {
       <!-- 消息区：无消息时显示欢迎/思考，有消息时使用虚拟滚动 -->
       <div class="chat-messages chat-messages-virtual">
         <div v-if="chat.messages.length === 0 && !chat.processing" class="chat-welcome">
-          <div class="chat-welcome-icon">💬</div>
-          <div class="chat-welcome-text">开始新对话</div>
-          <div class="chat-welcome-hint">输入消息开始聊天</div>
+          <div class="welcome-icon">💬</div>
+          <h2>开始新对话</h2>
+          <p>输入消息开始聊天，支持多模态文件上传和流式回复。</p>
+          <div class="quick-actions">
+            <div class="quick-action" @click="handleSend({ text: '你好，请介绍一下你自己', attachments: [] })">打招呼</div>
+            <div class="quick-action" @click="handleSend({ text: '帮我分析一下项目结构', attachments: [] })">分析项目</div>
+            <div class="quick-action" @click="handleSend({ text: '给我写一段代码', attachments: [] })">写代码</div>
+          </div>
         </div>
         <div v-if="chat.processing && chat.messages.filter(m => m.role === 'assistant').length === 0">
           <ThinkingIndicator label="正在思考" />

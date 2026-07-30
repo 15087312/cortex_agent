@@ -23,11 +23,12 @@ async function handleClear() { if (!confirm('确定清空所有？')) return; tr
 async function handleCreate() { if (!newEvent.value.fact) { toast.show('请输入内容', 'error'); return }; try { await endpoints.createMemoryEvent({ fact: newEvent.value.fact, keywords: newEvent.value.keywords, importance: Number(newEvent.value.importance) || 0.5, event_type: newEvent.value.event_type }); toast.show('已创建', 'success'); showCreate.value = false; loadData() } catch { toast.show('创建失败', 'error') } }
 async function handleDetail(id) { try { const r = await endpoints.memoryEvent(id); detailEvent.value = r.data } catch { toast.show('加载失败', 'error') } }
 function typeBadgeClass(t) { return t === 'fact' ? 'badge-blue' : t === 'thought' ? 'badge-green' : t === 'strategy' ? 'badge-yellow' : 'badge-gray' }
+function starRating(v) { const s = Math.round(v * 5); return '★'.repeat(s) + '☆'.repeat(5 - s) }
 </script>
 
 <template>
   <div>
-    <div class="page-header"><h2>📝 记忆管理</h2></div>
+    <div class="page-header">      <h2>记忆管理</h2></div>
     <div class="page-body">
       <div class="stat-grid">
         <div class="stat-card"><div class="stat-value">{{ total }}</div><div class="stat-label">总事件</div></div>
@@ -44,7 +45,7 @@ function typeBadgeClass(t) { return t === 'fact' ? 'badge-blue' : t === 'thought
         <div class="card-header">记忆列表</div>
         <table class="data-table" v-if="events.length > 0">
           <thead><tr><th>类型</th><th>内容</th><th>重要性</th><th>时间</th><th>操作</th></tr></thead>
-          <tbody><tr v-for="e in events" :key="e.id"><td><span class="badge" :class="typeBadgeClass(e.type)">{{ e.type }}</span></td><td><span style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block">{{ (e.fact||'').slice(0,60) }}</span></td><td>{{ (e.importance||0).toFixed(2) }}</td><td>{{ formatTime(e.time) }}</td><td><button class="btn btn-sm" @click="handleDetail(e.id)">详情</button> <button class="btn btn-sm btn-danger" @click="handleDelete(e.id)">删除</button></td></tr></tbody>
+          <tbody><tr v-for="e in events" :key="e.id"><td><span class="badge" :class="typeBadgeClass(e.type)">{{ e.type }}</span></td><td><span style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block">{{ (e.fact||'').slice(0,60) }}</span></td><td><span class="star-rating" style="font-size:14px;letter-spacing:1px">{{ starRating(e.importance || 0) }}</span></td><td>{{ formatTime(e.time) }}</td><td><button class="btn btn-sm" @click="handleDetail(e.id)">详情</button> <button class="btn btn-sm btn-danger" @click="handleDelete(e.id)">删除</button></td></tr></tbody>
         </table>
         <div v-else class="empty-state" style="padding:40px"><span class="empty-icon">📭</span><p class="empty-text">暂无记忆</p></div>
       </div>

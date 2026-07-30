@@ -16,7 +16,7 @@ class WsClient {
   }
 
   _host() {
-    try { return window.location.hostname || 'localhost' } catch { return 'localhost' }
+    try { return window.location.host || 'localhost:5173' } catch { return 'localhost:5173' }
   }
 
   connect(sid) {
@@ -32,7 +32,7 @@ class WsClient {
   _doConnect(sid) {
     if (this._conn) { this._conn.onclose = null; this._conn.onerror = null; this._conn.onmessage = null; try { this._conn.close() } catch {}; this._conn = null }
     try {
-      this._conn = new WebSocket(`ws://${this._host()}:8080/stream/ws/${sid}`)
+      this._conn = new WebSocket(`ws://${this._host()}/stream/ws/${sid}`)
     } catch (e) {
       this._reject?.(e)
       this._scheduleRetry(sid)

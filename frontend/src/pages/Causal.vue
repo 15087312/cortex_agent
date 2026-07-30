@@ -21,7 +21,7 @@ function nodeBadgeClass(type) { return type === 'root' ? 'badge-green' : type ==
 
 <template>
   <div>
-    <div class="page-header"><h2>🔗 因果图</h2></div>
+    <div class="page-header">      <h2>因果图</h2></div>
     <div class="page-body">
       <div class="stat-grid">
         <div class="stat-card"><div class="stat-value">{{ stats.total_nodes || nodes.length }}</div><div class="stat-label">节点</div></div>
@@ -40,8 +40,8 @@ function nodeBadgeClass(type) { return type === 'root' ? 'badge-green' : type ==
       <div v-if="detail" class="card" style="margin-top:12px">
         <div class="card-header">因果链: {{ tree?.anchor?.label || detail.node?.label }}</div>
         <table class="data-table"><tbody><tr><td style="color:var(--text-muted)">节点</td><td>{{ detail.node?.label }}</td></tr><tr><td style="color:var(--text-muted)">类型</td><td>{{ detail.node?.type }}</td></tr></tbody></table>
-        <div v-if="detail.predecessors?.length" style="margin-top:12px"><strong style="font-size:13px;color:var(--text-muted)">⬆ 前驱节点</strong><div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px"><span v-for="p in detail.predecessors" :key="p.id" class="badge badge-blue" style="cursor:pointer" @click="handleShowTree(p.id)">{{ p.label }}</span></div></div>
-        <div v-if="detail.successors?.length" style="margin-top:12px"><strong style="font-size:13px;color:var(--text-muted)">⬇ 后继节点</strong><div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px"><span v-for="s in detail.successors" :key="s.id" class="badge badge-green" style="cursor:pointer" @click="handleShowTree(s.id)">{{ s.label }}</span></div></div>
+         <div v-if="detail.predecessors?.length" style="margin-top:12px"><strong style="font-size:13px;color:var(--text-muted)">⬆ 前驱节点</strong><div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px"><span v-for="p in detail.predecessors" :key="p.id" class="causal-pill predecessor" @click="handleShowTree(p.id)">{{ p.label }}</span></div></div>
+         <div v-if="detail.successors?.length" style="margin-top:12px"><strong style="font-size:13px;color:var(--text-muted)">⬇ 后继节点</strong><div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px"><span v-for="s in detail.successors" :key="s.id" class="causal-pill successor" @click="handleShowTree(s.id)">{{ s.label }}</span></div></div>
       </div>
     </div>
   </div>

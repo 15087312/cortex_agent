@@ -19,19 +19,12 @@ const emit = defineEmits(['select', 'delete', 'new'])
         v-for="s in sessions"
         :key="s.session_id"
         class="session-item"
-        :style="{
-          background: activeId === s.session_id ? 'var(--accent-bg)' : 'transparent',
-          borderLeft: activeId === s.session_id ? '3px solid var(--accent)' : '3px solid transparent'
-        }"
+        :class="{ active: activeId === s.session_id }"
         @click="emit('select', s.session_id)"
         @contextmenu.prevent="emit('delete', s.session_id)"
       >
-        <div style="font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
-          {{ (s.title || s.session_id || '').slice(0, 30) }}
-        </div>
-        <div style="font-size:11px;color:var(--text-muted);margin-top:4px">
-          {{ (s.last_active || s.created_at || '').slice(5, 16) }} · {{ s.message_count || 0 }}条
-        </div>
+        <div class="session-title">{{ (s.title || s.session_id || '').slice(0, 30) }}</div>
+        <div class="session-time">{{ (s.last_active || s.created_at || '').slice(5, 16) }}</div>
       </div>
     </div>
   </div>

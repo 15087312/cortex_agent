@@ -110,6 +110,7 @@ class ModelClient(BaseModelClient):
     ) -> ChatResponse:
         payload = self._build_openai_payload(messages, max_tokens, temperature, stream=True)
         headers = self._build_headers("openai")
+        url = self.api_url
 
         # 打印发送给 LLM 的完整上下文
         logger.info("=" * 60)
@@ -121,13 +122,13 @@ class ModelClient(BaseModelClient):
         logger.info("=" * 60)
 
         session = await self._get_session()
-        self._log_request("POST (stream)", self.api_url, len(json.dumps(payload)))
+        self._log_request("POST (stream)", url, len(json.dumps(payload)))
 
         full_content = []
         finish_reason = "stop"
         usage = None
 
-        async with session.post(self.api_url, headers=headers, json=payload) as response:
+        async with session.post(url, headers=headers, json=payload) as response:
             if response.status != 200:
                 error_body = await response.text()
                 raise RuntimeError(f"Stream API error: HTTP {response.status}: {error_body[:200]}")
@@ -181,13 +182,14 @@ class ModelClient(BaseModelClient):
             payload["system"] = system_text
 
         headers = self._build_headers("anthropic")
+        url = self.api_url
         session = await self._get_session()
-        self._log_request("POST (stream)", self.api_url, len(json.dumps(payload)))
+        self._log_request("POST (stream)", url, len(json.dumps(payload)))
 
         full_content = []
         finish_reason = "stop"
 
-        async with session.post(self.api_url, headers=headers, json=payload) as response:
+        async with session.post(url, headers=headers, json=payload) as response:
             if response.status != 200:
                 error_body = await response.text()
                 raise RuntimeError(f"Anthropic stream error: HTTP {response.status}: {error_body[:200]}")

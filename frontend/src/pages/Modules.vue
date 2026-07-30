@@ -23,11 +23,12 @@ async function refreshMod(name) {
   try { await endpoints.refreshModule(name); toast.show(name + '已刷新', 'success') } catch { toast.show('刷新失败', 'error') }
 }
 function statusClass(s) { return s === 'healthy' ? 'badge-green' : s === 'degraded' ? 'badge-yellow' : 'badge-red' }
+function statusLabel(m) { return m.status === 'healthy' ? '正常' : m.status === 'degraded' ? '降级' : m.status }
 </script>
 
 <template>
   <div>
-    <div class="page-header"><h2>🧩 模块管理</h2></div>
+    <div class="page-header">      <h2>模块管理</h2></div>
     <div class="page-body">
       <div class="stat-grid">
         <div class="stat-card"><div class="stat-value">{{ total }}</div><div class="stat-label">总模块</div></div>
@@ -36,10 +37,13 @@ function statusClass(s) { return s === 'healthy' ? 'badge-green' : s === 'degrad
       </div>
       <div class="card">
         <div class="card-header">模块列表 ({{ total }})</div>
-        <table class="data-table" v-if="mods.length > 0">
-          <thead><tr><th>模块名</th><th>API</th><th>Core</th><th>状态</th><th>操作</th></tr></thead>
-          <tbody><tr v-for="m in mods" :key="m.name"><td><strong>{{ m.name }}</strong></td><td><span class="badge" :class="m.has_api?'badge-green':'badge-gray'">{{ m.has_api?'✓':'✗' }}</span></td><td><span class="badge" :class="m.has_core?'badge-green':'badge-gray'">{{ m.has_core?'✓':'✗' }}</span></td><td><span class="badge" :class="statusClass(m.status)">{{ m.status }}</span></td><td><button class="btn btn-sm" @click="refreshMod(m.name)">刷新</button></td></tr></tbody>
-        </table>
+        <div v-if="mods.length > 0" class="module-grid">
+          <div v-for="m in mods" :key="m.name" class="module-card" @click="refreshMod(m.name)">
+            <div class="module-icon">📦</div>
+            <div class="module-name">{{ m.name }}</div>
+            <div class="module-desc">{{ m.has_api ? 'API' : '无API' }} · {{ m.has_core ? 'Core' : '无Core' }} · {{ statusLabel(m) }}</div>
+          </div>
+        </div>
         <div v-else class="empty-state"><span class="empty-icon">📭</span><p class="empty-text">后端连接后将自动加载模块数据</p></div>
       </div>
     </div>
