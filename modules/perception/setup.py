@@ -108,6 +108,8 @@ class PerceptionSystem:
             language=cfg["voice_language"],
             energy_threshold=cfg["voice_energy"],
             timeout=cfg["voice_timeout"],
+            wake_word=cfg.get("voice_wake_prefix", "科特"),
+            end_word=cfg.get("voice_wake_suffix", "完毕"),
         )
         if self.voice_detector and self.voice_detector.is_available():
             self.voice_detector.start()

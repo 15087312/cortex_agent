@@ -41,6 +41,8 @@ class VoiceDetector(PerceptionDetector):
         energy_threshold: int = 300,
         timeout: float = 10.0,
         event_bus=None,
+        wake_word: str = "科特",
+        end_word: str = "完毕",
     ):
         self._device_index = device_index
         self._model_size = model_size
@@ -48,6 +50,8 @@ class VoiceDetector(PerceptionDetector):
         self._energy_threshold = energy_threshold
         self._timeout = timeout
         self._event_bus = event_bus
+        self._wake_word = wake_word
+        self._end_word = end_word
 
         self._running = False
         self._thread: Optional[threading.Thread] = None
@@ -125,10 +129,16 @@ class VoiceDetector(PerceptionDetector):
     def _listen_loop(self):
         """后台语音监听循环
 
-        使用 speech_recognition 的 listen() 方法阻塞等待语音，
-        adjust_for_ambient_noise 已在校准阶段完成。
-        phrase_time_limit=15 防止用户长时间说话卡住线程。
+        使用 speech_recognition 的 listen() 方法检测语音活动（VAD），
+        每次说话结束后用 Whisper 转写，仅当文本包含唤醒词时才触发事件。
+
+        唤醒词机制：
+        - 每次转写后检查是否包含唤醒词（默认"科特"）
+        - 包含唤醒词 → 剥离唤醒词和结束词（默认"完毕"），发布事件
+        - 不含唤醒词 → 静默丢弃，不触发任何响应
+        - 能量阈值仅用于判断是否有人在说话（VAD），不是触发条件
         """
+        import re as _re
         import speech_recognition as sr
 
         while self._running:
@@ -141,23 +151,43 @@ class VoiceDetector(PerceptionDetector):
                     break
 
                 text = self._recognize(audio)
-                if text:
-                    event = PerceptionEvent(
-                        event_type=PerceptionEventType.SPEECH_DETECTED,
-                        source="voice",
-                        importance=0.8,
-                        payload={"text": text, "language": self._language},
-                    )
-                    # 缓存事件（供 detect() 方法消费）
-                    with self._events_lock:
-                        self._events.append(event)
-                    # 直接发布到 Event Bus（供其他模块消费）
-                    if self._event_bus:
-                        self._event_bus.publish(event)
-                    logger.info(f"语音识别: {text[:80]}")
+                if not text:
+                    continue
+
+                # ── 唤醒词过滤：仅当文本包含唤醒词时才触发 ──
+                if self._wake_word not in text:
+                    continue
+
+                # 剥离唤醒词和结束词，提取有效指令
+                clean = text
+                if self._wake_word:
+                    clean = clean.replace(self._wake_word, "").strip()
+                if self._end_word:
+                    clean = clean.replace(self._end_word, "").strip()
+
+                if not clean:
+                    continue
+
+                logger.info(
+                    f"语音唤醒: wake={self._wake_word!r} text={clean[:80]}"
+                )
+
+                event = PerceptionEvent(
+                    event_type=PerceptionEventType.SPEECH_DETECTED,
+                    source="voice",
+                    importance=0.8,
+                    payload={
+                        "text": clean,
+                        "raw": text,
+                        "language": self._language,
+                    },
+                )
+                with self._events_lock:
+                    self._events.append(event)
+                if self._event_bus:
+                    self._event_bus.publish(event)
 
             except sr.WaitTimeoutError:
-                # listen 超时是正常现象，静默跳过
                 pass
             except OSError as e:
                 logger.warning(f"麦克风错误: {e}")

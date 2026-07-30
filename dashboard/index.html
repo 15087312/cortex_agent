@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Cortex Agent — Humanoid AGI Backend</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght,SOFT@9..144,300..900,0..100&family=DM+Sans:opsz,wght@9..40,300..700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#08080c;
+  --bg2:#0d0d12;
+  --bg3:#12121a;
+  --surface:#181820;
+  --surface2:#20202c;
+  --border:#282838;
+  --text:#e4e4ec;
+  --text2:#7a7a8a;
+  --text3:#4a4a5a;
+  --accent:#6c5ce7;
+  --accent2:#8b7cf7;
+  --accent-dim:rgba(108,92,231,0.08);
+  --accent-glow:rgba(108,92,231,0.25);
+  --amber:#f59e0b;
+  --radius:12px;
+  --font-display:'Fraunces',Georgia,serif;
+  --font-body:'DM Sans',system-ui,sans-serif;
+  --font-mono:'JetBrains Mono',monospace;
+}
+html{scroll-behavior:smooth}
+body{font-family:var(--font-body);background:var(--bg);color:var(--text);overflow-x:hidden;line-height:1.7;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+::selection{background:var(--accent);color:#fff}
+::-webkit-scrollbar{width:4px}
+::-webkit-scrollbar-track{background:var(--bg)}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+img{max-width:100%;display:block}
+
+/* Type scale */
+h1,h2,h3,h4{font-family:var(--font-display);font-weight:560;font-variation-settings:"SOFT" 60;letter-spacing:-0.02em;line-height:1.1}
+h1{font-size:clamp(44px,8vw,80px);font-weight:600;letter-spacing:-0.03em}
+h2{font-size:clamp(28px,4vw,44px);margin-bottom:12px}
+h3{font-size:20px;margin-bottom:6px}
+p,li{color:var(--text2);font-size:15px;line-height:1.8}
+code,.code{font-family:var(--font-mono);font-size:13px}
+
+/* ── Nav ── */
+nav{
+  position:fixed;top:0;left:0;right:0;z-index:100;
+  padding:0 40px;height:60px;
+  display:flex;align-items:center;justify-content:space-between;
+  background:rgba(8,8,12,0.75);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);
+  border-bottom:1px solid var(--border)
+}
+.nav-logo{display:flex;align-items:center;gap:10px;font-weight:600;font-size:15px;letter-spacing:-0.01em}
+.nav-logo .mark{width:28px;height:28px;background:var(--accent);border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:#fff;font-family:var(--font-body)}
+.nav-links{display:flex;gap:28px;align-items:center}
+.nav-links a{color:var(--text2);text-decoration:none;font-size:13px;font-weight:500;transition:color .2s}
+.nav-links a:hover{color:var(--text)}
+.nav-cta{
+  padding:8px 18px;border-radius:8px;
+  background:var(--accent);color:#fff;font-weight:600;font-size:13px;
+  border:none;cursor:pointer;transition:transform .2s,box-shadow .2s;text-decoration:none
+}
+.nav-cta:hover{transform:translateY(-1px);box-shadow:0 6px 20px var(--accent-glow)}
+
+/* ── Hero ── */
+.hero{
+  min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  position:relative;padding:120px 40px 80px;text-align:center;overflow:hidden
+}
+.hero::after{
+  content:'';position:absolute;inset:0;
+  background:radial-gradient(ellipse 70% 40% at 50% 30%,var(--accent-dim),transparent 70%);
+  pointer-events:none
+}
+.hero-grid{
+  position:absolute;inset:0;z-index:0;
+  background-image:linear-gradient(var(--border) 1px,transparent 1px),linear-gradient(90deg,var(--border) 1px,transparent 1px);
+  background-size:48px 48px;mask-image:radial-gradient(ellipse 60% 50% at center,#000 20%,transparent 70%);
+  -webkit-mask-image:radial-gradient(ellipse 60% 50% at center,#000 20%,transparent 70%);
+  opacity:.4
+}
+.hero-content{position:relative;z-index:1;max-width:820px}
+.hero-badge{
+  display:inline-flex;align-items:center;gap:8px;
+  padding:6px 14px;border-radius:100px;
+  background:var(--accent-dim);border:1px solid rgba(108,92,231,0.2);
+  font-size:12px;font-weight:500;color:var(--accent2);margin-bottom:28px;font-family:var(--font-mono)
+}
+.hero-badge .dot{width:5px;height:5px;border-radius:50%;background:var(--amber);animation:pulseDot 2s ease-in-out infinite}
+@keyframes pulseDot{0%,100%{opacity:1}50%{opacity:.3}}
+
+.hero h1{margin-bottom:20px}
+.hero h1 .highlight{color:var(--accent2)}
+.hero p{font-size:17px;max-width:580px;margin:0 auto 40px}
+.hero-actions{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+.btn-primary{
+  padding:14px 28px;border-radius:10px;background:var(--accent);color:#fff;
+  font-weight:600;font-size:14px;border:none;cursor:pointer;
+  transition:transform .2s,box-shadow .2s;text-decoration:none;
+  display:inline-flex;align-items:center;gap:8px
+}
+.btn-primary:hover{transform:translateY(-2px);box-shadow:0 10px 28px var(--accent-glow)}
+.btn-secondary{
+  padding:14px 28px;border-radius:10px;background:var(--surface);border:1px solid var(--border);
+  color:var(--text);font-weight:500;font-size:14px;cursor:pointer;
+  transition:transform .2s,background .2s;text-decoration:none;
+  display:inline-flex;align-items:center;gap:8px
+}
+.btn-secondary:hover{background:var(--surface2);transform:translateY(-2px)}
+
+.hero-metrics{
+  display:flex;gap:48px;margin-top:64px;justify-content:center;flex-wrap:wrap;
+  font-family:var(--font-display)
+}
+.hero-metrics dt{font-size:36px;font-weight:600;font-variation-settings:"SOFT" 80;letter-spacing:-0.02em;line-height:1;color:var(--accent2)}
+.hero-metrics dd{font-size:13px;color:var(--text2);margin-top:4px;font-family:var(--font-body)}
+
+/* ── Sections common ── */
+section{padding:120px 40px;position:relative}
+.section-inner{max-width:1120px;margin:0 auto}
+.section-kicker{
+  font-family:var(--font-mono);font-size:12px;font-weight:500;
+  color:var(--accent2);letter-spacing:0.04em;margin-bottom:8px;display:block
+}
+.section-title{margin-bottom:16px}
+.section-desc{font-size:16px;max-width:540px;margin-bottom:56px}
+
+/* ── Section 01: Features (asymmetric flowing prose) ── */
+#features{background:var(--bg2)}
+.feature-block{display:grid;grid-template-columns:1fr 1fr;gap:64px 80px;align-items:center}
+.feature-block:nth-child(even){direction:rtl}
+.feature-block:nth-child(even) .feature-text{direction:ltr}
+.feature-block+.feature-block{margin-top:80px;padding-top:80px;border-top:1px solid var(--border)}
+.feature-text h3{font-size:22px;margin-bottom:8px}
+.feature-text p{font-size:14px;margin-bottom:16px}
+.feature-text .meta{display:flex;gap:8px;flex-wrap:wrap}
+.feature-text .meta span{
+  padding:3px 10px;border-radius:4px;font-family:var(--font-mono);font-size:11px;
+  background:var(--accent-dim);color:var(--accent2);border:1px solid rgba(108,92,231,0.15)
+}
+.feature-visual{
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+  padding:20px;aspect-ratio:4/3;display:flex;align-items:center;justify-content:center;
+  overflow:hidden;position:relative
+}
+.feature-visual .viz-content{width:100%;height:100%;position:relative}
+/* causal graph mockup */
+.graph-mockup{width:100%;height:100%;position:relative}
+.graph-mockup .node{
+  position:absolute;width:48px;height:48px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:600;
+  border:2px solid;font-family:var(--font-mono);cursor:default;
+  animation:nodeFloat 6s ease-in-out infinite
+}
+.graph-mockup .node:nth-child(1){background:rgba(108,92,231,0.12);border-color:var(--accent);color:var(--accent2);top:40%;left:44%;animation-delay:0s}
+.graph-mockup .node:nth-child(2){background:rgba(245,158,11,0.12);border-color:var(--amber);color:var(--amber);top:15%;left:20%;animation-delay:-1.5s;width:36px;height:36px}
+.graph-mockup .node:nth-child(3){background:rgba(16,185,129,0.12);border-color:#10b981;color:#10b981;top:18%;left:68%;animation-delay:-3s;width:36px;height:36px}
+.graph-mockup .node:nth-child(4){background:rgba(239,68,68,0.12);border-color:#ef4444;color:#ef4444;top:70%;left:18%;animation-delay:-4.5s}
+.graph-mockup .node:nth-child(5){background:rgba(6,182,212,0.12);border-color:#06b6d4;color:#06b6d4;top:68%;left:70%;animation-delay:-1s}
+.graph-mockup .edge{
+  position:absolute;height:2px;background:var(--border);transform-origin:left center
+}
+.graph-mockup .edge:nth-child(6){width:80px;top:38px;left:calc(20% + 18px);transform:rotate(-15deg)}
+.graph-mockup .edge:nth-child(7){width:100px;top:35px;left:calc(20% + 18px);transform:rotate(20deg)}
+.graph-mockup .edge:nth-child(8){width:90px;top:60px;left:calc(44% + 24px);transform:rotate(40deg)}
+.graph-mockup .edge:nth-child(9){width:75px;top:55px;left:calc(44% + 24px);transform:rotate(-30deg)}
+@keyframes nodeFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
+
+/* score card mockup */
+.score-mockup{width:100%;height:100%;padding:16px;display:flex;flex-direction:column;gap:12px}
+.score-bar{display:flex;align-items:center;gap:12px}
+.score-bar .label{font-size:10px;font-family:var(--font-mono);color:var(--text2);width:64px;text-align:right;flex-shrink:0}
+.score-bar .track{flex:1;height:6px;background:var(--border);border-radius:3px;overflow:hidden;position:relative}
+.score-bar .fill{height:100%;border-radius:3px;width:0;transition:width 1.5s ease}
+.score-bar .fill.semantic{background:var(--accent);width:80%}
+.score-bar .fill.importance{background:var(--amber);width:65%}
+.score-bar .fill.recency{background:#10b981;width:72%}
+.score-bar .fill.utility{background:#06b6d4;width:58%}
+.score-bar .fill.frequency{background:#ef4444;width:45%}
+.score-bar .pct{font-size:10px;font-family:var(--font-mono);color:var(--text2);width:32px;flex-shrink:0}
+
+/* pipeline mockup */
+.pipeline-mockup{width:100%;height:100%;padding:16px;display:flex;align-items:center;justify-content:center;gap:8px}
+.pipe-step{
+  flex:1;padding:10px 8px;border-radius:8px;text-align:center;
+  background:var(--surface2);border:1px solid var(--border);font-size:9px;
+  font-family:var(--font-mono);color:var(--text2);position:relative
+}
+.pipe-step.active{border-color:var(--accent);background:var(--accent-dim);color:var(--accent2)}
+.pipe-arrow{color:var(--text3);font-family:var(--font-body);font-size:12px;flex-shrink:0}
+
+/* memory isolation mockup */
+.memory-mockup{width:100%;height:100%;padding:16px;display:flex;gap:16px}
+.mem-pool{flex:1;background:var(--surface2);border-radius:8px;padding:12px;border:1px solid var(--border)}
+.mem-pool .pool-label{font-size:9px;font-family:var(--font-mono);color:var(--text3);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.05em}
+.mem-pool .mem-item{height:6px;border-radius:3px;margin-bottom:4px;background:var(--border)}
+.mem-pool .mem-item:nth-child(2n){width:80%}.mem-pool .mem-item:nth-child(3n){width:60%}
+.mem-pool .mem-item.highlight{background:var(--accent);opacity:.5}
+.mem-overlay{position:relative}
+.mem-overlay .owner-tag{
+  position:absolute;right:0;top:-4px;padding:2px 6px;border-radius:3px;
+  font-size:8px;font-family:var(--font-mono);background:var(--accent);color:#fff
+}
+
+/* ── Section 02: Pipeline (numbered flowing prose) ── */
+#pipeline{background:var(--bg3)}
+.pipeline-list{max-width:720px;counter-reset:step}
+.pipeline-item{counter-increment:step;padding:32px 0 32px 64px;position:relative;border-bottom:1px solid var(--border)}
+.pipeline-item:last-child{border-bottom:none}
+.pipeline-item::before{
+  content:"0" counter(step);position:absolute;left:0;top:32px;
+  font-family:var(--font-display);font-size:28px;font-weight:500;
+  font-variation-settings:"SOFT" 100;color:var(--accent2);line-height:1
+}
+.pipeline-item h3{font-size:17px;margin-bottom:4px}
+.pipeline-item p{font-size:14px;max-width:580px}
+.pipeline-item .tag{
+  display:inline-block;margin-top:8px;padding:2px 8px;border-radius:4px;
+  font-family:var(--font-mono);font-size:11px;background:var(--accent-dim);color:var(--accent2)
+}
+
+/* ── Section 03: Metrics ── */
+#metrics{background:var(--bg2)}
+.metrics-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
+.metric-card{
+  padding:32px 24px;border-radius:var(--radius);
+  background:var(--surface);border:1px solid var(--border);text-align:center;
+  transition:border-color .3s,transform .3s
+}
+.metric-card:hover{transform:translateY(-3px);border-color:var(--accent)}
+.metric-card .num{
+  font-family:var(--font-display);font-size:40px;font-weight:550;
+  font-variation-settings:"SOFT" 80;letter-spacing:-0.03em;
+  background:linear-gradient(135deg,var(--accent2),var(--accent));
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
+  line-height:1
+}
+.metric-card .suffix{font-size:20px;font-variation-settings:"SOFT" 80}
+.metric-card .label{font-size:13px;color:var(--text2);margin-top:6px}
+
+/* ── Section 04: Tech ── */
+#tech{background:var(--bg)}
+.tech-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px}
+.tech-item{
+  padding:16px 12px;border-radius:8px;
+  background:var(--surface);border:1px solid var(--border);
+  text-align:center;transition:border-color .3s,background .3s,transform .2s
+}
+.tech-item:hover{transform:translateY(-2px);border-color:var(--accent);background:var(--accent-dim)}
+.tech-item .name{font-size:13px;font-weight:600}
+.tech-item .cat{font-size:10px;color:var(--text2);font-family:var(--font-mono);margin-top:2px}
+
+/* ── Section 05: CTA ── */
+#cta{
+  text-align:center;padding:140px 40px;
+  background:linear-gradient(180deg,var(--bg2),transparent)
+}
+#cta h2{font-size:clamp(28px,4vw,48px);margin-bottom:16px}
+#cta p{max-width:480px;margin:0 auto 32px;font-size:16px}
+
+/* ── Footer ── */
+footer{padding:40px;text-align:center;font-size:13px;color:var(--text3);border-top:1px solid var(--border)}
+
+/* ── Animations ── */
+.reveal{opacity:0;transform:translateY(24px);transition:opacity .7s,transform .7s cubic-bezier(.16,1,.3,1)}
+.reveal.visible{opacity:1;transform:translateY(0)}
+.reveal-d1{transition-delay:.1s}.reveal-d2{transition-delay:.2s}.reveal-d3{transition-delay:.3s}
+.reveal-d4{transition-delay:.4s}.reveal-d5{transition-delay:.5s}
+
+/* ── Responsive ── */
+@media(max-width:768px){
+  nav{padding:0 16px}
+  .nav-links{display:none}
+  .hero{padding:100px 20px 60px}
+  .hero-metrics{gap:24px}
+  .hero-metrics dt{font-size:28px}
+  section{padding:80px 20px}
+  .feature-block{grid-template-columns:1fr;gap:32px}
+  .feature-block:nth-child(even){direction:ltr}
+  .pipeline-item{padding-left:40px}
+  .pipeline-item::before{font-size:20px}
+}
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="nav-logo"><div class="mark">C</div><span>Cortex Agent</span></div>
+  <div class="nav-links">
+    <a href="#features">Features</a>
+    <a href="#pipeline">Pipeline</a>
+    <a href="#tech">Stack</a>
+  </div>
+  <a href="causal_graph.html" class="nav-cta" target="_blank">Launch Dashboard</a>
+</nav>
+
+<!-- Hero -->
+<section class="hero">
+  <div class="hero-grid"></div>
+  <div class="hero-content">
+    <div class="hero-badge"><span class="dot"></span> v2.0.0 · humanoid AGI backend</div>
+    <h1>Memory & reasoning<br><span class="highlight">for agentic AI</span></h1>
+    <p>A production-grade backend that fuses hybrid retrieval, causal graph reasoning, and multi-agent memory isolation — so your AI doesn't just generate text, it remembers, understands, and learns.</p>
+    <div class="hero-actions">
+      <a href="#features" class="btn-primary">Explore the system ↓</a>
+      <a href="causal_graph.html" class="btn-secondary" target="_blank">Live causal graph &nearr;</a>
+    </div>
+    <dl class="hero-metrics">
+      <div><dt>3</dt><dd>retrieval dimensions</dd></div>
+      <div><dt>5</dt><dd>scoring factors</dd></div>
+      <div><dt>384</dt><dd>embedding dims</dd></div>
+      <div><dt>772</dt><dd>test cases</dd></div>
+    </dl>
+  </div>
+</section>
+
+<!-- Features -->
+<section id="features">
+  <div class="section-inner">
+    <span class="section-kicker reveal">✦ 01 · Core capabilities</span>
+    <h2 class="section-title reveal reveal-d1">Beyond retrieval</h2>
+    <p class="section-desc reveal reveal-d2">Cortex's trinity memory system lets AI do more than recall — it traces causality, isolates context per agent, and learns incrementally from every interaction.</p>
+
+    <div class="feature-block reveal">
+      <div class="feature-text">
+        <h3>Hybrid retrieval: vector + keyword + causal graph</h3>
+        <p>Every query fans out across three engines in parallel. FAISS handles semantic similarity (cosine on 384-dim L2-normalized embeddings), SQLite JSON matching covers keyword precision, and the causal graph expands through BFS neighborhood diffusion. Results merge through a 5-factor score — semantic weight 0.35, importance 0.20, recency 0.20, utility 0.15, frequency 0.10 — then normalize, threshold, and rank.</p>
+        <div class="meta"><span>FAISS IndexFlatIP</span><span>SQLite json_each</span><span>BFS diffusion</span></div>
+      </div>
+      <div class="feature-visual">
+        <div class="viz-content">
+          <div class="score-mockup">
+            <div style="display:flex;justify-content:space-between;margin-bottom:4px;font-size:10px;font-family:var(--font-mono);color:var(--text3)"><span>Scoring formula</span><span>normalized</span></div>
+            <div class="score-bar"><span class="label">semantic</span><div class="track"><div class="fill semantic"></div></div><span class="pct">0.35</span></div>
+            <div class="score-bar"><span class="label">importance</span><div class="track"><div class="fill importance"></div></div><span class="pct">0.20</span></div>
+            <div class="score-bar"><span class="label">recency</span><div class="track"><div class="fill recency"></div></div><span class="pct">0.20</span></div>
+            <div class="score-bar"><span class="label">utility</span><div class="track"><div class="fill utility"></div></div><span class="pct">0.15</span></div>
+            <div class="score-bar"><span class="label">frequency</span><div class="track"><div class="fill frequency"></div></div><span class="pct">0.10</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="feature-block reveal">
+      <div class="feature-text">
+        <h3>Causal reasoning: from correlation to causation</h3>
+        <p>When a query contains intent markers like "why", "root cause", or "predict", the DepthRecallScheduler activates — anchoring on causal graph nodes, then drilling down via CausalTree (trace_up for溯源, trace_down for prediction, bidirectional for generalization). Each traversal produces chains of cause-effect with configurable depth (default 2, max 4). Edge confidence updates incrementally on every recall.</p>
+        <div class="meta"><span>DAG traversal</span><span>BFS</span><span>confidence boost</span></div>
+      </div>
+      <div class="feature-visual">
+        <div class="viz-content">
+          <div class="graph-mockup">
+            <div class="node" style="z-index:2">root</div>
+            <div class="node">cause</div>
+            <div class="node">effect</div>
+            <div class="node">cond</div>
+            <div class="node">out</div>
+            <div class="edge"></div>
+            <div class="edge"></div>
+            <div class="edge"></div>
+            <div class="edge"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="feature-block reveal">
+      <div class="feature-text">
+        <h3>Multi-agent memory isolation</h3>
+        <p>Not all agents see the same past. The owner_id field partitions memory by model role: large_primary and large_coder access the full pool; supervisor and expert agents see only their own events. This enables collaborative multi-agent architectures where memory scope matches authority — without data leakage or context pollution.</p>
+        <div class="meta"><span>owner isolation</span><span>role-based scope</span><span>no leakage</span></div>
+      </div>
+      <div class="feature-visual">
+        <div class="viz-content">
+          <div class="memory-mockup">
+            <div class="mem-pool">
+              <div class="pool-label">Primary · full access</div>
+              <div class="mem-item highlight"></div>
+              <div class="mem-item highlight"></div>
+              <div class="mem-item"></div>
+              <div class="mem-item highlight"></div>
+              <div class="mem-item"></div>
+            </div>
+            <div class="mem-pool">
+              <div class="pool-label">Expert · own only</div>
+              <div class="mem-item"></div>
+              <div class="mem-item" style="background:var(--amber);opacity:.5"></div>
+              <div class="mem-item"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="feature-block reveal">
+      <div class="feature-text">
+        <h3>Incremental learning & graceful degradation</h3>
+        <p>Every retrieval updates the causal graph — confidence boosts on traversed paths, new nodes auto-created for discovered factors, events linked to anchors. If FAISS is unavailable, the system falls back to keyword-only search. If the embedding model fails, a background worker retries later. If the LLM is down for reduction, rule-based fallback kicks in. No single point of failure.</p>
+        <div class="meta"><span>online learning</span><span>fallback chain</span><span>resilient</span></div>
+      </div>
+      <div class="feature-visual">
+        <div class="viz-content">
+          <div class="pipeline-mockup">
+            <div class="pipe-step active">FAISS</div>
+            <span class="pipe-arrow">→</span>
+            <div class="pipe-step">keyword</div>
+            <span class="pipe-arrow">→</span>
+            <div class="pipe-step">causal</div>
+            <div style="flex:0;padding:0 4px;font-size:9px;color:var(--text3);font-family:var(--font-mono)">fallback</div>
+            <span class="pipe-arrow">→</span>
+            <div class="pipe-step" style="border-color:#10b981">degraded</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Pipeline -->
+<section id="pipeline">
+  <div class="section-inner">
+    <span class="section-kicker reveal">✦ 02 · Retrieval pipeline</span>
+    <h2 class="section-title reveal reveal-d1">From conversation to context</h2>
+    <p class="section-desc reveal reveal-d2">Every user session flows through five stages — extraction, embedding, hybrid search, deep recall, and context injection — in under 200ms at p50.</p>
+    <div class="pipeline-list">
+      <div class="pipeline-item reveal">
+        <h3>Memory extraction</h3>
+        <p>The EventReducer calls an LLM with a structured prompt to extract MemoryEvent objects — each carrying a fact (≤500 chars), thought (≤500), lesson (≤300), importance score, keywords, and type. Causal nodes and edges are extracted simultaneously.</p>
+        <span class="tag">LLM-driven · JSON extraction</span>
+      </div>
+      <div class="pipeline-item reveal reveal-d1">
+        <h3>Vector encoding & storage</h3>
+        <p>Each event is encoded into a 384-dim L2-normalized vector via paraphrase-multilingual-MiniLM-L12-v2 (mean pooling, max length 128). Vectors are stored in a FAISS IndexFlatIP index on disk alongside SQLite for structured fields.</p>
+        <span class="tag">SentenceTransformer · FAISS · SQLite</span>
+      </div>
+      <div class="pipeline-item reveal reveal-d2">
+        <h3>Hybrid search & scoring</h3>
+        <p>Three parallel searches (FAISS cosine, SQLite keywords, causal graph BFS) produce candidate sets. The 5-factor formula scores and normalizes across the batch; results below 0.2 semantic similarity are discarded. Top K are returned ranked.</p>
+        <span class="tag">0.35·sem + 0.20·imp + 0.20·rec + 0.15·util + 0.10·freq</span>
+      </div>
+      <div class="pipeline-item reveal reveal-d3">
+        <h3>Deep causal recall</h3>
+        <p>If intent classification detects logic keywords or shallow confidence is below 0.3, the DepthRecallScheduler triggers — anchoring on causal graph nodes, then tracing up (溯源), down (prediction), or bidirectionally (generalization) with intent-weighted scoring.</p>
+        <span class="tag">CausalTree · intent classification</span>
+      </div>
+      <div class="pipeline-item reveal reveal-d4">
+        <h3>Context injection</h3>
+        <p>Results are formatted as a 「历史记忆」 block and injected into the LLM's context window. The ContinuousThinker calls retrieve() on every turn; the Conscience system generates inner monologue from retrieved events and causal expansions.</p>
+        <span class="tag">context window · conscience monologue</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Metrics -->
+<section id="metrics">
+  <div class="section-inner">
+    <span class="section-kicker reveal">✦ 03 · Engineering metrics</span>
+    <h2 class="section-title reveal reveal-d1">Measured by design</h2>
+    <div class="metrics-grid">
+      <div class="metric-card reveal"><div class="num">772</div><div class="label">test cases across 2 test suites</div></div>
+      <div class="metric-card reveal reveal-d1"><div class="num">3</div><div class="label">parallel retrieval engines</div></div>
+      <div class="metric-card reveal reveal-d2"><div class="num">5</div><div class="label">scoring factors in fusion layer</div></div>
+      <div class="metric-card reveal reveal-d3"><div class="num">500</div><div class="label">max causal graph nodes</div></div>
+      <div class="metric-card reveal"><div class="num">4</div><div class="label">max causal tree depth</div></div>
+      <div class="metric-card reveal reveal-d1"><div class="num">128</div><div class="label">embedding token limit</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- Tech Stack -->
+<section id="tech">
+  <div class="section-inner">
+    <span class="section-kicker reveal">✦ 04 · Technology stack</span>
+    <h2 class="section-title reveal reveal-d1">Built with production-grade components</h2>
+    <div class="tech-grid">
+      <div class="tech-item reveal"><div class="name">FastAPI</div><div class="cat">web framework</div></div>
+      <div class="tech-item reveal reveal-d1"><div class="name">FAISS</div><div class="cat">vector search</div></div>
+      <div class="tech-item reveal reveal-d2"><div class="name">SQLite</div><div class="cat">structured store</div></div>
+      <div class="tech-item reveal reveal-d3"><div class="name">Transformers</div><div class="cat">embeddings</div></div>
+      <div class="tech-item reveal"><div class="name">Pydantic</div><div class="cat">validation</div></div>
+      <div class="tech-item reveal reveal-d1"><div class="name">NumPy</div><div class="cat">numerics</div></div>
+      <div class="tech-item reveal reveal-d2"><div class="name">D3.js</div><div class="cat">graph viz</div></div>
+      <div class="tech-item reveal reveal-d3"><div class="name">Textual</div><div class="cat">terminal UI</div></div>
+      <div class="tech-item reveal"><div class="name">Ruff</div><div class="cat">linting</div></div>
+      <div class="tech-item reveal reveal-d1"><div class="name">Pytest</div><div class="cat">testing</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- CTA -->
+<section id="cta">
+  <h2 class="reveal">Production-ready. Open-source.</h2>
+  <p class="reveal reveal-d1">Cortex Agent is built for developers who need their AI to remember, reason, and evolve.</p>
+  <div class="reveal reveal-d2">
+    <a href="causal_graph.html" class="btn-primary" target="_blank">Explore the causal graph &nearr;</a>
+  </div>
+</section>
+
+<footer>
+  <p>Cortex Agent &mdash; Humanoid AGI Backend &mdash; v2.0.0</p>
+</footer>
+
+<script>
+// Scroll reveal
+const observer = new IntersectionObserver((entries) => {
+  entries.forEach(e => { if(e.isIntersecting) e.target.classList.add('visible') })
+}, { threshold: 0.08, rootMargin: '0px 0px -40px 0px' })
+document.querySelectorAll('.reveal').forEach(el => observer.observe(el))
+
+// Animated score bars (trigger once visible)
+const barObserver = new IntersectionObserver((entries) => {
+  entries.forEach(e => {
+    if(!e.isIntersecting) return
+    e.target.querySelectorAll('.fill').forEach(fill => {
+      const w = fill.style.width || fill.classList.contains('semantic') ? '80%' :
+               fill.classList.contains('importance') ? '65%' :
+               fill.classList.contains('recency') ? '72%' :
+               fill.classList.contains('utility') ? '58%' : '45%'
+      fill.style.width = '0%'
+      setTimeout(() => { fill.style.width = w }, 100)
+    })
+    barObserver.unobserve(e.target)
+  })
+}, { threshold: 0.3 })
+document.querySelectorAll('.score-mockup').forEach(el => barObserver.observe(el))
+
+// Counter animation for metrics
+function animateValue(el, target, suffix) {
+  const duration = 1200, start = performance.now()
+  const num = parseInt(target)
+  function update(now) {
+    const p = Math.min((now - start) / duration, 1)
+    const ease = 1 - Math.pow(1 - p, 3)
+    el.textContent = Math.round(num * ease) + suffix
+    if(p < 1) requestAnimationFrame(update)
+  }
+  requestAnimationFrame(update)
+}
+
+const metricObserver = new IntersectionObserver((entries) => {
+  entries.forEach(e => {
+    if(!e.isIntersecting) return
+    e.target.querySelectorAll('.num').forEach(el => {
+      const text = el.textContent.trim()
+      const num = text.replace(/[^0-9]/g, '')
+      const suffix = text.replace(/[0-9]/g, '')
+      if(num) animateValue(el, num, suffix)
+    })
+    metricObserver.unobserve(e.target)
+  })
+}, { threshold: 0.4 })
+document.querySelectorAll('.metrics-grid').forEach(el => metricObserver.observe(el))
+
+// Hero parallax
+document.querySelector('.hero')?.addEventListener('mousemove', (e) => {
+  const heroGrid = document.querySelector('.hero-grid')
+  const x = (e.clientX / window.innerWidth - 0.5) * 8
+  const y = (e.clientY / window.innerHeight - 0.5) * 8
+  if(heroGrid) heroGrid.style.transform = `translate(${x}px, ${y}px)`
+})
+</script>
+</body>
+</html>

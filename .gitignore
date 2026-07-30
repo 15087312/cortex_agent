@@ -142,3 +142,9 @@ data/identities/*.yaml
 # 测试用临时文件（含 API Key）
 test_gpt55*
 test_gpt55_standard*
+
+# 外部技能包（从 GitHub clone 的 Agent Skills 包，不归我们维护）
+/skills/gsap-skills/
+
+# 前端依赖
+frontend/node_modules/

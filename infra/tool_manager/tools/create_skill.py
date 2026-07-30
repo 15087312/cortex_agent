@@ -1,9 +1,5 @@
-"""create_skill 工具 — 创建 YAML 格式的技能说明书
-
-从 toolbuilder.py 中拆分出来独立维护。
-"""
-import json
-from typing import Dict, List, Any
+"""create_skill 工具 — 创建 SKILL.md 格式的技能说明书"""
+from typing import Dict, List
 
 from infra.tool_manager.tool_registry import ToolRegistry
 from utils.logger import setup_logger
@@ -37,43 +33,58 @@ async def create_skill(
     description: str,
     keywords: list = None,
 ) -> dict:
-    """创建一个技能 YAML（技能说明书格式：纯提示词文档）"""
+    """创建一个 SKILL.md（技能说明书格式：YAML front matter + Markdown 正文）"""
     if not skill_id or not name:
         return {"status": "error", "message": "skill_id 和 name 不能为空"}
 
     import yaml
     from pathlib import Path
+    from datetime import datetime
 
     project_root = Path(__file__).parent.parent.parent.parent
     skills_dir = project_root / "skills"
-    skills_dir.mkdir(parents=True, exist_ok=True)
+    skill_dir = skills_dir / skill_id
+    skill_path = skill_dir / "SKILL.md"
 
-    skill_path = skills_dir / f"{skill_id}.yaml"
     if skill_path.exists():
         return {"status": "error", "message": f"技能 {skill_id} 已存在"}
 
-    data = {
+    skill_dir.mkdir(parents=True, exist_ok=True)
+
+    front = {
         "id": skill_id,
         "name": name,
-        "description": description,
+        "description": description[:200],
         "keywords": keywords or [],
         "trigger": {"include": keywords or [], "min_score": 1},
-        "metadata": {"version": 1, "type": "learned", "generated_at": __import__("datetime").datetime.now().isoformat()},
+        "metadata": {
+            "version": 1,
+            "type": "learned",
+            "generated_at": datetime.now().isoformat(),
+        },
     }
 
-    skill_path.write_text(yaml.dump(data, allow_unicode=True, default_flow_style=False, sort_keys=False), encoding="utf-8")
-
-    # 同步保存到 data/plugins/learned/（统一存储）
-    try:
-        plugins_learned_dir = Path(__file__).parent.parent.parent.parent / "data" / "plugins" / "learned"
-        plugins_learned_dir.mkdir(parents=True, exist_ok=True)
-        copy_path = plugins_learned_dir / f"{skill_id}.yaml"
-        copy_path.write_text(
-            yaml.dump(data, allow_unicode=True, default_flow_style=False, sort_keys=False),
-            encoding="utf-8",
-        )
-    except Exception:
-        pass
+    lines = ["---"]
+    for k, v in front.items():
+        if isinstance(v, dict):
+            lines.append(f"{k}:")
+            for sk, sv in v.items():
+                if isinstance(sv, list):
+                    items = ", ".join(repr(x) for x in sv)
+                    lines.append(f"  {sk}: [{items}]")
+                elif isinstance(sv, int):
+                    lines.append(f"  {sk}: {sv}")
+                else:
+                    lines.append(f"  {sk}: {sv}")
+        elif isinstance(v, list):
+            items = ", ".join(repr(x) for x in v)
+            lines.append(f"{k}: [{items}]")
+        else:
+            lines.append(f"{k}: {v}")
+    lines.append("---")
+    lines.append("")
+    lines.append(description)
+    skill_path.write_text("\n".join(lines), encoding="utf-8")
 
     # 重载 SkillManager
     try:

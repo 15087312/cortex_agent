@@ -87,29 +87,32 @@ class ModelInstanceFactory:
     # 创建
     # ------------------------------------------------------------------
 
-    def _ensure_capacity(self, tier: str, max_n: int) -> None:
-        """确保 tier 层级的容量充足，若已达上限则自动回收旧实例"""
-        if self._count_by_tier[tier] < max_n:
+    def _ensure_capacity(self, identity: ModelIdentity, max_n: int) -> None:
+        """确保同角色实例数不超上限，若已达上限则回收最旧的同名实例
+
+        按 identity.role 分组计数，不同角色的实例互不影响。
+        """
+        same_role = [
+            i for i in self._instances.values()
+            if i.identity.role == identity.role
+        ]
+        if len(same_role) < max_n:
             return
-        # 自愈：达到上限时自动回收旧实例
-        existing = self.list_by_tier(tier)
-        if existing:
-            for inst in existing:
-                logger.warning(
-                    f"[工厂] {tier} 已达上限 ({max_n})，"
-                    f"自动回收旧实例: {inst.model_id}"
-                )
-                self.destroy(inst.model_id)
-        else:
-            # 理论上不应发生（count>0 但 list 为空），防御性处理
-            self._count_by_tier[tier] = 0
+        # 回收最旧的同名实例
+        same_role.sort(key=lambda i: i.created_at)
+        target = same_role[0]
+        logger.warning(
+            f"[工厂] {identity.role} 已达上限 ({max_n})，"
+            f"自动回收最旧实例: {target.model_id}"
+        )
+        self.destroy(target.model_id)
 
     def create_large(self, identity: ModelIdentity = None, **kwargs) -> ModelInstance:
         """创建大模型实例（上限由 identity.permissions.max_instances 控制）"""
         if identity is None:
             identity = ModelIdentity.from_template("orchestrator")
         max_n = self._get_max_for_identity(identity)
-        self._ensure_capacity("large", max_n)
+        self._ensure_capacity(identity, max_n)
 
         from infra.model.large_model_client import LargeModelClient
 
@@ -136,7 +139,7 @@ class ModelInstanceFactory:
         if identity is None:
             identity = ModelIdentity.from_template(template_key)
         max_n = self._get_max_for_identity(identity)
-        self._ensure_capacity("supervisor", max_n)
+        self._ensure_capacity(identity, max_n)
 
         from infra.model.medium_model_client import MediumModelClient
 
@@ -163,7 +166,7 @@ class ModelInstanceFactory:
         if identity is None:
             identity = ModelIdentity.from_template(template_key)
         max_n = self._get_max_for_identity(identity)
-        self._ensure_capacity("expert", max_n)
+        self._ensure_capacity(identity, max_n)
 
         from infra.model.small_model_client import SmallModelClient
 

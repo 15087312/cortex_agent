@@ -259,7 +259,8 @@ class ToolPermissionController:
         """
         from modules.thinking.core.control_tools import (
             CONTINUE_THINKING_TOOL, QUERY_TOOL_DETAILS_TOOL,
-            DELEGATE_TASK_TOOL, CREATE_SUPERVISOR_TOOL,
+            DELEGATE_TASK_TOOL, STOP_TASK_TOOL,
+            CREATE_SUPERVISOR_TOOL,
             RESPOND_TO_USER_TOOL, REQUEST_SKILL_TOOL,
             LIST_SKILLS_TOOL, STOP_SKILL_TOOL,
             REQUEST_MODE_CHANGE_TOOL, ASK_USER_INTENT_TOOL,
@@ -269,6 +270,7 @@ class ToolPermissionController:
 
         if delegation_available and tier in ("large", "supervisor"):
             tools.append(DELEGATE_TASK_TOOL)
+            tools.append(STOP_TASK_TOOL)
         if delegation_available and tier == "large":
             tools.append(CREATE_SUPERVISOR_TOOL)
         if tier == "large":

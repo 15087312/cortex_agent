@@ -89,6 +89,7 @@ DEFAULT_TOOL_WHITELISTS: Dict[str, List[str]] = {
     "expert_customer": ["event_query"],
     "expert_emotion": ["event_query"],
     "expert_creative_writer": ["event_query"],
+    "expert_ui_designer": ["event_query", "web_fetch", "directory_tree", "list_directory", "read_text_file"],
 }
 
 
@@ -98,6 +99,13 @@ DEFAULT_STARTUP_MODES: Dict[str, str] = {
     "large": "on_demand",
     "expert_customer": "on_demand",
     "expert_emotion": "on_demand",
+}
+
+
+# ── 默认技能（启动时自动注入 system prompt）──
+
+DEFAULT_SKILL_IDS: Dict[str, str] = {
+    "ui_designer": "ui_design",
 }
 
 
@@ -206,12 +214,13 @@ DEFAULT_PERMISSIONS: Dict[str, ModelPermissions] = {
     # ── 专家 ──
     "expert_reviewer": ModelPermissions(requires_tool_approval=True),
     "code_reviewer": ModelPermissions(requires_tool_approval=True),  # alias
-    "expert_implementer": ModelPermissions(allowed_tool_categories=["query", "mutation"], requires_tool_approval=True),
-    "code_writer": ModelPermissions(allowed_tool_categories=["query", "mutation"], requires_tool_approval=True),  # alias
+    "expert_implementer": ModelPermissions(allowed_tool_categories=["query", "mutation"], requires_tool_approval=True, max_instances=3, max_concurrent_runners=3),
+    "code_writer": ModelPermissions(allowed_tool_categories=["query", "mutation"], requires_tool_approval=True, max_instances=3, max_concurrent_runners=3),  # alias
     "expert_tester": ModelPermissions(allowed_tool_categories=["query", "mutation"], requires_tool_approval=True),
     "tester": ModelPermissions(allowed_tool_categories=["query", "mutation"], requires_tool_approval=True),  # alias
     "expert_analyzer": ModelPermissions(),
     "expert_customer": ModelPermissions(),
+    "expert_ui_designer": ModelPermissions(allowed_tool_categories=["query", "mutation"]),
     "expert_creative_writer": ModelPermissions(max_instances=2, max_concurrent_runners=2),
     "expert_emotion": ModelPermissions(can_write_memory=True),
 }
@@ -247,6 +256,7 @@ class ModelIdentity:
     max_tokens: int = 256
     temperature: float = 0.2
     startup: str = "on_demand"
+    default_skill: str = ""
     permissions: "ModelPermissions" = field(default_factory=lambda: ModelPermissions())
     metadata: Dict = field(default_factory=dict)
     api_key: Optional[str] = None
@@ -293,6 +303,7 @@ class ModelIdentity:
             "max_tokens": template.get("max_tokens", 256),
             "temperature": template.get("temperature", 0.2),
             "startup": get_startup_mode(template_key),
+            "default_skill": DEFAULT_SKILL_IDS.get(template_key, ""),
             "permissions": get_permissions(template_key),
             "metadata": {},
         }

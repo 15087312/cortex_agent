@@ -131,6 +131,8 @@ ROLE_TO_IDENTITY: Dict[str, tuple[str, str]] = {
     "分析专家": ("expert", "code_writer"),
     "customer": ("expert", "customer"),
     "客户": ("expert", "customer"),
+    "ui_designer": ("expert", "ui_designer"),
+    "前端设计专家": ("expert", "ui_designer"),
     "creative_writer": ("expert", "code_writer"),
     "创意写作专家": ("expert", "code_writer"),
     "emotion": ("expert", "code_writer"),

@@ -72,6 +72,31 @@ DELEGATE_TASK_TOOL = {
     }
 }
 
+STOP_TASK_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "stop_task",
+        "description": (
+            "停止正在运行的委托任务（专家/主管）。当进度汇报显示某任务无进展、"
+            "耗时过长或需要重新分派时使用。停止后资源会被回收，可重新 delegate_task。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "target_model_id": {
+                    "type": "string",
+                    "description": "要停止的目标 model_id（从进度汇报中获取，如 expert_implementer_001）",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "停止原因，例如「5分钟无进展，重新分派」",
+                },
+            },
+            "required": ["target_model_id", "reason"],
+        },
+    },
+}
+
 # 控制工具通过 tool_calls 流转到 ModelRunner，由其路由给 thinker
 
 

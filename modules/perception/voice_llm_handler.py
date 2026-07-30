@@ -116,11 +116,8 @@ class VoiceLLMHandler:
             if not s.PERCEPTION_VOICE_LLM_TRIGGER_ENABLED:
                 return
 
-            prefix = s.PERCEPTION_VOICE_WAKE_PREFIX.strip()
-            suffix = s.PERCEPTION_VOICE_WAKE_SUFFIX.strip()
-            wrapped = f"{prefix} {text.strip()} {suffix}".strip()
-
-            logger.info(f"语音→总指挥: prefix={prefix!r} text={text[:60]}")
+            # 唤醒词已由 VoiceDetector 剥离，此处直接传递干净文本
+            logger.info(f"语音→总指挥: text={text[:60]}")
 
             # ── 3. 跨循环调度 ──
             # 注意：此 handler 由 Event Bus 在后台循环 (event-bus-async) 调用。
@@ -134,7 +131,7 @@ class VoiceLLMHandler:
                 future = asyncio.run_coroutine_threadsafe(
                     self._thinking_system.think(
                         self._voice_session_id,
-                        wrapped,
+                        text.strip(),
                     ),
                     main_loop,
                 )
@@ -145,7 +142,7 @@ class VoiceLLMHandler:
                 logger.warning("无主事件循环可用，在当前循环执行思考流程")
                 response = await self._thinking_system.think(
                     self._voice_session_id,
-                    wrapped,
+                    text.strip(),
                 )
 
             # ── 4. 路由响应 ──

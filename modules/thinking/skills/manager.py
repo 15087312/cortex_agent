@@ -1,7 +1,9 @@
 """技能管理器 — 加载、匹配技能
 
-技能以 YAML 文件存储在 skills/ 目录，每个文件是一个技能说明书。
+技能以 SKILL.md（主格式）或 .yaml（旧格式）存储在 skills/ 目录。
 模型通过 list_skills / get_skill_detail 工具查询和阅读。
+
+格式优先级：.yaml > SKILL.md（ID 冲突时 YAML 胜出）
 """
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -29,7 +31,7 @@ class SkillManager:
         self._loaded = False
 
     def load_skills(self, directory: Optional[str] = None) -> int:
-        """从 skills/ 目录加载所有 YAML 技能文件（含 learned/ 子目录）"""
+        """从 skills/ 目录加载 SKILL.md 和 YAML 技能文件（含 learned/ 子目录）"""
         skills_dir = Path(directory) if directory else _get_skills_dir()
 
         if not skills_dir.exists():
@@ -44,14 +46,30 @@ class SkillManager:
                 search_dirs.append(learned_dir)
 
         for search_dir in search_dirs:
+            # SKILL.md — 扫描所有子目录（支持扁平和嵌套，如 gsap-skills/skills/*/SKILL.md）
+            seen_ids = set()
+            for skill_md_path in sorted(search_dir.rglob("SKILL.md")):
+                if skill_md_path.parent == search_dir:
+                    continue  # 跳过顶层的 SKILL.md（不存在）
+                try:
+                    skill = self._load_skill_md(skill_md_path)
+                    if skill and skill.id not in seen_ids:
+                        self._skills[skill.id] = skill
+                        seen_ids.add(skill.id)
+                        count += 1
+                        logger.info(f"[技能] 加载 SKILL.md: {skill.id} ({skill.name})")
+                except Exception as e:
+                    logger.warning(f"[技能] SKILL.md 加载失败 {skill_md_path}: {e}")
+
+            # .yaml fallback（旧格式，向前兼容）
             for glob_pat in ("*.yaml", "*.yml"):
                 for file_path in sorted(search_dir.glob(glob_pat)):
                     try:
                         skill = self._load_yaml(file_path)
-                        if skill:
+                        if skill and skill.id not in self._skills:
                             self._skills[skill.id] = skill
                             count += 1
-                            logger.info(f"[技能] 加载: {skill.id} ({skill.name})")
+                            logger.info(f"[技能] 加载 YAML: {skill.id} ({skill.name})")
                     except Exception as e:
                         logger.warning(f"[技能] 加载失败 {file_path.name}: {e}")
 
@@ -158,6 +176,52 @@ class SkillManager:
             name=data.get("name", ""),
             description=data.get("description", ""),
             keywords=data.get("keywords", []),
+            source="yaml",
+            tool_rules=data.get("tool_rules"),
+            trigger=data.get("trigger"),
+            metadata=data.get("metadata", {}),
+        )
+
+    def _load_skill_md(self, file_path: Path) -> Optional[Skill]:
+        """加载 SKILL.md（YAML front matter + Markdown 正文）"""
+        try:
+            import yaml
+        except ImportError:
+            logger.warning("[技能] 需要 pyyaml")
+            return None
+
+        content = file_path.read_text(encoding="utf-8")
+        if not content.startswith("---"):
+            # 无 front matter，整个文件当描述
+            skill_id = file_path.parent.name
+            return Skill(
+                id=skill_id,
+                name=skill_id,
+                description=content.strip(),
+                source="skill_md",
+            )
+
+        # 分离 front matter 和正文
+        parts = content.split("---", 2)
+        if len(parts) < 3:
+            return None
+
+        raw_front = parts[1].strip()
+        body = parts[2].strip()
+
+        data = yaml.safe_load(raw_front)
+        if not data or not isinstance(data, dict):
+            return None
+
+        skill_id = data.get("id", file_path.parent.name)
+        body_description = body or ""
+
+        return Skill(
+            id=skill_id,
+            name=data.get("name", skill_id),
+            description=body_description,
+            keywords=data.get("keywords", []),
+            source="skill_md",
             tool_rules=data.get("tool_rules"),
             trigger=data.get("trigger"),
             metadata=data.get("metadata", {}),

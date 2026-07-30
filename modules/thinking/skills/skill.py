@@ -3,7 +3,11 @@
 Skill 是提示词说明书 + 可选工具权限约束。
 模型通过工具查询并阅读技能说明书，自行决定是否激活。
 
-每个 YAML 文件 = 一个技能，包含：
+支持两种格式：
+  - SKILL.md（主格式，skills/{name}/SKILL.md，带 YAML front matter）
+  - .yaml （旧格式，向前兼容，skills/{name}.yaml）
+
+每个技能包含：
   - name: 技能名称
   - description: 技能说明书（核心内容，模型阅读后就知道怎么做）
   - keywords: 匹配关键词
@@ -21,6 +25,7 @@ class Skill:
     name: str = ""
     description: str = ""     # 技能说明书正文（核心内容）
     keywords: List[str] = field(default_factory=list)  # 匹配关键词
+    source: str = "yaml"      # "yaml" | "skill_md"，标识来源格式
     tool_rules: Optional[Dict] = None  # 可选工具权限（learned skill 使用）
     trigger: Optional[Dict] = None     # 可选触发规则 {include, exclude, min_score}
     metadata: Dict = field(default_factory=dict)

@@ -30,6 +30,7 @@ from modules.thinking.core.control_tools import (
     REQUEST_SKILL_TOOL,
     LIST_SKILLS_TOOL,
     STOP_SKILL_TOOL,
+    STOP_TASK_TOOL,
     SET_MEMORY_FOCUS_TOOL,
     QUERY_TOOL_DETAILS_TOOL,
     REQUEST_MODE_CHANGE_TOOL,
@@ -74,6 +75,8 @@ class ModelRunner:
 
     THINK_TIMEOUT = 120.0  # 单次思考轮次超时（含重试），超时强制结束思考循环
 
+    PROGRESS_INTERVAL = 300.0  # 主管/大模型等待时，每隔N秒自动收集进度并唤醒
+
     def __init__(
         self,
         model_instance: Any,        # ModelInstance
@@ -104,6 +107,7 @@ class ModelRunner:
         self._last_known_mode = ""  # 记录当前执行模式，用于检测外部变更
         self._return_to_model_id = ""
         self._return_to_session_id = ""
+        self._started_at: float = 0.0  # 启动时间戳，用于进度汇报
         self._pending_guidance: List[str] = []
         self._thinker: Optional[Any] = None  # ContinuousThinker, 延迟创建
         self._active_skill: Any = None  # 当前激活的技能（Skill 实例）
@@ -128,6 +132,11 @@ class ModelRunner:
         if self._thinker:
             return getattr(self._thinker, '_context_window_size', 128000)
         return 128000
+
+    @property
+    def supervisor(self) -> str:
+        """所属主管的 model_id（由 _return_to_model_id 追踪）"""
+        return self._return_to_model_id
 
     # ------------------------------------------------------------------
     # 生命周期
@@ -157,6 +166,7 @@ class ModelRunner:
         self._return_to_model_id = return_to_model_id
         self._return_to_session_id = return_to_session_id or self.session_id
         self._running = True
+        self._started_at = time.time()
         self._task = asyncio.create_task(
             self._run_task(),
             name=f"runner_{self.model_id}",
@@ -453,8 +463,15 @@ class ModelRunner:
 
             # 根据 tier 设置不同的等待超时
             wait_timeout = 180.0 if self.tier == "supervisor" else 300.0
-            wakeup = await self._wait_for_wakeup_event(timeout=wait_timeout)
-            if wakeup is None or not self._running:
+            progress_interval = self.PROGRESS_INTERVAL
+            wakeup = await self._wait_for_wakeup_event(
+                timeout=wait_timeout,
+                progress_interval=progress_interval,
+            )
+            if not self._running:
+                break
+            if wakeup is None:
+                # _wait_for_wakeup_event 返回 None 说明已无待处理委托
                 break
 
             # 重置状态，用唤醒消息重启循环
@@ -672,10 +689,17 @@ class ModelRunner:
         if self._wakeup_event:
             self._wakeup_event.set()
 
-    async def _wait_for_wakeup_event(self, timeout: float = 300.0) -> Optional[str]:
-        """事件驱动等待唤醒消息（主管结果 / 用户输入）
+    async def _wait_for_wakeup_event(
+        self,
+        timeout: float = 300.0,
+        progress_interval: float = 300.0,
+    ) -> Optional[str]:
+        """事件驱动等待唤醒消息（主管结果 / 用户输入 / 进度汇报）
 
-        通过 MessageBus 订阅回调立即唤醒，无需轮询。超时或被停止返回 None。
+        通过 MessageBus 订阅回调立即唤醒，无需轮询。
+        在 progress_interval 间隔到期时自动收集活跃专家进度并返回进度汇报，
+        让主管/大模型有机会做出决策（继续等待、重新委托或输出部分结果）。
+        超时或被停止返回 None。
         """
         import asyncio as _asyncio
         import threading as _threading
@@ -684,64 +708,104 @@ class ModelRunner:
         if event is None:
             return None
 
-        # 在线程池中等待 threading.Event，不阻塞事件循环
         loop = _asyncio.get_running_loop()
-        try:
-            signaled = await loop.run_in_executor(
-                None, event.wait, timeout
-            )
-        except _threading.ThreadError:
-            return None
+        deadline = time.time() + timeout
+        next_progress_at = time.time() + progress_interval
 
-        if not signaled or not self._running:
-            logger.debug(f"[ModelRunner] {self.model_id} 等待唤醒超时")
-            return None
+        while time.time() < deadline and self._running:
+            remaining = max(min(deadline - time.time(), next_progress_at - time.time()), 0.5)
 
-        # 重置事件（为下次等待做准备）
-        event.clear()
+            try:
+                signaled = await loop.run_in_executor(
+                    None, event.wait, remaining
+                )
+            except _threading.ThreadError:
+                return None
 
-        # 从 MessageBus 中取出实际消息内容
-        msgs = await self._check_messages()
-        for m in msgs:
-            content = m.get('content', '')
-            if isinstance(content, dict):
-                action = content.get('action', '')
-                if action == 'thinking_result':
-                    result = content.get('result', '')
-                    source = content.get('source_model_id', '')
-                    source_tier = content.get('source_tier', '')
-                    source_role = content.get('source_role', '')
-                    delegation_id = content.get('delegation_id', '')
+            if not self._running:
+                return None
 
-                    if self._thinker and delegation_id:
-                        self._thinker._process_delegation_response(result, delegation_id)
+            if signaled:
+                event.clear()
 
-                    tier_label = {
-                        "supervisor": "主管",
-                        "expert": "专家",
-                        "large": "大模型",
-                    }.get(source_tier, "委托方")
-                    role_label = f"({source_role})" if source_role else ""
-                    wakeup_msg = (
-                        f"【{tier_label}{role_label}任务结果 from {source}】\n"
-                        f"source_tier={source_tier}\n"
-                        f"{result}"
-                    )
+                # 从 MessageBus 中取出实际消息内容
+                msgs = await self._check_messages()
+                for m in msgs:
+                    content = m.get('content', '')
+                    if isinstance(content, dict):
+                        action = content.get('action', '')
+                        if action == 'thinking_result':
+                            result = content.get('result', '')
+                            source = content.get('source_model_id', '')
+                            source_tier = content.get('source_tier', '')
+                            source_role = content.get('source_role', '')
+                            delegation_id = content.get('delegation_id', '')
+
+                            if self._thinker and delegation_id:
+                                self._thinker._process_delegation_response(result, delegation_id)
+
+                            tier_label = {
+                                "supervisor": "主管",
+                                "expert": "专家",
+                                "large": "大模型",
+                            }.get(source_tier, "委托方")
+                            role_label = f"({source_role})" if source_role else ""
+                            wakeup_msg = (
+                                f"【{tier_label}{role_label}任务结果 from {source}】\n"
+                                f"source_tier={source_tier}\n"
+                                f"{result}"
+                            )
+                            logger.info(
+                                f"[ModelRunner] {self.model_id} 被唤醒：收到 {source} "
+                                f"({source_tier}) 的任务结果 (delegation_id={delegation_id})"
+                            )
+                            return wakeup_msg
+                        elif action in ('user_input', 'new_message'):
+                            msg_content = str(content.get('content', ''))
+                            if msg_content.strip():
+                                logger.info(f"[ModelRunner] {self.model_id} 被唤醒：收到新消息")
+                                return msg_content
+                        elif action == 'progress_report':
+                            # 外部主动推送的进度汇报
+                            next_progress_at = time.time() + progress_interval
+                            report = content.get('report', '')
+                            if report:
+                                logger.info(f"[ModelRunner] {self.model_id} 收到外部进度汇报")
+                                return f"【进度汇报】\n{report}"
+                    elif isinstance(content, str) and content.strip():
+                        logger.info(f"[ModelRunner] {self.model_id} 被唤醒：收到文本消息")
+                        return content
+
+                # 事件被触发但没有可解析的消息（可能是订阅回调误触发）
+                # 重置进度计时器继续等待
+                next_progress_at = time.time() + progress_interval
+                continue
+
+            # 到达进度汇报时间 —— 自动收集活跃专家状态
+            if time.time() >= next_progress_at:
+                next_progress_at = time.time() + progress_interval
+                progress = await self._collect_expert_progress()
+                if progress:
                     logger.info(
-                        f"[ModelRunner] {self.model_id} 被唤醒：收到 {source} "
-                        f"({source_tier}) 的任务结果 (delegation_id={delegation_id})"
+                        f"[ModelRunner] {self.model_id} 进度汇报触发唤醒"
                     )
-                    return wakeup_msg
-                elif action in ('user_input', 'new_message'):
-                    msg_content = str(content.get('content', ''))
-                    if msg_content.strip():
-                        logger.info(f"[ModelRunner] {self.model_id} 被唤醒：收到新消息")
-                        return msg_content
-            elif isinstance(content, str) and content.strip():
-                logger.info(f"[ModelRunner] {self.model_id} 被唤醒：收到文本消息")
-                return content
+                    return f"【进度汇报】\n{progress}"
+                # 无进度信息则继续等待
 
-        # 事件被触发但没有可解析的消息（可能是订阅回调误触发）
+        # 正常超时：收集当前进度作为最终信息
+        if self._running:
+            logger.debug(f"[ModelRunner] {self.model_id} 等待唤醒超时 (timeout={timeout}s)")
+            # 检查是否仍有待处理的委托
+            has_pending = (
+                self._thinker is not None
+                and bool(self._thinker._pending_delegations)
+            )
+            if has_pending:
+                progress = await self._collect_expert_progress()
+                if progress:
+                    return f"【等待超时-专家仍在运行】\n{progress}"
+                return "【等待超时】部分委托仍在处理中，请决定下一步行动"
+
         return None
 
     def _build_awakening_prompt(self, supervisor_result: str) -> str:
@@ -752,7 +816,18 @@ class ModelRunner:
         2. 已获得的结果
         3. 下一步选择（继续委托或确认完成）
         4. 如果决定完成，要求输出给用户的最终结果
+
+        支持以下唤醒类型：
+        - 专家/主管的任务结果
+        - 定期进度汇报（每 PROGRESS_INTERVAL 秒）
+        - 等待超时提醒
+        - 用户新消息
         """
+        # 判断唤醒类型
+        is_progress_report = "【进度汇报】" in supervisor_result
+        is_timeout_report = "【等待超时" in supervisor_result
+        is_result_report = "【" in supervisor_result and "任务结果" in supervisor_result
+
         # 从唤醒消息中解析来源层级
         source_tier = ""
         if "source_tier=" in supervisor_result:
@@ -786,8 +861,27 @@ class ModelRunner:
         if pending_count > 0:
             delegation_summary += f"，还有 {pending_count} 个待处理"
 
-        # 构建核心提示
-        if has_results:
+        # 根据唤醒类型构建核心提示
+        if is_progress_report:
+            # 进度汇报 → 确认进展正常，允许继续等待或干预
+            core_prompt = f"""【进度汇报】
+委托任务仍在执行中，以下为各专家的最新状态：
+{supervisor_result}
+
+你的选择：
+1️⃣ **继续等待**：专家运行正常，调用 continue_thinking(wait_seconds=N) 继续等待
+2️⃣ **检查进度**：如果觉得进展太慢，可以 delegate_task 给专家发送检查指令
+3️⃣ **输出部分结果**：如果已有足够信息，调用 continue_thinking(result_summary=..., continue=False)"""
+        elif is_timeout_report:
+            # 超时提醒 → 委托已超时，需要决策
+            core_prompt = f"""【等待超时】
+{supervisor_result}
+
+你的选择：
+1️⃣ **继续等待**：专家可能仍在工作，调用 continue_thinking(wait_seconds=N)
+2️⃣ **重新委托**：用不同方式重新组织任务
+3️⃣ **输出部分结果**：如果已经有部分结果，汇总后输出给用户"""
+        elif has_results:
             # 已获得结果 → 强烈引导完成
             core_prompt = f"""【重要：任务已有结果可供输出】
 你已获得{tier_label}的委托结果。现在应该：
@@ -825,6 +919,43 @@ class ModelRunner:
 
 请立即做出决策："""
         return prompt
+
+    async def _collect_expert_progress(self) -> str:
+        """收集当前会话中所有活跃专家的进度信息
+
+        用于 _wait_for_wakeup_event 的定期进度汇报，让主管/大模型
+        在等待期间了解专家的工作状态。
+        """
+        try:
+            with _runner_managers_lock:
+                rm = _runner_managers.get(self.session_id)
+            if not rm:
+                return ""
+
+            parts = []
+            now = time.time()
+            for info in rm.list_runners():
+                tier = info.get("tier", "")
+                running = info.get("running", False)
+                if tier == "expert" and running:
+                    elapsed = now - info.get("started_at", now)
+                    name = info.get("name") or info.get("role", "unknown")
+                    task = (info.get("task") or "")[:60]
+                    elapsed_str = f"{int(elapsed)}s"
+                    if elapsed > 60:
+                        elapsed_str = f"{int(elapsed/60)}m{int(elapsed%60)}s"
+                    parts.append(
+                        f"  - {name}: 已运行 {elapsed_str}, 任务: {task}"
+                    )
+
+            if not parts:
+                return ""
+
+            header = f"当前活跃专家（{time.strftime('%H:%M:%S')}）:"
+            return header + "\n" + "\n".join(parts)
+        except Exception as e:
+            logger.debug(f"[进度收集] 失败: {e}")
+            return ""
 
 
     async def _notify_thinking_complete(self) -> None:
@@ -1574,7 +1705,7 @@ class ModelRunner:
                             supervisor_calls.append(tc)
                         elif tc.name == "respond_to_user":
                             control_calls.append(tc)
-                        elif tc.name in ("request_skill", "list_skills", "stop_skill", "set_memory_focus"):
+                        elif tc.name in ("request_skill", "list_skills", "stop_skill", "set_memory_focus", "stop_task"):
                             control_calls.append(tc)
                         elif tc.name in ("request_mode_change", "ask_user_intent"):
                             control_calls.append(tc)
@@ -1662,6 +1793,29 @@ class ModelRunner:
                                     return "【可用技能】\n" + "\n".join(lines)
                                 else:
                                     return "【可用技能】暂无可用技能"
+                            elif tc.name == "stop_task":
+                                target = args.get("target_model_id", "").strip()
+                                reason = args.get("reason", "").strip()
+                                if target and reason:
+                                    logger.info(
+                                        f"[ModelRunner] {self.model_id} 停止任务: {target} ({reason})"
+                                    )
+                                    if self.manager and hasattr(self.manager, 'stop_runner'):
+                                        success = await self.manager.stop_runner(target)
+                                        if success:
+                                            return (
+                                                f"【任务已停止】已停止 {target}，原因: {reason}\n"
+                                                f"你可以重新 delegate_task 来分派任务。"
+                                            )
+                                        else:
+                                            return (
+                                                f"【停止失败】无法找到 {target}，"
+                                                f"可能已自然结束或被其他主管停止。"
+                                            )
+                                    else:
+                                        return "【停止失败】当前上下文无法操作 runner 管理器。"
+                                else:
+                                    return "【停止失败】缺少 target_model_id 或 reason 参数。"
                         except Exception as e:
                             logger.debug(f"[ModelRunner] 控制工具处理异常 (非致命): {e}")
 
@@ -2214,29 +2368,43 @@ class ModelRunnerManager:
 
             template = get_identities()[identity_key]
             tier = template.get("tier", "expert")
-            model_id = template.get("model_id", "")
+            base_model_id = template.get("model_id", "")
 
-            # 创建 ModelInstance
+            # 创建 ModelIdentity（先获取模板权限）
             identity = ModelIdentity.from_template(identity_key)
 
-            # 容量检查 + 注册（原子操作）
-            # 使用 MAX_RUNNERS 作为 tier 级上限（expert=8, supervisor=3, large=1）
-            # permissions.max_concurrent_runners 是 per-identity 限制，
-            # 由下层 factory.create_* 的 max_instances 检查 + model_id 唯一性检查共同保证
-            max_allowed = self.MAX_RUNNERS.get(tier, 8)
+            # ── 多实例支持：为 model_id 生成唯一后缀 ──
+            # 剥离模板的 _001 后缀，按相同 base 计数分配
+            import re as _re
+            base = _re.sub(r'_\d{3}$', '', base_model_id) if base_model_id else identity_key
+            with self._lock:
+                existing = [mid for mid in self._runners if mid.startswith(base)]
+                instance_num = len(existing) + 1
+                model_id = f"{base}_{instance_num:03d}"
+
+            # ── 容量检查 ──
+            from modules.thinking.identity import get_permissions as _get_perm
+            perms = _get_perm(identity_key)
+            max_per_role = getattr(perms, 'max_concurrent_runners', 1)
+            max_tier = self.MAX_RUNNERS.get(tier, 8)
 
             with self._lock:
+                if instance_num > max_per_role:
+                    logger.warning(
+                        f"[ModelRunnerManager] {identity_key} 实例已达上限 "
+                        f"({instance_num-1}/{max_per_role})，拒绝创建 {model_id}"
+                    )
+                    return None
                 current = self._count_by_tier.get(tier, 0)
-                if current >= max_allowed:
+                if current >= max_tier:
                     logger.warning(
                         f"[ModelRunnerManager] {tier} runner 已达上限 "
-                        f"({current}/{max_allowed})，拒绝创建 {identity_key}"
+                        f"({current}/{max_tier})，拒绝创建 {identity_key}"
                     )
                     return None
 
-                if model_id in self._runners:
-                    logger.warning(f"[ModelRunnerManager] {model_id} 已在运行中")
-                    return model_id
+            # 更新 identity 为唯一 model_id
+            identity.model_id = model_id
 
             factory = get_model_factory()
 
@@ -2266,16 +2434,18 @@ class ModelRunnerManager:
                     self._probe_map[probe_id] = model_id
             runner.identity_key = identity_key
 
-            # 技能注入：大模型可按技能扮演角色
-            if skill_id and tier == "large":
+            # 技能注入：大模型可按技能扮演角色，专家可按默认技能加载
+            effective_skill_id = skill_id or identity.default_skill
+            if effective_skill_id:
                 try:
                     from modules.thinking.skills import skill_manager
-                    skill = skill_manager.get_skill(skill_id)
+                    skill = skill_manager.get_skill(effective_skill_id)
                     if skill:
                         runner._active_skill = skill
                         runner._active_skill_tool_rules = skill.tool_rules
+                        source = "auto-match" if skill_id else "default"
                         logger.info(
-                            f"[ModelRunnerManager] 技能已注入: {skill_id} → {model_id}"
+                            f"[ModelRunnerManager] 技能已注入 ({source}): {effective_skill_id} → {model_id}"
                         )
                 except Exception as e:
                     logger.debug(f"[ModelRunnerManager] 技能注入失败 (非致命): {e}")
@@ -2346,6 +2516,8 @@ class ModelRunnerManager:
                 "round": len(r._thinker.history_thoughts) if r._thinker and r._thinker.history_thoughts else 0,
                 "running": r._running,
                 "task": r._task_description[:100],
+                "started_at": r._started_at,
+                "supervisor": r.supervisor,
                 "context_tokens": r.context_tokens,
                 "context_window_size": r.context_window_size,
                 "active_skill": r._active_skill.name if r._active_skill else "",
