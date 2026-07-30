@@ -3,14 +3,19 @@ API routes — REST + WebSocket endpoints.
 """
 import asyncio
 import json
+import os
+import shutil
 import uuid
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, File, UploadFile, WebSocket, WebSocketDisconnect, Query
+from fastapi.responses import FileResponse, JSONResponse
 
 from backend.chat.continuous_thinker import ContinuousThinker
 from backend.database.session_repo import get_session_repo
+from backend.config.autostart import set_autostart
 from backend.config.settings import settings
 from backend.utils.logger import setup_logger
 
@@ -34,6 +39,18 @@ def get_thinker() -> ContinuousThinker:
 @router.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@router.get("/config")
+async def get_config():
+    """Returns all current settings as a flat dict (proxy-compatible, no /api prefix)."""
+    return settings.model_dump()
+
+
+@router.get("/api/config")
+async def get_config_api():
+    """Returns all current settings (production-compatible, with /api prefix)."""
+    return settings.model_dump()
 
 
 @router.post("/api/sessions")
@@ -76,8 +93,8 @@ async def get_messages(session_id: str, limit: int = Query(100, ge=1, le=500)):
     return {"session_id": session_id, "messages": messages}
 
 
-@router.put("/api/config/{key}")
-async def update_config(key: str, body: dict):
+def _apply_config_update(key: str, body: dict) -> JSONResponse:
+    """Shared config-update logic for both /config/{key} and /api/config/{key}."""
     if not settings.is_modifiable(key):
         return JSONResponse(
             status_code=400,
@@ -87,7 +104,99 @@ async def update_config(key: str, body: dict):
     if value is None:
         return JSONResponse(status_code=400, content={"error": "Missing 'value' field"})
     setattr(settings, key, value)
-    return {"key": key, "value": value}
+    settings.save_overrides()
+
+    # Side-effect handlers for specific config keys
+    if key == "launch_at_startup":
+        set_autostart(bool(value))
+
+    return JSONResponse(status_code=200, content={"key": key, "value": value})
+
+
+@router.put("/config/{key}")
+async def update_config(key: str, body: dict):
+    """Proxy-compatible route (Vite proxy strips /api prefix)."""
+    return _apply_config_update(key, body)
+
+
+@router.put("/api/config/{key}")
+async def update_config_api(key: str, body: dict):
+    """Production-compatible route (direct access, no proxy)."""
+    return _apply_config_update(key, body)
+
+
+# ── Gallery Endpoints ──
+
+GALLERY_DIR = Path(__file__).resolve().parents[2] / "gallery"
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"}
+
+
+def _gallery_root() -> Path:
+    """Resolve gallery directory from config or fallback."""
+    if settings.storage_path and settings.storage_path.strip():
+        p = Path(settings.storage_path) / "gallery"
+        p.mkdir(parents=True, exist_ok=True)
+        return p
+    GALLERY_DIR.mkdir(parents=True, exist_ok=True)
+    return GALLERY_DIR
+
+
+@router.get("/api/gallery/images")
+async def list_gallery_images():
+    """List all images in the gallery directory."""
+    root = _gallery_root()
+    images = []
+    try:
+        for entry in sorted(root.iterdir(), key=lambda e: e.stat().st_mtime, reverse=True):
+            if entry.is_file() and entry.suffix.lower() in IMAGE_EXTENSIONS:
+                st = entry.stat()
+                images.append({
+                    "name": entry.name,
+                    "size": st.st_size,
+                    "modified": datetime.fromtimestamp(st.st_mtime, tz=timezone.utc).isoformat(),
+                })
+    except FileNotFoundError:
+        pass
+    return {"images": images}
+
+
+@router.post("/api/gallery/upload")
+async def upload_gallery_image(file: UploadFile = File(...)):
+    """Upload an image to the gallery directory. Returns the saved filename."""
+    if not file.filename:
+        return JSONResponse(status_code=400, content={"error": "No filename provided"})
+
+    ext = Path(file.filename).suffix.lower()
+    if ext not in IMAGE_EXTENSIONS:
+        return JSONResponse(
+            status_code=400,
+            content={"error": f"Unsupported file type: {ext}"},
+        )
+
+    root = _gallery_root()
+    # Avoid overwriting: append counter if name exists
+    base = file.filename
+    dest = root / base
+    counter = 1
+    while dest.exists():
+        stem = Path(file.filename).stem
+        dest = root / f"{stem}_{counter}{ext}"
+        counter += 1
+
+    with open(dest, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+
+    return {"name": dest.name, "path": f"/api/gallery/image/{dest.name}"}
+
+
+@router.get("/api/gallery/image/{name}")
+async def serve_gallery_image(name: str):
+    """Serve a gallery image file."""
+    root = _gallery_root()
+    path = root / name
+    if not path.is_file():
+        return JSONResponse(status_code=404, content={"error": "Image not found"})
+    return FileResponse(str(path))
 
 
 # ── WebSocket Endpoint ──
@@ -115,7 +224,7 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
             msg_type = msg.get("type", "")
             content = msg.get("content", "")
 
-            if msg_type == "message" and content:
+            if msg_type == "input" and content:
                 # Save user message
                 repo.save_message(session_id, "user", content)
 

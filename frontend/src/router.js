@@ -28,6 +28,7 @@ const routes = [
   { path: '/perception', name: 'Perception', component: () => import('@/pages/Perception.vue') },
   { path: '/sessions', name: 'Sessions', component: () => import('@/pages/Sessions.vue') },
   { path: '/system', name: 'System', component: () => import('@/pages/System.vue') },
+  { path: '/gallery', name: 'Gallery', component: () => import('@/pages/Gallery.vue') },
   { path: '/settings', name: 'Settings', component: () => import('@/pages/Settings.vue') },
 ]
 
