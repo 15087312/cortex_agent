@@ -18,6 +18,13 @@ from api.errors import (
     ErrorCode, ErrorResponse, ErrorDetail, error_response, AppError,
 )
 from cortex.version import __version__ as _CORTEX_VERSION
+from cortex.watchdog import enable as _enable_orphan_watchdog
+
+# 防残留: 若启动本后端的 cortex 父进程被强杀，自动退出避免孤儿进程
+try:
+    _enable_orphan_watchdog()
+except Exception:
+    pass
 from infra.data_process.api import router as data_process_router
 from infra.tool_manager.api import router as tool_router
 from modules.thinking.chat_gateway import router as stream_router

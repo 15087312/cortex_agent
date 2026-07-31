@@ -7,6 +7,13 @@ import socketserver
 import hashlib
 import glob
 
+# 防残留: 若启动本服务的 cortex 父进程被强杀，自动退出避免孤儿进程
+try:
+    from cortex.watchdog import enable as _enable_orphan_watchdog
+    _enable_orphan_watchdog()
+except Exception:
+    pass
+
 BACKEND_URL = "http://localhost:8080"
 FRONTEND_DIR = os.path.dirname(os.path.abspath(__file__))
 

@@ -13,6 +13,13 @@ import signal
 import atexit
 import re
 
+# 防残留: 若启动本客户端的 cortex 父进程被强杀，自动退出避免孤儿进程
+try:
+    from cortex.watchdog import enable as _enable_orphan_watchdog
+    _enable_orphan_watchdog()
+except Exception:
+    pass
+
 from PyQt6.QtWidgets import QApplication, QMainWindow, QMessageBox
 from PyQt6.QtCore import QUrl, QSettings, Qt, QRect
 from PyQt6.QtGui import (

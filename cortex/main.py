@@ -128,6 +128,9 @@ def launch_tui(args):
 def main():
     args = parse_args()
 
+    # 防残留: 让所有子进程监控本进程 PID，父进程被强杀后子进程自动退出
+    os.environ.setdefault("CORTEX_PARENT_PID", str(os.getpid()))
+
     # ── 模式 1: 连接已有后端 ──
     if args.api_url:
         if args.no_tui:
