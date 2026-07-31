@@ -1,0 +1,51 @@
+<script setup>
+import { ref, onMounted } from 'vue'
+import { endpoints } from '@/api.js'
+import { useToastStore } from '@/stores/toast.js'
+
+const toast = useToastStore()
+const mods = ref([])
+const total = ref(0)
+const withApi = ref(0)
+const withCore = ref(0)
+
+onMounted(async () => {
+  try {
+    const r = await endpoints.modules()
+    mods.value = (r.data.modules || []).map(m => ({ name: m.name || m, has_api: m.has_api, has_core: m.has_core, status: m.status || '未知' }))
+    total.value = mods.value.length
+    withApi.value = r.data.with_api || 0
+    withCore.value = r.data.with_core || 0
+  } catch {}
+})
+
+async function refreshMod(name) {
+  try { await endpoints.refreshModule(name); toast.show(name + '已刷新', 'success') } catch { toast.show('刷新失败', 'error') }
+}
+function statusClass(s) { return s === 'healthy' ? 'badge-green' : s === 'degraded' ? 'badge-yellow' : 'badge-red' }
+function statusLabel(m) { return m.status === 'healthy' ? '正常' : m.status === 'degraded' ? '降级' : m.status }
+</script>
+
+<template>
+  <div>
+    <div class="page-header">      <h2>模块管理</h2></div>
+    <div class="page-body">
+      <div class="stat-grid">
+        <div class="stat-card"><div class="stat-value">{{ total }}</div><div class="stat-label">总模块</div></div>
+        <div class="stat-card"><div class="stat-value">{{ withApi }}</div><div class="stat-label">有API</div></div>
+        <div class="stat-card"><div class="stat-value">{{ withCore }}</div><div class="stat-label">有Core</div></div>
+      </div>
+      <div class="card">
+        <div class="card-header">模块列表 ({{ total }})</div>
+        <div v-if="mods.length > 0" class="module-grid">
+          <div v-for="m in mods" :key="m.name" class="module-card" @click="refreshMod(m.name)">
+            <div class="module-icon">📦</div>
+            <div class="module-name">{{ m.name }}</div>
+            <div class="module-desc">{{ m.has_api ? 'API' : '无API' }} · {{ m.has_core ? 'Core' : '无Core' }} · {{ statusLabel(m) }}</div>
+          </div>
+        </div>
+        <div v-else class="empty-state"><span class="empty-icon">📭</span><p class="empty-text">后端连接后将自动加载模块数据</p></div>
+      </div>
+    </div>
+  </div>
+</template>
