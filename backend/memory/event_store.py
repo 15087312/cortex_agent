@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional
 
 from backend.config.settings import settings
 from backend.utils.logger import setup_logger
+from utils.faiss_lock import faiss_file_lock
 
 logger = setup_logger("event_store")
 
@@ -293,30 +294,34 @@ class EventStore:
     def _load_faiss(self):
         if self._faiss_index is not None:
             return
-        try:
-            import faiss
-            dim = self._get_embedding_dim()
-            if os.path.exists(self._faiss_index_path):
-                self._faiss_index = faiss.read_index(self._faiss_index_path)
-            else:
-                self._faiss_index = faiss.IndexFlatIP(dim)
-            if os.path.exists(self._id_map_path):
-                with open(self._id_map_path, "r") as f:
-                    self._id_map = json.load(f)
-        except ImportError:
-            logger.warning("faiss not installed, vector search unavailable")
-            self._faiss_index = None
+        # 跨实例锁：防止两套 EventStore 并发读同一索引/id_map
+        with faiss_file_lock(self._faiss_index_path):
+            try:
+                import faiss
+                dim = self._get_embedding_dim()
+                if os.path.exists(self._faiss_index_path):
+                    self._faiss_index = faiss.read_index(self._faiss_index_path)
+                else:
+                    self._faiss_index = faiss.IndexFlatIP(dim)
+                if os.path.exists(self._id_map_path):
+                    with open(self._id_map_path, "r") as f:
+                        self._id_map = json.load(f)
+            except ImportError:
+                logger.warning("faiss not installed, vector search unavailable")
+                self._faiss_index = None
 
     def _save_faiss(self):
         if self._faiss_index is None:
             return
-        try:
-            import faiss
-            faiss.write_index(self._faiss_index, self._faiss_index_path)
-            with open(self._id_map_path, "w") as f:
-                json.dump(self._id_map, f)
-        except Exception as e:
-            logger.warning(f"FAISS save failed: {e}")
+        # 跨实例锁：防止两套 EventStore 并发写同一索引/id_map
+        with faiss_file_lock(self._faiss_index_path):
+            try:
+                import faiss
+                faiss.write_index(self._faiss_index, self._faiss_index_path)
+                with open(self._id_map_path, "w") as f:
+                    json.dump(self._id_map, f)
+            except Exception as e:
+                logger.warning(f"FAISS save failed: {e}")
 
     def add_embedding(self, event_id: str, embedding: List[float]):
         with self._write_lock:

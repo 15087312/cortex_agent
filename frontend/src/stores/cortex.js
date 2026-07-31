@@ -36,13 +36,13 @@ export const useCortexStore = defineStore('cortex', () => {
   )
 
   async function loadSessions() {
-    try { const data = await listSessions(); sessions.value = data.sessions || [] }
+    try { const data = await listSessions(); sessions.value = data.data || [] }
     catch { sessions.value = [] }
   }
 
   async function initSession() {
     _unbindWsEvents(); cortexWs.disconnect(); isConnected.value = false
-    try { const data = await createSession(); sessionId.value = data.session_id }
+    try { const data = await createSession(); sessionId.value = data.data?.session_id }
     catch { sessionId.value = 'ses_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8) }
     currentTitle.value = '新对话'
     messages.value = []; _stopped = false; processing.value = false; isStreaming.value = false
@@ -60,7 +60,7 @@ export const useCortexStore = defineStore('cortex', () => {
     streamingContent.value = ''; streamingIdx.value = -1
     try {
       const data = await getMessages(sid)
-      const msgs = data.messages || []
+      const msgs = data.data || []
       messages.value = msgs.map(m => ({ _id: uid(), role: m.role, content: m.content || '' }))
       currentTitle.value = sessions.value.find(s => s.session_id === sid)?.title || '对话'
     } catch { messages.value = [] }

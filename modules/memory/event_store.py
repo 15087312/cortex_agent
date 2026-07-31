@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from config.settings import settings
+from utils.faiss_lock import faiss_file_lock
 from utils.logger import setup_logger
 
 logger = setup_logger("event_store")
@@ -353,36 +354,40 @@ class EventStore:
         """延迟加载 FAISS 索引"""
         if self._faiss_index is not None:
             return
-        try:
-            import faiss
-            import numpy as np
-            dim = self._get_embedding_dim()
-            if os.path.exists(self._faiss_index_path):
-                self._faiss_index = faiss.read_index(self._faiss_index_path)
-                self.logger.info(f"[EventStore] 加载 FAISS 索引: {self._faiss_index_path} ({self._faiss_index.ntotal} 向量, dim={self._faiss_index.d})")
-            else:
-                self._faiss_index = faiss.IndexFlatIP(dim)
-                self.logger.info(f"[EventStore] 创建新 FAISS 索引 (dim={dim})")
+        # 跨实例锁：防止两套 EventStore 并发读同一索引/id_map
+        with faiss_file_lock(self._faiss_index_path):
+            try:
+                import faiss
+                import numpy as np
+                dim = self._get_embedding_dim()
+                if os.path.exists(self._faiss_index_path):
+                    self._faiss_index = faiss.read_index(self._faiss_index_path)
+                    self.logger.info(f"[EventStore] 加载 FAISS 索引: {self._faiss_index_path} ({self._faiss_index.ntotal} 向量, dim={self._faiss_index.d})")
+                else:
+                    self._faiss_index = faiss.IndexFlatIP(dim)
+                    self.logger.info(f"[EventStore] 创建新 FAISS 索引 (dim={dim})")
 
-            if os.path.exists(self._id_map_path):
-                with open(self._id_map_path, "r") as f:
-                    self._id_map = json.load(f)
-                assert len(self._id_map) == self._faiss_index.ntotal, \
-                    f"ID 映射长度 ({len(self._id_map)}) 与 FAISS 向量数 ({self._faiss_index.ntotal}) 不匹配"
-        except ImportError:
-            self.logger.warning("[EventStore] faiss 未安装，向量检索不可用")
-            self._faiss_index = None
+                if os.path.exists(self._id_map_path):
+                    with open(self._id_map_path, "r") as f:
+                        self._id_map = json.load(f)
+                    assert len(self._id_map) == self._faiss_index.ntotal, \
+                        f"ID 映射长度 ({len(self._id_map)}) 与 FAISS 向量数 ({self._faiss_index.ntotal}) 不匹配"
+            except ImportError:
+                self.logger.warning("[EventStore] faiss 未安装，向量检索不可用")
+                self._faiss_index = None
 
     def _save_faiss(self):
         if self._faiss_index is None:
             return
-        try:
-            import faiss
-            faiss.write_index(self._faiss_index, self._faiss_index_path)
-            with open(self._id_map_path, "w") as f:
-                json.dump(self._id_map, f)
-        except Exception as e:
-            self.logger.warning(f"[EventStore] 保存 FAISS 索引失败: {e}")
+        # 跨实例锁：防止两套 EventStore 并发写同一索引/id_map
+        with faiss_file_lock(self._faiss_index_path):
+            try:
+                import faiss
+                faiss.write_index(self._faiss_index, self._faiss_index_path)
+                with open(self._id_map_path, "w") as f:
+                    json.dump(self._id_map, f)
+            except Exception as e:
+                self.logger.warning(f"[EventStore] 保存 FAISS 索引失败: {e}")
 
     def add_embedding(self, event_id: str, embedding: List[float]):
         """向 FAISS 添加向量（外部调用时加锁）"""
@@ -407,37 +412,39 @@ class EventStore:
 
     def remove_embedding(self, event_id: str):
         """从 FAISS 移除向量（重建索引，低频操作）"""
-        try:
-            import numpy as np
-            import faiss
-            self._load_faiss()
-            if self._faiss_index is None or event_id not in self._id_map:
-                return
-            dim = self._get_embedding_dim()
-            idx = self._id_map.index(event_id)
-            # FAISS 不支持删除，重建索引跳过该向量
-            vectors = []
-            new_id_map = []
-            old_index = self._faiss_index
-            for i in range(old_index.ntotal):
-                if i == idx:
-                    continue
-                vec = np.zeros((1, dim), dtype=np.float32)
-                old_index.reconstruct(i, vec[0])
-                vectors.append(vec[0])
-                new_id_map.append(self._id_map[i])
-            if vectors:
-                new_index = faiss.IndexFlatIP(dim)
-                stacked = np.array(vectors, dtype=np.float32)
-                faiss.normalize_L2(stacked)
-                new_index.add(stacked)
-                self._faiss_index = new_index
-            else:
-                self._faiss_index = faiss.IndexFlatIP(self._embedding_dim)
-            self._id_map = new_id_map
-            self._save_faiss()
-        except Exception as e:
-            self.logger.warning(f"[EventStore] 移除向量失败: {e}")
+        # 跨实例锁：覆盖 读-改-写 全过程，防止与其他实例的写竞争
+        with faiss_file_lock(self._faiss_index_path):
+            try:
+                import numpy as np
+                import faiss
+                self._load_faiss()
+                if self._faiss_index is None or event_id not in self._id_map:
+                    return
+                dim = self._get_embedding_dim()
+                idx = self._id_map.index(event_id)
+                # FAISS 不支持删除，重建索引跳过该向量
+                vectors = []
+                new_id_map = []
+                old_index = self._faiss_index
+                for i in range(old_index.ntotal):
+                    if i == idx:
+                        continue
+                    vec = np.zeros((1, dim), dtype=np.float32)
+                    old_index.reconstruct(i, vec[0])
+                    vectors.append(vec[0])
+                    new_id_map.append(self._id_map[i])
+                if vectors:
+                    new_index = faiss.IndexFlatIP(dim)
+                    stacked = np.array(vectors, dtype=np.float32)
+                    faiss.normalize_L2(stacked)
+                    new_index.add(stacked)
+                    self._faiss_index = new_index
+                else:
+                    self._faiss_index = faiss.IndexFlatIP(self._embedding_dim)
+                self._id_map = new_id_map
+                self._save_faiss()
+            except Exception as e:
+                self.logger.warning(f"[EventStore] 移除向量失败: {e}")
 
     def search_by_vector(self, query_embedding: List[float], top_k: int = 10) -> List[tuple]:
         """向量搜索，返回 [(event_id, score), ...]"""

@@ -20,7 +20,7 @@ from api.errors import (
 from cortex.version import __version__ as _CORTEX_VERSION
 from infra.data_process.api import router as data_process_router
 from infra.tool_manager.api import router as tool_router
-from modules.thinking.api_stream import router as stream_router
+from modules.thinking.chat_gateway import router as stream_router
 from modules.attention.api import router as attention_router
 from modules.management.api import router as management_router
 from modules.output_system.api import router as output_router
@@ -315,11 +315,13 @@ _SIMPLE_API_KEY = settings.SIMPLE_API_KEY
 _AUTH_WHITELIST = {
     "/", "/health", "/docs", "/openapi.json", "/redoc", "/favicon.ico",
     "/dashboard", "/dashboard/",
+    # 会话端点：前端无需录入 key 即可建会话/查询状态（低风险写操作，WS 不走 HTTP 中间件）
+    "/stream/session", "/stream/status",
     "/stream/sessions", "/stream/sessions/",
     "/config", "/config/",
 }
 _AUTH_WHITELIST_PREFIXES = ("/management/causal-graph", "/management/memory",
-                             "/stream/sessions/", "/config/",
+                             "/stream/session/", "/stream/sessions/", "/config/",
                              "/audio")  # TTS 音频供前端 <audio> 无鉴权播放
 
 
@@ -542,7 +544,12 @@ async def health_check():
     # 检查数据库
     try:
         from modules.database.connection import db_manager
-        db_manager.get_session().close()
+        from sqlalchemy import text
+        # get_session 是 @contextmanager 生成器，必须用 with 进入
+        # （错误用法 get_session().close() 会抛 AttributeError，误报 unavailable）
+        # 执行真实查询：确保每次检查都真正验证数据库可用（session 惰性连接）
+        with db_manager.get_session() as session:
+            session.execute(text("SELECT 1"))
         checks["database"] = "ok"
     except Exception as e:
         logger.debug("健康检查: 数据库不可用: %s", e)
@@ -573,6 +580,24 @@ async def get_config():
         if val is not None:
             config_data[key] = val
     return {"data": config_data}
+
+
+@app.get("/config/api-key")
+async def get_api_key(request: Request):
+    """返回 API key 配置状态（供前端自动注入，免手动录入）。
+
+    - /config/ 前缀在白名单内，本端点无需鉴权即可访问
+    - 开发/测试环境：直接返回明文 key（本地免手动录入）
+    - 生产环境：仅本地回环客户端（localhost/127.0.0.1/::1）返回明文 key，
+      其余网络客户端只返回是否已配置——防止密钥泄露到局域网/公网。
+      前端 vite 代理在本机运行，请求来自回环地址，故自动检测仍可用。
+    """
+    # 复用 _get_client_ip：直接连接来自受信代理时解析 X-Forwarded-For 取真实 IP，
+    # 避免生产环境经同机反向代理时误判为回环而泄露明文 key
+    is_loopback = _get_client_ip(request) in ("127.0.0.1", "::1", "localhost")
+    if settings.APP_ENV == "production" and not is_loopback:
+        return {"success": True, "data": {"configured": bool(_SIMPLE_API_KEY), "api_key": ""}}
+    return {"success": True, "data": {"configured": bool(_SIMPLE_API_KEY), "api_key": _SIMPLE_API_KEY}}
 
 
 @app.post("/config/toggle-companion-mode")

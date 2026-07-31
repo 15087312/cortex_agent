@@ -18,25 +18,16 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
+      // 统一入口：全部指向主架构后端 :8080（api.main:app，含 chat_gateway /stream/*）
       '/api': {
-        target: 'http://localhost:8000',
+        target: 'http://localhost:8080',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, ''),
       },
+      // /stream 保留前缀：chat_gateway 的 WS 端点是 /stream/ws/{sid}
       '/stream': {
-        target: 'ws://localhost:8000',
+        target: 'ws://localhost:8080',
         ws: true,
-        rewrite: (path) => path.replace(/^\/stream/, ''),
-      },
-      '/cortex-api': {
-        target: 'http://localhost:8000',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/cortex-api/, '/api'),
-      },
-      '/cortex-ws': {
-        target: 'ws://localhost:8000',
-        ws: true,
-        rewrite: (path) => path.replace(/^\/cortex-ws/, '/ws'),
       },
     },
   },

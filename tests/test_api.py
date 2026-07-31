@@ -151,9 +151,11 @@ async def test_auth_missing_key_returns_401(_mock_lifespan, _auth_key, _reset_ra
     """Request without X-API-Key header to a protected path should return 401."""
     from api.main import app
 
-    # /config/{key} is PUT-only and is behind auth — no key → 401
+    # /management/dashboard is NOT in the auth whitelist → no key → 401
+    # (note: /config/ is whitelisted for the frontend settings page, so it is
+    #  not a valid choice for testing 401)
     async with _client(app) as client:
-        resp = await client.put("/config/DEBUG", json={"value": True})
+        resp = await client.get("/management/dashboard")
 
     assert resp.status_code == 401
     data = resp.json()
@@ -167,9 +169,8 @@ async def test_auth_wrong_key_returns_401(_mock_lifespan, _auth_key, _reset_rate
     from api.main import app
 
     async with _client(app) as client:
-        resp = await client.put(
-            "/config/DEBUG",
-            json={"value": True},
+        resp = await client.get(
+            "/management/dashboard",
             headers={"X-API-Key": "wrong-key"},
         )
 

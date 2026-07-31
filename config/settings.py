@@ -111,6 +111,11 @@ class Settings(BaseSettings):
     # 注意：身份/工具/人格/风格等由激活的 Skill 控制，执行模式仅决定安全门控策略
     EXECUTION_MODE: str = "edit"
 
+    # 对话路线模式 — 由对话网关 (modules/thinking/chat_gateway.py) 在每条对话开始时读取
+    # "agent":    完整多模型编排路线（默认，走 modules/thinking/api_stream）
+    # "chatonly": 简化单模型对话路线（走 backend/，懒加载，不影响其他模块）
+    CORTEX_MODE: str = "agent"
+
     # 安全审查模式: "llm"=安全专家LLM审批, "user"=用户手动审批, "auto"=LLM可用时用LLM否则拒绝
     SECURITY_REVIEW_MODE: str = "auto"
 

@@ -4,15 +4,17 @@
 import { useToastStore } from '@/stores/toast.js'
 
 const BASE = '/api'
-const CORTEX_BASE = '/cortex-api'
 
 let _memKey = null
 let _initialized = false
 
+const KEY_STORE = 'cortex_api_key'
+
 function _init() {
   if (_initialized) return
   _initialized = true
-  try { _memKey = sessionStorage.getItem('cortex_api_key') || null } catch { _memKey = null }
+  // localStorage 持久化（关浏览器不丢）；兼容旧 sessionStorage 缓存
+  try { _memKey = localStorage.getItem(KEY_STORE) || sessionStorage.getItem(KEY_STORE) || null } catch { _memKey = null }
 }
 
 function _headers() {
@@ -23,23 +25,39 @@ function _headers() {
 }
 
 // ═══════════════════════════════════════════
-// 基础请求（Cortex 后端 :8000）
+// API key 自动检测 — 从后端 /config/api-key 拉取，免手动录入
 // ═══════════════════════════════════════════
 
-async function cortexRequest(method, path, body) {
-  const opts = { method, headers: _headers() }
-  if (body !== undefined) opts.body = JSON.stringify(body)
-  const r = await fetch(CORTEX_BASE + path, opts)
-  if (!r.ok) {
-    const e = { status: r.status }
-    try { e.body = await r.json() } catch { e.body = await r.text() }
-    throw e
+let _autoDetectPromise = null
+
+/**
+ * 启动时调用：若本地无 key，则从后端自动拉取（开发/测试环境后端返回 key）。
+ * 幂等：并发调用共享同一个 Promise。返回最终生效的 key（可能为空串）。
+ */
+export async function autoDetectApiKey() {
+  _init()
+  if (_memKey) return _memKey
+  if (!_autoDetectPromise) {
+    _autoDetectPromise = (async () => {
+      try {
+        const r = await fetch(BASE + '/config/api-key')
+        if (!r.ok) throw new Error('HTTP ' + r.status)
+        const j = await r.json()
+        const k = (j?.data?.api_key) || ''
+        if (k) setApiKey(k)
+        return k
+      } catch (err) {
+        // 失败不缓存（后端启动慢时首次可能失败），下次调用自动重试
+        _autoDetectPromise = null
+        return ''
+      }
+    })()
   }
-  return await r.json()
+  return _autoDetectPromise
 }
 
 // ═══════════════════════════════════════════
-// 全局请求（原有后端 :8080）
+// 全局请求（统一后端 :8080，经 vite /api 代理剥前缀 → /stream/*）
 // ═══════════════════════════════════════════
 
 export async function request(method, path, body, signal) {
@@ -70,20 +88,28 @@ export function getApiKey() {
 
 export function setApiKey(k) {
   _memKey = k || null
-  try { k ? sessionStorage.setItem('cortex_api_key', k) : sessionStorage.removeItem('cortex_api_key') } catch {}
+  try {
+    if (k) {
+      localStorage.setItem(KEY_STORE, k)
+      sessionStorage.setItem(KEY_STORE, k)
+    } else {
+      localStorage.removeItem(KEY_STORE)
+      sessionStorage.removeItem(KEY_STORE)
+    }
+  } catch {}
 }
 
 // ═══════════════════════════════════════════
-// Cortex API（:8000）
+// Cortex 会话 API → chat_gateway /stream/* 端点（统一后端 :8080）
 // ═══════════════════════════════════════════
 
-export function createSession() { return cortexRequest('POST', '/sessions') }
-export function listSessions() { return cortexRequest('GET', '/sessions?limit=50') }
-export function getMessages(sessionId, limit = 100) { return cortexRequest('GET', `/sessions/${encodeURIComponent(sessionId)}/messages?limit=${limit}`) }
-export function deleteSession(sessionId) { return cortexRequest('DELETE', `/sessions/${encodeURIComponent(sessionId)}`) }
+export function createSession() { return request('POST', '/stream/session') }
+export function listSessions() { return request('GET', '/stream/sessions') }
+export function getMessages(sessionId, limit = 100) { return request('GET', `/stream/sessions/${encodeURIComponent(sessionId)}/messages?limit=${limit}`) }
+export function deleteSession(sessionId) { return request('DELETE', `/stream/session/${encodeURIComponent(sessionId)}`) }
 
 // ═══════════════════════════════════════════
-// 端点（原有后端 :8080）
+// 端点
 // ═══════════════════════════════════════════
 
 export const endpoints = {
