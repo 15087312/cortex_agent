@@ -191,7 +191,7 @@ class VoiceLLMHandler:
             logger.debug(f"推送到 CLI TUI 失败 (非致命): {e}")
 
     def _output_response(self, response: str, original_text: str) -> None:
-        """控制台输出兜底 — 当 CLI TUI 不可用时，语音响应仍可见"""
+        """控制台输出兜底 + TTS 语音输出（闭环）"""
         try:
             from modules.output_system.distributor import OutputDistributor
 
@@ -201,3 +201,38 @@ class VoiceLLMHandler:
             distributor.distribute(f"\n{header}\n{body}\n", channel="console")
         except Exception as e:
             logger.debug(f"输出分发失败 (非致命): {e}")
+
+        # ── TTS 语音输出：让角色真正"说"出来 ──
+        try:
+            from config.settings import settings as current_settings
+            if not getattr(current_settings, "OUTPUT_TTS_ENABLED", False):
+                return
+
+            from modules.output_system.tts import TTSEngine
+            engine = TTSEngine()
+
+            # gTTS 是阻塞的网络+CPU 调用，放入线程池避免卡死事件循环
+            async def _tts_task() -> None:
+                audio_path = await engine.synthesize(response)
+                if audio_path:
+                    logger.info(f"[语音] 🔊 TTS 输出: {audio_path}")
+
+            coro = _tts_task()
+            try:
+                loop = asyncio.get_running_loop()
+                if not loop.is_closed():
+                    asyncio.run_coroutine_threadsafe(coro, loop)
+                else:
+                    # 循环已关闭：关闭协程避免未 await 警告，走同步兜底
+                    coro.close()
+                    audio_path = engine.synthesize_sync(response)
+                    if audio_path:
+                        logger.info(f"[语音] 🔊 TTS 输出: {audio_path}")
+            except RuntimeError:
+                # 无运行中事件循环时，同步兜底
+                coro.close()
+                audio_path = engine.synthesize_sync(response)
+                if audio_path:
+                    logger.info(f"[语音] 🔊 TTS 输出: {audio_path}")
+        except Exception as e:
+            logger.debug(f"TTS 输出失败 (非致命): {e}")

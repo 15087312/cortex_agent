@@ -9,6 +9,7 @@
 - openai-whisper (pip install openai-whisper)
 """
 import collections
+import re
 import threading
 import time
 from typing import Any, Dict, List, Optional
@@ -20,6 +21,25 @@ from modules.perception.events.types import PerceptionEvent, PerceptionEventType
 from utils.logger import setup_logger
 
 logger = setup_logger("perception_voice_detector")
+
+
+def extract_instruction(
+    text: str,
+    wake_word: str = "",
+    end_word: str = "",
+) -> str:
+    """从识别文本中提取有效指令
+
+    - 结束词（如"完毕"）作为停止词：只保留结束词之前的内容
+    - 剥离唤醒词（如"科特"）
+    """
+    clean = text
+    if end_word and end_word in clean:
+        clean = clean.split(end_word, 1)[0]
+    if wake_word:
+        clean = clean.replace(wake_word, "")
+    # 压缩多余空白（剥离唤醒词可能留下双空格）
+    return re.sub(r"\s+", " ", clean).strip()
 
 
 class VoiceDetector(PerceptionDetector):
@@ -43,6 +63,7 @@ class VoiceDetector(PerceptionDetector):
         event_bus=None,
         wake_word: str = "科特",
         end_word: str = "完毕",
+        end_stop_cooldown: float = 3.0,
     ):
         self._device_index = device_index
         self._model_size = model_size
@@ -52,6 +73,7 @@ class VoiceDetector(PerceptionDetector):
         self._event_bus = event_bus
         self._wake_word = wake_word
         self._end_word = end_word
+        self._end_stop_cooldown = end_stop_cooldown
 
         self._running = False
         self._thread: Optional[threading.Thread] = None
@@ -66,6 +88,7 @@ class VoiceDetector(PerceptionDetector):
         try:
             import speech_recognition  # noqa: F401
             import pyaudio  # noqa: F401
+            import whisper  # noqa: F401
             return True
         except ImportError as e:
             logger.debug(f"语音依赖不可用: {e}")
@@ -158,12 +181,9 @@ class VoiceDetector(PerceptionDetector):
                 if self._wake_word not in text:
                     continue
 
-                # 剥离唤醒词和结束词，提取有效指令
-                clean = text
-                if self._wake_word:
-                    clean = clean.replace(self._wake_word, "").strip()
-                if self._end_word:
-                    clean = clean.replace(self._end_word, "").strip()
+                # 完毕作为停止词：截断到结束词之前 + 剥离唤醒词
+                end_detected = bool(self._end_word and self._end_word in text)
+                clean = extract_instruction(text, self._wake_word, self._end_word)
 
                 if not clean:
                     continue
@@ -186,6 +206,13 @@ class VoiceDetector(PerceptionDetector):
                     self._events.append(event)
                 if self._event_bus:
                     self._event_bus.publish(event)
+
+                # 完毕作为停止词：说完毕后进入冷却，防止环境音立刻再次触发
+                if end_detected and self._end_stop_cooldown > 0:
+                    logger.info(
+                        f"检测到结束词，冷却 {self._end_stop_cooldown}s"
+                    )
+                    time.sleep(self._end_stop_cooldown)
 
             except sr.WaitTimeoutError:
                 pass

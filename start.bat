@@ -29,6 +29,30 @@ if %ERRORLEVEL% neq 0 (
     echo [OK] PyQt6 安装完成
 )
 
+:: 检查语音依赖（热键 Push-to-Talk / Whisper STT / TTS），没有就自动装
+python -c "import pynput, pyaudio, gTTS, speech_recognition" 2>nul
+if %ERRORLEVEL% neq 0 (
+    echo [..] 正在安装语音依赖（首次运行需要）...
+    pip install pynput pyaudio gTTS SpeechRecognition -q
+    if %ERRORLEVEL% neq 0 (
+        echo [WARN] 语音依赖安装失败，语音功能不可用（可手动运行: pip install pynput pyaudio gTTS SpeechRecognition）
+    ) else (
+        echo [OK] 语音依赖安装完成
+    )
+)
+
+:: 检查 Whisper STT 引擎（本地识别，依赖 torch，体积较大）
+python -c "import whisper" 2>nul
+if %ERRORLEVEL% neq 0 (
+    echo [..] 正在安装 Whisper 语音识别引擎（首次运行需要，约 2GB）...
+    pip install openai-whisper -q
+    if %ERRORLEVEL% neq 0 (
+        echo [WARN] Whisper 安装失败，语音识别不可用（可手动运行: pip install openai-whisper）
+    ) else (
+        echo [OK] Whisper 安装完成
+    )
+)
+
 cd /d "%~dp0"
 echo [..] 启动中...
 start /b python frontend\main.py

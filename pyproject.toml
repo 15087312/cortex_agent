@@ -30,6 +30,11 @@ dependencies = [
     "rapidocr_onnxruntime>=1.2.0",
     "opencv-python>=4.8.0",
     "Pillow>=10.1.0",
+    # 语音输入/输出（macOS/Windows/Linux 跨平台）
+    "SpeechRecognition>=3.10.0",
+    "pyaudio>=0.2.14",
+    "gTTS>=2.5.0",
+    "pynput>=1.7.6",
 ]
 
 [project.optional-dependencies]
@@ -43,6 +48,11 @@ dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
     "ruff>=0.1.0",
+]
+voice = [
+    # 本地语音识别（STT）— 依赖 torch，单独放在 voice extra
+    "openai-whisper>=20231117",
+    "torch>=2.1.0",
 ]
 
 [project.scripts]

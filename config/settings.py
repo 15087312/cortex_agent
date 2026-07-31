@@ -255,6 +255,8 @@ class Settings(BaseSettings):
     PERCEPTION_FILE_ENABLED: bool = True               # 文件变化感知（watchdog）
     PERCEPTION_MCP_ENABLED: bool = True                # MCP 资源感知（通过 MCP 协议获取外部数据）
     PERCEPTION_VOICE_ENABLED: bool = False             # 语音感知（麦克风+Whisper STT）
+    PERCEPTION_VOICE_MODE: str = "hotkey"              # 语音触发模式: hotkey=热键开关 / wakeword=唤醒词监听
+    PERCEPTION_VOICE_HOTKEY: str = "f8"                # 热键模式全局热键（pynput 格式: f8 / <ctrl>+<space>）
     PERCEPTION_VOICE_DEVICE: Optional[int] = None      # 麦克风设备索引（None=系统默认）
     PERCEPTION_VOICE_MODEL: str = "tiny"               # Whisper 模型大小 (tiny/base/small/medium/large)
     PERCEPTION_VOICE_LANGUAGE: str = "zh"              # 语音识别语言
@@ -262,7 +264,15 @@ class Settings(BaseSettings):
     PERCEPTION_VOICE_TIMEOUT: float = 10.0             # 单次录音超时（秒）
     PERCEPTION_VOICE_LLM_TRIGGER_ENABLED: bool = False  # 语音识别后是否自动触发大模型
     PERCEPTION_VOICE_WAKE_PREFIX: str = "科特"           # 语音触发大模型时的唤醒前缀
-    PERCEPTION_VOICE_WAKE_SUFFIX: str = "完毕"           # 语音触发大模型时的结束后缀
+    PERCEPTION_VOICE_WAKE_SUFFIX: str = "完毕"           # 语音触发大模型时的结束后缀（同时作为停止词）
+    PERCEPTION_VOICE_END_STOP: bool = True             # 结束词（完毕）作为停止词: 说完即止
+    PERCEPTION_VOICE_MAX_DURATION: float = 60.0        # 单次录音最大时长（秒）
+    PERCEPTION_VOICE_END_CHECK_INTERVAL: float = 3.0   # 录音中检测结束词的间隔（秒）
+
+    # ── 语音输出（TTS） ──────────────────────────────────────
+    OUTPUT_TTS_ENABLED: bool = True                      # TTS 输出总开关（文本转语音）
+    OUTPUT_TTS_LANGUAGE: str = "zh"                      # TTS 合成语言
+    OUTPUT_TTS_OUTPUT_DIR: str = "data/output"           # TTS 音频输出目录
 
     # ── 主动感知（差异检测 → 触发响应） ────────────────────
     # 负责分析被动感知数据，检测变化并触发思考/搭话等响应

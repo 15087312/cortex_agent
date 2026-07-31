@@ -54,6 +54,11 @@ class PerceptionSystem:
             "voice_llm_trigger_enabled": getattr(settings, "PERCEPTION_VOICE_LLM_TRIGGER_ENABLED", False),
             "voice_wake_prefix": getattr(settings, "PERCEPTION_VOICE_WAKE_PREFIX", "科特"),
             "voice_wake_suffix": getattr(settings, "PERCEPTION_VOICE_WAKE_SUFFIX", "完毕"),
+            "voice_mode": getattr(settings, "PERCEPTION_VOICE_MODE", "hotkey"),
+            "voice_hotkey": getattr(settings, "PERCEPTION_VOICE_HOTKEY", "f8"),
+            "voice_end_stop": getattr(settings, "PERCEPTION_VOICE_END_STOP", True),
+            "voice_max_duration": getattr(settings, "PERCEPTION_VOICE_MAX_DURATION", 60.0),
+            "voice_end_check_interval": getattr(settings, "PERCEPTION_VOICE_END_CHECK_INTERVAL", 3.0),
             "proactive_enabled": getattr(settings, "PROACTIVE_OUTREACH_ENABLED", False),
             "voice_device": getattr(settings, "PERCEPTION_VOICE_DEVICE", None),
             "voice_model": getattr(settings, "PERCEPTION_VOICE_MODEL", "tiny"),
@@ -101,19 +106,37 @@ class PerceptionSystem:
         logger.info("感知系统组装完成")
 
     def _setup_voice_detector(self, cfg: dict):
-        from modules.perception.detectors.voice_detector import VoiceDetector
-        self.voice_detector = VoiceDetector(
-            device_index=cfg["voice_device"],
-            model_size=cfg["voice_model"],
-            language=cfg["voice_language"],
-            energy_threshold=cfg["voice_energy"],
-            timeout=cfg["voice_timeout"],
-            wake_word=cfg.get("voice_wake_prefix", "科特"),
-            end_word=cfg.get("voice_wake_suffix", "完毕"),
-        )
+        mode = cfg.get("voice_mode", "hotkey")
+        if mode == "hotkey":
+            from modules.perception.detectors.hotkey_voice_detector import (
+                HotkeyVoiceDetector,
+            )
+            self.voice_detector = HotkeyVoiceDetector(
+                hotkey=cfg.get("voice_hotkey", "f8"),
+                device_index=cfg["voice_device"],
+                model_size=cfg["voice_model"],
+                language=cfg["voice_language"],
+                wake_word=cfg.get("voice_wake_prefix", "科特"),
+                end_word=cfg.get("voice_wake_suffix", "完毕"),
+                end_stop=cfg.get("voice_end_stop", True),
+                max_duration=cfg.get("voice_max_duration", 60.0),
+                end_check_interval=cfg.get("voice_end_check_interval", 3.0),
+                event_bus=self.event_bus,
+            )
+        else:
+            from modules.perception.detectors.voice_detector import VoiceDetector
+            self.voice_detector = VoiceDetector(
+                device_index=cfg["voice_device"],
+                model_size=cfg["voice_model"],
+                language=cfg["voice_language"],
+                energy_threshold=cfg["voice_energy"],
+                timeout=cfg["voice_timeout"],
+                wake_word=cfg.get("voice_wake_prefix", "科特"),
+                end_word=cfg.get("voice_wake_suffix", "完毕"),
+            )
         if self.voice_detector and self.voice_detector.is_available():
             self.voice_detector.start()
-            logger.info("语音检测器: 已启动")
+            logger.info(f"语音检测器: 已启动 (mode={mode})")
         else:
             logger.warning("语音检测器: 依赖不可用")
             self.voice_detector = None

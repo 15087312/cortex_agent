@@ -84,11 +84,17 @@ async def text_output(text: str = Body(..., embed=True)):
 
 @router.post("/speech")
 async def speech_output(text: str = Body(..., embed=True)):
-    """语音输出接口"""
+    """语音输出接口 — 文本转语音（TTS）"""
     try:
         output_system = OutputSystem()
         output_system.output_text(text)
-        return {"success": True, "data": {"audio_url": None, "text": text, "message": "语音合成功能需接入TTS服务（如Azure TTS、Edge TTS）"}}
+
+        from modules.output_system.tts import TTSEngine
+        engine = TTSEngine()
+        audio_path = await engine.synthesize(text)
+        if audio_path:
+            return {"success": True, "data": {"audio_url": audio_path, "text": text, "message": "TTS 合成成功"}}
+        return {"success": True, "data": {"audio_url": None, "text": text, "message": "TTS 未启用或依赖不可用（OUTPUT_TTS_ENABLED=false 或未安装 gTTS）"}}
     except Exception as e:
         raise AppError(ErrorCode.INTERNAL_ERROR, "输出系统错误")
 

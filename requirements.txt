@@ -34,6 +34,8 @@ faiss-cpu>=1.7.4  # 向量索引
 SpeechRecognition>=3.10.0
 pyaudio>=0.2.14
 gTTS>=2.5.0
+pynput>=1.7.6  # 全局热键监听（热键模式语音 Push-to-Talk）
+openai-whisper>=20231117  # 本地语音识别 STT（随 torch 一起安装）
 
 # 图像处理
 Pillow>=10.1.0

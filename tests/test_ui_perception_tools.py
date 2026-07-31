@@ -87,8 +87,9 @@ class TestToolRegistration:
 # ======================================================================
 # 测试 2: list_windows
 # ======================================================================
+@pytest.mark.slow
 class TestListWindows:
-    """窗口列表工具"""
+    """窗口列表工具（依赖真实窗口环境）"""
 
     def test_list_all_windows(self):
         from infra.tool_manager.tools.list_windows import list_windows
@@ -136,8 +137,9 @@ class TestDetectUIElementsNoApp:
 # ======================================================================
 # 测试 4: detect_ui_elements — 指定 app
 # ======================================================================
+@pytest.mark.slow
 class TestDetectUIElementsWithApp:
-    """指定应用扫描 — 测试各个路径"""
+    """指定应用扫描 — 测试各个路径（依赖真实应用窗口）"""
 
     def test_via_tool_function(self):
         """通过工具函数调用（模拟大模型）"""
@@ -172,8 +174,9 @@ class TestDetectUIElementsWithApp:
 # ======================================================================
 # 测试 5: Electron app — CDP 自动配置
 # ======================================================================
+@pytest.mark.slow
 class TestElectronCDPAutoSetup:
-    """Electron 应用的 CDP 自动配置"""
+    """Electron 应用的 CDP 自动配置（依赖本机安装的 Electron 应用）"""
 
     @pytest.fixture
     def detector(self):
@@ -210,8 +213,9 @@ class TestVisualFallback:
 # ======================================================================
 # 测试 7: 工具链集成
 # ======================================================================
+@pytest.mark.slow
 class TestToolChain:
-    """list_windows → detect_ui_elements 完整链路"""
+    """list_windows → detect_ui_elements 完整链路（依赖真实窗口环境）"""
 
     def test_list_then_scan_first_app(self):
         """先查窗口列表，再扫描第一个应用"""

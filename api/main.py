@@ -4,6 +4,7 @@ FastAPI 主入口 - 挂载所有模块的路由、全局中间件
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
@@ -23,6 +24,7 @@ from modules.thinking.api_stream import router as stream_router
 from modules.attention.api import router as attention_router
 from modules.management.api import router as management_router
 from modules.output_system.api import router as output_router
+from modules.output_system.tts import DEFAULT_TTS_OUTPUT_DIR as _tts_dir
 from modules.security_system.api import router as security_router
 from config.settings import settings
 
@@ -263,6 +265,11 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# ── TTS 音频输出静态挂载（/speech 生成的 mp3 通过 /audio/ 对外提供） ──
+# check_dir=False：目录不存在时不崩溃启动，由 TTSEngine 首次合成时创建
+_tts_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/audio", StaticFiles(directory=str(_tts_dir), check_dir=False), name="audio")
+
 # ── Dashboard 静态文件 ──
 _DASHBOARD_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "dashboard")
 
@@ -312,7 +319,8 @@ _AUTH_WHITELIST = {
     "/config", "/config/",
 }
 _AUTH_WHITELIST_PREFIXES = ("/management/causal-graph", "/management/memory",
-                             "/stream/sessions/", "/config/")
+                             "/stream/sessions/", "/config/",
+                             "/audio")  # TTS 音频供前端 <audio> 无鉴权播放
 
 
 @app.middleware("http")
