@@ -93,9 +93,6 @@ class ToolManager:
     def _use_mcp_for_lookup(self) -> bool:
         return True
 
-    def _use_mcp_for_execution(self, tool_name: str) -> bool:
-        return True
-
     def _load_builtin_tools(self):
         """加载内置工具 — tools/__init__.py 自动扫描所有模块"""
         from infra.tool_manager.tool_registry import ToolRegistry
@@ -149,85 +146,6 @@ class ToolManager:
 
         return event
 
-    def _get_func(self, tool_name: str):
-        """获取工具函数 (供外部使用，如 ToolExecutor)"""
-        return ToolRegistry.get_func(tool_name)
-
-    def _auto_correct_params(self, tool_name: str, params: Dict[str, Any],
-                             error: str) -> Dict[str, Any]:
-        """自动修正参数名 — 使用模糊匹配将错误参数名映射到正确参数名
-
-        Args:
-            tool_name: 工具名
-            params: 当前参数
-            error: 原始错误信息
-
-        Returns:
-            修正后的参数字典，如果无法修正则返回原参数
-        """
-        from difflib import get_close_matches
-
-        tool_info = ToolRegistry.get_tool(tool_name)
-        if not tool_info or not tool_info.params:
-            return params
-
-        valid_params = list(tool_info.params.keys())
-        corrected = dict(params)
-        changed = False
-
-        for key in list(corrected.keys()):
-            if key not in valid_params:
-                matches = get_close_matches(key, valid_params, n=1, cutoff=0.6)
-                if matches:
-                    self.logger.info(
-                        f"[参数纠错] {tool_name}: 参数 '{key}' → '{matches[0]}'"
-                    )
-                    corrected[matches[0]] = corrected.pop(key)
-                    changed = True
-
-        return corrected if changed else params
-
-    def _coerce_param_types(self, tool_name: str, params: Dict[str, Any]) -> Dict[str, Any]:
-        """修正参数类型 — 模型常把 int/float 以字符串形式传入
-
-        根据工具函数签名中的类型注解自动转换。
-        """
-        import inspect
-        func = ToolRegistry.get_func(tool_name)
-        if not func:
-            return params
-
-        sig = inspect.signature(func)
-        coerced = dict(params)
-        for name, param in sig.parameters.items():
-            if name not in coerced:
-                continue
-            val = coerced[name]
-            annotation = param.annotation
-            # 处理 Optional[X] → 提取 X
-            origin = getattr(annotation, '__origin__', None)
-            if origin is type(None):
-                continue
-            # Optional[X] 是 Union[X, None]
-            args = getattr(annotation, '__args__', ())
-            if len(args) == 2 and type(None) in args:
-                actual_type = args[0] if args[1] is type(None) else args[1]
-            else:
-                actual_type = annotation
-
-            if actual_type is int and isinstance(val, str):
-                try:
-                    coerced[name] = int(val)
-                except (ValueError, TypeError):
-                    pass
-            elif actual_type is float and isinstance(val, str):
-                try:
-                    coerced[name] = float(val)
-                except (ValueError, TypeError):
-                    pass
-
-        return coerced
-
     def _call_mcp_sync(self, tool_name: str, params: Dict[str, Any],
                        caller_role: str, caller_model_id: str = "",
                        source: str = "sync", timeout: float = 30) -> Dict[str, Any]:
@@ -257,171 +175,32 @@ class ToolManager:
     async def call_tool(self, tool_name: str, params: Dict[str, Any] = None,
                         caller_role: str = "expert",
                         caller_model_id: str = "") -> Dict[str, Any]:
-        """调用工具（带权限检查）
+        """调用工具（统一 MCP 路由 + 安全门检查）
+
+        所有工具执行均通过 MCPToolService（CombinedToolExecutor）统一路由，
+        权限审查由外层 ToolSecurityGate 负责（见 api.py 的 _security_gate_check）。
 
         Args:
             tool_name: 工具名称
             params: 工具参数
             caller_role: 调用者角色 (large/supervisor/expert/user)
-                        默认 "expert" 保持向后兼容
-            caller_model_id: 调用者的 model_id，用于 ModelPermissions 精确查找
+            caller_model_id: 调用者的 model_id
         """
-        params = params or {}
-
-        if self._use_mcp_for_execution(tool_name):
-            return self._call_mcp_sync(tool_name, params, caller_role, caller_model_id, source="async")
-
-        func = ToolRegistry.get_func(tool_name)
-        if not func:
-            error = f"工具不存在: {tool_name}"
-            self.logger.warning(error)
-            self._record_tool_event(tool_name, params, False, error=error, source="async")
-            return {"success": False, "result": None, "error": error}
-
-        # === 参数类型修正（模型常把 int 传成 str） ===
-        params = self._coerce_param_types(tool_name, params)
-
-        # === 权限检查 ===
-        perm = self._check_tool_permission(tool_name, caller_role, caller_model_id)
-        if not perm["allowed"]:
-            error = f"权限拒绝: {perm['reason']}"
-            self.logger.warning(f"[权限拦截] caller={caller_role} tool={tool_name} -> {perm['reason']}")
-            self._record_tool_event(tool_name, params, False, error=error, source="async")
-            return {"success": False, "result": None, "error": error}
-
-        start = time.time()
-        try:
-            if inspect.iscoroutinefunction(func):
-                result = await func(**params)
-            else:
-                result = func(**params)
-
-            latency_ms = (time.time() - start) * 1000
-            self._record_tool_event(tool_name, params, True, result=result, latency_ms=latency_ms, source="async")
-            self.logger.info(f"工具执行成功: {tool_name}")
-            return {"success": True, "result": result, "error": None}
-
-        except TypeError as e:
-            # 参数错误 — 尝试自动纠错
-            corrected = self._auto_correct_params(tool_name, params, str(e))
-            if corrected != params:
-                try:
-                    if inspect.iscoroutinefunction(func):
-                        result = await func(**corrected)
-                    else:
-                        result = func(**corrected)
-                    latency_ms = (time.time() - start) * 1000
-                    self._record_tool_event(tool_name, corrected, True,
-                                            result=result, latency_ms=latency_ms,
-                                            source="async")
-                    self.logger.info(f"工具 {tool_name} 参数自动纠错后执行成功")
-                    return {"success": True, "result": result, "error": None}
-                except Exception as retry_error:
-                    self.logger.debug(f"工具 {tool_name} 参数纠错失败: {retry_error}")
-
-            error = f"参数错误: {str(e)}"
-            latency_ms = (time.time() - start) * 1000
-            self._record_tool_event(tool_name, params, False, error=error, latency_ms=latency_ms, source="async")
-            self.logger.error(f"工具 {tool_name} 参数错误: {e}")
-            return {"success": False, "result": None, "error": error}
-
-        except Exception as e:
-            error = f"执行失败: {str(e)}"
-            latency_ms = (time.time() - start) * 1000
-            self._record_tool_event(tool_name, params, False, error=error, latency_ms=latency_ms, source="async")
-            self.logger.error(f"工具 {tool_name} 执行失败: {e}")
-            return {"success": False, "result": None, "error": error}
+        return self._call_mcp_sync(tool_name, params or {}, caller_role, caller_model_id, source="async")
 
     def call_tool_sync(self, tool_name: str, params: Dict[str, Any] = None,
                        caller_role: str = "expert", max_retries: int = 3,
                        caller_model_id: str = "") -> Dict[str, Any]:
-        """同步调用工具（带权限检查 + 自动重试）
+        """同步调用工具（统一 MCP 路由）
 
         Args:
             tool_name: 工具名称
             params: 工具参数
             caller_role: 调用者角色
-            max_retries: 最大重试次数 (默认3次，指数退避)
-            caller_model_id: 调用者的 model_id，用于 ModelPermissions 精确查找
+            max_retries: 保留参数（MCP 执行器内部处理重试/超时）
+            caller_model_id: 调用者的 model_id
         """
-        params = params or {}
-
-        if self._use_mcp_for_execution(tool_name):
-            return self._call_mcp_sync(tool_name, params, caller_role, caller_model_id, source="sync")
-
-        func = ToolRegistry.get_func(tool_name)
-        if not func:
-            error = f"工具不存在: {tool_name}"
-            self._record_tool_event(tool_name, params, False, error=error, source="sync")
-            return {"success": False, "result": None, "error": error}
-
-        # 若工具函数是 async（如 understand_screen），同步调用需用 asyncio.run
-        if inspect.iscoroutinefunction(func):
-            async def _sync_wrapper(**kw):
-                return await func(**kw)
-            func = lambda **kw: asyncio.run(_sync_wrapper(**kw))
-
-        # === 权限检查 ===
-        perm = self._check_tool_permission(tool_name, caller_role, caller_model_id)
-        if not perm["allowed"]:
-            error = f"权限拒绝: {perm['reason']}"
-            self.logger.warning(f"[权限拦截] caller={caller_role} tool={tool_name} -> {perm['reason']}")
-            self._record_tool_event(tool_name, params, False, error=error, source="sync")
-            return {"success": False, "result": None, "error": error}
-
-        def _execute_with_retry(params_dict: Dict, max_retries: int) -> tuple:
-            """带指数退避的函数调用"""
-            import time as _time
-            last_error = None
-            for attempt in range(max_retries):
-                try:
-                    result = func(**params_dict)
-                    latency = (_time.time() - start) * 1000
-                    return result, latency, None
-                except TypeError:
-                    raise  # 参数错误不重试，抛出去给 auto_correct
-                except Exception as e:
-                    last_error = e
-                    if attempt < max_retries - 1:
-                        wait = 0.5 * (2 ** attempt)  # 0.5s, 1s, 2s
-                        self.logger.debug(
-                            f"工具 {tool_name} 第 {attempt+1}/{max_retries} 次失败，"
-                            f"{wait:.1f}s 后重试: {e}"
-                        )
-                        _time.sleep(wait)
-            return None, (_time.time() - start) * 1000, last_error
-
-        start = time.time()
-        try:
-            result, latency_ms, error = _execute_with_retry(params, max_retries)
-            if error is None:
-                self._record_tool_event(tool_name, params, True, result=result, latency_ms=latency_ms, source="sync")
-                return {"success": True, "result": result, "error": None}
-            raise error  # 所有重试都失败了，抛出最后一个错误
-        except TypeError as e:
-            # 参数错误 — 尝试自动纠错
-            corrected = self._auto_correct_params(tool_name, params, str(e))
-            if corrected != params:
-                try:
-                    result, latency_ms, error = _execute_with_retry(corrected, 1)  # 纠错后只试1次
-                    if error is None:
-                        self._record_tool_event(tool_name, corrected, True,
-                                                result=result, latency_ms=latency_ms,
-                                                source="sync")
-                        self.logger.info(f"工具 {tool_name} 参数自动纠错后执行成功")
-                        return {"success": True, "result": result, "error": None}
-                except Exception as retry_error:
-                    self.logger.debug(f"工具 {tool_name} 参数纠错失败: {retry_error}")
-
-            error = f"参数错误: {str(e)}"
-            latency_ms = (time.time() - start) * 1000
-            self._record_tool_event(tool_name, params, False, error=error, latency_ms=latency_ms, source="sync")
-            return {"success": False, "result": None, "error": error}
-        except Exception as e:
-            error = str(e)
-            latency_ms = (time.time() - start) * 1000
-            self._record_tool_event(tool_name, params, False, error=error, latency_ms=latency_ms, source="sync")
-            return {"success": False, "result": None, "error": error}
+        return self._call_mcp_sync(tool_name, params or {}, caller_role, caller_model_id, source="sync")
 
     def call_from_json(self, json_str: str, caller_role: str = "expert") -> Dict[str, Any]:
         """从JSON字符串调用工具

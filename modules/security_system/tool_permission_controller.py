@@ -49,7 +49,7 @@ class ToolPermissionController:
         from infra.tool_manager.tool_registry import ToolRegistry
 
         # 1. 从 identity.py 获取基础白名单
-        whitelist = self._get_base_whitelist(tier)
+        whitelist = self._get_base_whitelist(tier, role)
 
         # 2. 展开 tag:
         expanded = self._expand_tags(whitelist)
@@ -88,10 +88,12 @@ class ToolPermissionController:
             return list(DEFAULT_TOOL_WHITELISTS.get("large", []))
         elif tier == "supervisor":
             return list(DEFAULT_TOOL_WHITELISTS.get("supervisor", []))
-        # expert: 根据 role 查找
+        # expert: 根据 role 查找（兼容 expert_<role> 与 <role> 两种命名）
         expert_key = f"expert_{role}" if role else ""
         if expert_key in DEFAULT_TOOL_WHITELISTS:
             return list(DEFAULT_TOOL_WHITELISTS[expert_key])
+        if role in DEFAULT_TOOL_WHITELISTS:
+            return list(DEFAULT_TOOL_WHITELISTS[role])
         return []
 
     def _expand_tags(self, whitelist: List[str]) -> List[str]:
@@ -142,6 +144,12 @@ class ToolPermissionController:
                 if any(tag in info.tags for tag in rules.block_tags):
                     blocked.add(name)
             prioritized = [t for t in prioritized if t not in blocked]
+        if getattr(rules, 'block_categories', None):
+            blocked_cats = set(rules.block_categories)
+            prioritized = [
+                t for t in prioritized
+                if not (registry.get_tool(t) and registry.get_tool(t).category in blocked_cats)
+            ]
         return prioritized
 
     # ── 执行权限检查（角色类别权限）────────────────────────────────────
@@ -201,7 +209,7 @@ class ToolPermissionController:
                 if instance and hasattr(instance.identity, 'permissions'):
                     return instance.identity.permissions
 
-            # 回退: 通过 tier 查找同层级的任意实例
+            # 回退: 通过 tier 查找同层级的实例（优先匹配相同 role）
             tier = caller_tier
             if caller_role and (caller_role.startswith("expert")
                                  or caller_role.startswith("supervisor")):
@@ -211,6 +219,12 @@ class ToolPermissionController:
 
             if tier:
                 instances = factory.list_by_tier(tier)
+                if caller_role:
+                    for inst in instances:
+                        if getattr(getattr(inst, "identity", None), "role", "") == caller_role:
+                            identity = inst.identity
+                            if hasattr(identity, 'permissions'):
+                                return identity.permissions
                 if instances:
                     identity = instances[0].identity
                     if hasattr(identity, 'permissions'):

@@ -21,6 +21,7 @@ RuntimeExpert — 常驻型专家统一基类
 ModelRunner 检测到 identity.role 匹配时，自动实例化 RuntimeExpert 子类
 并调用 run_loop()，无需为每个专家类型写单独的 _think_loop_* 方法。
 """
+import asyncio
 import inspect
 import time
 from abc import ABC, abstractmethod
@@ -582,13 +583,21 @@ class RuntimeExpert(ABC):
     ) -> str:
         """构建提示词，注入工具执行历史"""
 
-        # 列出可用工具
+        # 列出可用工具（唯一出口：ToolPermissionController）
         try:
             from infra.tool_manager.tool_registry import ToolRegistry
+            from modules.security_system.tool_permission_controller import (
+                get_tool_permission_controller,
+            )
+            from config.settings import settings as _cfg
             all_tools = ToolRegistry.list_tools()
-            # 按 tool_whitelist 过滤
-            whitelist = self.identity.tool_whitelist if self.identity.tool_whitelist else list(all_tools.keys())
-            available = [t for t in whitelist if t in all_tools]
+            ctrl = get_tool_permission_controller()
+            visible = ctrl.get_visible_tools(
+                tier=self.identity.tier,
+                mode=_cfg.effective_execution_mode,
+                role=self.identity.role,
+            )
+            available = [t for t in visible if t in all_tools]
             tool_lines = "\n".join(
                 f"  - {name}: {all_tools[name].get('description', '')}"
                 for name in available[:15]
@@ -692,18 +701,34 @@ class RuntimeExpert(ABC):
             return "Error: tool_name is empty"
 
         try:
-            from infra.tool_manager.tool_registry import ToolRegistry
-            func = ToolRegistry.get_func(tool_name)
-            if func is None:
-                return f"Error: unknown tool '{tool_name}'"
+            # 统一路由 + 安全门控（与 ModelRunner 一致）：所有工具经
+            # ToolSecurityGate 审查 + MCPToolService(CombinedToolExecutor) 执行
+            from infra.mcp.factory import get_mcp_tool_service
+            from infra.mcp.types import ToolCallRequest
+            from modules.security_system.tool_security_gate import get_tool_security_gate
 
-            import inspect
-            if inspect.iscoroutinefunction(func):
-                import asyncio
-                result = await func(**arguments)
-            else:
-                result = func(**arguments)
-            return str(result)
+            gate = get_tool_security_gate()
+            allowed, reason = await gate.check(
+                tool_name=tool_name,
+                tool_params=arguments,
+                caller_tier=self.identity.tier,
+                caller_model_id=self.model_id,
+                caller_role=self.identity.role,
+            )
+            if not allowed:
+                return f"[安全门控拦截] {reason}"
+
+            request = ToolCallRequest(
+                tool_name=tool_name,
+                params=arguments or {},
+                caller_role=self.identity.tier,
+                caller_model_id=self.model_id,
+                source="runtime_expert",
+            )
+            result = await asyncio.to_thread(get_mcp_tool_service().execute, request)
+            if result.success:
+                return str(result.result) if result.result is not None else "(无返回值)"
+            return f"Error: {result.error or '工具执行失败'}"
         except Exception as e:
             self.logger.error(f"工具 {tool_name} 执行失败: {e}")
             return f"Error: {str(e)}"

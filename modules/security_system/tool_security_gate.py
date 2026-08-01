@@ -208,6 +208,7 @@ class ToolSecurityGate:
         caller_tier: str,
         caller_model_id: str,
         dialog_context: str = "",
+        caller_role: str = "",
     ) -> Tuple[bool, str]:
         """审查工具调用请求（带相同调用缓存）"""
         # 相同调用缓存：完全相同的 tool_name + params + 执行模式 跳过重复审批
@@ -216,7 +217,7 @@ class ToolSecurityGate:
         if cached is not None:
             return cached
 
-        result = await self._check_impl(tool_name, tool_params, caller_tier, caller_model_id, dialog_context)
+        result = await self._check_impl(tool_name, tool_params, caller_tier, caller_model_id, dialog_context, caller_role)
         self._check_cache[cache_key] = result
         return result
 
@@ -227,6 +228,7 @@ class ToolSecurityGate:
         caller_tier: str,
         caller_model_id: str,
         dialog_context: str = "",
+        caller_role: str = "",
     ) -> Tuple[bool, str]:
         """审查工具调用请求（实际实现，不带缓存）"""
         exec_mode = self._execution_mode
@@ -250,7 +252,7 @@ class ToolSecurityGate:
             from modules.security_system.tool_permission_controller import get_tool_permission_controller
             perm_ctrl = get_tool_permission_controller()
             perm_allowed, perm_reason = perm_ctrl.check_execution_permission(
-                tool_name, caller_tier, caller_model_id,
+                tool_name, caller_tier, caller_model_id, caller_role,
             )
             if not perm_allowed:
                 _emit_security_event("角色类别拦截", tool_name, caller_model_id, False, perm_reason)

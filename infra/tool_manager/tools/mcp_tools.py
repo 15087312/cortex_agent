@@ -66,8 +66,12 @@ def mcp_call_tool(tool: str, params: Optional[str] = None) -> Dict[str, Any]:
         # 格式化返回内容
         content_text = ""
         for item in result.get("content", []):
-            if item.get("type") == "text":
-                content_text += item.get("text", "")
+            if isinstance(item, dict):
+                if item.get("type") == "text":
+                    content_text += item.get("text", "")
+            else:
+                if getattr(item, "type", "") == "text":
+                    content_text += getattr(item, "text", "") or ""
 
         is_error = result.get("isError", False)
         return {

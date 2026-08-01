@@ -23,6 +23,7 @@ async def _security_gate_check(tool_name: str, params: Dict[str, Any], caller_ro
         tool_params=params,
         caller_tier=caller_role,
         caller_model_id=f"api:{caller_role}",
+        caller_role=caller_role,
     )
     if not allowed:
         logger.warning(f"[ToolAPI] 安全门控拦截: tool={tool_name} role={caller_role} reason={reason}")

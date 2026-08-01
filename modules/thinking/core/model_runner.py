@@ -1224,117 +1224,22 @@ class ModelRunner:
             )
 
     def _visible_tool_whitelist(self) -> List[str]:
-        """获取当前模型可见工具列表（委托给 ToolPermissionController）"""
-        try:
-            from modules.security_system.tool_permission_controller import (
-                get_tool_permission_controller,
-            )
-            from config.settings import settings as _cfg
-            ctrl = get_tool_permission_controller()
-            return ctrl.get_visible_tools(
-                tier=getattr(self.identity, "tier", ""),
-                mode=_cfg.effective_execution_mode,
-                role=getattr(self.identity, "role", ""),
-                skill_tool_rules=getattr(self, '_active_skill_tool_rules', None),
-            )
-        except Exception as e:
-            logger.warning(f"[权限] 控制器失败，走降级路径: {e}")
-            return self._visible_tool_whitelist_legacy()
+        """获取当前模型可见工具列表（唯一出口：ToolPermissionController）
 
-    def _visible_tool_whitelist_legacy(self) -> List[str]:
-        """降级路径：原有的白名单逻辑（控制器不可用时使用）"""
-        tier = getattr(self.identity, "tier", "")
-        role = getattr(self.identity, "role", "")
-
-        raw_whitelist = list(getattr(self.identity, "tool_whitelist", []) or [])
-
-        # 步骤 1：展开 tag: 前缀
-        expanded = []
-        all_tools = ToolRegistry._tools
-        for item in raw_whitelist:
-            if item == "*":
-                expanded = ["*"]
-                break
-            elif item.startswith("tag:"):
-                tag = item[4:]
-                for name, tool_info in all_tools.items():
-                    if tag in tool_info.tags:
-                        expanded.append(name)
-            else:
-                expanded.append(item)
-
-        # 步骤 2：按 risk_level 自动过滤
-        # HIGH/CRITICAL 工具只给 large 和 supervisor
-        result = []
-        restricted_levels = {"HIGH", "CRITICAL"}
-        for name in expanded:
-            tool_info = all_tools.get(name)
-            if not tool_info:
-                result.append(name)  # 工具不存在，保留以便稍后报错
-                continue
-
-            # 高风险工具过滤
-            if tool_info.risk_level in restricted_levels and tier == "expert":
-                logger.debug(f"[权限] {role} 无权调用高风险工具 {name} (风险级: {tool_info.risk_level})")
-                continue
-
-            result.append(name)
-
-        # 步骤 3：按 tier 特殊处理
-        if tier == "expert":
-            # 专家不能使用 internal 标签的工具（探针、人格注入等）
-            internal_tools = ToolRegistry.get_tools_by_tag("internal")
-            blocked = set(internal_tools)
-            if role != "memory_manager":
-                blocked.add("memory_write")
-            result = [name for name in result if name not in blocked]
-
-        # 步骤 4：按 active_skill 的工具范围过滤
-        skill_tool_rules = getattr(self, '_active_skill_tool_rules', None)
-        if skill_tool_rules:
-            result = self._apply_skill_tool_rules(result, skill_tool_rules)
-
-        return result
-
-    def _apply_skill_tool_rules(self, tools: List[str], rules) -> List[str]:
-        """按技能工具范围重排工具列表（降级路径，主路径在 ToolPermissionController）"""
-        from infra.tool_manager.tool_registry import ToolRegistry
-        all_tools = ToolRegistry._tools
-
-        prioritized = list(tools)
-
-        # restrict_to: 限制到 allow_tools + 核心系统工具
-        if getattr(rules, 'restrict_to', False) and rules.allow_tools:
-            core_system = {"tools_search",
-                           "calc", "memory_match", "todo"}
-            restricted = set(rules.allow_tools) | core_system
-            prioritized = [t for t in prioritized if t in restricted]
-
-        if rules.allow_tools and not getattr(rules, 'restrict_to', False):
-            skill_tools = [t for t in tools if t in rules.allow_tools]
-            other_tools = [t for t in tools if t not in rules.allow_tools]
-            prioritized = skill_tools + other_tools
-
-        # 排除指定工具名（安全排除，如 code_review 屏蔽 exec_command）
-        if rules.block_tools:
-            prioritized = [t for t in prioritized if t not in rules.block_tools]
-
-        # 排除指定 tag
-        if rules.block_tags:
-            blocked = set()
-            for name, info in all_tools.items():
-                if any(tag in info.tags for tag in rules.block_tags):
-                    blocked.add(name)
-            prioritized = [t for t in prioritized if t not in blocked]
-
-        # 排除指定 category
-        if rules.block_categories:
-            prioritized = [
-                t for t in prioritized
-                if not (all_tools.get(t) and all_tools[t].category in rules.block_categories)
-            ]
-
-        return prioritized
+        权限策略不再在 ModelRunner 内分散实现；旧降级路径已移除，
+        全部委托给 ToolPermissionController 统一裁决。
+        """
+        from modules.security_system.tool_permission_controller import (
+            get_tool_permission_controller,
+        )
+        from config.settings import settings as _cfg
+        ctrl = get_tool_permission_controller()
+        return ctrl.get_visible_tools(
+            tier=getattr(self.identity, "tier", ""),
+            mode=_cfg.effective_execution_mode,
+            role=getattr(self.identity, "role", ""),
+            skill_tool_rules=getattr(self, '_active_skill_tool_rules', None),
+        )
 
     def _build_system_prompt_for_mode(self) -> str:
         """根据运行模式构建系统提示词 — 委托给 PromptComposer"""
@@ -2070,6 +1975,7 @@ class ModelRunner:
                                             caller_tier=self.tier,
                                             caller_model_id=self.model_id,
                                             dialog_context=dialog_ctx,
+                                            caller_role=getattr(self.identity, "role", ""),
                                         )
                                     except Exception as gate_err:
                                         # Gate 异常 → 硬停，报错到 TUI

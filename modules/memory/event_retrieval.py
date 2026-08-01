@@ -63,6 +63,7 @@ class EventRetrieval:
     def __init__(self):
         self._store: Optional[EventStore] = None
         self._embedder: Optional[EmbeddingEngine] = None
+        self.logger = logger
 
     @classmethod
     def get_instance(cls) -> "EventRetrieval":

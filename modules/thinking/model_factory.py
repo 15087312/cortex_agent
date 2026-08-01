@@ -38,11 +38,30 @@ class ModelInstance:
         return self.identity.tool_whitelist
 
     def can_use_tool(self, tool_name: str) -> bool:
-        """检查该实例是否有权使用某工具"""
-        whitelist = self.tool_whitelist
-        if "*" in whitelist:
-            return True
-        return tool_name in whitelist
+        """检查该实例是否有权使用某工具（统一出口：ToolPermissionController）
+
+        不再直接读取 identity.tool_whitelist（YAML 中为空时会导致误判），
+        而是交给 ToolPermissionController 按 tier/role/模式统一裁决。
+        """
+        try:
+            from modules.security_system.tool_permission_controller import (
+                get_tool_permission_controller,
+            )
+            from config.settings import settings as _cfg
+            ctrl = get_tool_permission_controller()
+            visible = ctrl.get_visible_tools(
+                tier=self.identity.tier,
+                mode=_cfg.effective_execution_mode,
+                role=self.identity.role,
+            )
+            if "*" in visible:
+                return True
+            return tool_name in visible
+        except Exception:
+            whitelist = self.tool_whitelist
+            if "*" in whitelist:
+                return True
+            return tool_name in whitelist
 
     def to_dict(self) -> dict:
         return {

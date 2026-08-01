@@ -273,10 +273,15 @@ class CombinedToolExecutor(ToolExecutorPort):
         is_error = result.get("isError", False)
 
         # 解析 MCP 返回内容
+        # content 项可能是 dict（错误回退路径）或 mcp SDK 的 TextContent 对象
         content_text = ""
         for item in result.get("content", []):
-            if item.get("type") == "text":
-                content_text += item.get("text", "")
+            if isinstance(item, dict):
+                if item.get("type") == "text":
+                    content_text += item.get("text", "")
+            else:
+                if getattr(item, "type", "") == "text":
+                    content_text += getattr(item, "text", "") or ""
 
         # 错误信息提取：优先 content_text，其次 MCP error 字段，最后回退到原始结果摘要
         error_text = None

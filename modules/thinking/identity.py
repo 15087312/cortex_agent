@@ -214,10 +214,10 @@ DEFAULT_PERMISSIONS: Dict[str, ModelPermissions] = {
     # ── 专家 ──
     "expert_reviewer": ModelPermissions(requires_tool_approval=True),
     "code_reviewer": ModelPermissions(requires_tool_approval=True),  # alias
-    "expert_implementer": ModelPermissions(allowed_tool_categories=["query", "mutation"], requires_tool_approval=True, max_instances=3, max_concurrent_runners=3),
-    "code_writer": ModelPermissions(allowed_tool_categories=["query", "mutation"], requires_tool_approval=True, max_instances=3, max_concurrent_runners=3),  # alias
-    "expert_tester": ModelPermissions(allowed_tool_categories=["query", "mutation"], requires_tool_approval=True),
-    "tester": ModelPermissions(allowed_tool_categories=["query", "mutation"], requires_tool_approval=True),  # alias
+    "expert_implementer": ModelPermissions(allowed_tool_categories=["query", "mutation", "admin"], requires_tool_approval=True, max_instances=3, max_concurrent_runners=3),
+    "code_writer": ModelPermissions(allowed_tool_categories=["query", "mutation", "admin"], requires_tool_approval=True, max_instances=3, max_concurrent_runners=3),  # alias
+    "expert_tester": ModelPermissions(allowed_tool_categories=["query", "mutation", "admin"], requires_tool_approval=True),
+    "tester": ModelPermissions(allowed_tool_categories=["query", "mutation", "admin"], requires_tool_approval=True),  # alias
     "expert_analyzer": ModelPermissions(),
     "expert_customer": ModelPermissions(),
     "expert_ui_designer": ModelPermissions(allowed_tool_categories=["query", "mutation"]),
@@ -283,6 +283,8 @@ class ModelIdentity:
                 whitelist = DEFAULT_TOOL_WHITELISTS["supervisor"]
             else:
                 whitelist = DEFAULT_TOOL_WHITELISTS.get(f"expert_{role}", [])
+                if not whitelist:
+                    whitelist = DEFAULT_TOOL_WHITELISTS.get(role, [])
 
         # 模型名，从 YAML 的 model_names 段读取
         model_names = get_identities().get("_model_names", {})
