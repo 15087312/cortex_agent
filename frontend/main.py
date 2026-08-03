@@ -27,7 +27,12 @@ from PyQt6.QtGui import (
     QColor, QFont, QPalette, QBrush, QPen, QLinearGradient,
 )
 from PyQt6.QtWebEngineWidgets import QWebEngineView
-from PyQt6.QtWebEngineCore import QWebEngineProfile, QWebEnginePage
+from PyQt6.QtWebEngineCore import QWebEngineProfile, QWebEnginePage, QWebEngineSettings
+
+# 允许网页访问剪贴板，否则前端「复制」按钮的 navigator.clipboard 不可用
+QWebEngineSettings.defaultSettings().setAttribute(
+    QWebEngineSettings.WebAttribute.JavascriptCanAccessClipboard, True
+)
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import server

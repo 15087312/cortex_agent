@@ -17,8 +17,8 @@ import time
 from pathlib import Path
 
 
-def _wait_for_server(url: str, timeout: int = 30) -> bool:
-    """等待后端服务就绪"""
+def _wait_for_server(url: str, timeout: int = 120) -> bool:
+    """等待后端服务就绪（后端启动含感知/视觉/embedding 初始化，可能较慢）"""
     import urllib.request
     import urllib.error
 
@@ -201,11 +201,13 @@ def main():
     signal.signal(signal.SIGTERM, cleanup)
 
     # 等待就绪
-    print("⏳ 等待后端就绪...")
-    if _wait_for_server(api_url, timeout=30):
+    print("⏳ 等待后端就绪（首次启动需加载感知/视觉/embedding，可能需 1~2 分钟）...")
+    if _wait_for_server(api_url, timeout=120):
         print(f"✓ 后端就绪: {api_url}")
     else:
-        print("✗ 后端启动超时")
+        print("✗ 后端启动超时（120s）。请检查：")
+        print("   1. 后端是否异常退出（查看上方日志）")
+        print("   2. 视觉模型加载是否过慢（可在 ~/.cortex/settings.json 设 VISION_BACKEND=mock 跳过）")
         backend_proc.terminate()
         sys.exit(1)
 

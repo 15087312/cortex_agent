@@ -25,8 +25,6 @@ async def test_control_mode():
     # 验证配置
     print(f"\n✓ EXECUTION_MODE: {settings.EXECUTION_MODE}")
     print(f"✓ effective_execution_mode: {settings.effective_execution_mode}")
-    print(f"✓ SECURITY_REVIEW_MODE: {settings.SECURITY_REVIEW_MODE}")
-    print(f"✓ effective_security_review_mode: {settings.effective_security_review_mode}")
 
     # 获取安全门控
     gate = get_tool_security_gate()

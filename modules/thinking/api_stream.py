@@ -483,8 +483,9 @@ class StreamThinkingSystem:
 
         if await self._is_processing(session_id):
             # busy：不再丢弃，保存用户消息保证会话历史完整（_append_message 对连续重复去重）
+            busy_msg_id = ""
             try:
-                await self._append_message(session_id, "user", user_input)
+                busy_msg_id = await self._append_message(session_id, "user", user_input)
             except Exception:
                 pass
             await self._emit(
@@ -495,6 +496,7 @@ class StreamThinkingSystem:
                     event="busy",
                     content="会话正在处理中，请稍后",
                     role="system",
+                    data={"message_id": busy_msg_id},
                 ),
                 callback,
             )

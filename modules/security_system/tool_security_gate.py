@@ -16,15 +16,10 @@
   完全相同的 tool_name + params 第二次调用直接返回缓存结果，
   避免同一命令重复触发 LLM 审批。缓存仅在当前会话有效，重启后清空。
 
-风险分级：
+ 风险分级：
 - LOW:    查询类工具，直接放行
 - MEDIUM: 文件修改/白名单命令，快速路径检查
 - HIGH:   exec_command/kill_process/git_push 等，需要审批
-
-审查模式（SECURITY_REVIEW_MODE）：
-- "llm":   安全专家 LLM 审批
-- "user":  用户在 CLI 手动审批
-- "auto":  LLM 可用时用 LLM，否则拒绝
 """
 from __future__ import annotations
 
@@ -182,15 +177,6 @@ class ToolSecurityGate:
     def set_active_blackboard(self, blackboard) -> None:
         """注入当前活跃的 Blackboard（由编排层调用）"""
         self._active_blackboard = blackboard
-
-    @property
-    def _review_mode(self) -> str:
-        """获取当前审查模式"""
-        try:
-            from config.settings import settings
-            return settings.SECURITY_REVIEW_MODE
-        except Exception:
-            return "auto"
 
     @property
     def _execution_mode(self) -> str:
@@ -425,9 +411,8 @@ class ToolSecurityGate:
         caller_model_id: str,
         dialog_context: str,
     ) -> Tuple[bool, str]:
-        """HIGH 风险工具 — 根据审查模式和执行模式选择审批方式"""
+        """HIGH 风险工具 — 根据执行模式选择审批方式"""
         exec_mode = self._execution_mode
-        mode = self._review_mode
 
         # yolo 模式：只走 LLM 审核，跳过用户确认
         if exec_mode == "yolo":
@@ -451,24 +436,13 @@ class ToolSecurityGate:
                 tool_name, tool_params, caller_tier, caller_model_id
             )
 
-        # plan 模式（写操作已在 check() 最顶层拦截，不应到达这里）
-        # 兜底按原 mode 路由（user/llm/auto）
-        if mode == "user":
-            return await self._check_user_review(
-                tool_name, tool_params, caller_tier, caller_model_id
-            )
-        elif mode == "llm":
+        # 兜底（非 yolo/edit/plan）：LLM 可用则 LLM 审批，不可用拒绝
+        if self._model_available:
             return await self._check_llm_review(
                 tool_name, tool_params, caller_tier, caller_model_id, dialog_context
             )
-        else:  # auto
-            if self._model_available:
-                return await self._check_llm_review(
-                    tool_name, tool_params, caller_tier, caller_model_id, dialog_context
-                )
-            else:
-                logger.warning("[安全门控] auto 模式：LLM 不可用，拒绝 HIGH 风险操作")
-                return False, "安全专家不可用，auto 模式降级拒绝"
+        logger.warning("[安全门控] LLM 不可用，拒绝 HIGH 风险操作")
+        return False, "安全专家不可用，拒绝 HIGH 风险操作"
 
     async def _check_user_review(
         self,

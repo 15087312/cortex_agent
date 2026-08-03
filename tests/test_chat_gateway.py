@@ -23,6 +23,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from modules.thinking import chat_gateway  # noqa: E402
+from config.settings import settings  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -352,6 +353,8 @@ def test_rest_session_lifecycle(gw_app):
 
 def test_resolve_mode_defaults_to_agent(monkeypatch):
     monkeypatch.delenv("CORTEX_MODE", raising=False)
+    # 隔离用户持久化配置（settings.json 可能存了 CORTEX_MODE=chatonly）
+    monkeypatch.setattr(settings, "CORTEX_MODE", "agent")
     assert chat_gateway._resolve_mode() == "agent"
 
 

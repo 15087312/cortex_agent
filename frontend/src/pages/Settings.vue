@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { getApiKey, setApiKey, endpoints } from '@/api.js'
 import { useConfigStore } from '@/stores/config.js'
 import { useToastStore } from '@/stores/toast.js'
@@ -13,7 +13,7 @@ const configStore = useConfigStore()
 const appVersion = __APP_VERSION__
 
 /* ── Tabs ── */
-const tabs = ['对话', '人设管理', '主动搭话', '安全', '感知', '记忆库', '系统', '高级', '通用设置', '授权设置', '关于']
+const tabs = ['对话', '人设管理', '主动搭话', '感知', '记忆库', '系统', '高级', '通用设置', '授权设置', '关于']
 const activeTab = ref('对话')
 
 /* ── 记忆库 ── */
@@ -21,12 +21,28 @@ const memoryLibs = ref([])
 const memoryCurrent = ref('')
 const newLibName = ref('')
 async function loadMemoryLibs() {
-  try {
-    const r = await endpoints.memoryLibs()
-    memoryLibs.value = (r.data && r.data.libs) || []
-    memoryCurrent.value = (r.data && r.data.current) || ''
-  } catch { memoryLibs.value = [] }
+  // 失败自动重试（最多 3 次）——首次加载可能撞上后端初始化/网络抖动，
+  // 不再静默置空（无兜底/无重试/无报错），最终失败给 toast 提示
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const r = await endpoints.memoryLibs()
+      memoryLibs.value = (r.data && r.data.libs) || []
+      memoryCurrent.value = (r.data && r.data.current) || ''
+      return true
+    } catch (e) {
+      if (attempt < 3) {
+        await new Promise(r => setTimeout(r, 400 * attempt))
+        continue
+      }
+      memoryLibs.value = []
+      toast.show('记忆库列表加载失败: ' + (e.body?.error?.message || e.status || '网络错误'), 'error')
+    }
+  }
+  return false
 }
+
+// 切到「记忆库」tab 时重新加载（兜底 onMounted 时序/首次失败）
+watch(activeTab, (v) => { if (v === '记忆库') loadMemoryLibs() })
 async function switchLib(name) {
   try {
     await endpoints.switchMemoryLib(name)
@@ -53,6 +69,14 @@ async function renameLib(lib) {
     toast.show('已重命名', 'success')
     await loadMemoryLibs()
   } catch (e) { toast.show('重命名失败: ' + (e.body?.error?.message || e.status), 'error') }
+}
+async function deleteLib(lib) {
+  if (!(await confirm(`确定删除记忆库「${lib.name}」？物理数据文件将保留，仅从列表移除。`))) return
+  try {
+    await endpoints.deleteMemoryLib(lib.name)
+    toast.show('已删除记忆库: ' + lib.name, 'success')
+    await loadMemoryLibs()
+  } catch (e) { toast.show('删除失败: ' + (e.body?.error?.message || e.status), 'error') }
 }
 
 /* ── Config keys (persisted to backend) ── */
@@ -94,7 +118,6 @@ const userName = txtCfg('USER_NAME', '用户')
 const proactiveEnabled = boolCfg('PROACTIVE_OUTREACH_ENABLED', false)
 const proactiveIdle = numCfg('PROACTIVE_OUTREACH_IDLE_MINUTES', 30)
 const proactiveCooldown = numCfg('PROACTIVE_OUTREACH_COOLDOWN_MINUTES', 60)
-const securityMode = segCfg('SECURITY_REVIEW_MODE', 'auto')
 const ttsEnabled = boolCfg('OUTPUT_TTS_ENABLED', false)
 const debugEnabled = boolCfg('DEBUG', false)
 const loggingEnabled = boolCfg('LOGGING_ENABLED', true)
@@ -225,16 +248,27 @@ const personasByTier = computed(() => ({
   expert: personas.value.filter(p => p.tier === 'expert'),
 }))
 async function loadPersonas() {
-  try {
-    const r = await endpoints.personas()
-    personas.value = (r.data && r.data.personas) || []
-    personaDrafts.value = {}
-    systemOverrideDrafts.value = {}
-    for (const p of personas.value) {
-      personaDrafts.value[p.role] = p.custom || ''
-      systemOverrideDrafts.value[p.role] = p.system_override || ''
+  // 失败重试 + 报错（同类加固：不再静默置空导致人设列表空白）
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const r = await endpoints.personas()
+      personas.value = (r.data && r.data.personas) || []
+      personaDrafts.value = {}
+      systemOverrideDrafts.value = {}
+      for (const p of personas.value) {
+        personaDrafts.value[p.role] = p.custom || ''
+        systemOverrideDrafts.value[p.role] = p.system_override || ''
+      }
+      return
+    } catch (e) {
+      if (attempt < 3) {
+        await new Promise(r => setTimeout(r, 400 * attempt))
+      } else {
+        personas.value = []
+        toast.show('人设列表加载失败: ' + (e.body?.error?.message || e.status || '网络错误'), 'error')
+      }
     }
-  } catch { personas.value = [] }
+  }
 }
 async function savePersona(role) {
   const val = (personaDrafts.value[role] || '').trim()
@@ -258,6 +292,9 @@ async function resetPersona(role) {
 
 /* ── Init ── */
 onMounted(async () => {
+  // 记忆库优先并行加载（不阻塞在 loadConfig/loadPersonas 之后，
+  // 避免切到"记忆库" tab 时列表还是空的）
+  loadMemoryLibs()
   await configStore.loadConfig()
   await configStore.loadModelStatus()
   await loadPersonas()
@@ -397,24 +434,6 @@ onMounted(async () => {
           <div class="setting-row">
             <div class="lbl"><div class="t">冷却时间(分钟)</div><div class="d">两次主动搭话间隔</div></div>
             <div class="setting-ctl"><input class="input" type="number" v-model.number="proactiveCooldown" style="width:110px;text-align:right" /></div>
-          </div>
-        </div>
-      </div>
-
-      <!-- ═══════════════ 安全 ═══════════════ -->
-      <div v-if="activeTab === '安全'" class="settings-section">
-        <div class="settings-group">
-          <div class="settings-group-title">安全</div>
-          <p class="settings-hint">工具调用的审查方式</p>
-          <div class="setting-row">
-            <div class="lbl"><div class="t">安全审查模式</div></div>
-            <div class="setting-ctl">
-              <div class="seg">
-                <button :class="{ on: securityMode === 'auto' }" @click="securityMode = 'auto'" title="按风险等级自动审批">自动</button>
-                <button :class="{ on: securityMode === 'llm' }" @click="securityMode = 'llm'" title="高风险由大模型审查">LLM 审查</button>
-                <button :class="{ on: securityMode === 'user' }" @click="securityMode = 'user'" title="高风险需用户确认">用户确认</button>
-              </div>
-            </div>
           </div>
         </div>
       </div>
@@ -575,8 +594,9 @@ onMounted(async () => {
           <div style="display:flex;gap:8px;margin-bottom:12px">
             <input class="input" v-model="newLibName" style="flex:1;max-width:260px" placeholder="新记忆库名称" @keydown.enter="createLib" />
             <button class="btn btn-sm btn-primary" @click="createLib">新建记忆库</button>
+            <button class="btn btn-sm" @click="loadMemoryLibs" title="刷新记忆库列表"><Icon name="refresh" :size="14" /> 刷新</button>
           </div>
-          <div v-if="memoryLibs.length === 0" class="empty-state" style="padding:24px"><p class="empty-text">暂无记忆库</p></div>
+          <div v-if="memoryLibs.length === 0" class="empty-state" style="padding:24px"><p class="empty-text">暂无记忆库（可点击刷新）</p></div>
           <div v-for="lib in memoryLibs" :key="lib.name" class="card" style="margin-bottom:10px">
             <div class="card-header" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
               <b>{{ lib.name }}</b>
@@ -586,6 +606,7 @@ onMounted(async () => {
             <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
               <button v-if="!lib.current" class="btn btn-sm" @click="switchLib(lib.name)">切换到此库</button>
               <button class="btn btn-sm" @click="renameLib(lib)">重命名</button>
+              <button v-if="lib.name !== '默认'" class="btn btn-sm danger" @click="deleteLib(lib)">删除</button>
             </div>
           </div>
         </div>

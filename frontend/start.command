@@ -17,14 +17,15 @@ start_backend() {
     echo "      VISION_BACKEND=$VISION_BACKEND"
     $PYTHON -m uvicorn api.main:app --host 127.0.0.1 --port 8080 --log-level warning &
     BACKEND_PID=$!
-    for i in $(seq 1 30); do
+    echo "      （首次启动需加载感知/视觉/embedding，可能需 1~2 分钟）"
+    for i in $(seq 1 120); do
         if curl -sf http://127.0.0.1:8080/health >/dev/null 2>&1; then
             echo "[OK] 后端已启动 (${i}s)"
             return 0
         fi
         sleep 1
     done
-    echo "[ERR] 后端启动超时 (30s)"
+    echo "[ERR] 后端启动超时 (120s)。若视觉模型加载过慢，可在 ~/.cortex/settings.json 设 VISION_BACKEND=mock"
     return 1
 }
 

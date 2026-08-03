@@ -64,6 +64,7 @@ class ModelClient(BaseModelClient):
 
                 headers = self._build_headers(self._api_format)
                 self._log_request("POST", url, len(json.dumps(payload)))
+                self._log_payload(payload)
 
                 async with session.post(url, headers=headers, json=payload) as response:
                     if response.status == 200:
@@ -186,6 +187,7 @@ class ModelClient(BaseModelClient):
         url = self.api_url
         session = await self._get_session()
         self._log_request("POST (stream)", url, len(json.dumps(payload)))
+        self._log_payload(payload)
 
         full_content = []
         finish_reason = "stop"

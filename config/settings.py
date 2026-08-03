@@ -33,7 +33,6 @@ class Settings(BaseSettings):
         "USER_NAME",     # 用户称呼（大模型如何称呼用户）
         "PERSONA_PROMPTS",# 自定义人设提示词（JSON: {role: prompt}）
         "SYSTEM_PROMPT_OVERRIDES",  # 完整系统提示词覆盖（JSON: {role: prompt}，高级设置）
-        "SECURITY_REVIEW_MODE",  # 安全审查模式: auto / llm / user
         "OUTPUT_TTS_ENABLED",    # TTS 语音输出总开关
 
         # ── 感知系统模块开关 ──
@@ -104,7 +103,6 @@ class Settings(BaseSettings):
 
     # Embedding/RAG 配置
     EMBEDDING_MODEL: str = "paraphrase-multilingual-MiniLM-L12-v2"
-    EMBEDDING_DEVICE: str = "cpu"
     EMBEDDING_CACHE_FOLDER: str = "data/memory/embeddings/models"
     EMBEDDING_LOCAL_FILES_ONLY: bool = False
     HF_MIRROR: str = ""
@@ -117,14 +115,6 @@ class Settings(BaseSettings):
     MEMORY_FAISS_INDEX: str = str(Path(__file__).resolve().parents[1] / "data" / "events_faiss.index")
     MEMORY_ID_MAP: str = str(Path(__file__).resolve().parents[1] / "data" / "events_id_map.json")
 
-
-    # 向量数据库配置（可选）
-    VECTOR_DB_HOST: str = "localhost"
-    VECTOR_DB_PORT: int = 6333
-    VECTOR_DB_DIMENSION: int = 768
-
-    # 工具后端 — 当前固定 mcp（本地 ToolRegistry + 远程 MCP server）
-    TOOL_BACKEND: str = "mcp"
     MCP_SERVERS: str = ""  # JSON object: {"server": {"command": "...", "args": []}}
 
     # 系统配置
@@ -148,7 +138,6 @@ class Settings(BaseSettings):
     CORTEX_MODE: str = "agent"
 
     # 安全审查模式: "llm"=安全专家LLM审批, "user"=用户手动审批, "auto"=LLM可用时用LLM否则拒绝
-    SECURITY_REVIEW_MODE: str = "auto"
 
     # 上下文窗口配置
     # CONTEXT_WINDOW_SIZE: 大模型上下文窗口大小（token 数）
@@ -175,11 +164,6 @@ class Settings(BaseSettings):
         return self.EXECUTION_MODE
 
     @property
-    def effective_security_review_mode(self) -> str:
-        """有效的审批模式（control 模式强制 user）"""
-        if self.effective_execution_mode == "control":
-            return "user"
-        return self.SECURITY_REVIEW_MODE
 
     @property
     def is_delegation_available(self) -> bool:
@@ -239,25 +223,33 @@ class Settings(BaseSettings):
     def _load_personas_yaml(self) -> dict:
         """读取 ~/.cortex/personas.yaml"""
         import yaml
-        try:
-            if self._personas_yaml_path.exists():
-                data = yaml.safe_load(self._personas_yaml_path.read_text(encoding="utf-8")) or {}
-                return data if isinstance(data, dict) else {}
-        except Exception:
-            pass
+        import time
+        for _ in range(2):
+            try:
+                if self._personas_yaml_path.exists():
+                    data = yaml.safe_load(self._personas_yaml_path.read_text(encoding="utf-8")) or {}
+                    return data if isinstance(data, dict) else {}
+                break
+            except Exception:
+                # 并发写可能读到半写 → 稍等后重试一次
+                time.sleep(0.05)
         return {}
 
     def _save_personas_yaml(self, data: dict) -> None:
-        """写入 ~/.cortex/personas.yaml"""
+        """写入 ~/.cortex/personas.yaml（原子写，防读端读到半写）"""
         import yaml
+        import os
+        import sys
         try:
-            self._personas_yaml_path.parent.mkdir(parents=True, exist_ok=True)
-            self._personas_yaml_path.write_text(
+            path = self._personas_yaml_path
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(
                 yaml.safe_dump(data, allow_unicode=True, sort_keys=False),
                 encoding="utf-8",
             )
+            os.replace(tmp, path)
         except Exception as e:
-            import sys
             print(f"[WARNING] 人设 yaml 保存失败: {e}", file=sys.stderr)
 
     @property
@@ -403,13 +395,11 @@ class Settings(BaseSettings):
     PROACTIVE_OUTREACH_ENABLED: bool = True            # 是否启用自动搭话
     PROACTIVE_OUTREACH_COOLDOWN_MINUTES: int = 15      # 搭话冷却时间（分钟）
     PROACTIVE_OUTREACH_IDLE_MINUTES: int = 15          # 触发搭话的空闲阈值（分钟）
-    PROACTIVE_OUTREACH_COMPANION_PROMPT: str = ""      # 陪伴模式自定义提示词（为空则用默认）
     PROACTIVE_OUTREACH_WORK_PROMPT: str = ""           # 工作模式自定义提示词（为空则用默认）
 
     # 记忆配置
     MEMORY_TTL_SHORT: int = 3600  # 1 小时
     MEMORY_TTL_LONG: int = 86400  # 24 小时
-    MEMORY_VECTOR_DIMENSION: int = 768
 
     # ── 因果系统配置 ──
     CAUSAL_MAX_NODES: int = 500             # 因果图最大节点数
@@ -532,7 +522,11 @@ class Settings(BaseSettings):
             for key in keys:
                 if hasattr(type(self), "model_fields") and key in type(self).model_fields:
                     data[key] = getattr(self, key)
-            path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+            # 原子写：先写临时文件再替换，防读端读到半写
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+            import os as _os
+            _os.replace(tmp, path)
             return True
         except Exception as e:
             print(f"[WARNING] 用户配置保存失败: {e}", file=sys.stderr)
@@ -549,15 +543,23 @@ class Settings(BaseSettings):
         return Path.home() / ".cortex" / "memory_libs.json"
 
     def get_memory_libs(self) -> dict:
-        """读取记忆库配置；无配置时返回默认记忆库（当前 settings 的路径）"""
+        """读取记忆库配置；无配置/读取失败时返回默认记忆库（当前 settings 的路径）。
+
+        并发写（切换记忆库）可能读到半写内容 → JSON 解析失败 → 重试一次。
+        """
         import json
-        try:
-            if self._memory_libs_path.exists():
-                data = json.loads(self._memory_libs_path.read_text(encoding="utf-8"))
-                if data.get("libs"):
-                    return data
-        except Exception:
-            pass
+        import time
+        for _ in range(2):
+            try:
+                if self._memory_libs_path.exists():
+                    data = json.loads(self._memory_libs_path.read_text(encoding="utf-8"))
+                    if data.get("libs"):
+                        return data
+                # 无配置或 libs 为空 → 返回默认库（不必重试）
+                break
+            except Exception:
+                # 读到半写/损坏内容 → 稍等后重试一次
+                time.sleep(0.05)
         return {
             "current": "默认",
             "libs": {
@@ -571,11 +573,16 @@ class Settings(BaseSettings):
 
     def _save_memory_libs(self, data: dict) -> None:
         import json
+        import os
         import sys
         try:
-            self._memory_libs_path.parent.mkdir(parents=True, exist_ok=True)
-            self._memory_libs_path.write_text(
+            path = self._memory_libs_path
+            path.parent.mkdir(parents=True, exist_ok=True)
+            # 原子写：先写临时文件再 os.replace，读端永远不会看到半写内容
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(
                 json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+            os.replace(tmp, path)
         except Exception as e:
             print(f"[WARNING] 记忆库配置保存失败: {e}", file=sys.stderr)
 
@@ -669,10 +676,33 @@ class Settings(BaseSettings):
         self._save_memory_libs(data)
         return True
 
+    def delete_memory_lib(self, name: str) -> bool:
+        """删除记忆库（从配置移除；默认库不可删；若删的是当前库则切回默认）。
+
+        物理文件（DB/FAISS/id_map）保留，避免误删数据。
+        """
+        data = self.get_memory_libs()
+        libs = data.get("libs", {})
+        if name not in libs:
+            return False
+        if name == "默认":
+            return False  # 核心库不允许删除
+        libs.pop(name, None)
+        if data.get("current") == name:
+            data["current"] = "默认"
+        self._save_memory_libs(data)
+        if data.get("current") != name:
+            self.switch_memory_lib(data.get("current"))
+        return True
+
     def memory_lib_event_count(self, name: str) -> int:
         """返回指定记忆库的事件数量（用于列表展示）"""
+        import os
         lib = self.get_memory_libs().get("libs", {}).get(name)
         if not lib:
+            return 0
+        # DB 文件不存在（新建未用过）→ 直接返回 0，避免 sqlite3.connect 创建空 DB
+        if not os.path.exists(lib["db"]):
             return 0
         try:
             import sqlite3

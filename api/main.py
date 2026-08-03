@@ -86,12 +86,15 @@ async def lifespan(app: FastAPI):
 
     # 预加载视觉模型（同步加载，先加载再启动，避免运行中首次调用才加载）
     # auto/mlx/transformers/api 均为真实视觉后端；mock 为模拟，无需加载
+    # 上限 60s：模型加载过慢（或首次下载）时降级为按需加载，不拖垮整体启动
     if settings.VISION_BACKEND and settings.VISION_BACKEND.lower() != "mock":
         try:
             from infra.data_process.core.image_analyzer import ImageAnalyzer
             analyzer = ImageAnalyzer(model_type="auto")
-            await analyzer.initialize()
+            await asyncio.wait_for(analyzer.initialize(), timeout=60)
             logger.info(f"✓ 视觉模型预加载完成 (type={analyzer.model_type})")
+        except asyncio.TimeoutError:
+            logger.warning("视觉模型预加载超时(60s)，降级为运行中按需加载")
         except Exception as e:
             logger.warning(f"视觉模型预加载失败 (降级，运行中按需加载): {e}")
 
@@ -641,7 +644,7 @@ async def create_memory_lib(body: MemoryLibRequest):
         return JSONResponse(status_code=422, content=error_response(ErrorCode.VALIDATION_ERROR, "记忆库名不能为空").model_dump())
     lib = settings.create_memory_lib(name)
     if lib is None:
-        return JSONResponse(status_code=409, content=error_response(ErrorCode.CONFLICT, f"记忆库 '{name}' 已存在").model_dump())
+        return JSONResponse(status_code=409, content=error_response(ErrorCode.BAD_REQUEST, f"记忆库 '{name}' 已存在").model_dump())
     return {"success": True, "data": {"name": name, "lib": lib}}
 
 
@@ -662,8 +665,16 @@ async def rename_memory_lib(body: MemoryLibRequest):
     if not old or not new:
         return JSONResponse(status_code=422, content=error_response(ErrorCode.VALIDATION_ERROR, "需提供 old_name 与 new_name").model_dump())
     if not settings.rename_memory_lib(old, new):
-        return JSONResponse(status_code=409, content=error_response(ErrorCode.CONFLICT, "重命名失败（记忆库不存在或名称冲突）").model_dump())
+        return JSONResponse(status_code=409, content=error_response(ErrorCode.BAD_REQUEST, "重命名失败（记忆库不存在或名称冲突）").model_dump())
     return {"success": True, "data": {"old_name": old, "new_name": new}}
+
+
+@app.delete("/config/memory-libs/{name}")
+async def delete_memory_lib(name: str):
+    """删除记忆库（默认库不可删；若删的是当前库则切回默认）"""
+    if not settings.delete_memory_lib(name):
+        return JSONResponse(status_code=404, content=error_response(ErrorCode.NOT_FOUND, f"记忆库 '{name}' 不存在或不可删除").model_dump())
+    return {"success": True, "data": {"deleted": name}}
 
 
 @app.put("/config/persona/{role}")
@@ -736,6 +747,9 @@ async def update_config(key: str, body: PutConfigRequest):
         # CORTEX_MODE 需要同步写回环境变量，保证 chat_gateway._resolve_mode 生效
         if key_upper == "CORTEX_MODE":
             os.environ["CORTEX_MODE"] = str(validated)
+        # 实时持久化到 ~/.cortex/settings.json（原子写），重启后仍生效
+        if not settings.save_user_config([key_upper]):
+            logger.warning(f"配置 {key_upper} 已更新但持久化失败（重启后将丢失）")
         logger.info(f"配置已更新: {key_upper} = {validated} (旧值: {old_value})")
         return {
             "success": True,

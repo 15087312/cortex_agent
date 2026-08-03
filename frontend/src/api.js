@@ -183,6 +183,7 @@ export const endpoints = {
   createMemoryLib: (name) => request('POST', '/config/memory-libs', { name }),
   switchMemoryLib: (name) => request('PUT', '/config/memory-libs/current', { name }),
   renameMemoryLib: (oldName, newName) => request('PUT', '/config/memory-libs/rename', { old_name: oldName, new_name: newName }),
+  deleteMemoryLib: (name) => request('DELETE', '/config/memory-libs/' + encodeURIComponent(name)),
 
   sessions: (signal) => request('GET', '/stream/sessions', undefined, signal),
   deleteSession: (id, signal) => request('DELETE', '/stream/session/' + encodeURIComponent(id), undefined, signal),

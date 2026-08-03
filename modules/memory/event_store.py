@@ -310,30 +310,34 @@ class EventStore:
         return cur.rowcount > 0
 
     def get_event(self, event_id: str) -> Optional[MemoryEvent]:
-        conn = self._get_conn()
-        row = conn.execute("SELECT * FROM events WHERE id = ?", (event_id,)).fetchone()
-        if row is None:
-            return None
-        return MemoryEvent.from_dict(dict(row))
+        with self._write_lock:
+            conn = self._get_conn()
+            row = conn.execute("SELECT * FROM events WHERE id = ?", (event_id,)).fetchone()
+            if row is None:
+                return None
+            return MemoryEvent.from_dict(dict(row))
 
     def delete_event(self, event_id: str) -> bool:
-        conn = self._get_conn()
-        cur = conn.execute("DELETE FROM events WHERE id = ?", (event_id,))
-        conn.commit()
-        return cur.rowcount > 0
+        with self._write_lock:
+            conn = self._get_conn()
+            cur = conn.execute("DELETE FROM events WHERE id = ?", (event_id,))
+            conn.commit()
+            return cur.rowcount > 0
 
     def list_events(self, limit: int = 50, offset: int = 0) -> List[MemoryEvent]:
-        conn = self._get_conn()
-        rows = conn.execute(
-            "SELECT * FROM events ORDER BY time DESC LIMIT ? OFFSET ?",
-            (limit, offset),
-        ).fetchall()
-        return [MemoryEvent.from_dict(dict(r)) for r in rows]
+        with self._write_lock:
+            conn = self._get_conn()
+            rows = conn.execute(
+                "SELECT * FROM events ORDER BY time DESC LIMIT ? OFFSET ?",
+                (limit, offset),
+            ).fetchall()
+            return [MemoryEvent.from_dict(dict(r)) for r in rows]
 
     def count_events(self) -> int:
-        conn = self._get_conn()
-        row = conn.execute("SELECT COUNT(*) as cnt FROM events").fetchone()
-        return row["cnt"] if row else 0
+        with self._write_lock:
+            conn = self._get_conn()
+            row = conn.execute("SELECT COUNT(*) as cnt FROM events").fetchone()
+            return row["cnt"] if row else 0
 
     # ------------------------------------------------------------------
     # FAISS 索引管理
@@ -474,24 +478,26 @@ class EventStore:
         """精确关键词匹配"""
         if not keywords:
             return []
-        conn = self._get_conn()
-        placeholders = ",".join("?" for _ in keywords)
-        rows = conn.execute(
-            f"SELECT DISTINCT e.* FROM events e "
-            f"WHERE EXISTS (SELECT 1 FROM json_each(e.keywords) AS je "
-            f"               WHERE LOWER(je.value) IN ({placeholders})) "
-            f"ORDER BY e.importance DESC, e.time DESC LIMIT ?",
-            [k.lower() for k in keywords] + [limit],
-        ).fetchall()
-        return [MemoryEvent.from_dict(dict(r)) for r in rows]
+        with self._write_lock:
+            conn = self._get_conn()
+            placeholders = ",".join("?" for _ in keywords)
+            rows = conn.execute(
+                f"SELECT DISTINCT e.* FROM events e "
+                f"WHERE EXISTS (SELECT 1 FROM json_each(e.keywords) AS je "
+                f"               WHERE LOWER(je.value) IN ({placeholders})) "
+                f"ORDER BY e.importance DESC, e.time DESC LIMIT ?",
+                [k.lower() for k in keywords] + [limit],
+            ).fetchall()
+            return [MemoryEvent.from_dict(dict(r)) for r in rows]
 
     def search_by_importance(self, min_importance: float = 0.7, limit: int = 20) -> List[MemoryEvent]:
-        conn = self._get_conn()
-        rows = conn.execute(
-            "SELECT * FROM events WHERE importance >= ? ORDER BY importance DESC, time DESC LIMIT ?",
-            (min_importance, limit),
-        ).fetchall()
-        return [MemoryEvent.from_dict(dict(r)) for r in rows]
+        with self._write_lock:
+            conn = self._get_conn()
+            rows = conn.execute(
+                "SELECT * FROM events WHERE importance >= ? ORDER BY importance DESC, time DESC LIMIT ?",
+                (min_importance, limit),
+            ).fetchall()
+            return [MemoryEvent.from_dict(dict(r)) for r in rows]
 
     # ------------------------------------------------------------------
     # 清理

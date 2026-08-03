@@ -255,30 +255,34 @@ class EventStore:
         return cur.rowcount > 0
 
     def get_event(self, event_id: str) -> Optional[MemoryEvent]:
-        conn = self._get_conn()
-        row = conn.execute("SELECT * FROM events WHERE id = ?", (event_id,)).fetchone()
-        if row is None:
-            return None
-        return MemoryEvent.from_dict(dict(row))
+        with self._write_lock:
+            conn = self._get_conn()
+            row = conn.execute("SELECT * FROM events WHERE id = ?", (event_id,)).fetchone()
+            if row is None:
+                return None
+            return MemoryEvent.from_dict(dict(row))
 
     def delete_event(self, event_id: str) -> bool:
-        conn = self._get_conn()
-        cur = conn.execute("DELETE FROM events WHERE id = ?", (event_id,))
-        conn.commit()
-        return cur.rowcount > 0
+        with self._write_lock:
+            conn = self._get_conn()
+            cur = conn.execute("DELETE FROM events WHERE id = ?", (event_id,))
+            conn.commit()
+            return cur.rowcount > 0
 
     def list_events(self, limit: int = 50, offset: int = 0) -> List[MemoryEvent]:
-        conn = self._get_conn()
-        rows = conn.execute(
-            "SELECT * FROM events ORDER BY time DESC LIMIT ? OFFSET ?",
-            (limit, offset),
-        ).fetchall()
-        return [MemoryEvent.from_dict(dict(r)) for r in rows]
+        with self._write_lock:
+            conn = self._get_conn()
+            rows = conn.execute(
+                "SELECT * FROM events ORDER BY time DESC LIMIT ? OFFSET ?",
+                (limit, offset),
+            ).fetchall()
+            return [MemoryEvent.from_dict(dict(r)) for r in rows]
 
     def count_events(self) -> int:
-        conn = self._get_conn()
-        row = conn.execute("SELECT COUNT(*) as cnt FROM events").fetchone()
-        return row["cnt"] if row else 0
+        with self._write_lock:
+            conn = self._get_conn()
+            row = conn.execute("SELECT COUNT(*) as cnt FROM events").fetchone()
+            return row["cnt"] if row else 0
 
     # ── FAISS ──
 

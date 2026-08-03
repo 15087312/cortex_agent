@@ -202,8 +202,18 @@ class ProactiveTrigger:
         ).start()
 
     def _execute_outreach(self, idle_minutes: float, event, trigger_count: int):
-        """执行主动询问（在 daemon 线程中）"""
+        """执行主动询问（在 daemon 线程中）
+
+        设计目的：主动搭话以「本次启动过会话且真实说过话」为前提。
+        防止用户只是打开程序、还没说过话时，程序就去检索上一次的会话
+        主动搭话打扰用户 —— 只有本次启动确实发过消息，才认为主动搭话
+        （哪怕目标是接上次会话继续聊）是合适的。
+        """
         try:
+            if not self._has_spoken_this_boot():
+                logger.info(f"[主动触发 #{trigger_count}] 本次启动未说过话，跳过主动搭话")
+                return
+
             session_id, conversation = self._get_session_info()
             if not session_id:
                 logger.warning(f"[主动触发 #{trigger_count}] 无活跃 session，跳过")
@@ -274,6 +284,24 @@ class ProactiveTrigger:
             pass
         return _run_async(coro)
 
+    def _has_spoken_this_boot(self) -> bool:
+        """本次进程启动后是否真正发过消息（主动搭话的前提）。
+
+        设计目的：防止「只是打开程序、没说话」时，程序就去检索上一次的
+        会话主动搭话打扰用户。所有真实用户消息都会经 session_repo.
+        save_message 保存，那里会置位进程级标志（重启自动归零），按对话
+        模式读对应的 repo 判定即可。
+        """
+        try:
+            from modules.thinking.chat_gateway import _resolve_mode
+            if _resolve_mode() == "chatonly":
+                from backend.database.session_repo import get_boot_has_spoken
+            else:
+                from modules.database.session_repo import get_boot_has_spoken
+            return bool(get_boot_has_spoken())
+        except Exception:
+            return False
+
     def _get_session_info(self):
         """选择主动搭话的目标会话
 
@@ -282,22 +310,25 @@ class ProactiveTrigger:
         2. 优先选当前正有 WebSocket 连接的会话（即用户当前正在看的会话）
         3. 其次选最近一次有过对话的会话（上次对话）
         4. 如果从来没有过任何对话 → 返回空，上层直接跳过，不启动主动搭话
+
+        内存 sessions 可能因重启/长时间无人用而为空 → 兜底查询数据库最近会话。
         """
+        system = None
         try:
             from modules.thinking.api_stream import get_thinking_system
             system = get_thinking_system()
-            if not system.sessions:
-                return "", ""
+        except Exception:
+            system = None
 
+        candidates = {}
+        if system and system.sessions:
             # 只保留有真实消息的会话（真正聊过，不含空/voice 残留会话）
             candidates = {
                 sid: data for sid, data in system.sessions.items()
                 if data.get("messages")
             }
-            if not candidates:
-                # 从来没有过对话 → 不启动主动搭话
-                return "", ""
 
+        if candidates:
             # 自动选择"上一次对话"的会话：最近一次有过对话的（消息时间戳最新）
             def score(sid, data):
                 msgs = data.get("messages") or []
@@ -312,8 +343,28 @@ class ProactiveTrigger:
                 for m in recent
             )
             return best_sid, conversation
+
+        # 内存无会话 → 兜底查数据库最近一次有真实消息的会话（重启/长空闲后仍能搭话）
+        try:
+            from modules.thinking.chat_gateway import _resolve_mode
+            if _resolve_mode() == "chatonly":
+                from backend.database.session_repo import get_session_repo
+            else:
+                from modules.database.session_repo import get_session_repo
+            repo = get_session_repo()
+            for sess in repo.get_all_sessions(limit=20):
+                msgs = repo.get_recent_messages(sess["session_id"], limit=6)
+                real = [m for m in msgs if m.get("role") in ("user", "assistant")]
+                if not real:
+                    continue
+                conversation = "\n".join(
+                    f"[{m.get('role')}]: {str(m.get('content', ''))[:200]}"
+                    for m in real
+                )
+                return sess["session_id"], conversation
         except Exception:
-            return "", ""
+            pass
+        return "", ""
 
     def _get_current_window(self) -> tuple:
         """获取当前活动窗口信息"""

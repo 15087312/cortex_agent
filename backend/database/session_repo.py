@@ -12,6 +12,15 @@ from backend.utils.logger import setup_logger
 logger = setup_logger("session_repo")
 
 
+# 本次进程启动后是否保存过用户消息（主动搭话前提判定用，进程级标志）
+_boot_has_spoken = False
+
+
+def get_boot_has_spoken() -> bool:
+    """本次进程启动后是否真正发过消息（进程级标志，重启自动归零）。"""
+    return _boot_has_spoken
+
+
 class SessionRepository:
     """Session persistence repository."""
 
@@ -78,6 +87,9 @@ class SessionRepository:
             } for r in rows]
 
     def save_message(self, session_id: str, role: str, content: str, round_num: int = 0) -> str:
+        global _boot_has_spoken
+        if role == "user":
+            _boot_has_spoken = True
         if not content or not content.strip():
             return ""
         with self._session() as s:

@@ -167,11 +167,13 @@ const _onStatus = (d) => {
 
 const _onAck = (d) => {
   if (!_isCurrent(d)) return
-  if (d.event === 'received' && d.data?.message_id) {
-    // 用户消息已保存，回填消息 ID（供删除/编辑使用）
+  // 任何 ack（received / busy）带 message_id 都回填最后一条 user 消息（供删除/编辑使用）。
+  // busy 时后端也已保存 user 消息（不再丢弃），故需回填其 id 保持一致
+  if (d.data?.message_id) {
     const last = chat.messages[chat.messages.length - 1]
     if (last && last.role === 'user' && !last.id) last.id = d.data.message_id
-  } else if (d.event === 'busy') {
+  }
+  if (d.event === 'busy') {
     // 后端正忙且丢弃了本条 input → 提示并稍后重发（避免"一直加载"）
     chat.hint = '会话正在处理中，请稍候…'
     setTimeout(() => chat.retryLastInput(), 2500)
