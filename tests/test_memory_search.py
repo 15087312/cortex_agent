@@ -253,8 +253,17 @@ class TestVectorSearch:
         self.store, self.tmpdir = _make_store()
         # Mock embedding 维度，避免加载真实 SentenceTransformer
         self.store._embedding_dim = 16
+        # 隔离全局 EmbeddingEngine：禁用 save_event 自动向量化（其状态受其他测试/真实模型加载影响），
+        # 否则同事件会被自动 add + 手动 add_embedding 各加一次，导致 search 返回重复 id。
+        from modules.memory.embedding import EmbeddingEngine
+        _em = MagicMock()
+        _em._loaded = False
+        _em._attempted = True
+        self._emb_patch = patch.object(EmbeddingEngine, "get_instance", return_value=_em)
+        self._emb_patch.start()
 
     def teardown_method(self):
+        self._emb_patch.stop()
         self.store.clear_all()
         self.store.close()
 

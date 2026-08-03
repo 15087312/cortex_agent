@@ -165,8 +165,8 @@ class ProbePermissionManager:
         # 1. 检查 can_start_probes 标志
         if caller_permissions is not None and not caller_permissions.can_start_probes:
             return (
-                f"权限不足: 当前模型无权启动探针。"
-                f"(can_start_probes=False)"
+                "权限不足: 当前模型无权启动探针。"
+                "(can_start_probes=False)"
             )
 
         # 2. 检查 controllable_tiers

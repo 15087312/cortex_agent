@@ -7,7 +7,7 @@ import json
 import os
 import time
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 
 from infra.tool_manager.tool_registry import ToolRegistry
 from utils.logger import setup_logger

@@ -2,6 +2,7 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { endpoints } from '@/api.js'
 import { useToastStore } from '@/stores/toast.js'
+import Icon from '@/components/Icon.vue'
 
 const toast = useToastStore()
 const status = ref({})
@@ -21,11 +22,11 @@ function pipeStatusLabel(st) { return st === 'ok' || st === true || st === 'heal
     <div class="page-header">      <h2>感知系统</h2></div>
     <div class="page-body">
       <div class="stat-grid">
-        <div class="stat-card" :class="{ 'perception-running': status.status === 'running' }"><div class="stat-icon">{{ status.status === 'running' ? '🟢' : '⏸' }}</div><div class="stat-value">{{ status.status === 'running' ? '运行中' : '待启动' }}</div><div class="stat-label">状态</div></div>
-        <div class="stat-card"><div class="stat-icon">🖥</div><div class="stat-value">{{ status.platform || '检测中...' }}</div><div class="stat-label">平台</div></div>
-        <div class="stat-card"><div class="stat-icon">🎤</div><div class="stat-value">{{ status.voice_available ? '可用' : '不可用' }}</div><div class="stat-label">语音</div></div>
+        <div class="stat-card" :class="{ 'perception-running': status.status === 'running' }"><div class="stat-icon"><Icon :name="status.status === 'running' ? 'circle' : 'stop'" :size="18" /></div><div class="stat-value">{{ status.status === 'running' ? '运行中' : '待启动' }}</div><div class="stat-label">状态</div></div>
+        <div class="stat-card"><div class="stat-icon"><Icon name="monitor" :size="18" /></div><div class="stat-value">{{ status.platform || '检测中...' }}</div><div class="stat-label">平台</div></div>
+        <div class="stat-card"><div class="stat-icon"><Icon name="mic" :size="18" /></div><div class="stat-value">{{ status.voice_available ? '可用' : '不可用' }}</div><div class="stat-label">语音</div></div>
       </div>
-      <div class="card" style="margin-top:12px"><div class="card-header">控制</div><div style="display:flex;gap:8px"><button class="btn btn-primary btn-sm" @click="start">▶ 启动</button><button class="btn btn-sm" @click="stop">⏹ 停止</button></div></div>
+      <div class="card" style="margin-top:12px"><div class="card-header">控制</div><div style="display:flex;gap:8px"><button class="btn btn-primary btn-sm" @click="start"><Icon name="play" :size="14" /> 启动</button><button class="btn btn-sm" @click="stop"><Icon name="stop" :size="14" /> 停止</button></div></div>
       <div v-if="status.pipeline && Object.keys(status.pipeline).length > 0" class="card" style="margin-top:12px"><div class="card-header">流水线</div>
         <div class="pipeline-list">
           <div class="pipeline-row" v-for="(st, step) in status.pipeline" :key="step">

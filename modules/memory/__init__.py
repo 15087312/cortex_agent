@@ -17,3 +17,14 @@ from modules.memory.causal_graph import CausalGraph, CausalNode, CausalEdge
 from modules.memory.causal_tree import CausalTree, CausalChain, CausalTreeResult
 from modules.memory.depth_recall import DepthRecallScheduler, DeepRecallResult, should_trigger_deep_recall, classify_intent
 from modules.memory.result_fusion import ResultFusion, format_deep_recall_result
+
+__all__ = [
+    "EventStore", "MemoryEvent",
+    "EventReducer", "get_reducer",
+    "EventRetrieval", "get_event_retrieval",
+    "EmbeddingEngine",
+    "CausalGraph", "CausalNode", "CausalEdge",
+    "CausalTree", "CausalChain", "CausalTreeResult",
+    "DepthRecallScheduler", "DeepRecallResult", "should_trigger_deep_recall", "classify_intent",
+    "ResultFusion", "format_deep_recall_result",
+]

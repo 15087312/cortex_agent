@@ -11,9 +11,7 @@
 额外能力：语义摘要、冗余检测、增量更新
 """
 import re
-import time
-import threading
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Optional
 from utils.logger import setup_logger
 from .types import (
     CompressionLevel, EventRecord, EventType

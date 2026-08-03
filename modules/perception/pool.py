@@ -47,7 +47,7 @@ class PerceptionPool:
         cutoff = time.time() - self._ttl
         self._items = [i for i in self._items if i["timestamp"] >= cutoff]
 
-    def snapshot(self, max_items: int = 5) -> "ContextFragment":
+    def snapshot(self, max_items: int = 5) -> "ContextFragment":  # noqa: F821 - 字符串注解，函数内 import
         """取最近 N 条语义事件，输出 ContextFragment"""
         from modules.thinking.context.pool import ContextFragment
 

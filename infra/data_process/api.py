@@ -6,14 +6,13 @@
 from fastapi import APIRouter, UploadFile, File, Form, Depends
 from api.auth import require_api_key
 from fastapi.responses import JSONResponse
-from typing import Optional
 import base64
 import json
 
 from api.errors import AppError, ErrorCode
 from utils.logger import setup_logger
-from infra.data_process.core.speech_recognizer import SpeechRecognizer, get_default_recognizer
-from infra.data_process.core.image_analyzer import ImageAnalyzer, get_default_analyzer
+from infra.data_process.core.speech_recognizer import get_default_recognizer
+from infra.data_process.core.image_analyzer import get_default_analyzer
 
 logger = setup_logger("data_process_api")
 
@@ -110,7 +109,7 @@ async def recognize_speech_base64(
         result = await recognizer.recognize(audio_data, language)
         
         return {"success": True, "data": result}
-    except Exception as e:
+    except Exception:
         raise AppError(ErrorCode.INTERNAL_ERROR, "服务暂时不可用，请稍后重试")
 
 
@@ -164,7 +163,7 @@ async def analyze_image_base64(
         analyzer = await get_default_analyzer()
         result = await analyzer.analyze_base64(image, prompt)
         return {"success": True, "data": result}
-    except Exception as e:
+    except Exception:
         raise AppError(ErrorCode.INTERNAL_ERROR, "服务暂时不可用，请稍后重试")
 
 
@@ -234,7 +233,7 @@ async def detect_ui_elements(
             "success": True,
             "data": result
         })
-    except Exception as e:
+    except Exception:
         raise AppError(ErrorCode.INTERNAL_ERROR, "服务暂时不可用，请稍后重试")
 
 
@@ -270,7 +269,7 @@ async def analyze_with_query(
             "success": True,
             "data": result
         })
-    except Exception as e:
+    except Exception:
         raise AppError(ErrorCode.INTERNAL_ERROR, "服务暂时不可用，请稍后重试")
 
 
@@ -300,5 +299,5 @@ async def draw_ui_elements(
         result_bytes = analyzer.draw_elements(image_data, elements)
         
         return Response(content=result_bytes, media_type="image/png")
-    except Exception as e:
+    except Exception:
         raise AppError(ErrorCode.INTERNAL_ERROR, "服务暂时不可用，请稍后重试")

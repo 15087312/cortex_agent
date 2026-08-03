@@ -1,6 +1,7 @@
 <script setup>
 import { ref, onUnmounted } from 'vue'
 import { copyCodeBlock } from '@/utils/markdown.js'
+import Icon from '@/components/Icon.vue'
 
 const props = defineProps({
   language: { type: String, default: '' },
@@ -32,7 +33,7 @@ async function handleCopy() {
     <div class="code-block-header">
       <span class="lang-label">{{ language || '代码' }}</span>
       <button class="copy-btn" @click="handleCopy">
-        {{ copied ? '✅ 已复制' : '📋 复制' }}
+        <Icon :name="copied ? 'check' : 'copy'" :size="12" /> {{ copied ? '已复制' : '复制' }}
       </button>
     </div>
     <!-- v-html 仅用于语法高亮（hljs 输出不含用户输入，安全） -->

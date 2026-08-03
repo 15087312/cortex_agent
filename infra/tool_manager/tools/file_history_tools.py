@@ -5,7 +5,7 @@ file_history 工具集 — 文件修改历史记录与回滚
 支持按版本回滚。
 """
 import os
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 
 from infra.tool_manager.tool_registry import ToolRegistry
 

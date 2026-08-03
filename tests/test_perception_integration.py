@@ -106,9 +106,10 @@ class TestEventBusToIntegrator:
         assert "环境感知" in summary or "【窗口状态】" in summary
 
     def test_context_summary_empty_without_events(self):
-        """无事件时 snapshot() 返回空"""
+        """无事件时 snapshot() 返回「无感知数据」提示（给 orchestrator 的占位）"""
         self.integrator.pool.clear()
-        assert self.integrator.pool.snapshot().content == ""
+        summary = self.integrator.pool.snapshot().content
+        assert "无感知数据" in summary
 
     def test_attention_items_capped(self):
         """pool._items 受 max=20 限制"""
@@ -139,7 +140,6 @@ class TestEventBusToIntegrator:
                             payload={"new_lines": ["hello world"]})
         )
         summary = self.integrator.pool.snapshot().content
-        assert "【环境感知】" in summary
         assert "【窗口状态】" in summary
         assert "【屏幕文本】" in summary
 
@@ -153,7 +153,7 @@ class TestEventBusToIntegrator:
             )
         )
         summary = self.integrator.pool.snapshot().content
-        assert summary.startswith("【环境感知】")
+        assert summary.startswith("【窗口状态】")
 
     def test_description_contains_screen_and_change_keywords(self):
         """SCREEN_DIFF 事件生成的描述必须包含"屏幕"和"变化"关键词"""

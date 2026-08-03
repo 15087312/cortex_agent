@@ -3,12 +3,11 @@
 
 使用 OpenAI 兼容 API（DeepSeek）调用云端 7B 级模型。
 """
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 from .base_model import BaseModelClient, ToolCall, ChatMessage, ChatResponse
 from config.settings import settings
 from utils.logger import setup_logger
 from modules.management import report_api_error, report_exception
-import aiohttp
 import asyncio
 import json
 
@@ -119,7 +118,7 @@ class SmallModelClient(BaseModelClient):
                             await asyncio.sleep(2 ** attempt)
                             continue
                         raise last_error
-            except asyncio.TimeoutError as e:
+            except asyncio.TimeoutError:
                 last_error = Exception(f"Small model chat timeout (attempt {attempt}/{max_retries})")
                 if attempt < max_retries:
                     await asyncio.sleep(2 ** attempt)

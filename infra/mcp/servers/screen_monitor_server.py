@@ -7,8 +7,6 @@ MCP Screen Monitor Server — 纯视觉的屏幕分析（Touchpoint 降级方案
 作为 MCP stdio server 运行，通过 MCP_SERVERS 配置。
 独立脚本，不引入项目其他模块。
 """
-import base64
-import io
 import json
 import os
 import subprocess

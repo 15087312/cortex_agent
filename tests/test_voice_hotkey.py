@@ -47,6 +47,13 @@ class TestExtractInstruction:
 # ====================================================================
 
 class TestVoiceDetectorEndStop:
+    @pytest.fixture(autouse=True)
+    def _isolate_voice_deps(self):
+        with patch.dict("sys.modules", {
+            "speech_recognition": None, "pyaudio": None, "whisper": None, "pynput": None,
+        }):
+            yield
+
     def test_constructor_accepts_cooldown(self):
         det = VoiceDetector(end_stop_cooldown=5.0)
         assert det._end_stop_cooldown == 5.0
@@ -61,6 +68,18 @@ class TestVoiceDetectorEndStop:
 # ====================================================================
 
 class TestHotkeyVoiceDetector:
+    @pytest.fixture(autouse=True)
+    def _isolate_voice_deps(self):
+        """隔离语音原生依赖（pyaudio/whisper/pynput）。
+
+        构造 HotkeyVoiceDetector 会 _check_availability() → import 这些原生库，
+        在完整测试套件中 portaudio 已被其他测试初始化，二次 import 会触发原生
+        Abort（Fatal Python error）。这里 patch 掉让依赖不可用。
+        """
+        with patch.dict("sys.modules", {
+            "speech_recognition": None, "pyaudio": None, "whisper": None, "pynput": None,
+        }):
+            yield
     def test_not_available_without_deps(self):
         with patch.dict("sys.modules", {"pynput": None, "pyaudio": None}):
             det = HotkeyVoiceDetector()

@@ -17,24 +17,12 @@ import time
 import uuid
 import threading
 import json
-from pathlib import Path
-from typing import Dict, Any, List, Optional, Callable, Awaitable
+from typing import Dict, Any, List, Optional
 
 from utils.logger import setup_logger
+from utils.suspension import pausable_wait_for
 from infra.tool_manager.tool_registry import ToolRegistry
 from modules.thinking.core.control_tools import (
-    CONTINUE_THINKING_TOOL,
-    DELEGATE_TASK_TOOL,
-    CREATE_SUPERVISOR_TOOL,
-    RESPOND_TO_USER_TOOL,
-    REQUEST_SKILL_TOOL,
-    LIST_SKILLS_TOOL,
-    STOP_SKILL_TOOL,
-    STOP_TASK_TOOL,
-    SET_MEMORY_FOCUS_TOOL,
-    QUERY_TOOL_DETAILS_TOOL,
-    REQUEST_MODE_CHANGE_TOOL,
-    ASK_USER_INTENT_TOOL,
     ThinkingTaskContext,
 )
 
@@ -108,6 +96,14 @@ class ModelRunner:
         self._return_to_model_id = ""
         self._return_to_session_id = ""
         self._started_at: float = 0.0  # 启动时间戳，用于进度汇报
+        # 运行状态机（供前端状态面板）：idle/thinking/tool_loop/waiting_delegation/completed/error
+        self._status: str = "idle"
+        self._status_detail: str = ""  # 状态附加信息（工具名 / 委托角色 / 错误信息）
+        # 三层循环独立状态（供前端精确判定/显示）
+        #  React 工具循环（_generate_with_tools 内 chat→tool→execute 循环）
+        self._react_loop: Optional[dict] = None     # {"turn","max","tool"}
+        #  continue_think 循环（ContinuousThinker.continuous_think 每轮思考）
+        self._think_loop_state: Optional[dict] = None     # {"round","max","wait"}
         self._pending_guidance: List[str] = []
         self._thinker: Optional[Any] = None  # ContinuousThinker, 延迟创建
         self._active_skill: Any = None  # 当前激活的技能（Skill 实例）
@@ -167,6 +163,8 @@ class ModelRunner:
         self._return_to_session_id = return_to_session_id or self.session_id
         self._running = True
         self._started_at = time.time()
+        self._status = "thinking"
+        self._status_detail = ""
         self._task = asyncio.create_task(
             self._run_task(),
             name=f"runner_{self.model_id}",
@@ -201,6 +199,15 @@ class ModelRunner:
             f"[ModelRunner] {self.model_id} 收到引导注入: {guidance_text[:60]}..."
         )
 
+    def _update_loop_state(self, think_round: int = 0, think_max: int = 0, think_wait: float = 0.0) -> None:
+        """由 ContinuousThinker 每轮思考后调用：
+        - 记录 continue_think 循环状态（当前轮次 / 上限 / 等待秒数）
+        - 清除已结束的 React 工具循环状态（本轮 think_once 已完成）
+        """
+        if think_round > 0:
+            self._think_loop_state = {"round": think_round, "max": think_max, "wait": round(think_wait, 1)}
+        self._react_loop = None
+
     # ------------------------------------------------------------------
     # 内部
     # ------------------------------------------------------------------
@@ -216,8 +223,11 @@ class ModelRunner:
                 await self._think_loop()
         except asyncio.CancelledError:
             logger.info(f"[ModelRunner] {self.model_id} 思考循环被取消")
+            self._status = "completed"
         except Exception as e:
             logger.error(f"[ModelRunner] {self.model_id} 思考循环崩溃: {e}")
+            self._status = "error"
+            self._status_detail = str(e)[:300]
         finally:
             self._running = False
             self._thinker = None
@@ -419,7 +429,6 @@ class ModelRunner:
             try:
                 # 增强任务描述（只在大模型第一次时）
                 task_desc = self._task_description
-                from config.settings import settings as _cfg
                 if self.tier in ("large", "supervisor") and not hasattr(self, '_task_enhanced'):
                     task_desc = self._task_description + _TASK_ENHANCEMENT_PROMPT
                     self._task_enhanced = True
@@ -586,7 +595,6 @@ class ModelRunner:
 
         例外（保持现状）:
           - _save_partial_result: 取消/中断路径，不走正常输出流
-          - no_tools 模式: 独立模式，不经过 thinking 循环
         """
         final_thought = ""
         try:
@@ -826,7 +834,6 @@ class ModelRunner:
         # 判断唤醒类型
         is_progress_report = "【进度汇报】" in supervisor_result
         is_timeout_report = "【等待超时" in supervisor_result
-        is_result_report = "【" in supervisor_result and "任务结果" in supervisor_result
 
         # 从唤醒消息中解析来源层级
         source_tier = ""
@@ -1037,9 +1044,16 @@ class ModelRunner:
             return {"response": "事件发送失败", "error": str(e)}
 
         try:
-            return await asyncio.wait_for(future, timeout=timeout)
-        except asyncio.TimeoutError:
-            return {"response": "用户未响应（超时）", "timeout": True}
+            # 挂起全局计时器：等待用户响应期间所有思考/轮次超时暂停
+            from utils.suspension import Suspension
+            Suspension.suspend()
+            try:
+                # 无限等待用户响应，不自动超时（由前端提交 interactive_response 结束）
+                return await asyncio.wait_for(future, timeout=timeout)
+            except asyncio.TimeoutError:
+                return {"response": "用户未响应（超时）", "timeout": True}
+            finally:
+                Suspension.resume()
         finally:
             self._pending_user_responses.pop(request_id, None)
 
@@ -1051,24 +1065,45 @@ class ModelRunner:
                 future.set_result(response)
 
     async def _handle_mode_change_request(self, reason: str, suggested_mode: str) -> str:
-        """处理 request_mode_change 工具调用"""
-        from config.settings import settings as _cfg
+        """处理 request_mode_change 工具调用 — 通过审批横幅请用户确认
 
-        # 其他模式（plan/edit/yolo/control）需要用户确认
-        result = await self._wait_for_user_response("mode_change_request", {
-            "action": "mode_change_request",
-            "reason": reason,
-            "suggested_mode": suggested_mode,
-        })
-        if result.get("timeout"):
-            return f"【模式切换】用户未响应，当前模式不变。原因：{reason}"
-        approved = result.get("approved", False)
+        复用安全门控的 pending_reviews + resolve_review：前端弹出
+        "⚠ 等待审批：request_mode_change" 横幅，点批准/拒绝后生效。
+        """
+        import uuid
+        from modules.security_system.tool_security_gate import (
+            ToolSecurityGate, _emit_security_event,
+        )
+        from utils.suspension import Suspension
+        request_id = f"review_mode_change_{uuid.uuid4().hex[:8]}"
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future = loop.create_future()
+        ToolSecurityGate._pending_reviews[request_id] = future
+        _emit_security_event(
+            "等待用户审批", "request_mode_change", self.model_id, True,
+            f"请求将执行模式切换为「{suggested_mode}」\n原因: {reason or '(未说明)'}",
+            request_id=request_id,
+        )
+        Suspension.suspend()  # 等待审批期间暂停所有计时
+        try:
+            # 用户审批无限等待：由用户显式点击批准/拒绝决定，不自动超时
+            result = await asyncio.wait_for(future, timeout=None)
+            approved = bool(result.get("approved", False))
+        except asyncio.TimeoutError:
+            approved = False
+        finally:
+            Suspension.resume()
+            ToolSecurityGate._pending_reviews.pop(request_id, None)
+
         if approved:
-            target_mode = result.get("mode", suggested_mode)
+            target_mode = result.get("mode") or suggested_mode
+            try:
+                from config.settings import settings as _cfg
+                object.__setattr__(_cfg, "EXECUTION_MODE", target_mode)
+            except Exception:
+                pass
             return f"【模式切换】用户同意切换到 {target_mode} 模式。请继续执行任务。"
-        else:
-            user_reason = result.get("reason", "用户拒绝")
-            return f"【模式切换】用户拒绝切换模式。原因：{user_reason}。请在当前模式下继续。"
+        return "【模式切换】用户拒绝切换模式。请在当前模式下继续。"
 
     async def _handle_ask_user_intent(self, question: str, options: list, context: str) -> str:
         """处理 ask_user_intent 工具调用"""
@@ -1212,7 +1247,7 @@ class ModelRunner:
             return f"[模型调用失败: {last_error}]"
 
         try:
-            return await asyncio.wait_for(_do_generate(), timeout=self.THINK_TIMEOUT)
+            return await pausable_wait_for(_do_generate(), timeout=self.THINK_TIMEOUT)
         except asyncio.TimeoutError:
             logger.error(
                 f"[ModelRunner] {self.model_id} 模型调用超时 "
@@ -1261,9 +1296,9 @@ class ModelRunner:
                 else:
                     logger.info(f"[ModelRunner] 黑板无对话历史 (obs={len(self.blackboard.observations)})")
             else:
-                logger.info(f"[ModelRunner] blackboard 为 None")
+                logger.info("[ModelRunner] blackboard 为 None")
 
-            logger.info(f"[ModelRunner] 构建系统提示词: mode={mode}, tier={self.tier}")
+            logger.debug(f"[ModelRunner] 构建系统提示词: mode={mode}, tier={self.tier}")
             # 读取良知内心独白并注入到 system prompt 顶部
             conscience_guidance = ""
             try:
@@ -1297,7 +1332,7 @@ class ModelRunner:
                 pass
 
             full = conversation_header + result + non_core_section
-            logger.info(f"[ModelRunner] 系统提示词: {len(full)} 字符 (对话历史 {len(conversation_header)} + 系统 {len(result)} + 非核心工具)")
+            logger.debug(f"[ModelRunner] 系统提示词: {len(full)} 字符 (对话历史 {len(conversation_header)} + 系统 {len(result)} + 非核心工具)")
             return full
         except Exception as e:
             logger.warning(f"[ModelRunner] PromptComposer 构建失败，回退: {e}")
@@ -1433,20 +1468,6 @@ class ModelRunner:
         from infra.tool_manager.tool_registry import ToolRegistry
         from infra.model.base_model import ChatMessage
 
-        # 检查 no_tools 标志 — 纯聊天模式，跳过工具加载
-        no_tools = False
-        if self.blackboard:
-            no_tools = self.blackboard.runtime_state.get("no_tools", False)
-
-        if no_tools:
-            logger.info(f"[ModelRunner] {self.model_id} 纯聊天模式，跳过工具加载")
-            response = await client.generate(prompt=user_prompt, max_tokens=4096)
-            result = response.content if hasattr(response, 'content') else str(response)
-            # 写入 blackboard（例外：no_tools 模式不走 thinking 循环，直接输出）
-            if self.blackboard:
-                self.blackboard.set_final_response(result)
-            return result
-
         from infra.mcp.factory import get_mcp_tool_service
         mcp = get_mcp_tool_service()
         tools = mcp.get_tools_for_api(self._visible_tool_whitelist(), core_only=True)
@@ -1488,7 +1509,10 @@ class ModelRunner:
         for attempt in range(self.GENERATE_RETRIES):
             try:
                 logger.info(f"[TOOL-LOOP] {self.model_id} 进入工具循环 (max_turns={self.MAX_CHAT_TOOL_TURNS})")
+                self._status = "tool_loop"
+                self._status_detail = "开始工具循环"
                 for turn in range(self.MAX_CHAT_TOOL_TURNS):
+                    self._react_loop = {"turn": turn, "max": self.MAX_CHAT_TOOL_TURNS, "tool": ""}
                     # ── 每轮检查执行模式是否被外部变更 ──
                     try:
                         from config.settings import settings as _mode_settings
@@ -1499,10 +1523,10 @@ class ModelRunner:
                                     f"[ModelRunner] {self.model_id} 执行模式变更: "
                                     f"{self._last_known_mode} → {current_mode}"
                                 )
-                                messages.append({
-                                    "role": "system",
-                                    "content": f"[系统通知] 执行模式已从 {self._last_known_mode} 切换为 {current_mode}，请按新模式策略执行。",
-                                })
+                                messages.append(ChatMessage(
+                                    role="system",
+                                    content=f"[系统通知] 执行模式已从 {self._last_known_mode} 切换为 {current_mode}，请按新模式策略执行。",
+                                ))
                             self._last_known_mode = current_mode
                     except Exception as e:
                         logger.warning(f"[ModelRunner] 执行模式检查失败: {e}")
@@ -1557,6 +1581,10 @@ class ModelRunner:
                     )
                     if tool_calls:
                         tc_names = [tc.name for tc in tool_calls]
+                        self._status = "tool_loop"
+                        self._status_detail = ", ".join(tc_names)
+                        if self._react_loop is not None:
+                            self._react_loop["tool"] = ", ".join(tc_names)
                         logger.info(f"[TOOL-LOOP] turn={turn} tools={tc_names}")
 
                     if not tool_calls:
@@ -1619,37 +1647,67 @@ class ModelRunner:
                         else:
                             normal_calls.append(tc)
 
-                    # ── query_tool_details → 返回工具完整定义，供模型后续调用 ──
+                    # ── 构建 assistant 消息：声明本轮所有【会产生 tool 结果】的调用 ──
+                    # 必须放在任何 tool 结果之前，且 tool_calls 必须包含所有后续会有
+                    # tool 消息的 id，否则 OpenAI API 报错：
+                    #   "Messages with role 'tool' must be a response to a preceding message with 'tool_calls'"
+                    # 于是模型收不到结果 → 反复调用同一工具死循环。
+                    # continue_thinking / respond_to_user / set_memory_focus / request_mode_change /
+                    # ask_user_intent / delegate_task / create_supervisor 不产生 tool 结果，
+                    # 不写入 assistant.tool_calls（避免"未应答的 tool_calls"错误）。
+                    _CONTROL_RESULT_TOOLS = ("request_skill", "stop_skill", "list_skills", "stop_task")
+                    result_control_calls = [tc for tc in control_calls if tc.name in _CONTROL_RESULT_TOOLS]
+                    all_result_calls = normal_calls + query_calls + result_control_calls
+                    if all_result_calls:
+                        messages.append(ChatMessage(
+                            role="assistant",
+                            content=None,  # 有 tool_calls 时丢弃文本，避免上下文污染
+                            tool_calls=all_result_calls,
+                        ))
+
+                    # ── query_tool_details → 把工具完整定义作为 tool 消息回传，
+                    #    让模型看到详情后在同一思考轮次内继续调用该工具（避免反复重查） ──
                     for tc in query_calls:
                         try:
                             args = json.loads(tc.arguments) if isinstance(tc.arguments, str) and tc.arguments.strip() else {}
                             target_name = str(args.get("tool_name", "")).strip()
                             if not target_name:
-                                return "【查询失败】缺少 tool_name 参数。请提供要查询的工具名称。"
-                            tool_info = ToolRegistry.get_tool(target_name)
-                            if not tool_info:
-                                available = sorted(ToolRegistry._tools.keys())
-                                hint = "、".join(available[:20])
-                                if len(available) > 20:
-                                    hint += f" 等共 {len(available)} 个"
-                                return f"【查询失败】工具「{target_name}」不存在。可用工具：{hint}"
-                            schema = tool_info.to_json_schema()
-                            result_parts = [
-                                f"【工具详情：{target_name}】",
-                                f"描述：{tool_info.description}",
-                                f"风险等级：{tool_info.risk_level}",
-                                f"类别：{tool_info.category}",
-                                f"参数 Schema：\n{json.dumps(schema, ensure_ascii=False, indent=2)}",
-                            ]
-                            return "\n".join(result_parts)
+                                result = "【查询失败】缺少 tool_name 参数。请提供要查询的工具名称。"
+                            else:
+                                tool_info = ToolRegistry.get_tool(target_name)
+                                if not tool_info:
+                                    available = sorted(ToolRegistry._tools.keys())
+                                    hint = "、".join(available[:20])
+                                    if len(available) > 20:
+                                        hint += f" 等共 {len(available)} 个"
+                                    result = f"【查询失败】工具「{target_name}」不存在。可用工具：{hint}"
+                                else:
+                                    schema = tool_info.to_json_schema()
+                                    result_parts = [
+                                        f"【工具详情：{target_name}】",
+                                        f"描述：{tool_info.description}",
+                                        f"风险等级：{tool_info.risk_level}",
+                                        f"类别：{tool_info.category}",
+                                        f"参数 Schema：\n{json.dumps(schema, ensure_ascii=False, indent=2)}",
+                                    ]
+                                    result = "\n".join(result_parts)
                         except Exception as e:
-                            return f"【查询异常】{e}"
+                            result = f"【查询异常】{e}"
+                        messages.append(ChatMessage(
+                            role="tool",
+                            content=result[:4000] if len(result) > 4000 else result,
+                            tool_call_id=getattr(tc, 'id', None) or tc.name,
+                        ))
+                        logger.info(f"[ModelRunner] {self.model_id} 查询工具详情: {target_name}")
 
                     # ── 处理工具调用接口（continue_thinking, delegate_task 等）──
-                    # 1. continue_thinking → 直接记录到 thinker
+                    # 1. continue_thinking / respond_to_user 记录决策（由 thinker 决定终止，不结束工具循环）
+                    #    信息型工具（list_skills/request_skill/stop_skill/stop_task）结果作为 tool 消息回传后继续，
+                    #    避免模型看不到结果而重复调用（与 query_tool_details 同类 bug）
                     for tc in control_calls:
                         try:
                             args = json.loads(tc.arguments) if isinstance(tc.arguments, str) and tc.arguments.strip() else {}
+                            result = ""
                             if tc.name == "continue_thinking":
                                 ctrl = {"continue": args.get("continue", True)}
                                 if "wait_seconds" in args:
@@ -1662,6 +1720,10 @@ class ModelRunner:
                                 content = args.get("content", "")
                                 if self._thinker:
                                     self._thinker.record_control_decision({"continue": False, "result_summary": content})
+                            elif tc.name == "set_memory_focus":
+                                mix = args.get("mix", {})
+                                if self._thinker and isinstance(mix, dict):
+                                    self._thinker._memory_focus = mix
                             elif tc.name == "request_skill":
                                 skill_id = args.get("skill_id", "")
                                 if skill_id:
@@ -1672,13 +1734,9 @@ class ModelRunner:
                                         self._active_skill_tool_rules = skill.tool_rules
                                         logger.info(f"[ModelRunner] 技能已切换: {skill_id}")
                                         preview = skill.description[:120].replace("\n", " ")
-                                        return f"【技能已激活】{skill.name}\n{preview}"
+                                        result = f"【技能已激活】{skill.name}\n{preview}"
                                     else:
-                                        return f"【技能未找到】skill_id={skill_id} 不存在。使用 list_skills 查看可用技能。"
-                            elif tc.name == "set_memory_focus":
-                                mix = args.get("mix", {})
-                                if self._thinker and isinstance(mix, dict):
-                                    self._thinker._memory_focus = mix
+                                        result = f"【技能未找到】skill_id={skill_id} 不存在。使用 list_skills 查看可用技能。"
                             elif tc.name == "stop_skill":
                                 if self._active_skill:
                                     skill_name = self._active_skill.name
@@ -1686,18 +1744,17 @@ class ModelRunner:
                                     logger.info(f"[ModelRunner] 技能已停用: {self._active_skill.id} ({reason})")
                                     self._active_skill = None
                                     self._active_skill_tool_rules = None
-                                    return f"【技能已停用】{skill_name}，已恢复默认角色。"
+                                    result = f"【技能已停用】{skill_name}，已恢复默认角色。"
                                 else:
-                                    return "【无活跃技能】当前没有激活的技能。"
+                                    result = "【无活跃技能】当前没有激活的技能。"
                             elif tc.name == "list_skills":
                                 from modules.thinking.skills import skill_manager
                                 skills = skill_manager.list_skills()
                                 logger.info(f"[ModelRunner] 列出技能: {len(skills)} 个")
-                                if skills:
-                                    lines = [f"- {s.id}: {s.name} — {s.description[:80]}" for s in skills]
-                                    return "【可用技能】\n" + "\n".join(lines)
-                                else:
-                                    return "【可用技能】暂无可用技能"
+                                result = "【可用技能】" + (
+                                    "\n" + "\n".join(f"- {s.id}: {s.name} — {s.description[:80]}" for s in skills)
+                                    if skills else "暂无可用技能"
+                                )
                             elif tc.name == "stop_task":
                                 target = args.get("target_model_id", "").strip()
                                 reason = args.get("reason", "").strip()
@@ -1708,21 +1765,35 @@ class ModelRunner:
                                     if self.manager and hasattr(self.manager, 'stop_runner'):
                                         success = await self.manager.stop_runner(target)
                                         if success:
-                                            return (
+                                            result = (
                                                 f"【任务已停止】已停止 {target}，原因: {reason}\n"
                                                 f"你可以重新 delegate_task 来分派任务。"
                                             )
                                         else:
-                                            return (
+                                            result = (
                                                 f"【停止失败】无法找到 {target}，"
                                                 f"可能已自然结束或被其他主管停止。"
                                             )
                                     else:
-                                        return "【停止失败】当前上下文无法操作 runner 管理器。"
+                                        result = "【停止失败】当前上下文无法操作 runner 管理器。"
                                 else:
-                                    return "【停止失败】缺少 target_model_id 或 reason 参数。"
+                                    result = "【停止失败】缺少 target_model_id 或 reason 参数。"
+                            if result:
+                                messages.append(ChatMessage(
+                                    role="tool",
+                                    content=result[:4000] if len(result) > 4000 else result,
+                                    tool_call_id=getattr(tc, 'id', None) or tc.name,
+                                ))
                         except Exception as e:
                             logger.debug(f"[ModelRunner] 控制工具处理异常 (非致命): {e}")
+                            # 若该工具已被 assistant.tool_calls 声明，必须补回 tool 响应，
+                            # 否则 OpenAI 报"未应答的 tool_calls"并在下一轮重复调用
+                            if tc.name in _CONTROL_RESULT_TOOLS:
+                                messages.append(ChatMessage(
+                                    role="tool",
+                                    content=f"[{tc.name} 执行异常: {e}]",
+                                    tool_call_id=getattr(tc, 'id', None) or tc.name,
+                                ))
 
                     # 2. delegate_task → 执行模式检查 + 委托 + 记录到 thinker
                     if delegate_calls:
@@ -1797,6 +1868,8 @@ class ModelRunner:
                                     )
                                 if self._thinker:
                                     self._thinker.record_delegation(role, task, dlg_result)
+                                self._status = "waiting_delegation"
+                                self._status_detail = f"委托 {role}"
                                 logger.info(f"[ModelRunner] 直通委托: role={role}, success={dlg_result.success}")
                         except Exception as e:
                             logger.warning(f"[ModelRunner] 直通委托失败: {e}")
@@ -1818,7 +1891,7 @@ class ModelRunner:
                                 identity.role = role
                                 # 如果 identity 的 name 还是模板默认名，改成自定义 role
                                 from modules.thinking.identity import get_identities
-                                tmpl = get_identities().get(template_key, {})
+                                get_identities().get(template_key, {})
                                 identity.name = f"{role}_{self.session_id[:8]}"
                                 instance = factory.create_supervisor(identity=identity)
                                 sv_result = (
@@ -1831,7 +1904,7 @@ class ModelRunner:
                                     sv_result += f"现在可以通过 delegate_task(role=\"{role}\", task=...) 来委托。"
                                 logger.info(f"[ModelRunner] create_supervisor: role={role}, model_id={instance.model_id}")
                             else:
-                                sv_result = f"【创建主管失败】缺少必填参数 role 或 template_key"
+                                sv_result = "【创建主管失败】缺少必填参数 role 或 template_key"
                         except Exception as e:
                             sv_result = f"【创建主管异常】{e}"
                             logger.warning(f"[ModelRunner] create_supervisor 异常: {e}")
@@ -1928,20 +2001,13 @@ class ModelRunner:
                         return content
 
                     # ── 原有逻辑：构建 assistant 消息（只包含正常工具调用）──
-                    # 注意：content 中仅保留 tool_calls 响应文本，不保留模型思考旁白
-                    # 模型在调工具时输出的"好的我来学习"等前言会随 history 传入下一轮，
-                    # 导致模型看到自己的话后重复输出。有 tool_calls 时 content 设为空。
+                    # 注意：assistant 消息已在上面统一构建（含 query/control 结果回传），
+                    # 此处仅执行 normal 工具并回传结果。
                     if normal_calls:
-                        assistant_msg = ChatMessage(
-                            role="assistant",
-                            content=None,  # 有 tool_calls 时丢弃文本，避免上下文污染
-                            tool_calls=normal_calls,
-                        )
-                        messages.append(assistant_msg)
-
                         from infra.mcp.types import ToolCallRequest
                         for tc in normal_calls:
                             try:
+                                self._status_detail = tc.name
                                 args = json.loads(tc.arguments) if isinstance(tc.arguments, str) and tc.arguments.strip() else {}
                                 missing = self._missing_required_tool_args(tc.name, args)
                                 if missing:
@@ -2015,6 +2081,10 @@ class ModelRunner:
                                             result = f"[错误: {error_msg}]"
                                             if self.tier == "expert":
                                                 expert_errors.append(f"{tc.name}: {mcp_result.error}")
+                                        # 审批结果回传：让模型明确知道该工具经过了用户审批
+                                        # （gate.check 的 reason 以"用户批准/用户拒绝"开头表示走了用户审批）
+                                        if reason and reason.startswith("用户批准"):
+                                            result = f"[用户审批已通过] {reason}\n{result}"
                             except Exception as e:
                                 result = f"[工具 {tc.name} 执行失败: {e}]"
                                 if self.tier == "expert":
@@ -2087,6 +2157,8 @@ class ModelRunner:
                 if attempt < self.GENERATE_RETRIES - 1:
                     await asyncio.sleep(self.GENERATE_RETRY_DELAY * (2 ** attempt))
                 else:
+                    self._status = "error"
+                    self._status_detail = str(e)[:300]
                     logger.error(f"[ModelRunner] {self.model_id} 工具调用失败: {e}")
 
         if last_error and "503" in str(last_error):
@@ -2232,7 +2304,7 @@ class ModelRunnerManager:
         self._message_event = asyncio.Event()  # 消息到达唤醒
         self._orphan_event = asyncio.Event()  # 孤儿检查唤醒
 
-        logger.info(
+        logger.debug(
             f"[ModelRunnerManager] 初始化: session={self.session_id[:8]}"
         )
 
@@ -2421,6 +2493,12 @@ class ModelRunnerManager:
                 "role": r.identity.role,
                 "round": len(r._thinker.history_thoughts) if r._thinker and r._thinker.history_thoughts else 0,
                 "running": r._running,
+                "status": r._status,
+                "status_detail": r._status_detail,
+                "max_turns": r.MAX_CHAT_TOOL_TURNS,
+                "react_loop": r._react_loop,
+                "think_loop": r._think_loop_state,
+                "last_thought": (r._thinker.history_thoughts[-1] if r._thinker and r._thinker.history_thoughts else "")[:200],
                 "task": r._task_description[:100],
                 "started_at": r._started_at,
                 "supervisor": r.supervisor,
@@ -2476,7 +2554,7 @@ class ModelRunnerManager:
             self._listen_loop(),
             name=f"runner_mgr_{self.session_id[:8]}",
         )
-        logger.info("[ModelRunnerManager] 开始监听 probe 命令 (事件驱动)")
+        logger.debug("[ModelRunnerManager] 开始监听 probe 命令 (事件驱动)")
 
     async def stop_listening(self) -> None:
         """停止监听"""
@@ -2713,6 +2791,10 @@ _runner_managers: Dict[str, ModelRunnerManager] = {}
 _runner_managers_lock = threading.RLock()
 
 
+# 每个 session 最近一次组装的事件记忆上下文（供 api_stream 发 message 时附带给前端展开栏）
+_session_memory_context: Dict[str, str] = {}
+
+
 def get_runner_manager(
     session_id: str,
     blackboard: Any = None,
@@ -2727,6 +2809,17 @@ def get_runner_manager(
                 blackboard=blackboard,
                 turn_context=turn_context,
             )
+        else:
+            # 复用已存在的 manager（可能上一次 remove 尚未完成）：
+            # 必须更新到本轮新黑板/上下文，否则 runner 会读到上一轮的旧黑板
+            # （对话历史、expert_findings、observations 全部过期）。
+            mgr = _runner_managers[session_id]
+            if blackboard is not None and mgr.blackboard is not blackboard:
+                mgr.blackboard = blackboard
+                for r in list(mgr._runners.values()):
+                    r.blackboard = blackboard
+            if turn_context is not None:
+                mgr.turn_context = turn_context
         return _runner_managers[session_id]
 
 

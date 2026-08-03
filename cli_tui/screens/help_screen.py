@@ -23,7 +23,6 @@ HELP_TEXT = """
   /thinking, /th    切换思考过程显示
   /clear, /c        清空显示
   /mode <模式>      切换执行模式 (plan / edit / yolo / control)
-  /notools, /nt     临时禁用AI工具（纯聊天，减少token消耗）
   /config           查看或修改配置
   /stop             停止当前思考
   /exit, /q, /quit  退出

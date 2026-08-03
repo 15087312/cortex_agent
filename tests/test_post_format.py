@@ -6,6 +6,7 @@
 import pytest
 import asyncio
 from dataclasses import dataclass
+from unittest.mock import patch
 
 
 # ── Mock Session（拦截 POST 请求） ──
@@ -79,11 +80,14 @@ class TestLargeModelPostFormat:
         from infra.model.large_model_client import LargeModelClient
         from config.settings import settings
 
-        data = await _capture_generate(LargeModelClient, settings.LARGE_MODEL_API_URL, "large", "orchestrator")
-        sys_content = data["body"]["messages"][0]["content"]
+        # 隔离用户的自定义人设/覆盖，保证断言默认人格（不受 ~/.cortex 配置影响）
+        with patch.object(type(settings), 'get_persona', return_value=""), \
+             patch.object(type(settings), 'get_system_override', return_value=""):
+            data = await _capture_generate(LargeModelClient, settings.LARGE_MODEL_API_URL, "large", "orchestrator")
+            sys_content = data["body"]["messages"][0]["content"]
 
-        assert "系统主模型" in sys_content, "缺少层级身份声明"
-        assert "用户与系统之间的唯一桥梁" in sys_content, "缺少 orchestrator 人格"
+            assert "系统主模型" in sys_content, "缺少层级身份声明"
+            assert "用户与系统之间的唯一桥梁" in sys_content, "缺少 orchestrator 人格"
 
     @pytest.mark.asyncio
     async def test_system_prompt_contains_safety_rules(self):

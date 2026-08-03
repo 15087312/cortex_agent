@@ -5,7 +5,7 @@ OCR 检测器 — 屏幕文字识别
 """
 import time
 import threading
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 import numpy as np
 
@@ -42,7 +42,7 @@ class OCRDetector(PerceptionDetector):
 
     def is_available(self) -> bool:
         try:
-            from rapidocr_onnxruntime import RapidOCR
+            from rapidocr_onnxruntime import RapidOCR  # noqa: F401
             return True
         except ImportError:
             return False
@@ -82,7 +82,7 @@ class OCRDetector(PerceptionDetector):
                 return
             self._last_trigger_time = now
 
-        logger.info(f"触发 OCR: change_ratio={change_ratio:.0%}")
+        logger.debug(f"触发 OCR: change_ratio={change_ratio:.0%}")
         threading.Thread(
             target=self._run_ocr,
             daemon=True,

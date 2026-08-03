@@ -15,7 +15,7 @@ Skill 是提示词说明书 + 可选工具权限约束。
   - tool_rules: 可选工具权限 {allow_tools, block_tools, block_tags, restrict_to}
 """
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 
 @dataclass
@@ -35,7 +35,7 @@ class Skill:
         parts = [f"══════ 技能: {self.name} ══════"]
         if self.description:
             parts.append(self.description)
-        parts.append(f"══════ 技能结束 ══════")
+        parts.append("══════ 技能结束 ══════")
         return "\n\n".join(parts)
 
     def to_suggestion_block(self) -> str:

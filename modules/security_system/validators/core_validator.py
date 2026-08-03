@@ -2,7 +2,7 @@
 核心校验器 - L0级，永远开启不可关闭
 """
 from typing import Tuple
-from ..security_level import FORBIDDEN_SYSTEM_COMMANDS, PROTECTED_CORE_MODULES, FORBIDDEN_CODE_PATTERNS, _check_code_with_ast
+from ..security_level import FORBIDDEN_SYSTEM_COMMANDS, FORBIDDEN_CODE_PATTERNS, _check_code_with_ast
 from utils.logger import setup_logger
 
 logger = setup_logger("core_validator")

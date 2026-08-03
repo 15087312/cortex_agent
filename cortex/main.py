@@ -188,15 +188,13 @@ def main():
             pass
     threading.Thread(target=_drain_stderr, args=(backend_proc,), daemon=True).start()
 
-    # 清理函数
+    # 清理函数（静默停止，不打印多余提示）
     def cleanup(signum=None, frame=None):
-        print("\n⏹ 停止后端...")
         backend_proc.terminate()
         try:
             backend_proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             backend_proc.kill()
-        print("✓ 已停止")
         sys.exit(0)
 
     signal.signal(signal.SIGINT, cleanup)
@@ -235,7 +233,6 @@ def main():
         )
 
         def qt_cleanup(signum=None, frame=None):
-            print("\n⏹ 停止...")
             front_server.terminate()
             desktop_proc.terminate()
             cleanup()
@@ -250,7 +247,7 @@ def main():
         print(f"\n📡 API: {api_url}")
         print(f"   健康检查: {api_url}/health")
         print(f"   指标:     {api_url}/metrics")
-        print(f"   Ctrl+C 停止\n")
+        print("   Ctrl+C 停止\n")
         try:
             backend_proc.wait()
         except KeyboardInterrupt:

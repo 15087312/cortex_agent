@@ -82,8 +82,6 @@ class DatabaseManager:
         """创建表（幂等：重复调用自动跳过）"""
         if self._tables_created:
             return
-        from . import models
-        from . import chat_models  # 会话持久化表
         Base.metadata.create_all(self._engine)
         self._migrate()
         self._tables_created = True
@@ -133,7 +131,7 @@ class DatabaseManager:
         try:
             yield session
             session.commit()
-        except Exception as e:
+        except Exception:
             session.rollback()
             raise
         finally:

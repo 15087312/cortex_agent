@@ -54,7 +54,6 @@ register("/thinking", ["/th"], "切换思考过程显示", "thinking")
 register("/stop", ["/pause"], "停止当前思考处理", "stop")
 register("/mode", ["/m"], "切换执行模式 (/mode plan/edit/yolo)", "mode")
 register("/config", ["/cfg"], "查看或修改配置 (用法: /config 或 /config KEY VALUE)", "config")
-register("/notools", ["/nt"], "临时禁用/启用AI工具（纯聊天模式，减少token消耗）", "notools")
 
 
 def find_command(text: str) -> Optional[Command]:

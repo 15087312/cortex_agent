@@ -5,7 +5,6 @@ MCP Server 生命周期管理器
 """
 from __future__ import annotations
 
-import asyncio
 from typing import Dict, List, Optional
 from .transport import MCPStdioTransport, MCPSseTransport, MCPToolDef
 from .types import MCPServerConfig

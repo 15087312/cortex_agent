@@ -119,7 +119,10 @@ class TestPerceptionPool:
     def test_empty_snapshot_returns_empty_fragment(self, pool):
         frag = pool.snapshot()
         assert frag.source == "perception"
-        assert frag.content == ""
+        # 空池给出「无感知数据」提示（给 orchestrator，避免模型误判系统异常）
+        assert frag.content != ""
+        assert "无感知数据" in frag.content
+        assert frag.target_roles == ("orchestrator",)
 
     def test_add_and_snapshot(self, pool):
         pool.add("screen.window", "window", "当前窗口: Chrome - GitHub")
@@ -141,7 +144,8 @@ class TestPerceptionPool:
         pool.add("screen.window", "window", "即将过期的窗口")
         time.sleep(0.02)
         frag = pool.snapshot()
-        assert frag.content == ""  # TTL expired
+        # TTL 过期后池为空 → 返回「无感知数据」提示（非空内容）
+        assert "无感知数据" in frag.content
 
     def test_max_items_trim(self, pool):
         for i in range(15):
@@ -180,12 +184,13 @@ class TestPerceptionPool:
         pool.add("screen.window", "window", "窗口1")
         pool.clear()
         assert len(pool._items) == 0
-        assert pool.snapshot().content == ""
+        # clear 后空池 → 返回「无感知数据」提示
+        assert "无感知数据" in pool.snapshot().content
 
     def test_snapshot_target_roles(self, pool):
         pool.add("screen.window", "window", "窗口信息")
         frag = pool.snapshot()
-        assert frag.target_roles == ("large",)
+        assert frag.target_roles == ("orchestrator",)
         assert frag.priority == 5
         assert frag.ttl_turns == 1
 

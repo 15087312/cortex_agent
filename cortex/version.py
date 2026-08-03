@@ -36,7 +36,6 @@ def _get_version_name(version: str) -> str:
 # 从 VERSION 文件读取
 __version__ = _read_version_file()
 __version_name__ = _get_version_name(__version__)
-import datetime
 __build_date__ = datetime.date.today().isoformat()
 
 # 版本组件解析

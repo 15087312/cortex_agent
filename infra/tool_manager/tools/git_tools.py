@@ -2,7 +2,6 @@
 Git 工具包 — git_status, git_add, git_commit, git_push, git_pull, git_diff
 """
 import subprocess
-import os
 from typing import Dict, Any, Optional
 
 from infra.tool_manager.tool_registry import ToolRegistry

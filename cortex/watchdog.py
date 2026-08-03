@@ -19,22 +19,6 @@ _ENV_KEY = "CORTEX_PARENT_PID"
 _DEFAULT_INTERVAL = 2.0
 
 _started = False
-_logger = None
-
-
-def _log(msg: str) -> None:
-    global _logger
-    if _logger is None:
-        try:
-            from utils.logger import setup_logger
-            _logger = setup_logger("orphan_watchdog")
-        except Exception:
-            _logger = False
-    if _logger:
-        try:
-            _logger.info(msg)
-        except Exception:
-            pass
 
 
 def _parent_alive(pid: int) -> bool:
@@ -70,7 +54,7 @@ def enable(interval: float = _DEFAULT_INTERVAL) -> bool:
         while True:
             time.sleep(interval)
             if not _parent_alive(ppid):
-                _log(f"父进程 {ppid} 已退出，自动退出以避免残留")
+                # 静默退出，不打印（避免 Ctrl+C 停止时多出日志）
                 os._exit(0)
 
     threading.Thread(target=_watch, daemon=True, name="orphan-watchdog").start()

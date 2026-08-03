@@ -71,7 +71,7 @@ def _capture_screen() -> np.ndarray | None:
         else:
             # numpy-only: 用 PIL 兜底
             from PIL import Image
-            buf = io.BytesIO(img_data.tobytes())
+            io.BytesIO(img_data.tobytes())
             pil_img = Image.open(io.BytesIO(open(tmp_path, "rb").read()))
             return np.array(pil_img)[:, :, ::-1]  # RGB → BGR
     except Exception:

@@ -203,7 +203,6 @@ class PyAutoGUIController(HardwareInputController):
             return None
         try:
             import io
-            from PIL import Image
             
             if region:
                 img = self._controller.screenshot(region=region)

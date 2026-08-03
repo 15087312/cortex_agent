@@ -7,7 +7,6 @@
   - Windows/Linux (CUDA):   transformers + CUDA
   - CPU 兜底:              transformers + float32
 """
-import asyncio
 import base64
 import io
 import sys
@@ -16,7 +15,7 @@ import time
 import json
 import random
 from typing import Dict, Any, List, Optional, Tuple
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
 from utils.logger import setup_logger
 
 logger = setup_logger("image_analyzer")
@@ -123,7 +122,7 @@ class ImageAnalyzer:
         # 1) Apple Silicon: mlx-vlm
         if _IS_APPLE_SILICON:
             try:
-                from mlx_vlm import generate, load
+                from mlx_vlm import generate, load  # noqa: F401
                 logger.info("视觉后端: MLX-VLM (Apple Silicon - 本地优先)")
                 return "mlx_vlm"
             except ImportError:
@@ -131,15 +130,15 @@ class ImageAnalyzer:
 
         # 2) transformers + Qwen2-VL (CUDA/MPS/CPU - 本地优先)
         try:
-            from transformers import Qwen2VLForConditionalGeneration
-            from qwen_vl_utils import process_vision_info
+            from transformers import Qwen2VLForConditionalGeneration  # noqa: F401
+            from qwen_vl_utils import process_vision_info  # noqa: F401
             logger.info("视觉后端: transformers (本地模型 - 优先)")
             return "qwen_vl"
         except ImportError:
             pass
 
         try:
-            import llava
+            import llava  # noqa: F401
             logger.info("视觉后端: LLaVA (本地模型)")
             return "llava"
         except ImportError:
@@ -165,7 +164,6 @@ class ImageAnalyzer:
             model_name = self.local_model or settings.effective_vision_mlx_model
 
             # 检查缓存
-            cache_key = f"mlx_vlm:{model_name}"
             if _MODEL_CACHE.get("mlx_vlm") and _MODEL_CACHE["mlx_vlm"].get("name") == model_name:
                 logger.info(f"MLX-VLM 从缓存加载: {model_name}")
                 cached = _MODEL_CACHE["mlx_vlm"]
@@ -428,7 +426,7 @@ class ImageAnalyzer:
             temp_path = f.name
         
         try:
-            image = Image.open(temp_path)
+            Image.open(temp_path)
             
             messages = [
                 {
@@ -541,7 +539,7 @@ class ImageAnalyzer:
     async def _detect_objects(self, image_data: bytes) -> List[Dict[str, Any]]:
         """目标检测（简化版）"""
         try:
-            image = Image.open(io.BytesIO(image_data))
+            Image.open(io.BytesIO(image_data))
             return [
                 {"label": "物体", "confidence": 0.9, "bbox": [0, 0, 100, 100]}
             ]
@@ -551,7 +549,7 @@ class ImageAnalyzer:
     async def _classify_scene(self, image_data: bytes) -> str:
         """场景分类"""
         try:
-            image = Image.open(io.BytesIO(image_data))
+            Image.open(io.BytesIO(image_data))
             return "场景"
         except Exception:
             return "unknown"
@@ -638,7 +636,8 @@ class ImageAnalyzer:
         element_types: List[str]
     ) -> Dict[str, Any]:
         """使用Qwen-VL检测UI元素"""
-        prompt = """分析这张截图，找出所有UI元素。对于每个元素，请输出：
+        prompt = """你是纯视觉描述模块，只客观描述屏幕上实际可见的 UI 元素，不做任何评价、不给任何操作建议或引导。
+分析这张截图，找出所有UI元素。对于每个元素，请输出：
 1. 类型（button/input/icon/link/text/image/container）
 2. 文字内容（如果有）
 3. 精确位置 [x1,y1,x2,y2] 左上角到右下角
@@ -677,7 +676,8 @@ class ImageAnalyzer:
             http_client=http_client,
         )
 
-        prompt = """分析这张截图，找出所有UI元素。输出JSON格式：
+        prompt = """你是纯视觉描述模块，只客观描述屏幕上实际可见的 UI 元素，不做任何评价、不给任何操作建议或引导。
+分析这张截图，找出所有UI元素。输出JSON格式：
 {"elements": [
   {"type":"button","text":"确定","bounds":[100,200,180,230],"colors":{"bg":"#2196F3","text":"#FFFFFF"}},
   {"type":"input","text":"","bounds":[50,100,300,140],"colors":{"bg":"#FFFFFF","border":"#CCCCCC"}}

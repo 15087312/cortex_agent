@@ -14,12 +14,12 @@ DepthRecall — 深度回忆调度模块
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
-from backend.memory.causal_graph import CausalGraph, CausalNode, CausalEdge
-from backend.memory.causal_tree import CausalTree, CausalChain, CausalTreeResult
+from backend.memory.causal_graph import CausalGraph, CausalNode
+from backend.memory.causal_tree import CausalTree, CausalChain
 from backend.memory.event_store import EventStore, MemoryEvent
-from backend.memory.event_retrieval import EventRetrieval, SCORE_WEIGHTS
+from backend.memory.event_retrieval import EventRetrieval
 
 from backend.utils.logger import get_logger
 logger = get_logger(__name__)
@@ -154,12 +154,12 @@ class DeepRecallResult:
             lines.append(f"  {direction} {i}: {' → '.join(labels)} (置信度 {chain.confidence:.0%})")
 
         if self.supporting_events:
-            lines.append(f"【佐证事件】")
+            lines.append("【佐证事件】")
             for ev in self.supporting_events[:max_events]:
                 lines.append(f"  · {ev.fact} (重要性 {ev.importance:.0%})")
 
         if self.counter_examples:
-            lines.append(f"【反例 / 例外】")
+            lines.append("【反例 / 例外】")
             for ev in self.counter_examples[:3]:
                 lines.append(f"  · {ev.fact}")
 
@@ -210,7 +210,7 @@ class DepthRecallScheduler:
         if cache_key in self._hot_cache:
             result, ts = self._hot_cache[cache_key]
             if time.time() - ts < self._hot_cache_ttl:
-                logger.debug(f"[DepthRecall] 命中热缓存")
+                logger.debug("[DepthRecall] 命中热缓存")
                 return result
 
         result = DeepRecallResult(intent=classify_intent(query))
@@ -529,7 +529,7 @@ class DepthRecallScheduler:
                 new_node = CausalNode(
                     label=factor,
                     node_type="condition",
-                    description=f"从深度回忆中发现的共享因果因子",
+                    description="从深度回忆中发现的共享因果因子",
                     keywords=[factor],
                     importance=0.5,
                     confidence=0.3,

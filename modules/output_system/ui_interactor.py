@@ -9,7 +9,7 @@ UI交互器 - 基于图像分析的UI元素检测和点击
 """
 import time
 import random
-from typing import Dict, Any, List, Optional, Tuple
+from typing import List, Optional, Tuple
 from dataclasses import dataclass
 from utils.logger import setup_logger
 
@@ -97,7 +97,6 @@ class UIInteractor:
         try:
             import pyautogui
             import io
-            from PIL import Image
             
             if region:
                 img = pyautogui.screenshot(region=region)
@@ -244,7 +243,7 @@ class UIInteractor:
         
         return ClickResult(
             success=success,
-            element=f"position",
+            element="position",
             x=x, y=y,
             mode="real",
             message="" if success else "点击失败"

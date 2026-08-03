@@ -10,7 +10,6 @@
   recall_guidance, tool_download, probe_create, view_sub_session
 """
 import asyncio
-import uuid
 from typing import Dict, Any
 
 from infra.tool_manager.tool_registry import ToolRegistry
@@ -26,11 +25,6 @@ _session_guidance: Dict[tuple, Dict[str, str]] = {}
 def set_session_guidance(session_id: str, guidance: Dict[str, str], model_id: str = "large_primary") -> None:
     """编排器调用，写入当前会话的引导文本"""
     _session_guidance[(model_id, session_id)] = guidance
-
-
-def clear_session_guidance(session_id: str, model_id: str = "large_primary") -> None:
-    """会话结束时清理"""
-    _session_guidance.pop((model_id, session_id), None)
 
 
 # ============================================================================
@@ -111,7 +105,6 @@ def request_intermediate_response(
 ) -> Dict[str, Any]:
     """请求中途回复 — 大模型可以在专家工作时先回复用户"""
     try:
-        session_id = kwargs.get("_session_id", "")
         caller_role = kwargs.get("_caller_role", "large")
         intermediate_text = ""
 

@@ -18,7 +18,6 @@ const CORTEX_DEPENDENT_PATHS = [
 const routes = [
   { path: '/', redirect: '/chat' },
   { path: '/chat', name: 'Chat', component: () => import('@/pages/Chat.vue') },
-  { path: '/cortex', name: 'Cortex', component: () => import('@/pages/CortexChat.vue') },
   { path: '/dashboard', name: 'Dashboard', component: () => import('@/pages/Dashboard.vue') },
   { path: '/modules', name: 'Modules', component: () => import('@/pages/Modules.vue') },
   { path: '/memory', name: 'Memory', component: () => import('@/pages/Memory.vue') },
@@ -40,7 +39,7 @@ const router = createRouter({
 /**
  * 全局前置守卫：对依赖 Cortex 后端（8080）的页面做健康检查
  *
- * - /chat（对话页本身可作为降级入口）和 /cortex（连 Cortex 8000）不检查
+ * - /chat（对话页本身可作为降级入口）不检查
  * - 健康检查超时 3 秒，失败则重定向到 /chat 并 toast 提示
  */
 router.beforeEach(async (to, from, next) => {

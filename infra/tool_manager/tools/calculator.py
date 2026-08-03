@@ -3,7 +3,7 @@
 """
 import math
 import operator
-from typing import Union, List
+from typing import Union
 from infra.tool_manager.tool_registry import ToolRegistry
 
 
@@ -34,7 +34,6 @@ def calculate(a: Union[int, float], op: str, b: Union[int, float]) -> str:
         if result == int(result):
             result = int(result)
         
-        _get_memory().notebook_write_result(f"{a} {op} {b}", result)
         return f"{a} {op} {b} = {result}"
     except ZeroDivisionError:
         return "错误: 除数不能为零"

@@ -1,7 +1,7 @@
 """思考编排端口的默认适配器。"""
 from __future__ import annotations
 
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, Tuple
 
 from utils.logger import setup_logger
 

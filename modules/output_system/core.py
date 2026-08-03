@@ -140,7 +140,6 @@ class OutputSystem:
         language: str = "",
         user_input: str = ""
     ) -> str:
-        input_context = {"user_input": user_input}
         passed, validated = self.validate(code, "code")
         if not passed:
             logger.warning(f"[安全拦截] 代码验证失败: {validated}")

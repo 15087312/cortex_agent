@@ -13,9 +13,10 @@ import time
 import uuid
 import hmac
 import asyncio
+from typing import Optional
 
 from api.errors import (
-    ErrorCode, ErrorResponse, ErrorDetail, error_response, AppError,
+    ErrorCode, error_response, AppError,
 )
 from cortex.version import __version__ as _CORTEX_VERSION
 from cortex.watchdog import enable as _enable_orphan_watchdog
@@ -74,7 +75,6 @@ async def lifespan(app: FastAPI):
         logger.debug(f"屏幕权限检测跳过: {e}")
 
     # 预加载 Embedding 模型（阻塞启动，加载失败则启动失败）
-    import sys
     from modules.memory.embedding import EmbeddingEngine
     eng = EmbeddingEngine.get_instance()
     print("[DEBUG] 开始加载 Embedding 模型...", flush=True)
@@ -84,29 +84,16 @@ async def lifespan(app: FastAPI):
     logger.info(f"✓ Embedding 模型已预加载 (dim={eng.dim})")
     print("[DEBUG] 继续后续初始化...", flush=True)
 
-    # 预加载 MLX-VLM 视觉模型（后台加载，不阻塞启动）
-    if settings.VISION_BACKEND in ("mlx", "auto"):
-        import threading
-        def _preload_vision():
-            try:
-                from utils.logger import setup_logger
-                vision_logger = setup_logger("vision_preload")
-                vision_logger.info("开始预加载 MLX-VLM 视觉模型...")
-                from infra.data_process.core.image_analyzer import ImageAnalyzer
-                analyzer = ImageAnalyzer(model_type="auto")
-                # 同步加载（在后台线程中）
-                import asyncio
-                loop = asyncio.new_event_loop()
-                loop.run_until_complete(analyzer.initialize())
-                loop.close()
-                vision_logger.info(f"✓ MLX-VLM 视觉模型预加载完成 (type={analyzer.model_type})")
-            except Exception as e:
-                from utils.logger import setup_logger
-                vision_logger = setup_logger("vision_preload")
-                vision_logger.warning(f"MLX-VLM 预加载失败 (非致命): {e}")
-
-        threading.Thread(target=_preload_vision, daemon=True, name="vision-preload").start()
-        logger.info("✓ 视觉模型预加载已启动（后台）")
+    # 预加载视觉模型（同步加载，先加载再启动，避免运行中首次调用才加载）
+    # auto/mlx/transformers/api 均为真实视觉后端；mock 为模拟，无需加载
+    if settings.VISION_BACKEND and settings.VISION_BACKEND.lower() != "mock":
+        try:
+            from infra.data_process.core.image_analyzer import ImageAnalyzer
+            analyzer = ImageAnalyzer(model_type="auto")
+            await analyzer.initialize()
+            logger.info(f"✓ 视觉模型预加载完成 (type={analyzer.model_type})")
+        except Exception as e:
+            logger.warning(f"视觉模型预加载失败 (降级，运行中按需加载): {e}")
 
     # 初始化模型调度管理器
     try:
@@ -325,10 +312,24 @@ _AUTH_WHITELIST = {
     # 会话端点：前端无需录入 key 即可建会话/查询状态（低风险写操作，WS 不走 HTTP 中间件）
     "/stream/session", "/stream/status",
     "/stream/sessions", "/stream/sessions/",
+    "/management/sessions", "/management/sessions/",
     "/config", "/config/",
+    # 只读状态/列表接口：前端各页面 init 即调用，无 key 也可浏览
+    "/management/dashboard",
+    "/management/modules",
+    "/management/thinking",
+    "/management/database",
+    "/management/info-process",
+    "/management/models",
+    "/management/perception",
+    "/attention/status",
+    "/tools", "/tools/", "/tools/events",
+    "/security/status", "/security/audit",
 }
 _AUTH_WHITELIST_PREFIXES = ("/management/causal-graph", "/management/memory",
-                             "/stream/session/", "/stream/sessions/", "/config/",
+                             "/stream/session/", "/stream/sessions/",
+                             "/management/sessions/", "/config/",
+                             "/tools/info/",
                              "/audio")  # TTS 音频供前端 <audio> 无鉴权播放
 
 
@@ -576,6 +577,13 @@ async def health_check():
 
 class PutConfigRequest(BaseModel):
     value: str | int | float | bool
+    system_override: Optional[str] = None  # 高级设置：完整系统提示词覆盖（可选）
+
+
+class MemoryLibRequest(BaseModel):
+    name: str = ""        # 新建 / 切换时用的记忆库名
+    old_name: str = ""    # 重命名：旧名
+    new_name: str = ""    # 重命名：新名
 
 
 @app.get("/config")
@@ -587,6 +595,93 @@ async def get_config():
         if val is not None:
             config_data[key] = val
     return {"data": config_data}
+
+
+@app.get("/config/personas")
+async def get_personas():
+    """返回所有角色的人设：默认 / 自定义 / 当前生效（供设置页编辑）"""
+    from config.prompts.loader import get_loader
+    roles = (get_loader().load("roles") or {}).get("roles") or {}
+    result = []
+    for key, data in roles.items():
+        custom = settings.get_persona(key)
+        result.append({
+            "role": key,
+            "name": data.get("name", key),
+            "tier": data.get("tier", ""),
+            "default": data.get("personality", ""),
+            "custom": custom,
+            "system_override": settings.get_system_override(key),
+        })
+    return {"success": True, "data": {"personas": result}}
+
+
+# ── 记忆库管理（多记忆库切换 + 命名）──
+
+@app.get("/config/memory-libs")
+async def get_memory_libs():
+    """列出所有记忆库（含当前库与事件数）"""
+    data = settings.get_memory_libs()
+    current = data.get("current", "")
+    libs = []
+    for name, lib in (data.get("libs", {}) or {}).items():
+        libs.append({
+            "name": name,
+            "current": name == current,
+            "event_count": settings.memory_lib_event_count(name),
+        })
+    return {"success": True, "data": {"current": current, "libs": libs}}
+
+
+@app.post("/config/memory-libs")
+async def create_memory_lib(body: MemoryLibRequest):
+    """创建并命名一个新记忆库，并切换过去"""
+    name = (body.name or "").strip()
+    if not name:
+        return JSONResponse(status_code=422, content=error_response(ErrorCode.VALIDATION_ERROR, "记忆库名不能为空").model_dump())
+    lib = settings.create_memory_lib(name)
+    if lib is None:
+        return JSONResponse(status_code=409, content=error_response(ErrorCode.CONFLICT, f"记忆库 '{name}' 已存在").model_dump())
+    return {"success": True, "data": {"name": name, "lib": lib}}
+
+
+@app.put("/config/memory-libs/current")
+async def switch_memory_lib(body: MemoryLibRequest):
+    """切换当前记忆库"""
+    name = (body.name or "").strip()
+    if not settings.switch_memory_lib(name):
+        return JSONResponse(status_code=404, content=error_response(ErrorCode.NOT_FOUND, f"记忆库 '{name}' 不存在").model_dump())
+    return {"success": True, "data": {"current": name}}
+
+
+@app.put("/config/memory-libs/rename")
+async def rename_memory_lib(body: MemoryLibRequest):
+    """重命名记忆库"""
+    old = (body.old_name or "").strip()
+    new = (body.new_name or "").strip()
+    if not old or not new:
+        return JSONResponse(status_code=422, content=error_response(ErrorCode.VALIDATION_ERROR, "需提供 old_name 与 new_name").model_dump())
+    if not settings.rename_memory_lib(old, new):
+        return JSONResponse(status_code=409, content=error_response(ErrorCode.CONFLICT, "重命名失败（记忆库不存在或名称冲突）").model_dump())
+    return {"success": True, "data": {"old_name": old, "new_name": new}}
+
+
+@app.put("/config/persona/{role}")
+async def update_persona(role: str, body: PutConfigRequest):
+    """更新指定角色的人设提示词（value 为空则恢复默认；system_override 可选）"""
+    settings.set_persona(role, str(body.value or ""))
+    if body.system_override is not None:
+        settings.set_system_override(role, body.system_override)
+    # set_* 内部已写入 ~/.cortex/personas.yaml，重启后仍生效
+    logger.info(f"人设已更新: {role}")
+    return {
+        "success": True,
+        "data": {
+            "role": role,
+            "custom": settings.get_persona(role),
+            "system_override": settings.get_system_override(role),
+        },
+    }
 
 
 @app.get("/config/api-key")
@@ -605,16 +700,6 @@ async def get_api_key(request: Request):
     if settings.APP_ENV == "production" and not is_loopback:
         return {"success": True, "data": {"configured": bool(_SIMPLE_API_KEY), "api_key": ""}}
     return {"success": True, "data": {"configured": bool(_SIMPLE_API_KEY), "api_key": _SIMPLE_API_KEY}}
-
-
-@app.post("/config/toggle-companion-mode")
-async def toggle_companion_mode():
-    """切换陪伴模式（沿用 API 端点，内部改为激活 companion skill）"""
-    from modules.thinking.skills.manager import skill_manager
-    companion = skill_manager.get_skill("companion")
-    if companion:
-        return {"data": {"skill": "companion", "name": companion.name, "message": "Companion skill ready"}}
-    return {"data": {"message": "Companion skill not found"}}
 
 
 @app.put("/config/{key}")
@@ -648,6 +733,9 @@ async def update_config(key: str, body: PutConfigRequest):
     try:
         old_value = getattr(settings, key_upper, None)
         object.__setattr__(settings, key_upper, validated)
+        # CORTEX_MODE 需要同步写回环境变量，保证 chat_gateway._resolve_mode 生效
+        if key_upper == "CORTEX_MODE":
+            os.environ["CORTEX_MODE"] = str(validated)
         logger.info(f"配置已更新: {key_upper} = {validated} (旧值: {old_value})")
         return {
             "success": True,

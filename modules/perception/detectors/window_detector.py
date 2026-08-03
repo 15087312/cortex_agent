@@ -6,7 +6,6 @@ macOS: pyobjc (NSWorkspace + Accessibility API)
 检测窗口切换、活跃应用变化。
 """
 import platform
-import time
 from typing import Any, Dict, List, Optional
 
 import numpy as np

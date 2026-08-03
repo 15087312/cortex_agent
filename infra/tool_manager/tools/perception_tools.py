@@ -5,11 +5,8 @@
 - understand_screen: 截图 + OCR + LLM 抽象理解
 - detect_ui_elements: 无障碍 API 检测 UI 元素
 """
-import asyncio
 import base64
-import io
 import os
-import time
 from typing import Dict, Any
 
 from infra.tool_manager.tool_registry import ToolRegistry
@@ -130,7 +127,6 @@ def _get_active_window() -> str:
     if sys.platform == "win32":
         try:
             import ctypes
-            from ctypes import wintypes
             user32 = ctypes.windll.user32
             hwnd = user32.GetForegroundWindow()
             length = user32.GetWindowTextLengthW(hwnd)
@@ -171,9 +167,13 @@ async def _vision_understand(
 
         analyzer = await get_default_analyzer()
 
-        prompt = "请用一句话概括当前屏幕：什么应用、主要界面。"
+        prompt = (
+            "你是纯视觉描述模块，只负责客观描述屏幕上实际可见的视觉内容，你只是用于描述视觉效果，不具备人格。"
+            "不给任何操作建议或引导（不说'你应该…'、不指导下一步、不提醒等待）。"
+            "请用一句话客观概括当前屏幕：什么应用、主要界面、可见的关键元素。"
+        )
         if focus:
-            prompt += f" 重点关注：{focus}"
+            prompt += f" 重点描述：{focus}"
 
         logger.info("[视觉理解] 开始分析图像...")
         start = time.time()

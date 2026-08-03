@@ -73,7 +73,8 @@ export function parseMarkdownSegments(text) {
 
     // ── HTML 块 ──
     if (token.type === 'html_block') {
-      rawSegments.push({ type: 'text', html: token.content })
+      // html:false 下通常不会出现该 token，但保守起见转义，避免 XSS
+      rawSegments.push({ type: 'text', html: escapeHtml(token.content) })
       continue
     }
 

@@ -2,7 +2,7 @@
 安全级别与核心规则定义
 """
 from enum import Enum
-from typing import List, Set, Tuple
+from typing import Set, Tuple
 import ast
 
 

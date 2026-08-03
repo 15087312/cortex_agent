@@ -15,6 +15,7 @@ class PromptRequest:
     skill_id: Optional[str] = None
     tool_count: int = 0
     conscience_guidance: str = ""   # 良知系统内心独白
+    custom_system: str = ""         # 高级覆盖：完全控制 system prompt（非空则忽略其它组装）
 
     # 动态数据
     task: str = ""
@@ -32,6 +33,7 @@ class PromptRequest:
 
 @dataclass
 class RoleInfo:
+    key: str = ""
     name: str = ""
     tier: str = "expert"
     model_id: str = ""
@@ -71,6 +73,17 @@ class PromptComposer:
 
     def build_system(self, req: PromptRequest) -> str:
         """构建 system prompt"""
+        # 高级覆盖：完全控制系统提示词（优先于所有组装逻辑）
+        override = (req.custom_system or "").strip()
+        if not override:
+            try:
+                from config.settings import settings as _s
+                override = _s.get_system_override(req.role)
+            except Exception:
+                override = ""
+        if override:
+            return override
+
         parts = []
 
         # 良知引导（最顶部）— 作为 LLM 自己的回忆注入，而非独立身份
@@ -92,6 +105,7 @@ class PromptComposer:
         roles = self._roles.get("roles", {})
         data = roles.get(role_key, roles.get("orchestrator", {}))
         return RoleInfo(
+            key=role_key,
             name=data.get("name", "助手"),
             tier=data.get("tier", "expert"),
             model_id=data.get("model_id", ""),
@@ -105,7 +119,16 @@ class PromptComposer:
     def _build_identity(self, role: RoleInfo) -> str:
         tier = self._base.get("tiers", {}).get(role.tier, {})
         identity_text = tier.get("identity", "")
-        lines = [f"【人格】{role.personality}", f"【风格】{role.speaking_style}"]
+        personality = role.personality
+        # 自定义人设（按角色覆盖，设置页可配置，运行时生效）
+        try:
+            from config.settings import settings
+            custom = settings.get_persona(role.key)
+            if custom:
+                personality = custom
+        except Exception:
+            pass
+        lines = [f"【人格】{personality}", f"【风格】{role.speaking_style}"]
         if role.expertise:
             lines.append(f"【擅长】{'、'.join(role.expertise)}")
         if role.weaknesses:
@@ -224,8 +247,6 @@ class PromptComposer:
         values = base.get("values", {})
         core = values.get("core", [])
         behavior = values.get("behavior", [])
-        weights = values.get("weights", {})
-        name_cn = values.get("name_cn", {})
 
         parts = []
         if core:
@@ -237,14 +258,6 @@ class PromptComposer:
             lines = ["【行为准则 - 必须遵循】"]
             for i, r in enumerate(behavior, 1):
                 lines.append(f"{i}. {r}")
-            parts.append("\n".join(lines))
-        if weights:
-            lines = ["【价值观权重 - 参考执行】（1.0为最高）"]
-            sorted_w = sorted(weights.items(), key=lambda x: x[1], reverse=True)
-            for name, w in sorted_w:
-                cn = name_cn.get(name, name)
-                stars = "★" * int(w * 5)
-                lines.append(f"- {cn} ({name}): {stars} {w:.0%}")
             parts.append("\n".join(lines))
         return "\n\n".join(parts)
 

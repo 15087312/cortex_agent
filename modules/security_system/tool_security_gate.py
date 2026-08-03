@@ -271,7 +271,6 @@ class ToolSecurityGate:
         # ── 安全最高指示：Blackboard 有安全拦截信号时，拒绝所有写操作 ──
         if tool_name in _get_mutation_tools():
             try:
-                from modules.thinking.cognition.blackboard import CognitiveBlackboard
                 # 检查当前活跃的 Blackboard 是否有安全拦截
                 # 通过模块级变量获取（由编排层注入）
                 bb = getattr(self, '_active_blackboard', None)
@@ -486,7 +485,7 @@ class ToolSecurityGate:
         for rid, fut in list(self._pending_reviews.items()):
             if not fut.done() and rid.startswith(f"review_{tool_name}_"):
                 logger.info(f"[安全门控] {tool_name} 已有待审批 (id={rid})，跳过重复审批")
-                return True, f"同一工具已在审批中，等待上一请求结果"
+                return True, "同一工具已在审批中，等待上一请求结果"
 
         request_id = uuid.uuid4().hex[:12]
         request_id = f"review_{tool_name}_{request_id}"
@@ -499,9 +498,7 @@ class ToolSecurityGate:
             params_summary = params_summary[:300] + "..."
 
         # 确定风险等级和提示样式
-        is_high_risk = tool_name in _get_high_risk_tools()
-        risk_icon = "🔴" if is_high_risk else "🟠"
-        risk_level = "HIGH" if is_high_risk else "MEDIUM"
+        tool_name in _get_high_risk_tools()
 
         _emit_security_event(
             "等待用户审批",
@@ -512,20 +509,28 @@ class ToolSecurityGate:
 
         logger.info(f"[安全门控] {tool_name} 等待用户审批 (id={request_id})")
 
+        # 挂起全局计时器：审批等待期间所有思考/轮次超时暂停
+        from utils.suspension import Suspension
+        Suspension.suspend()
         try:
-            result = await asyncio.wait_for(future, timeout=USER_REVIEW_TIMEOUT)
+            # 用户审批无限等待（不超时自动拒绝）：由用户显式点击批准/拒绝决定
+            result = await asyncio.wait_for(future, timeout=None)
             approved = result.get("approved", False)
             reason = result.get("reason", "用户决定")
             if approved:
                 logger.info(f"[安全门控] {tool_name} 用户批准: {reason}")
-                return True, f"用户批准: {reason}"
+                # 避免"用户批准: 用户批准"重复（前端 reason 可能已带前缀）
+                msg = reason if str(reason).startswith("用户批准") else f"用户批准: {reason}"
+                return True, msg
             else:
                 logger.warning(f"[安全门控] {tool_name} 用户拒绝: {reason}")
-                return False, f"用户拒绝: {reason}"
+                msg = reason if str(reason).startswith("用户拒绝") else f"用户拒绝: {reason}"
+                return False, msg
         except asyncio.TimeoutError:
             logger.warning(f"[安全门控] {tool_name} 用户审查超时，自动拒绝")
             return False, "用户审查超时，自动拒绝"
         finally:
+            Suspension.resume()
             self._pending_reviews.pop(request_id, None)
 
     async def _check_llm_review(

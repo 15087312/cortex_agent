@@ -17,7 +17,7 @@
 
 import threading
 from dataclasses import dataclass
-from typing import Dict, Any, List, Optional
+from typing import Dict, Optional
 
 
 @dataclass
@@ -52,7 +52,7 @@ class ContextBudget:
         }
 
         # 工具描述: 根据工具数量动态调整
-        remaining = self.total_tokens - sum(result.values())
+        self.total_tokens - sum(result.values())
         if actual_tool_count is not None and actual_tool_count < 5:
             # 工具少: 减少工具描述空间，增加对话空间
             tool_desc_percent = self.tool_descriptions_min_percent

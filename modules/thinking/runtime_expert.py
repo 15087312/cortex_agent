@@ -28,6 +28,7 @@ from abc import ABC, abstractmethod
 from typing import Dict, Any, List, Optional
 
 from utils.logger import setup_logger
+from utils.suspension import Suspension, pausable_wait_for, effective_elapsed_since
 
 logger = setup_logger("runtime_expert")
 
@@ -432,12 +433,14 @@ class RuntimeExpert(ABC):
         tool_history = []
         iteration = 0
         current_response = None
-        start_time = time.time()
+        time.time()
+        start_mono = time.monotonic()
+        start_susp = Suspension.suspended_duration()
 
         try:
             while iteration < max_iterations:
-                # 检查总体超时（保留作为安全上限）
-                elapsed_total = time.time() - start_time
+                # 检查总体超时（保留作为安全上限；审批挂起时自动暂停计时）
+                elapsed_total = effective_elapsed_since(start_mono, start_susp)
                 if elapsed_total > timeout:
                     self.logger.warning(
                         f"[{self.identity.name}] 总体超时（{elapsed_total:.1f}s > {timeout}s）"
@@ -450,8 +453,10 @@ class RuntimeExpert(ABC):
                         'tool_calls': len(tool_history),
                     }
 
-                # 重新计时：每轮独立的超时检查
-                round_start_time = time.time()
+                # 重新计时：每轮独立的超时检查（挂起时暂停）
+                time.time()
+                round_start_mono = time.monotonic()
+                round_start_susp = Suspension.suspended_duration()
 
                 iteration += 1
                 self.logger.info(
@@ -467,7 +472,7 @@ class RuntimeExpert(ABC):
 
                 # 2️⃣ 调用模型生成响应（使用轮级超时）
                 try:
-                    round_elapsed = time.time() - round_start_time
+                    round_elapsed = effective_elapsed_since(round_start_mono, round_start_susp)
                     if round_elapsed > round_timeout:
                         self.logger.warning(
                             f"[{self.identity.name}] 本轮超时（{round_elapsed:.1f}s > {round_timeout}s）"
@@ -482,15 +487,15 @@ class RuntimeExpert(ABC):
 
                     # 计算该步骤的可用时间（轮级剩余时间 或 总体剩余时间，取较小值）
                     remaining_round_time = round_timeout - round_elapsed
-                    remaining_total_time = timeout - (time.time() - start_time)
+                    remaining_total_time = timeout - effective_elapsed_since(start_mono, start_susp)
                     remaining_time = min(remaining_round_time, remaining_total_time, 60)
 
-                    current_response = await asyncio.wait_for(
+                    current_response = await pausable_wait_for(
                         self._model_generate(prompt),
                         timeout=max(5, remaining_time),  # 确保至少给5s
                     )
                 except asyncio.TimeoutError:
-                    self.write_thought(f"[专家模型生成超时]", round_num=iteration)
+                    self.write_thought("[专家模型生成超时]", round_num=iteration)
                     return {
                         'success': False,
                         'error': f'Model generation timeout in iteration {iteration}',

@@ -5,7 +5,6 @@ VisionBackend — 截图 + 视觉模型分析
 适用于所有应用，包括 Chromium 和游戏。
 """
 import time
-from typing import Optional
 
 from modules.perception.screen.context import ScreenContext, UIElement
 from utils.logger import setup_logger
@@ -22,7 +21,7 @@ class VisionBackend:
     def is_available(self) -> bool:
         """检查视觉模型是否可用"""
         try:
-            from infra.data_process.core.image_analyzer import ImageAnalyzer
+            from infra.data_process.core.image_analyzer import ImageAnalyzer  # noqa: F401
             return True
         except ImportError:
             return False
@@ -44,10 +43,13 @@ class VisionBackend:
         # 默认 prompt
         if not prompt:
             prompt = (
-                "分析这个屏幕截图，列出所有可见的 UI 元素。"
+                "你是纯视觉描述模块，只负责客观描述屏幕上实际可见的 UI 元素。"
+                "不做任何评价（不评判好坏/美丑/设计/加载状态是否正常），"
+                "不给任何操作建议或引导（不说'你应该点击…'、不指导下一步）。"
+                "列出所有可见的 UI 元素。"
                 "对每个元素提供：类型(button/text/input/menu/tab/...)、"
                 "文字标签、大致位置(上/中/下/左/右)。"
-                "用 JSON 数组格式返回。"
+                "只报告你实际看到的，用 JSON 数组格式返回。"
             )
 
         # 调用视觉模型

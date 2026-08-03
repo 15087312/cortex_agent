@@ -6,24 +6,7 @@
 
 ## 运行模式配置
 
-### COMPANION_MODE（陪伴模式）
-
-```env
-COMPANION_MODE=False
-```
-
-**说明**：
-- `True`（陪伴模式）：
-  - ✅ ValuesExpert 启用（价值观指导）
-  - ✅ EmotionExpert 启用（情绪反馈）
-  - ✅ 感知系统规范检测启用
-  - ❌ 完整工具委托关闭
-
-- `False`（工作模式）：
-  - ❌ ValuesExpert 禁用（仅安全检测）
-  - ❌ EmotionExpert 禁用
-  - ✅ SecurityExpert 启用（项目规范硬编码）
-  - ✅ 完整工具委托启用
+> 注：`COMPANION_MODE`（陪伴模式）已移除，当前无此配置项。运行模式由 `EXECUTION_MODE`（plan/edit/yolo/control）与 `CORTEX_MODE`（agent/chatonly）控制。
 
 ---
 
@@ -204,7 +187,6 @@ vi config/project_guidelines.yaml
 
 | 配置项 | 文件 | 说明 |
 |--------|------|------|
-| COMPANION_MODE | config/settings.py | 运行模式开关 |
 | VALUE_ALIGNMENT_HANDLER_ENABLED | config/settings.py | 被动监测开关 |
 | PERCEPTION_ENABLED | config/settings.py | 感知系统开关 |
 | DIFFERENCE_DETECTOR_ENABLED | config/settings.py | 差异检测开关 |
@@ -230,10 +212,6 @@ vi config/project_guidelines.yaml
   ✅ 看到安全检测 + 项目规范 + 规范违反
   ✅ 调整输出
 
-【ValuesExpert（可选，基于COMPANION_MODE）】
-  ✅ 仅陪伴模式下启用
-  ✅ 从 core_values.txt 动态加载规则
-
 【DifferenceDetector（被动，基于两个开关）】
   ✅ 统计对齐度趋势
   ✅ 大模型定期查询
@@ -244,10 +222,9 @@ vi config/project_guidelines.yaml
 
 ## 常见配置场景
 
-### 场景 1：生产环境（工作模式）
+### 场景 1：工作模式
 
 ```env
-COMPANION_MODE=False
 VALUE_ALIGNMENT_HANDLER_ENABLED=True
 PERCEPTION_ENABLED=True
 DIFFERENCE_DETECTOR_ENABLED=True
@@ -258,20 +235,6 @@ DIFFERENCE_DETECTOR_ENABLED=True
 - 安全检测 + 项目规范始终启用
 - 规范违反实时提示
 - 后台监测趋势用于未来改进
-
-### 场景 2：陪伴模式（AI助手）
-
-```env
-COMPANION_MODE=True
-VALUE_ALIGNMENT_HANDLER_ENABLED=True
-PERCEPTION_ENABLED=True
-DIFFERENCE_DETECTOR_ENABLED=True
-```
-
-**特点**：
-- 启用价值观指导和情绪反馈
-- 安全检测 + 规范违反检测
-- 完整专家流水线
 - 支持自我修正和规则演进
 
 ### 场景 3：仅安全检测

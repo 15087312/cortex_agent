@@ -3,9 +3,8 @@ diskcache 缓存层
 替换 Redis，零配置、可打包
 """
 import os
-import json
 import time
-from typing import Any, Optional, List, Dict
+from typing import Any, List, Dict
 from utils.logger import setup_logger
 
 logger = setup_logger("diskcache")
@@ -121,7 +120,7 @@ class DiskCache:
                 return full_key in self._cache
             else:
                 return full_key in self._memory_store
-        except Exception as e:
+        except Exception:
             return False
     
     def lpush(self, key: str, value: Any, prefix: str = "list", max_len: int = 1000) -> int:
@@ -287,7 +286,7 @@ class DiskCache:
                     "connected": False,
                     "mode": "memory"
                 }
-        except Exception as e:
+        except Exception:
             return {"connected": False, "mode": "error"}
     
     def close(self):

@@ -358,7 +358,7 @@ class EventStore:
         with faiss_file_lock(self._faiss_index_path):
             try:
                 import faiss
-                import numpy as np
+                import numpy as np  # noqa: F401
                 dim = self._get_embedding_dim()
                 if os.path.exists(self._faiss_index_path):
                     self._faiss_index = faiss.read_index(self._faiss_index_path)

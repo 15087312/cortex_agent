@@ -4,14 +4,13 @@
 每个模型实例 = ModelIdentity + ModelClient + 独立配置
 不再使用全局单例模式，每个模型都是独立个体。
 """
-import asyncio
 import threading as _threading
 from typing import Dict, Optional, Any
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from utils.logger import setup_logger
 from config.settings import settings
-from .identity import ModelIdentity, ModelTier
+from .identity import ModelIdentity
 
 logger = setup_logger("model_factory")
 
@@ -120,7 +119,7 @@ class ModelInstanceFactory:
         # 回收最旧的同名实例
         same_role.sort(key=lambda i: i.created_at)
         target = same_role[0]
-        logger.warning(
+        logger.debug(
             f"[工厂] {identity.role} 已达上限 ({max_n})，"
             f"自动回收最旧实例: {target.model_id}"
         )
@@ -254,7 +253,7 @@ class ModelInstanceFactory:
         if instance is None:
             return False
         self._count_by_tier[instance.tier] -= 1
-        logger.info(f"[工厂] 销毁实例: {instance.identity.name} ({model_id})")
+        logger.debug(f"[工厂] 销毁实例: {instance.identity.name} ({model_id})")
         return True
 
     # ------------------------------------------------------------------

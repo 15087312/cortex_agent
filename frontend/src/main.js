@@ -6,6 +6,7 @@ import { autoDetectApiKey } from './api.js'
 import '../css/theme.css'
 import '../css/layout.css'
 import '../css/components.css'
+import './assets/hljs-dark.css'
 
 // 启动即自动检测后端 API key（开发/测试环境后端 /config/api-key 返回 key，免手动录入）
 autoDetectApiKey()

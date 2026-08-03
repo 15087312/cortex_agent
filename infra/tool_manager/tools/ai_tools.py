@@ -16,7 +16,7 @@ import json
 import time
 import threading
 from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 
 from infra.tool_manager.tool_registry import ToolRegistry
 from utils.logger import setup_logger
@@ -495,7 +495,7 @@ def edit_tool(
     old_record = records.get(tool_name, {})
     new_description = description if description is not None else tool_info.description
     new_code = code if code is not None else old_record.get("code", "")
-    new_params = params if params is not None else old_record.get("params", {})
+    params if params is not None else old_record.get("params", {})
 
     # 解析 params
     params_dict: Dict[str, str] = {}

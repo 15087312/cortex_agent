@@ -4,7 +4,7 @@
 空闲分钟数通过 config.settings 动态配置。
 """
 import time
-from typing import List, Optional
+from typing import List
 
 from modules.perception.difference.sources.base import DifferenceSource
 from modules.perception.difference.models import Difference

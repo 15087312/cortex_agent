@@ -1,44 +1,202 @@
 <script setup>
-import { ref, onMounted, onUnmounted, nextTick } from 'vue'
-import { DynamicScroller, DynamicScrollerItem } from 'vue-virtual-scroller'
-import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
+defineOptions({ name: 'Chat' })
+import { ref, computed, onMounted, onActivated, onUnmounted, nextTick } from 'vue'
 import { useChatStore } from '@/stores/chat.js'
 import { useSessionStore } from '@/stores/session.js'
 import { useToastStore } from '@/stores/toast.js'
 import { useWsStore } from '@/ws/store.js'
+import { endpoints } from '@/api.js'
+import { useConfirm, usePrompt } from '@/composables/useDialog.js'
 import ChatMessage from '@/components/ChatMessage.vue'
 import ChatInput from '@/components/ChatInput.vue'
 import SessionList from '@/components/SessionList.vue'
 import ModelSelector from '@/components/ModelSelector.vue'
 import ThinkingIndicator from '@/components/ThinkingIndicator.vue'
+import ThinkingStatusPanel from '@/components/ThinkingStatusPanel.vue'
+import Icon from '@/components/Icon.vue'
 
 const chat = useChatStore()
 const session = useSessionStore()
 const ws = useWsStore()
 const toast = useToastStore()
-const scrollerRef = ref(null)
+const confirm = useConfirm()
+const prompt = usePrompt()
+const sessionListCollapsed = ref(false)
+const messagesWrap = ref(null)
+let watchTimer = null
+
+// ── 分批渲染：最多同时渲染 RENDER_LIMIT 条，超出时顶部可加载更早 ──
+const RENDER_LIMIT = 50
+const RENDER_STEP = 50
+const renderLimit = ref(RENDER_LIMIT)
+
+const visibleMessages = computed(() =>
+  chat.messages.slice(Math.max(0, chat.messages.length - renderLimit.value))
+)
+const msgOffset = computed(() => chat.messages.length - visibleMessages.value.length)
+const hasMoreMessages = computed(() => chat.messages.length > visibleMessages.value.length)
+
+function loadMoreMessages() {
+  const el = messagesWrap.value
+  const prevHeight = el ? el.scrollHeight : 0
+  renderLimit.value += RENDER_STEP
+  nextTick(() => {
+    if (el) el.scrollTop = el.scrollHeight - prevHeight
+  })
+}
+
+// ── 标题行内编辑 ──
+const editingTitle = ref(false)
+const titleDraft = ref('')
+
+function startEditTitle() {
+  if (!session.sessionId) return
+  editingTitle.value = true
+  titleDraft.value = session.currentTitle
+}
+async function commitTitle() {
+  editingTitle.value = false
+  const val = titleDraft.value.trim() || '新会话'
+  if (session.sessionId && val && val !== session.currentTitle) {
+    session.currentTitle = val
+    try {
+      await endpoints.updateSessionTitle(session.sessionId, val)
+      await session.loadSessions()
+    } catch {
+      toast.show('标题保存失败', 'error')
+    }
+  }
+}
+
+// ── WS 事件处理 ──
+// 事件归属判断：WS 可能保持处理中会话的连接（切走后仍监听其 done），
+// 其他会话的 thinking/message 不混入当前消息流
+const _isCurrent = (d) => !d.session_id || d.session_id === session.sessionId
+
+// 错误回复前缀 → 渲染为报错横幅
+const ERROR_PREFIXES = ['[思考失败]', '[模型调用失败]', '[工具调用达到上限', '[安全拦截]', '[安全审查拦截]', '[系统通知]']
 
 const _onThinking = (d) => {
-  if (d.event === 'thinking_step' && d.content) {
-    chat.handleStreamContent(d.content)
+  if (!_isCurrent(d)) return
+  // 安全审批 / 模型提问 → 拦截，不混入内容
+  const sev = d.data?.stage_event
+  if (sev?.event_type === 'security' && d.data?.payload?.request_id) {
+    const action = String(sev.action || '')
+    if (action.indexOf('等待用户审批') >= 0) {
+      chat.addApproval(d)
+      scrollBottom()
+      return
+    }
+    if (action.indexOf('user_intent_request') >= 0) {
+      chat.addIntent(d)
+      scrollBottom()
+      return
+    }
+  }
+  // 思考步骤：supervisor/expert 显示气泡；large/thinking/main 的文字也展示
+  // （模型经常"边回答边调工具"，若忽略则这些文字用户看不到）
+  const role = String(d.role || d.data?.dialog_tier || '').toLowerCase()
+  if (role === 'supervisor' || role === 'expert' || role === 'large' || role === 'thinking' || role === 'main') {
+    chat.addThinkingStep(d)
     scrollBottom()
   }
 }
+
 const _onMessage = (d) => {
-  chat.finalizeStream(d.content || '')
+  if (!_isCurrent(d)) return
+  // 用户已主动停止：忽略后端补发的 message，避免"按了停止又冒出回复"
+  if (chat.stopped) return
+  const content = d.content || ''
+  if (content) {
+    // 思考元数据（内心独白 + 事件记忆 + 会话记忆）→ 附加到消息下方展开栏
+    // 会话记忆：优先展示后端实际注入 AI 的【对话历史】原文（同一数据源，保证与 AI 看到的一致）；
+    // 后端未提供时回退为本地消息组装（兜底）
+    const m = d.data?.meta || {}
+    const sessionMemory = m.conversation_history || chat.messages
+      .filter(x => x.role === 'user' || x.role === 'assistant')
+      .slice(-6)
+      .map(x => `[${x.role === 'user' ? 'user' : 'assistant'}]: ${(x.content || '').slice(0, 200)}`)
+      .join('\n')
+    // 错误回复检测 → 渲染为报错横幅（红色）
+    const isError = ERROR_PREFIXES.some(p => content.startsWith(p))
+    // 非流式：直接渲染最终答案（思考步骤独立展示）+ 打字机
+    chat.addMessage({
+      role: 'assistant',
+      content,
+      id: d.data?.message_id || '',
+      identity_name: d.data?.identity_name || '',
+      typing: true,
+      error: isError,
+      meta: {
+        innerMonologue: m.inner_monologue || '',
+        eventMemory: m.event_memory || '',
+        sessionMemory,
+      },
+    })
+  } else {
+    chat.finalizeStream('')
+  }
   scrollBottom()
 }
-const _onDone = () => { chat.finalizeStream('') }
+
+const _onDone = (d) => {
+  if (d.session_id && d.session_id !== session.sessionId) {
+    // 处理中其他会话完成 → 清除其处理状态（保持连接时收到的 done）
+    if (chat.processingSid === d.session_id) chat.finalizeStream('')
+    return
+  }
+  chat.finalizeStream('')
+}
 const _onError = (d) => {
+  if (!_isCurrent(d)) return
   chat.finalizeStream('')
   toast.show('错误: ' + (d.content || '未知'), 'error')
 }
 
+const _onStatus = (d) => {
+  if (!_isCurrent(d)) return
+  chat.elapsed = d.data?.elapsed_s || 0
+  // 解析 thinking_progress → 在线模型状态（大循环 指挥/主管/专家 层级）
+  const list = []
+  const add = (r, tier, sup) => { if (r && r.model_id) list.push({ ...r, tier, supervisor: sup || '' }) }
+  if (d.data?.large_model) add(d.data.large_model, 'large', '')
+  ;(d.data?.active_supervisors || []).forEach(s => add(s, 'supervisor', ''))
+  ;(d.data?.active_experts || []).forEach(e => add(e, 'expert', e.supervisor || ''))
+  chat.runners = list
+}
+
+const _onAck = (d) => {
+  if (!_isCurrent(d)) return
+  if (d.event === 'received' && d.data?.message_id) {
+    // 用户消息已保存，回填消息 ID（供删除/编辑使用）
+    const last = chat.messages[chat.messages.length - 1]
+    if (last && last.role === 'user' && !last.id) last.id = d.data.message_id
+  } else if (d.event === 'busy') {
+    // 后端正忙且丢弃了本条 input → 提示并稍后重发（避免"一直加载"）
+    chat.hint = '会话正在处理中，请稍候…'
+    setTimeout(() => chat.retryLastInput(), 2500)
+  }
+}
+
+const _onProactive = (d) => {
+  const content = d.content || ''
+  if (!content) return
+  // 主动搭话发到"上一次对话会话"——若当前不在该会话，刷新会话列表以便用户看到，不混入当前消息流
+  if (d.session_id && d.session_id !== session.sessionId) {
+    session.loadSessions()
+    return
+  }
+  chat.addMessage({ role: 'assistant', content, id: d.data?.message_id || '', proactive: true })
+  scrollBottom()
+}
+
 function scrollBottom() {
   nextTick(() => {
-    if (scrollerRef.value && chat.messages.length > 0) {
-      scrollerRef.value.scrollToItem(chat.messages.length - 1)
-    }
+    const el = messagesWrap.value
+    if (!el) return
+    // 仅在用户接近底部时自动滚到底（读取历史时不打断）
+    if (el.scrollHeight - el.scrollTop - el.clientHeight > 120) return
+    el.scrollTop = el.scrollHeight
   })
 }
 
@@ -49,6 +207,21 @@ onMounted(async () => {
   ws.wsClient.on('message', _onMessage)
   ws.wsClient.on('done', _onDone)
   ws.wsClient.on('error', _onError)
+  ws.wsClient.on('ack', _onAck)
+  ws.wsClient.on('status', _onStatus)
+  ws.wsClient.on('proactive', _onProactive)
+  // 连接看门狗：处理中断开 → 复位加载态并提示，避免"一直加载"
+  watchTimer = setInterval(() => {
+    if (chat.processing && !ws.wsClient.connected) {
+      chat.finalizeStream('')
+      toast.show('连接已断开，本轮回复可能丢失', 'error')
+    }
+  }, 2000)
+})
+
+// KeepAlive 缓存下 onMounted 只首次执行——切页回来刷新会话列表
+onActivated(() => {
+  session.loadSessions()
 })
 
 onUnmounted(() => {
@@ -56,13 +229,23 @@ onUnmounted(() => {
   ws.wsClient.off('message', _onMessage)
   ws.wsClient.off('done', _onDone)
   ws.wsClient.off('error', _onError)
+  ws.wsClient.off('ack', _onAck)
+  ws.wsClient.off('status', _onStatus)
+  ws.wsClient.off('proactive', _onProactive)
+  if (watchTimer) clearInterval(watchTimer)
 })
 
 function handleSend({ text, attachments }) {
+  if (chat.processing) return
   chat.sendMessage(text, attachments)
   chat.addMessage({ role: 'user', content: text })
   chat.processing = true
+  chat.hint = '思考中...'
   scrollBottom()
+}
+
+async function handleNewSession() {
+  await chat.init()
 }
 
 async function handleSessionSelect(sid) {
@@ -70,23 +253,93 @@ async function handleSessionSelect(sid) {
   scrollBottom()
 }
 
-function handleSessionDelete(sid) {
-  if (!confirm('确定删除此会话？')) return
-  session.deleteSession(sid)
-  if (sid === session.sessionId) chat.init()
+async function handleSessionDelete(sid) {
+  if (!(await confirm('确定删除此会话？删除后不可恢复。'))) return
+  await session.deleteSession(sid)
+  if (sid === session.sessionId) {
+    // 删除当前会话 → 切换到最近一个，否则回到新会话
+    if (session.sessions.length > 0) {
+      await chat.switchToSession(session.sessions[0].session_id)
+    } else {
+      await chat.init()
+    }
+    scrollBottom()
+  }
+}
+
+async function handleSessionRename(sid) {
+  const s = session.sessions.find(x => x.session_id === sid)
+  const val = await prompt('重命名会话', s?.title || '')
+  if (val === null || !val.trim()) return
+  try {
+    await endpoints.updateSessionTitle(sid, val.trim())
+    await session.loadSessions()
+    if (sid === session.sessionId) session.currentTitle = val.trim()
+  } catch {
+    toast.show('重命名失败', 'error')
+  }
 }
 
 function handleCopyMessage(idx) {
   const msg = chat.messages[idx]
-  if (msg?.content) {
-    navigator.clipboard.writeText(msg.content).then(() => toast.show('已复制', 'success'))
+  if (!msg?.content) return
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(msg.content)
+      .then(() => toast.show('已复制', 'success'))
+      .catch(() => copyTextFallback(msg.content))
+  } else {
+    copyTextFallback(msg.content)
   }
 }
 
-function handleDeleteMessage(idx) {
-  if (idx >= 0 && idx < chat.messages.length) {
-    chat.messages.splice(idx, 1)
+function copyTextFallback(text) {
+  try {
+    const ta = document.createElement('textarea')
+    ta.value = text
+    ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;width:1px;height:1px'
+    document.body.appendChild(ta)
+    ta.focus()
+    ta.select()
+    const ok = document.execCommand('copy')
+    document.body.removeChild(ta)
+    toast.show(ok ? '已复制' : '复制失败', ok ? 'success' : 'error')
+  } catch {
+    toast.show('复制失败', 'error')
   }
+}
+
+async function handleDeleteMessage(idx) {
+  const msg = chat.messages[idx]
+  if (!msg) return
+  if (!(await confirm('确定删除这条消息？删除后 AI 上下文与数据库同步更新。'))) return
+  const ok = await chat.deleteMessageAt(idx)
+  if (!ok) toast.show('删除失败', 'error')
+}
+
+async function handleEditMessage(idx) {
+  const msg = chat.messages[idx]
+  if (!msg?.id) {
+    toast.show('消息尚未保存，无法编辑', 'warning')
+    return
+  }
+  const val = await prompt('编辑消息', msg.content)
+  if (val === null) return
+  const ok = await chat.editMessageAt(idx, val)
+  if (!ok) toast.show('编辑失败', 'error')
+}
+
+async function handleClearChat() {
+  if (chat.messages.length === 0) return
+  if (!(await confirm('确定清空当前对话？'))) return
+  chat.clearMessages()
+}
+
+function handleApprove(requestId, approved) {
+  chat.approve(requestId, approved)
+}
+
+function handleAnswerIntent(requestId, answer) {
+  chat.answerIntent(requestId, answer)
 }
 </script>
 
@@ -95,27 +348,39 @@ function handleDeleteMessage(idx) {
     <SessionList
       :sessions="session.sessions"
       :activeId="session.sessionId"
+      :collapsed="sessionListCollapsed"
+      @update:collapsed="v => sessionListCollapsed = v"
       @select="handleSessionSelect"
       @delete="handleSessionDelete"
-      @new="chat.init()"
-      style="width:260px;flex-shrink:0"
+      @rename="handleSessionRename"
+      @new="handleNewSession"
+      :style="{ width: sessionListCollapsed ? 40 : 260, flexShrink: 0 }"
     />
     <div style="flex:1;display:flex;flex-direction:column;overflow:hidden">
       <div class="chat-header">
         <div class="chat-header-left">
-          <span class="chat-header-title">{{ session.currentTitle }}</span>
+          <span v-if="!editingTitle" class="chat-header-title" :class="{ editable: !!session.sessionId }" @click="startEditTitle">{{ session.currentTitle }}</span>
+          <input
+            v-else
+            v-model="titleDraft"
+            class="edit-title-input"
+            maxlength="50"
+            @blur="commitTitle"
+            @keydown.enter="commitTitle"
+            @keydown.esc="editingTitle = false"
+          />
           <ModelSelector v-model="chat.currentModel" />
         </div>
         <div class="chat-header-right">
-          <button class="chat-btn-icon" @click="chat.stop()" v-if="chat.processing" title="停止">⏹</button>
-          <button class="chat-btn-icon" @click="chat.clearMessages()" title="清空">🗑</button>
+          <button class="chat-btn-icon" @click="chat.stop()" v-if="chat.processing" title="停止"><Icon name="square" :size="15" /></button>
+          <button class="chat-btn-icon" @click="handleClearChat" title="清空对话"><Icon name="trash" :size="15" /></button>
         </div>
       </div>
 
-      <!-- 消息区：无消息时显示欢迎/思考，有消息时使用虚拟滚动 -->
-      <div class="chat-messages chat-messages-virtual">
+      <!-- 消息区 -->
+      <div ref="messagesWrap" class="chat-messages">
         <div v-if="chat.messages.length === 0 && !chat.processing" class="chat-welcome">
-          <div class="welcome-icon">💬</div>
+          <div class="welcome-icon"><Icon name="message" :size="40" /></div>
           <h2>开始新对话</h2>
           <p>输入消息开始聊天，支持多模态文件上传和流式回复。</p>
           <div class="quick-actions">
@@ -125,39 +390,38 @@ function handleDeleteMessage(idx) {
           </div>
         </div>
         <div v-if="chat.processing && chat.messages.filter(m => m.role === 'assistant').length === 0">
-          <ThinkingIndicator label="正在思考" />
+          <ThinkingIndicator :label="chat.elapsed ? '正在思考 ' + chat.elapsed + 's' : '正在思考'" />
         </div>
 
-        <DynamicScroller
-          v-if="chat.messages.length > 0"
-          ref="scrollerRef"
-          :items="chat.messages"
-          :min-item-size="80"
-          key-field="_id"
-          class="chat-scroller"
-        >
-          <template #default="{ item, index, active }">
-            <DynamicScrollerItem
-              :item="item"
-              :active="active"
-              :size-dependencies="[item.content]"
-              :data-index="index"
-            >
-              <ChatMessage
-                :message="item"
-                :index="index"
-                :isStreaming="ws.isStreaming && index === chat.streamingIdx"
-                @copy="handleCopyMessage"
-                @delete="handleDeleteMessage"
-              />
-            </DynamicScrollerItem>
-          </template>
-        </DynamicScroller>
+        <!-- 思考循环状态面板：大循环（指挥→主管→专家）/ 连续思考 / 工具循环 -->
+        <ThinkingStatusPanel v-if="chat.processing && chat.runners.length" :runners="chat.runners" :elapsed="chat.elapsed" />
+
+        <!-- 其他会话正在思考中（切走后仍显示横幅 + 停止按钮，可停止处理中的会话） -->
+        <div v-if="chat.processing && chat.processingSid && chat.processingSid !== session.sessionId" class="chat-other-processing">
+          <span>会话「{{ (chat.processingSid || '').slice(0, 8) }}…」正在思考中，切回该会话可查看进度</span>
+          <button class="btn btn-sm" style="background:var(--danger);color:white;border-color:var(--danger)" @click="chat.stop()"><Icon name="stop" :size="14" /> 停止</button>
+        </div>
+
+        <div class="chat-load-more" v-if="hasMoreMessages" @click="loadMoreMessages">
+          加载更早消息（还有 {{ chat.messages.length - visibleMessages.length }} 条）
+        </div>
+
+        <ChatMessage
+          v-for="(item, i) in visibleMessages"
+          :key="item._id"
+          :message="item"
+          :index="msgOffset + i"
+          @copy="handleCopyMessage"
+          @delete="handleDeleteMessage"
+          @edit="handleEditMessage"
+          @approve="handleApprove"
+          @answer-intent="handleAnswerIntent"
+        />
       </div>
 
-      <ChatInput @send="handleSend">
+      <ChatInput :processing="chat.processing" :hint="chat.hint" @send="handleSend" @toast="(t) => toast.show(t.message, t.type)">
         <template #actions>
-          <button v-if="chat.processing" class="btn btn-sm" style="background:var(--danger);color:white;border-color:var(--danger)" @click="chat.stop()">⏹ 停止</button>
+          <button v-if="chat.processing" class="btn btn-sm" style="background:var(--danger);color:white;border-color:var(--danger)" @click="chat.stop()"><Icon name="stop" :size="14" /> 停止</button>
         </template>
       </ChatInput>
     </div>

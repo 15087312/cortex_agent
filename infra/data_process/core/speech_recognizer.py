@@ -6,7 +6,6 @@ import asyncio
 import tempfile
 import os
 from typing import Dict, Any, Optional
-from pathlib import Path
 from utils.logger import setup_logger
 
 logger = setup_logger("speech_recognizer")
@@ -99,7 +98,6 @@ class SpeechRecognizer:
             temp_path = f.name
         
         try:
-            import whisper
             result = self.model.transcribe(
                 temp_path,
                 language=None if language == "auto" else language,

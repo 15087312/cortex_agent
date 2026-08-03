@@ -1,5 +1,11 @@
 const MAX_RETRY = 3
 
+// 链路追踪：每次发送注入 trace_id / trace_seq（与 js/ws.js 对齐，供后端关联审计）
+const _traceId = (typeof crypto !== 'undefined' && crypto.randomUUID)
+  ? crypto.randomUUID()
+  : ('w' + Date.now() + Math.random().toString(36).slice(2))
+let _traceSeq = 0
+
 class WsClient {
   constructor() {
     this._conn = null
@@ -16,7 +22,8 @@ class WsClient {
   }
 
   _host() {
-    try { return window.location.host || 'localhost:5173' } catch { return 'localhost:5173' }
+    // 直连后端 :8080（Qt 静态代理 8765 无 WS 转发；与 js/ws.js 一致）
+    try { return (window.location.hostname || 'localhost') + ':8080' } catch { return 'localhost:8080' }
   }
 
   connect(sid) {
@@ -38,7 +45,11 @@ class WsClient {
       this._scheduleRetry(sid)
       return
     }
-    this._conn.onopen = () => { this._attempt = 0; this._resolve?.() }
+    this._conn.onopen = () => {
+      this._attempt = 0
+      this._resolve?.()
+      if (this._timeoutId) { clearTimeout(this._timeoutId); this._timeoutId = null }
+    }
     this._conn.onmessage = (e) => {
       try { const d = JSON.parse(e.data); this._emit(d.type || d.event, d) } catch {}
     }
@@ -62,7 +73,9 @@ class WsClient {
 
   send(data) {
     if (this._conn && this._conn.readyState === WebSocket.OPEN) {
-      this._conn.send(JSON.stringify(data))
+      _traceSeq++
+      const payload = { ...data, trace_id: _traceId, trace_seq: _traceSeq }
+      this._conn.send(JSON.stringify(payload))
       return true
     }
     return false

@@ -10,8 +10,8 @@ MCP 传输层 — 连接外部 MCP server 并通信
 from __future__ import annotations
 
 import asyncio
-import time
-from typing import Any, Dict, List, Optional
+import concurrent.futures
+from typing import Any, Dict, List
 from dataclasses import dataclass, field
 
 from utils.logger import setup_logger
@@ -43,6 +43,21 @@ class MCPStdioTransport:
         self._session_ctx = None
         self._tools_cache: List[MCPToolDef] = []
         self._connected = False
+        self._loop = None
+
+    def _submit_on_loop(self, coro_factory) -> Any:
+        """把 session 调用提交回其绑定的常驻事件循环。
+
+        MCP ClientSession 的读循环/响应 Future 绑定在 connect() 时的事件循环，
+        若在其它线程的新 loop 里 await 会跨事件循环挂起。这里用
+        run_coroutine_threadsafe 把调用送回原 loop，并同步等待结果。
+        """
+        if self._loop is None:
+            raise RuntimeError(f"MCP server {self.server_name} 未记录事件循环")
+        if self._loop.is_closed():
+            raise RuntimeError(f"MCP server {self.server_name} 事件循环已关闭")
+        fut = asyncio.run_coroutine_threadsafe(coro_factory(), self._loop)
+        return fut.result(timeout=self._timeout)
 
     async def connect(self) -> bool:
         """启动子进程并建立 MCP 连接，保持 session 活跃直到 close()"""
@@ -50,6 +65,7 @@ class MCPStdioTransport:
             from mcp.client.stdio import stdio_client
             from mcp import StdioServerParameters, ClientSession
 
+            self._loop = asyncio.get_running_loop()
             params = StdioServerParameters(
                 command=self._command,
                 args=self._args,
@@ -94,7 +110,13 @@ class MCPStdioTransport:
             logger.warning(f"[MCP] {self.server_name} 未连接")
             return []
         try:
-            tools_result = await self._session.list_tools()
+            if asyncio.get_running_loop() is self._loop:
+                tools_result = await self._session.list_tools()
+            else:
+                tools_result = await asyncio.to_thread(
+                    self._submit_on_loop,
+                    lambda: self._session.list_tools(),
+                )
             self._tools_cache = [
                 MCPToolDef(
                     name=t.name,
@@ -114,11 +136,20 @@ class MCPStdioTransport:
         if not self._session:
             return {"isError": True, "content": [{"type": "text", "text": f"MCP server {self.server_name} 未连接"}]}
         try:
-            result = await self._session.call_tool(tool_name, arguments or {})
+            if asyncio.get_running_loop() is self._loop:
+                result = await self._session.call_tool(tool_name, arguments or {})
+            else:
+                result = await asyncio.to_thread(
+                    self._submit_on_loop,
+                    lambda: self._session.call_tool(tool_name, arguments or {}),
+                )
             return {
                 "isError": getattr(result, "isError", False),
                 "content": getattr(result, "content", []),
             }
+        except concurrent.futures.TimeoutError:
+            logger.error(f"[MCP] call_tool 超时 {self.server_name}/{tool_name}")
+            return {"isError": True, "content": [{"type": "text", "text": f"MCP 工具超时 ({self._timeout}s): {tool_name}"}]}
         except Exception as e:
             logger.error(f"[MCP] call_tool 失败 {self.server_name}/{tool_name}: {e}")
             return {"isError": True, "content": [{"type": "text", "text": str(e)}]}
@@ -126,18 +157,30 @@ class MCPStdioTransport:
     async def close(self):
         """关闭连接，清理子进程和 session 资源"""
         self._connected = False
-        self._session = None
         self._tools_cache = []
         try:
             if self._session_ctx:
-                await self._session_ctx.__aexit__(None, None, None)
+                if self._loop is None or asyncio.get_running_loop() is self._loop:
+                    await self._session_ctx.__aexit__(None, None, None)
+                else:
+                    await asyncio.to_thread(
+                        self._submit_on_loop,
+                        lambda: self._session_ctx.__aexit__(None, None, None),
+                    )
         except Exception as e:
             logger.debug(f"MCP session 关闭失败 (非致命): {e}")
         try:
             if self._stdio_ctx:
-                await self._stdio_ctx.__aexit__(None, None, None)
+                if self._loop is None or asyncio.get_running_loop() is self._loop:
+                    await self._stdio_ctx.__aexit__(None, None, None)
+                else:
+                    await asyncio.to_thread(
+                        self._submit_on_loop,
+                        lambda: self._stdio_ctx.__aexit__(None, None, None),
+                    )
         except Exception as e:
             logger.debug(f"MCP stdio 关闭失败 (非致命): {e}")
+        self._session = None
         self._session_ctx = None
         self._stdio_ctx = None
         logger.info(f"[MCP] 已断开: {self.server_name}")
@@ -160,12 +203,21 @@ class MCPSseTransport:
         self._tools_cache: List[MCPToolDef] = []
         self._connected = False
 
+    def _submit_on_loop(self, coro_factory) -> Any:
+        if self._loop is None:
+            raise RuntimeError(f"MCP server {self.server_name} 未记录事件循环")
+        if self._loop.is_closed():
+            raise RuntimeError(f"MCP server {self.server_name} 事件循环已关闭")
+        fut = asyncio.run_coroutine_threadsafe(coro_factory(), self._loop)
+        return fut.result(timeout=self._timeout)
+
     async def connect(self) -> bool:
         """连接远程 SSE MCP server"""
         try:
             from mcp.client.sse import sse_client
             from mcp import ClientSession
 
+            self._loop = asyncio.get_running_loop()
             self._sse_ctx = sse_client(url=self._url)
             self._read, self._write = await self._sse_ctx.__aenter__()
 
@@ -201,7 +253,13 @@ class MCPSseTransport:
         if not self._session:
             return []
         try:
-            tools_result = await self._session.list_tools()
+            if asyncio.get_running_loop() is self._loop:
+                tools_result = await self._session.list_tools()
+            else:
+                tools_result = await asyncio.to_thread(
+                    self._submit_on_loop,
+                    lambda: self._session.list_tools(),
+                )
             self._tools_cache = [
                 MCPToolDef(
                     name=t.name,
@@ -220,11 +278,20 @@ class MCPSseTransport:
         if not self._session:
             return {"isError": True, "content": [{"type": "text", "text": f"MCP server {self.server_name} 未连接"}]}
         try:
-            result = await self._session.call_tool(tool_name, arguments or {})
+            if asyncio.get_running_loop() is self._loop:
+                result = await self._session.call_tool(tool_name, arguments or {})
+            else:
+                result = await asyncio.to_thread(
+                    self._submit_on_loop,
+                    lambda: self._session.call_tool(tool_name, arguments or {}),
+                )
             return {
                 "isError": getattr(result, "isError", False),
                 "content": getattr(result, "content", []),
             }
+        except concurrent.futures.TimeoutError:
+            logger.error(f"[MCP-SSE] call_tool 超时 {self.server_name}/{tool_name}")
+            return {"isError": True, "content": [{"type": "text", "text": f"MCP 工具超时 ({self._timeout}s): {tool_name}"}]}
         except Exception as e:
             logger.error(f"[MCP-SSE] call_tool 失败 {self.server_name}/{tool_name}: {e}")
             return {"isError": True, "content": [{"type": "text", "text": str(e)}]}
@@ -235,12 +302,24 @@ class MCPSseTransport:
         self._tools_cache = []
         try:
             if self._session_ctx:
-                await self._session_ctx.__aexit__(None, None, None)
+                if self._loop is None or asyncio.get_running_loop() is self._loop:
+                    await self._session_ctx.__aexit__(None, None, None)
+                else:
+                    await asyncio.to_thread(
+                        self._submit_on_loop,
+                        lambda: self._session_ctx.__aexit__(None, None, None),
+                    )
         except Exception as e:
             logger.debug(f"MCP-SSE session 关闭失败 (非致命): {e}")
         try:
             if self._sse_ctx:
-                await self._sse_ctx.__aexit__(None, None, None)
+                if self._loop is None or asyncio.get_running_loop() is self._loop:
+                    await self._sse_ctx.__aexit__(None, None, None)
+                else:
+                    await asyncio.to_thread(
+                        self._submit_on_loop,
+                        lambda: self._sse_ctx.__aexit__(None, None, None),
+                    )
         except Exception as e:
             logger.debug(f"MCP-SSE 连接关闭失败 (非致命): {e}")
         self._session_ctx = None

@@ -48,8 +48,8 @@ class SessionRepository:
     def set_session_title(self, session_id: str, title: str) -> None:
         with self._session() as s:
             row = s.query(ChatSession).filter_by(session_id=session_id).first()
-            if row and not row.title:
-                row.title = title[:200]
+            if row:
+                row.title = (title or "")[:200]
                 s.commit()
 
     def get_all_sessions(self, limit: int = 50) -> List[Dict[str, Any]]:
@@ -77,16 +77,18 @@ class SessionRepository:
                 "message_count": r.message_count,
             } for r in rows]
 
-    def save_message(self, session_id: str, role: str, content: str, round_num: int = 0) -> None:
+    def save_message(self, session_id: str, role: str, content: str, round_num: int = 0) -> str:
         if not content or not content.strip():
-            return
+            return ""
         with self._session() as s:
-            s.add(ChatMessage(
+            msg = ChatMessage(
                 session_id=session_id,
                 role=role,
                 content=content[:50000],
                 round_num=round_num,
-            ))
+            )
+            s.add(msg)
+            s.flush()  # 立即生成 msg.id
             session_row = s.query(ChatSession).filter_by(session_id=session_id).first()
             if session_row:
                 session_row.message_count += 1
@@ -94,6 +96,34 @@ class SessionRepository:
                 if role == "user" and not session_row.title:
                     session_row.title = content[:200]
             s.commit()
+            return msg.id
+
+    def delete_message(self, session_id: str, message_id: str) -> bool:
+        with self._session() as s:
+            msg = s.query(ChatMessage).filter_by(session_id=session_id, id=message_id).first()
+            if not msg:
+                return False
+            s.delete(msg)
+            session_row = s.query(ChatSession).filter_by(session_id=session_id).first()
+            if session_row:
+                session_row.message_count = max(0, session_row.message_count - 1)
+                session_row.last_active = datetime.utcnow()
+            s.commit()
+            return True
+
+    def update_message(self, session_id: str, message_id: str, content: str) -> bool:
+        if not content or not content.strip():
+            return False
+        with self._session() as s:
+            msg = s.query(ChatMessage).filter_by(session_id=session_id, id=message_id).first()
+            if not msg:
+                return False
+            msg.content = content[:50000]
+            session_row = s.query(ChatSession).filter_by(session_id=session_id).first()
+            if session_row:
+                session_row.last_active = datetime.utcnow()
+            s.commit()
+            return True
 
     def get_messages(self, session_id: str, limit: int = 100) -> List[Dict[str, Any]]:
         with self._session() as s:
@@ -101,6 +131,7 @@ class SessionRepository:
                 session_id=session_id
             ).order_by(ChatMessage.created_at).limit(limit).all()
             return [{
+                "id": r.id,
                 "role": r.role,
                 "content": r.content,
                 "created_at": r.created_at.isoformat() if r.created_at else "",

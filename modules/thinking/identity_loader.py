@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict
 
 from utils.logger import get_logger
 logger = get_logger(__name__)
@@ -134,7 +134,7 @@ def merge_identities(defaults: Dict[str, dict], overrides: Dict[str, dict]) -> D
                     merged[key][field] = value
         else:
             # 新增身份：填充必需字段的默认值
-            tier = override.get("tier", "expert")
+            override.get("tier", "expert")
             if "model_id" not in override:
                 override["model_id"] = f"{key}_001"
             if "name" not in override:

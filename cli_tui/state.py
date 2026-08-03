@@ -37,8 +37,6 @@ class AppState:
     # 面板切换
     show_tools: bool = False
     show_thinking: bool = True
-    no_tools: bool = False  # 临时禁用AI工具（纯聊天模式）
-
     # 进度提示
     thinking_hint: str = ""
     debug_enabled: bool = False

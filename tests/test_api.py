@@ -151,11 +151,12 @@ async def test_auth_missing_key_returns_401(_mock_lifespan, _auth_key, _reset_ra
     """Request without X-API-Key header to a protected path should return 401."""
     from api.main import app
 
-    # /management/dashboard is NOT in the auth whitelist → no key → 401
-    # (note: /config/ is whitelisted for the frontend settings page, so it is
-    #  not a valid choice for testing 401)
+    # /tools/call is a protected write endpoint (not in the auth whitelist)
+    # → no key → 401
+    # (note: /management/dashboard and /config/ are whitelisted read endpoints
+    #  for the frontend, so they are not valid choices for testing 401)
     async with _client(app) as client:
-        resp = await client.get("/management/dashboard")
+        resp = await client.get("/tools/call")
 
     assert resp.status_code == 401
     data = resp.json()
@@ -170,7 +171,7 @@ async def test_auth_wrong_key_returns_401(_mock_lifespan, _auth_key, _reset_rate
 
     async with _client(app) as client:
         resp = await client.get(
-            "/management/dashboard",
+            "/tools/call",
             headers={"X-API-Key": "wrong-key"},
         )
 

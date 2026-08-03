@@ -2,7 +2,6 @@
 import os
 import subprocess
 import sys
-from typing import Optional
 
 from infra.tool_manager.tool_registry import ToolRegistry
 from utils.logger import setup_logger

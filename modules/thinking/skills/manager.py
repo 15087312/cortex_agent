@@ -57,7 +57,7 @@ class SkillManager:
                         self._skills[skill.id] = skill
                         seen_ids.add(skill.id)
                         count += 1
-                        logger.info(f"[技能] 加载 SKILL.md: {skill.id} ({skill.name})")
+                        logger.debug(f"[技能] 加载 SKILL.md: {skill.id} ({skill.name})")
                 except Exception as e:
                     logger.warning(f"[技能] SKILL.md 加载失败 {skill_md_path}: {e}")
 
@@ -69,12 +69,12 @@ class SkillManager:
                         if skill and skill.id not in self._skills:
                             self._skills[skill.id] = skill
                             count += 1
-                            logger.info(f"[技能] 加载 YAML: {skill.id} ({skill.name})")
+                            logger.debug(f"[技能] 加载 YAML: {skill.id} ({skill.name})")
                     except Exception as e:
                         logger.warning(f"[技能] 加载失败 {file_path.name}: {e}")
 
         self._loaded = True
-        logger.info(f"[技能] 共加载 {count} 个技能")
+        logger.debug(f"[技能] 共加载 {count} 个技能")
         return count
 
     def get_skill(self, skill_id: str) -> Optional[Skill]:

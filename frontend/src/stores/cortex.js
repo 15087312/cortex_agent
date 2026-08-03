@@ -82,11 +82,15 @@ export const useCortexStore = defineStore('cortex', () => {
   }
 
   function _sendWithRetry(content, attempt) {
+    if (!cortexWs.connected && sessionId.value) {
+      // 尝试重连（连接成功后再发）
+      cortexWs.connect(sessionId.value).then(() => { isConnected.value = true }).catch(() => { isConnected.value = false })
+    }
     const sent = cortexWs.send({ type: 'input', content })
     if (sent) return
     if (attempt >= 2) {
       processing.value = false
-      messages.value.push({ _id: uid(), role: 'system', content: '⚠️ 发送失败，WebSocket 未连接' })
+      messages.value.push({ _id: uid(), role: 'system', content: '发送失败，WebSocket 未连接' })
       try { useToastStore().show('Cortex 后端未连接', 'error') } catch {}
       return
     }
@@ -96,6 +100,8 @@ export const useCortexStore = defineStore('cortex', () => {
   function stopGeneration() {
     _stopped = true; clearTimeout(_timer); _queue.length = 0
     processing.value = false; isStreaming.value = false
+    // 通知后端停止生成（对齐 chat store：UI 停了后端也要停）
+    cortexWs.send({ type: 'stop' })
   }
 
   function _bindWsEvents() {
@@ -125,7 +131,7 @@ export const useCortexStore = defineStore('cortex', () => {
 
   function _onError(d) {
     _finalize()
-    messages.value.push({ _id: uid(), role: 'system', content: '⚠️ ' + (d.content || '未知错误') })
+    messages.value.push({ _id: uid(), role: 'system', content: (d.content || '未知错误') })
   }
 
   function _pump() {

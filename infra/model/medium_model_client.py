@@ -2,12 +2,11 @@
 中模型调用客户端 - API 调用（32B 级）
 """
 from .base_model import BaseModelClient, ChatMessage, ChatResponse, ToolCall
-import aiohttp
 import asyncio
 import json
 from typing import Dict, List, Optional
 from config.settings import settings
-from modules.management import report_api_error, report_exception
+from modules.management import report_exception
 from utils.logger import setup_logger
 
 logger = setup_logger("medium_model_client")

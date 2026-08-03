@@ -6,7 +6,6 @@
 
 模型不直接调用模型 → 模型调用工具 → 工具操纵探针 → 探针激活模型
 """
-import os
 import time
 import uuid
 import asyncio
@@ -27,6 +26,11 @@ logger = setup_logger("multi_model_orchestrator")
 # ── 全局会话注册表（供管理 API 和 probe_tools 查询）──
 _session_registry: Dict[str, Dict[str, Any]] = {}
 _session_registry_lock = threading.Lock()
+
+# 每轮实际注入 AI 的【对话历史】原文（供 api_stream 附带给前端展开栏，
+# 保证前端展示的会话记忆 = AI 实际发送的对话记录，同一数据源天然一致）
+_session_dialog_history: Dict[str, str] = {}
+_session_dialog_history_lock = threading.Lock()
 
 
 def get_active_sessions() -> List[Dict[str, Any]]:
@@ -180,7 +184,7 @@ class MultiModelOrchestrator:
                 f"consumer 可能异常"
             )
             raise RuntimeError(
-                f"处理超时：会话可能已异常退出"
+                "处理超时：会话可能已异常退出"
             )
 
         if result_type == "success":
@@ -199,7 +203,6 @@ class MultiModelOrchestrator:
         short_term_memory: List[str] = None,
         event_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
         session_id: Optional[str] = None,
-        no_tools: bool = False,
         model_id: str = "large_primary",
     ) -> Dict:
         """
@@ -278,7 +281,6 @@ class MultiModelOrchestrator:
             event_callback=event_callback,
             skill_id=skill_id,
             context=context,  # 传递对话历史用于短期记忆
-            no_tools=no_tools,
             model_id=model_id,
         )
 
@@ -388,7 +390,6 @@ class MultiModelOrchestrator:
         event_callback,
         skill_id: str = "",
         context: List[Dict] = None,
-        no_tools: bool = False,
         model_id: str = "large_primary",
     ) -> Dict:
         """执行多模型思考 — 统一探针驱动流程
@@ -422,9 +423,6 @@ class MultiModelOrchestrator:
                     turn_id=turn_context.turn_id,
                 )
                 blackboard.set_goal(user_input)
-                # 传递 no_tools 标志到黑板运行时状态
-                if no_tools:
-                    blackboard.runtime_state["no_tools"] = True
                 # 注册到全局会话表（供管理 API）
                 with _session_registry_lock:
                     _session_registry[session_id or ""] = {
@@ -437,8 +435,8 @@ class MultiModelOrchestrator:
                         "started_at": time.time(),
                     }
                 t1 = time.time() - start
-                timings['SessionLifecycle'] = (t1, f'会话初始化完成')
-                logger.info(
+                timings['SessionLifecycle'] = (t1, '会话初始化完成')
+                logger.debug(
                     f"[编排器] 会话就绪: session={session_id[:12]}, turn={turn_context.turn_id[:8]} (+{t1:.2f}s)"
                 )
             except Exception as e:
@@ -485,7 +483,7 @@ class MultiModelOrchestrator:
                     if (session_id or "") in _session_registry:
                         _session_registry[session_id or ""]["runner_manager"] = runner_manager
                 t3 = time.time() - start
-                timings['ModelRunnerManager'] = (t3 - timings.get('SessionLifecycle', (0,))[0], f'模型运行管理器启动')
+                timings['ModelRunnerManager'] = (t3 - timings.get('SessionLifecycle', (0,))[0], '模型运行管理器启动')
                 logger.info(
                     f"[ModelRunnerManager] 已启动: "
                     f"session={str(session_id)[:8] if session_id else '?'} (+{time.time() - t_before:.3f}s)"
@@ -496,7 +494,7 @@ class MultiModelOrchestrator:
             # ---- 写入上下文到 CognitiveBlackboard ----
 
             # 1. 委托引导（系统级，持久上下文）
-            from config.prompts.composer import PromptComposer, PromptRequest
+            from config.prompts.composer import PromptComposer
             composer = PromptComposer()
             supervisor_list = composer._build_supervisor_table()
             expert_list = composer._build_expert_table()
@@ -537,6 +535,13 @@ class MultiModelOrchestrator:
                         content=history_text,
                         metadata={"context_type": "conversation_history"},
                     )
+                    # 缓存实际注入的对话记录，供 api_stream 附带给前端（保证展示一致）
+                    try:
+                        global _session_dialog_history, _session_dialog_history_lock
+                        with _session_dialog_history_lock:
+                            _session_dialog_history[session_id or ""] = history_text
+                    except Exception:
+                        pass
                     logger.info(f"[编排器] 注入对话历史到黑板: {len(history_lines)} 条, {len(history_text)} 字符")
             else:
                 logger.info(f"[编排器] 无对话历史 (blackboard={bool(blackboard)}, context={len(context) if context else 0})")
@@ -583,7 +588,7 @@ class MultiModelOrchestrator:
                     await bus.send(msg)
                     logger.info(f"[编排器] 直接激活大模型: session={str(session_id)[:8]}")
                 else:
-                    logger.warning(f"[编排器] runner_manager 或 blackboard 不可用，跳过直接激活")
+                    logger.warning("[编排器] runner_manager 或 blackboard 不可用，跳过直接激活")
             except Exception as e:
                 logger.warning(f"[编排器] 直接激活大模型失败 (非致命): {e}")
 
@@ -637,8 +642,6 @@ class MultiModelOrchestrator:
                 return False
 
             completed = False
-            consecutive_idle = 0
-            MAX_IDLE_CHECKS = 999999  # 注释掉超时，让模型无限思考直到完成
             MAX_WALL_TIME = 86400  # 硬上限 24 小时（实际由连接生命周期决定）
 
             try:
@@ -672,7 +675,6 @@ class MultiModelOrchestrator:
                         break
 
                     if _has_pending_delegations():
-                        consecutive_idle = 0
                         logger.info(f"[编排器] 大模型等待委托中，延长等待 (+{elapsed:.0f}s)")
                     # else:
                     #     consecutive_idle += 1
@@ -683,7 +685,7 @@ class MultiModelOrchestrator:
                     #     break
 
                 t_wait_elapsed = time.time() - t_wait_start
-                timings['WaitLargeModel'] = (t_wait_elapsed, f'等待大模型完成' + (f' (完成)' if completed else f' (超时或中止)'))
+                timings['WaitLargeModel'] = (t_wait_elapsed, '等待大模型完成' + (' (完成)' if completed else ' (超时或中止)'))
                 logger.info(f"[等待大模型] {('完成信号已收到' if completed else '等待超时')} (+{t_wait_elapsed:.2f}s)")
 
                 if not final_response and blackboard and blackboard.final_response:
@@ -698,7 +700,7 @@ class MultiModelOrchestrator:
                 if completed:
                     logger.warning("[编排器] 大模型已发送完成信号但无 final_response")
                 else:
-                    logger.warning(f"[编排器] 大模型超时，尝试恢复最后可用的内容")
+                    logger.warning("[编排器] 大模型超时，尝试恢复最后可用的内容")
                 if blackboard and blackboard.final_response:
                     final_response = blackboard.final_response
 
@@ -714,7 +716,7 @@ class MultiModelOrchestrator:
                     final_response = "[系统通知] 思考超时，请重试。"
 
             t_total = time.time() - start
-            timings['总耗时'] = (t_total, f'完整流程耗时')
+            timings['总耗时'] = (t_total, '完整流程耗时')
 
             # 打印性能统计
             logger.info(f"\n【性能统计】会话 {session_id[:12]}:")
@@ -742,8 +744,10 @@ class MultiModelOrchestrator:
             }
         finally:
             try:
+                # 同步清理：确保 manager 完全关闭后再返回，
+                # 避免下一次对话（可能紧接到达）复用上一轮的旧黑板。
                 from modules.thinking.core.model_runner import remove_runner_manager
-                asyncio.create_task(remove_runner_manager(session_id or ""))
+                await remove_runner_manager(session_id or "")
             except Exception as e:
                 logger.debug(f"[编排器] runner_manager 清理失败 (非致命): {e}")
 

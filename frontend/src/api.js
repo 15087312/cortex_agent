@@ -10,6 +10,12 @@ let _initialized = false
 
 const KEY_STORE = 'cortex_api_key'
 
+// 链路追踪：每次请求附带 X-Trace-Id / X-Request-Seq（与 js/api.js 对齐）
+let _traceId = (typeof crypto !== 'undefined' && crypto.randomUUID)
+  ? crypto.randomUUID()
+  : ('t' + Date.now() + Math.random().toString(36).slice(2))
+let _traceSeq = 0
+
 function _init() {
   if (_initialized) return
   _initialized = true
@@ -19,7 +25,12 @@ function _init() {
 
 function _headers() {
   _init()
-  const h = { 'Content-Type': 'application/json' }
+  _traceSeq++
+  const h = {
+    'Content-Type': 'application/json',
+    'X-Trace-Id': _traceId,
+    'X-Request-Seq': String(_traceSeq),
+  }
   if (_memKey) h['X-API-Key'] = _memKey
   return h
 }
@@ -68,6 +79,12 @@ export async function request(method, path, body, signal) {
   if (!r.ok) {
     const e = { status: r.status }
     try { e.body = await r.json() } catch { e.body = await r.text() }
+    if (r.status === 401 || r.status === 403) {
+      try {
+        const { useToastStore } = await import('@/stores/toast.js')
+        useToastStore().show('需要 API Key，请在设置页配置', 'error')
+      } catch {}
+    }
     throw e
   }
   return await r.json()
@@ -159,10 +176,20 @@ export const endpoints = {
 
   config: (signal) => request('GET', '/config', undefined, signal),
   updateConfig: (k, v, signal) => request('PUT', '/config/' + encodeURIComponent(k), { value: v }, signal),
-  toggleCompanion: (signal) => request('POST', '/config/toggle-companion-mode', undefined, signal),
+
+  personas: (signal) => request('GET', '/config/personas', undefined, signal),
+  updatePersona: (role, prompt, systemOverride, signal) => request('PUT', '/config/persona/' + encodeURIComponent(role), { value: prompt, system_override: systemOverride ?? null }, signal),
+  memoryLibs: (signal) => request('GET', '/config/memory-libs', undefined, signal),
+  createMemoryLib: (name) => request('POST', '/config/memory-libs', { name }),
+  switchMemoryLib: (name) => request('PUT', '/config/memory-libs/current', { name }),
+  renameMemoryLib: (oldName, newName) => request('PUT', '/config/memory-libs/rename', { old_name: oldName, new_name: newName }),
 
   sessions: (signal) => request('GET', '/stream/sessions', undefined, signal),
   deleteSession: (id, signal) => request('DELETE', '/stream/session/' + encodeURIComponent(id), undefined, signal),
+  updateSessionTitle: (id, title, signal) => request('PUT', '/stream/session/' + encodeURIComponent(id) + '/title', { title }, signal),
+  deleteMessage: (sid, mid, signal) => request('DELETE', '/stream/sessions/' + encodeURIComponent(sid) + '/messages/' + encodeURIComponent(mid), undefined, signal),
+  updateMessage: (sid, mid, content, signal) => request('PUT', '/stream/sessions/' + encodeURIComponent(sid) + '/messages/' + encodeURIComponent(mid), { content }, signal),
+  sessionMessages: (id, limit, signal) => request('GET', '/stream/sessions/' + encodeURIComponent(id) + '/messages?limit=' + (limit || 100), undefined, signal),
   managementSessions: (signal) => request('GET', '/management/sessions', undefined, signal),
   sessionDialog: (id, limit, signal) => request('GET', '/management/sessions/' + encodeURIComponent(id) + '/dialog?limit=' + (limit || 100), undefined, signal),
 

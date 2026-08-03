@@ -2,6 +2,12 @@
 const MAX_RETRY = 3
 const PING_INTERVAL = 30000
 
+// 链路追踪：每次发送注入 trace_id / trace_seq（与 js/ws.js 对齐）
+const _traceId = (typeof crypto !== 'undefined' && crypto.randomUUID)
+  ? crypto.randomUUID()
+  : ('w' + Date.now() + Math.random().toString(36).slice(2))
+let _traceSeq = 0
+
 class CortexWsClient {
   constructor() {
     this._conn = null
@@ -37,8 +43,9 @@ class CortexWsClient {
     const sid = this._sessionId
     if (!sid) { this._reject?.('no session id'); return }
     try {
-      const host = window.location.host
-      this._conn = new WebSocket(`ws://${host}/stream/ws/${sid}`)
+      // 直连后端 :8080（经 Qt 静态代理 8765 加载时同源 ws 无法转发，与 js/ws.js 一致）
+      const host = window.location.hostname || 'localhost'
+      this._conn = new WebSocket(`ws://${host}:8080/stream/ws/${sid}`)
     } catch (e) {
       this._reject?.(e)
       this._scheduleRetry()
@@ -109,7 +116,8 @@ class CortexWsClient {
 
   send(data) {
     if (this._conn && this._conn.readyState === WebSocket.OPEN) {
-      this._conn.send(JSON.stringify(data))
+      _traceSeq++
+      this._conn.send(JSON.stringify({ ...data, trace_id: _traceId, trace_seq: _traceSeq }))
       return true
     }
     return false

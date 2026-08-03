@@ -39,17 +39,19 @@ TYPE_DECAY_LAMBDA = {
 }
 
 # ── 评分权重 ──────────────────────────────────────────────
+# 语义相关性必须主导：importance/recency/utility/frequency 只是辅助，
+# 权重过高会让"重要/最近/高频"的无关事件碾压语义相关事件（用户反馈检索无关）。
 SCORE_WEIGHTS = {
-    "semantic": 0.35,     # 语义相关
-    "importance": 0.20,   # 重要性（LLM 离散标注）
-    "recency": 0.20,      # 最近被访问
-    "utility": 0.15,      # 被检索次数
-    "frequency": 0.10,    # 话题被提及次数
+    "semantic": 0.60,     # 语义相关（主导）
+    "importance": 0.15,   # 重要性（LLM 离散标注）
+    "recency": 0.10,      # 最近被访问
+    "utility": 0.08,      # 被检索次数
+    "frequency": 0.07,    # 话题被提及次数
 }
 
 # 最小原始语义相似度：低于此值的事件视为不相关，直接过滤
-# 余弦相似度 < 0.20 表示向量几乎正交，无语义关联
-MIN_SEMANTIC_SIMILARITY = 0.20
+# 余弦相似度 < 0.30 表示向量基本无关，防止"热门但无关"事件挤进结果
+MIN_SEMANTIC_SIMILARITY = 0.30
 
 SECONDS_PER_DAY = 86400.0
 
@@ -211,7 +213,9 @@ class EventRetrieval:
 
         for ev, _ in keyword_results:
             if ev.id not in seen:
-                seen[ev.id] = {"event": ev, "semantic": 0.1}
+                # 关键词匹配的基础语义分：须 >= MIN_SEMANTIC_SIMILARITY 才能过门槛，
+                # 但低于向量命中，避免"纯关键词巧合"的无关事件排到语义相关前面
+                seen[ev.id] = {"event": ev, "semantic": 0.35}
 
         scored = []
         for sid, data in seen.items():
@@ -255,17 +259,15 @@ class EventRetrieval:
         threshold: float,
         max_results: int,
     ) -> List[MemoryEvent]:
-        """归一化 → 阈值 → 排序 → 截断"""
+        """绝对归一化 → 阈值 → 排序 → 截断"""
         if not scored:
             return []
 
-        scores = [s for _, s in scored]
-        smin, smax = min(scores), max(scores)
-
-        if smax - smin < 0.0001:
-            normalized = [(ev, 0.5) for ev, _ in scored]
-        else:
-            normalized = [(ev, (s - smin) / (smax - smin)) for ev, s in scored]
+        # 绝对归一化：除以理论最大原始分，而不是 min-max 相对归一化。
+        # min-max 会让"所有候选都不相关"时最高分也变成 1.0 通过阈值（矮子里拔将军）。
+        # 理论最大 raw ≈ 全因子取 1.0 × 内容加成上限 1.15。
+        raw_max = sum(SCORE_WEIGHTS.values()) * 1.15
+        normalized = [(ev, s / raw_max) for ev, s in scored]
 
         qualified = [(ev, ns) for ev, ns in normalized if ns >= threshold]
         qualified.sort(key=lambda x: x[1], reverse=True)

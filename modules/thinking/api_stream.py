@@ -50,7 +50,11 @@ class ConnectionManager:
         async with self._lock:
             websocket = self.active_connections.get(session_id)
             if websocket:
-                await websocket.send_json(data)
+                try:
+                    await websocket.send_json(data)
+                except Exception:
+                    # 连接已关闭/客户端断开（如 voice 会话瞬时连接）→ 移除残留连接，避免重复报错
+                    self.active_connections.pop(session_id, None)
 
     def send_json_from_thread(self, session_id: str, data: dict, timeout: float = 5.0) -> bool:
         """从非事件循环线程安全地发送 WebSocket 消息
@@ -69,8 +73,13 @@ class ConnectionManager:
             async with self._lock:
                 ws = self.active_connections.get(session_id)
                 if ws:
-                    await ws.send_json(data)
-                    return True
+                    try:
+                        await ws.send_json(data)
+                        return True
+                    except Exception:
+                        # 连接已关闭 → 移除残留连接
+                        self.active_connections.pop(session_id, None)
+                        return False
             return False
 
         try:
@@ -99,16 +108,29 @@ def _resolve_identity_name(model_id: str) -> str:
         return _identity_name_cache[model_id]
 
     # 去除尾部 _number（如 _001、_002）
-    base = model_id.rsplit("_", 1)[0] if re.match(r".*_\d+$", model_id) else model_id
+    base = re.sub(r'_\d+$', '', model_id)
 
     try:
         from modules.thinking.identity import get_identities
         identities = get_identities()
+        # 先尝试直接用 key 查（model_id 即 key 或 base 即 key 的情况）
         identity = identities.get(base)
         if identity:
             name = identity.get("name", "")
-            _identity_name_cache[model_id] = name
-            return name
+            if name:
+                _identity_name_cache[model_id] = name
+                return name
+        # 反向匹配：身份模板的 model_id 字段去掉尾部编号后与 base 相等
+        # （roles.yaml 中 key=code_supervisor，但 model_id=supervisor_code_001）
+        for key, ident in identities.items():
+            tmid = ident.get("model_id", "")
+            if not tmid:
+                continue
+            tbase = re.sub(r'_\d+$', '', tmid)
+            if tbase == base:
+                name = ident.get("name", "")
+                _identity_name_cache[model_id] = name
+                return name
     except Exception as e:
         logger.debug("获取模型身份名称失败: %s", e)
     _identity_name_cache[model_id] = ""
@@ -176,8 +198,11 @@ class StreamThinkingSystem:
                     try:
                         recent = repo.get_recent_messages(session_id, limit=50)
                         if recent:
+                            # 过滤思考步骤（thought），只恢复真实对话，避免污染模型上下文
+                            recent = [m for m in recent if m["role"] != "thought"]
                             self.sessions[session_id]["messages"] = [
-                                {"role": m["role"], "content": m["content"], "timestamp": 0}
+                                {"role": m["role"], "content": m["content"], "timestamp": 0,
+                                 "id": m.get("id", "")}
                                 for m in recent
                             ]
                             logger.info(f"[SessionRepo] 恢复 {len(recent)} 条历史消息: session={session_id[:8]}")
@@ -217,26 +242,56 @@ class StreamThinkingSystem:
             else:
                 self._running = False
 
-    async def _append_message(self, session_id: str, role: str, content: str):
+    async def _append_message(self, session_id: str, role: str, content: str, tier: str = "") -> str:
+        """追加消息到内存并持久化，返回消息 ID"""
+        msg_id = ""
+        msg_index = -1
         async with self._lock:
             if session_id not in self.sessions:
-                return
-            self.sessions[session_id]["messages"].append(
+                return ""
+            msgs = self.sessions[session_id]["messages"]
+            # user 消息去重：busy 时已保存、retry 重发同内容 → 不重复入库（保证会话历史唯一）
+            if role == "user" and msgs and msgs[-1].get("role") == "user" and msgs[-1].get("content") == content:
+                return msgs[-1].get("id", "")
+            msgs.append(
                 {
                     "role": role,
                     "content": content,
                     "timestamp": time.time(),
+                    "id": "",
                 }
             )
-            self.sessions[session_id]["messages"] = self.sessions[session_id]["messages"][-200:]
+            self.sessions[session_id]["messages"] = msgs[-200:]
+            msg_index = len(self.sessions[session_id]["messages"]) - 1
 
         # 持久化到 SQLite
         repo = self._get_session_repo()
         if repo:
             try:
-                repo.save_message(session_id, role, content)
+                msg_id = repo.save_message(session_id, role, content, tier=tier)
             except Exception as e:
                 logger.debug(f"[SessionRepo] 保存消息失败: {e}")
+        if msg_id and session_id in self.sessions and msg_index >= 0:
+            # 按索引回填消息 ID（避免并发追加时误改最后一条）
+            async with self._lock:
+                msgs = self.sessions[session_id].get("messages", [])
+                if msg_index < len(msgs):
+                    msgs[msg_index]["id"] = msg_id
+        return msg_id
+
+    async def _persist_thought(self, session_id: str, content: str, tier: str = "") -> None:
+        """持久化思考步骤到 DB（供前端切换会话后恢复展示）。
+
+        只写 SQLite、不写入内存 messages —— 内存 messages 用于组装模型上下文
+        （think() 的 context / 【对话历史】），思考步骤不应污染 AI 看到的对话。
+        """
+        repo = self._get_session_repo()
+        if not repo:
+            return
+        try:
+            repo.save_message(session_id, "thought", content, tier=tier)
+        except Exception as e:
+            logger.debug(f"[SessionRepo] 保存思考步骤失败: {e}")
 
     async def _proactive_context_trim(self, session_id: str):
         """水位线渐进裁剪 — 消息超窗口 80% 时丢弃最旧的 50%"""
@@ -304,6 +359,9 @@ class StreamThinkingSystem:
         source = event.get("source", "")
         success = bool(event.get("success", True))
         dialog_tier = ""
+        model_id = ""
+        identity_name = ""
+        tier_labels = {"large": "[总指挥]", "supervisor": "[主管]", "expert": "[专家]", "user": "[用户]"}
 
         if event_type == "tool_call":
             content = f"工具 {target} {action} {'成功' if success else '失败'}"
@@ -312,7 +370,7 @@ class StreamThinkingSystem:
             metadata = payload.get("metadata", {})
             msg_type = payload.get("msg_type", "")
             tier = metadata.get("tier") or payload.get("tier", payload.get("sender_tier", "unknown"))
-            phase = payload.get("phase", "comm")
+            payload.get("phase", "comm")
             detail = payload.get("detail", "")
             sender = payload.get("sender", source)
             recipient = payload.get("recipient", target)
@@ -401,6 +459,13 @@ class StreamThinkingSystem:
         }
         if dialog_tier:
             result_data["dialog_tier"] = dialog_tier
+        # 身份信息：供前端渲染不同的头像/名字（如 代码主管 / 总指挥）
+        if event_type == "model_comm":
+            result_data["model_id"] = model_id
+            if identity_name:
+                result_data["identity_name"] = identity_name
+            else:
+                result_data["identity_name"] = tier_labels.get(dialog_tier, dialog_tier) if dialog_tier else ""
         return {
             "content": content,
             "data": result_data,
@@ -417,6 +482,11 @@ class StreamThinkingSystem:
             await self.start(session_id)
 
         if await self._is_processing(session_id):
+            # busy：不再丢弃，保存用户消息保证会话历史完整（_append_message 对连续重复去重）
+            try:
+                await self._append_message(session_id, "user", user_input)
+            except Exception:
+                pass
             await self._emit(
                 session_id,
                 _build_event(
@@ -431,7 +501,7 @@ class StreamThinkingSystem:
             return ""
 
         await self._set_processing(session_id, True)
-        await self._append_message(session_id, "user", user_input)
+        user_msg_id = await self._append_message(session_id, "user", user_input)
 
         try:
             await self._emit(
@@ -442,6 +512,7 @@ class StreamThinkingSystem:
                     event="received",
                     content="已接收请求，开始处理",
                     role="system",
+                    data={"message_id": user_msg_id},
                 ),
                 callback,
             )
@@ -477,11 +548,8 @@ class StreamThinkingSystem:
             except Exception as e:
                 logger.debug(f"[安全门控] 设置事件回调失败 (非致命): {e}")
 
-            # 从 session 获取 no_tools 标志
-            no_tools = False
             async with self._lock:
                 session_data = self.sessions.get(session_id, {})
-                no_tools = session_data.get("no_tools", False)
                 model_id = session_data.get("model_id", "large_primary")
 
             scheduler_task = asyncio.create_task(
@@ -491,7 +559,6 @@ class StreamThinkingSystem:
                     short_term_memory,
                     scheduler_event_callback,
                     session_id,
-                    no_tools=no_tools,
                     model_id=model_id,
                 )
             )
@@ -534,6 +601,13 @@ class StreamThinkingSystem:
                                         "role": role,
                                         "model_id": model_id,
                                         "active_skill": runner_info.get("active_skill", ""),
+                                        "status": runner_info.get("status", ""),
+                                        "status_detail": runner_info.get("status_detail", ""),
+                                        "round": runner_info.get("round", 0),
+                                        "max_turns": runner_info.get("max_turns", 0),
+                                        "react_loop": runner_info.get("react_loop"),
+                                        "think_loop": runner_info.get("think_loop"),
+                                        "last_thought": runner_info.get("last_thought", ""),
                                     }
                                 # 主管
                                 elif tier == "supervisor" and running:
@@ -541,6 +615,13 @@ class StreamThinkingSystem:
                                         "name": name,
                                         "role": role,
                                         "model_id": model_id,
+                                        "status": runner_info.get("status", ""),
+                                        "status_detail": runner_info.get("status_detail", ""),
+                                        "round": runner_info.get("round", 0),
+                                        "max_turns": runner_info.get("max_turns", 0),
+                                        "react_loop": runner_info.get("react_loop"),
+                                        "think_loop": runner_info.get("think_loop"),
+                                        "last_thought": runner_info.get("last_thought", ""),
                                     })
                                 # 专家（带上所属主管）
                                 elif tier == "expert" and running:
@@ -551,6 +632,13 @@ class StreamThinkingSystem:
                                         "role": role,
                                         "model_id": model_id,
                                         "supervisor": supervisor,
+                                        "status": runner_info.get("status", ""),
+                                        "status_detail": runner_info.get("status_detail", ""),
+                                        "round": runner_info.get("round", 0),
+                                        "max_turns": runner_info.get("max_turns", 0),
+                                        "react_loop": runner_info.get("react_loop"),
+                                        "think_loop": runner_info.get("think_loop"),
+                                        "last_thought": runner_info.get("last_thought", ""),
                                     })
                     except Exception as e:
                         logger.debug(f"[活跃专家] 收集状态失败 (非致命): {e}")
@@ -587,6 +675,12 @@ class StreamThinkingSystem:
                     if formatted is None:
                         continue  # 空内容轮次，跳过展示
                     event_role = formatted["data"].get("dialog_tier", "thinking")
+                    # 持久化思考/对话步骤（role=thought），切换会话后仍能恢复展示
+                    # 只写 DB、不进内存 messages，避免污染 AI 上下文（见 _persist_thought）
+                    try:
+                        await self._persist_thought(session_id, formatted["content"], tier=event_role)
+                    except Exception:
+                        pass
                     await self._emit(
                         session_id,
                         _build_event(
@@ -618,6 +712,10 @@ class StreamThinkingSystem:
                     logger.debug("获取取消后的部分响应失败: %s", e)
 
                 if partial_response:
+                    try:
+                        await self._append_message(session_id, "assistant", partial_response)
+                    except Exception:
+                        pass
                     await self._emit(
                         session_id,
                         _build_event(
@@ -735,8 +833,34 @@ class StreamThinkingSystem:
                 )
 
             await self._append_message(session_id, "assistant", final_response)
+            # 获取刚保存的 assistant 消息 ID（前端删除/修改需要）
+            assistant_msg_id = ""
+            async with self._lock:
+                msgs = self.sessions.get(session_id, {}).get("messages", [])
+                if msgs and msgs[-1].get("id"):
+                    assistant_msg_id = msgs[-1]["id"]
 
             if output_mode == "output":
+                # 附带本轮思考元数据（内心独白 + 事件记忆），供前端回复下方展开栏展示
+                meta = {"inner_monologue": "", "event_memory": "", "conversation_history": ""}
+                try:
+                    from modules.thinking.probes.probe_tools import _session_guidance
+                    g = _session_guidance.get((model_id, session_id), {})
+                    meta["inner_monologue"] = g.get("inner_thoughts", "") or ""
+                except Exception:
+                    pass
+                try:
+                    from modules.thinking.core.model_runner import _session_memory_context
+                    meta["event_memory"] = _session_memory_context.get(session_id, "") or ""
+                except Exception:
+                    pass
+                try:
+                    # 附加上一轮实际注入 AI 的【对话历史】原文（前端直接展示，保证一致）
+                    from modules.thinking.multi_model_orchestrator import _session_dialog_history, _session_dialog_history_lock
+                    with _session_dialog_history_lock:
+                        meta["conversation_history"] = _session_dialog_history.get(session_id, "") or ""
+                except Exception:
+                    pass
                 await self._emit(
                     session_id,
                     _build_event(
@@ -745,7 +869,8 @@ class StreamThinkingSystem:
                         event="assistant_message",
                         content=final_response,
                         role="main",
-                        data={"trace_id": result.get("trace_id", ""), "output_mode": output_mode},
+                        data={"trace_id": result.get("trace_id", ""), "output_mode": output_mode,
+                              "message_id": assistant_msg_id, "meta": meta},
                     ),
                     callback,
                 )
@@ -928,7 +1053,8 @@ class StreamThinkingSystem:
         session = self.sessions.get(session_id)
         if not session:
             return []
-        return session.get("messages", [])
+        # 过滤思考步骤（thought），确保模型上下文只含真实对话
+        return [m for m in session.get("messages", []) if m.get("role") != "thought"]
 
     def get_status(self) -> Dict[str, Any]:
         running_sessions = sum(1 for s in self.sessions.values() if s.get("running"))
@@ -942,6 +1068,10 @@ class StreamThinkingSystem:
 _thinking_system: Optional[StreamThinkingSystem] = None
 _thinking_system_lock = threading.Lock()
 
+# 主事件循环引用（lifespan 启动时记录）：供后台线程（如主动搭话）跨线程提交协程，
+# 避免在无活跃 WS 连接时 connection_manager._loop 为 None 导致持久化走错路径
+_main_event_loop: Optional[asyncio.AbstractEventLoop] = None
+
 
 def get_thinking_system() -> StreamThinkingSystem:
     global _thinking_system
@@ -954,6 +1084,12 @@ def get_thinking_system() -> StreamThinkingSystem:
 
 async def initialize_system():
     """初始化流式思考系统"""
+    # 记录主事件循环，供后台线程（主动搭话等）跨线程安全提交协程
+    global _main_event_loop
+    try:
+        _main_event_loop = asyncio.get_running_loop()
+    except Exception:
+        pass
     return get_thinking_system()
 
 
@@ -976,6 +1112,39 @@ async def create_session():
     system = get_thinking_system()
     session_id = await system.create_session()
     return {"success": True, "data": {"session_id": session_id}}
+
+
+async def _safe_think(system, session_id: str, user_input: str, callback=None) -> None:
+    """包一层 think 调用：调度抛异常时也保存一条错误回复，保证会话历史有记录。
+
+    think 任务通过 asyncio.create_task 独立于 WebSocket/SSE 连接运行，
+    连接断开不影响处理；此处兜底异常，避免"思考失败但会话无任何记录"。
+    """
+    try:
+        await system.think(session_id, user_input, callback=callback)
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        logger.error(f"[think] 调度失败: {e}")
+        error_text = f"[模型调用失败: {e}]"
+        try:
+            await system._append_message(session_id, "assistant", error_text)
+        except Exception:
+            pass
+        try:
+            await system._emit(
+                session_id,
+                _build_event(
+                    session_id=session_id,
+                    msg_type="error",
+                    event="think_error",
+                    content=error_text,
+                    role="system",
+                ),
+                callback,
+            )
+        except Exception:
+            pass
 
 
 @router.websocket("/ws/{session_id}")
@@ -1029,19 +1198,7 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
                         except Exception as e:
                             logger.warning(f"WebSocket 消息设置执行模式 '{exec_mode}' 失败: {e}")
 
-                    # 如果消息中带了 no_tools 标志，存入 session
-                    no_tools = msg_data.get("no_tools", False)
-                    if no_tools:
-                        async with system._lock:
-                            if session_id in system.sessions:
-                                system.sessions[session_id]["no_tools"] = True
-                        logger.info(f"[API] 会话禁用工具: session={session_id[:8]}")
-                    else:
-                        async with system._lock:
-                            if session_id in system.sessions:
-                                system.sessions[session_id]["no_tools"] = False
-
-                    asyncio.create_task(system.think(session_id, user_content))
+                    asyncio.create_task(_safe_think(system, session_id, user_content))
 
             elif msg_type == "stop":
                 await system.stop(session_id)
@@ -1125,7 +1282,7 @@ async def _stream_sse(session_id: str, question: str):
     system = get_thinking_system()
     await system.start(session_id)
 
-    task = asyncio.create_task(system.think(session_id, question, callback=callback))
+    task = asyncio.create_task(_safe_think(system, session_id, question, callback=callback))
 
     try:
         while True:
@@ -1178,10 +1335,84 @@ async def get_context(session_id: str):
 
 @router.delete("/session/{session_id}")
 async def close_session(session_id: str):
-    """关闭会话"""
+    """关闭并删除会话（同时清理内存与数据库）"""
     system = get_thinking_system()
     await system.stop(session_id)
-    return {"success": True, "data": {"message": "会话已关闭"}}
+    async with system._lock:
+        system.sessions.pop(session_id, None)
+    repo = system._get_session_repo()
+    if repo:
+        try:
+            repo.delete_session(session_id)
+        except Exception as e:
+            logger.debug(f"[SessionRepo] 删除会话失败: {e}")
+    return {"success": True, "data": {"message": "会话已删除"}}
+
+
+@router.put("/session/{session_id}/title")
+async def update_session_title(session_id: str, body: dict = None):
+    """重命名会话标题"""
+    title = ((body or {}).get("title") or "").strip()
+    if not title:
+        raise AppError(ErrorCode.BAD_REQUEST, "标题不能为空")
+    system = get_thinking_system()
+    repo = system._get_session_repo()
+    if repo:
+        try:
+            repo.set_session_title(session_id, title[:200])
+        except Exception as e:
+            logger.debug(f"[SessionRepo] 设置标题失败: {e}")
+    return {"success": True, "data": {"message": "标题已更新", "title": title[:200]}}
+
+
+@router.delete("/sessions/{session_id}/messages/{message_id}")
+async def delete_message(session_id: str, message_id: str):
+    """删除单条消息（同步更新数据库与 AI 上下文）"""
+    system = get_thinking_system()
+    # 先从内存（AI 可见上下文）移除
+    async with system._lock:
+        msgs = system.sessions.get(session_id, {}).get("messages", [])
+        len(msgs)
+        system.sessions[session_id]["messages"] = [
+            m for m in msgs if m.get("id") != message_id
+        ]
+    # 再从数据库删除
+    repo = system._get_session_repo()
+    if repo:
+        try:
+            repo.delete_message(session_id, message_id)
+        except Exception as e:
+            logger.debug(f"[SessionRepo] 删除消息失败: {e}")
+    return {
+        "success": True,
+        "data": {"message": "消息已删除", "removed": True},
+    }
+
+
+@router.put("/sessions/{session_id}/messages/{message_id}")
+async def update_message(session_id: str, message_id: str, body: dict = None):
+    """修改单条消息内容（同步更新数据库与 AI 上下文）"""
+    content = ((body or {}).get("content") or "").strip()
+    if not content:
+        raise AppError(ErrorCode.BAD_REQUEST, "内容不能为空")
+    system = get_thinking_system()
+    # 更新内存（AI 可见上下文）
+    async with system._lock:
+        msgs = system.sessions.get(session_id, {}).get("messages", [])
+        for m in msgs:
+            if m.get("id") == message_id:
+                m["content"] = content
+    # 更新数据库
+    repo = system._get_session_repo()
+    if repo:
+        try:
+            repo.update_message(session_id, message_id, content)
+        except Exception as e:
+            logger.debug(f"[SessionRepo] 更新消息失败: {e}")
+    return {
+        "success": True,
+        "data": {"message": "消息已更新", "content": content},
+    }
 
 
 @router.get("/status")
@@ -1197,17 +1428,29 @@ async def get_sessions():
     system = get_thinking_system()
     repo = system._get_session_repo()
 
+    # 合并内存中的活跃会话状态
+    async with system._lock:
+        live_ids = set(system.sessions.keys())
+
+    # 真正"正在使用"的会话 = 有活跃 WebSocket 连接的会话
+    active_ws = set(connection_manager.active_connections.keys())
+
     # 从 DB 获取历史会话
     db_sessions = []
     if repo:
         try:
+            # 自动清理无消息的空会话：
+            # 仅保留有活跃 WS 连接或最近活跃的空会话，其余（含内存里挂着的旧空会话）删除
+            repo.delete_empty_sessions(
+                exclude_ids=list(active_ws),
+                min_idle_minutes=10,
+            )
+        except Exception as e:
+            logger.debug(f"[SessionRepo] 清理空会话失败: {e}")
+        try:
             db_sessions = repo.get_all_sessions(limit=50)
         except Exception as e:
             logger.debug(f"[SessionRepo] 查询会话失败: {e}")
-
-    # 合并内存中的活跃会话状态
-    async with system._lock:
-        live_ids = set(system.sessions.keys())
 
     for s in db_sessions:
         s["is_live"] = s["session_id"] in live_ids
@@ -1217,15 +1460,32 @@ async def get_sessions():
 
 @router.get("/sessions/{session_id}/messages")
 async def get_session_messages(session_id: str, limit: int = 100):
-    """获取会话历史消息"""
+    """获取会话历史消息（DB 优先，内存兜底保证切换会话不丢）"""
     repo = get_thinking_system()._get_session_repo()
     if not repo:
         return {"success": True, "data": []}
     try:
         messages = repo.get_messages(session_id, limit=limit)
-        return {"success": True, "data": messages}
+        if messages:
+            return {"success": True, "data": messages}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        logger.debug(f"[SessionRepo] 读取消息失败，尝试内存兜底: {e}")
+    # 兜底：DB 无记录（保存失败的极端场景）时用后端内存消息，避免切回会话内容丢失
+    try:
+        sys_inst = get_thinking_system()
+        mem = sys_inst.sessions.get(session_id, {}).get("messages", [])
+        data = [
+            {
+                "id": m.get("id", ""),
+                "role": m.get("role", ""),
+                "content": m.get("content", ""),
+                "created_at": m.get("timestamp", 0),
+            }
+            for m in mem[-limit:]
+        ]
+        return {"success": True, "data": data}
+    except Exception:
+        return {"success": True, "data": []}
 
 
 @router.post("/stop")

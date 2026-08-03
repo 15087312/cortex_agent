@@ -3,7 +3,6 @@
 
 不负责存储，只负责从 ValueSystem 读取并格式化输出
 """
-from typing import Dict, List
 
 
 class ValueFormatter:

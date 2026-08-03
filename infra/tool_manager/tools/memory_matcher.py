@@ -89,7 +89,6 @@ class MemoryMatchEngine:
             return None
         
         try:
-            import numpy as np
             embedding = self._embedding_model.encode(text, convert_to_numpy=True)
             return embedding
         except Exception as e:

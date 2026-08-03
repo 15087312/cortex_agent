@@ -1,6 +1,5 @@
 """世界状态管理器 — 从事件总线消费事件，维护当前世界状态"""
 import threading
-import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 

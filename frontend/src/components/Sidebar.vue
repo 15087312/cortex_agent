@@ -1,6 +1,7 @@
 <script setup>
 import { useRouter, useRoute } from 'vue-router'
 import { useThemeStore } from '@/stores/theme.js'
+import Icon from '@/components/Icon.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -11,29 +12,28 @@ const navSections = [
   {
     label: '概览',
     items: [
-      { route: '/dashboard', label: '仪表盘' },
-      { route: '/chat', label: '对话' },
-      { route: '/cortex', label: 'Cortex' },
+      { route: '/dashboard', label: '仪表盘', icon: 'dashboard' },
+      { route: '/chat', label: '对话', icon: 'message' },
     ]
   },
   {
     label: '管理',
     items: [
-      { route: '/modules', label: '模块' },
-      { route: '/memory', label: '记忆' },
-      { route: '/causal', label: '因果图' },
-      { route: '/tools', label: '工具' },
-      { route: '/gallery', label: '图库' },
-      { route: '/security', label: '安全' },
-      { route: '/perception', label: '感知' },
+      { route: '/modules', label: '模块', icon: 'puzzle' },
+      { route: '/memory', label: '记忆', icon: 'file' },
+      { route: '/causal', label: '因果图', icon: 'network' },
+      { route: '/tools', label: '工具', icon: 'wrench' },
+      { route: '/gallery', label: '图库', icon: 'image' },
+      { route: '/security', label: '安全', icon: 'shield' },
+      { route: '/perception', label: '感知', icon: 'eye' },
     ]
   },
   {
     label: '系统',
     items: [
-      { route: '/sessions', label: '会话' },
-      { route: '/system', label: '系统' },
-      { route: '/settings', label: '设置' },
+      { route: '/sessions', label: '会话', icon: 'list' },
+      { route: '/system', label: '系统', icon: 'info' },
+      { route: '/settings', label: '设置', icon: 'settings' },
     ]
   }
 ]
@@ -56,6 +56,7 @@ function isActive(itemRoute) {
           :class="{ active: isActive(item.route) }"
           @click="router.push(item.route)"
         >
+          <span class="nav-item-icon"><Icon :name="item.icon" :size="16" /></span>
           <span>{{ item.label }}</span>
         </div>
       </template>
@@ -63,7 +64,7 @@ function isActive(itemRoute) {
     <div class="sidebar-footer">
       <span class="version">v{{ appVersion }}</span>
       <button class="theme-toggle" @click="theme.toggle()" title="切换主题">
-        {{ theme.isDark ? '☀️' : '🌙' }}
+        <Icon :name="theme.isDark ? 'sun' : 'moon'" :size="16" />
       </button>
     </div>
   </nav>

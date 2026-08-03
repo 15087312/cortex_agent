@@ -4,7 +4,6 @@ TouchpointBackend — 通过 macOS 无障碍 API 检测 UI 元素
 适用于原生应用（PyCharm、Safari、Finder 等）。
 """
 import time
-from typing import Optional
 
 from modules.perception.screen.context import ScreenContext, UIElement
 from utils.logger import setup_logger
@@ -18,7 +17,7 @@ class TouchpointBackend:
     def __init__(self):
         self._available = False
         try:
-            import touchpoint
+            import touchpoint  # noqa: F401
             self._available = True
         except ImportError:
             logger.debug("touchpoint 未安装")
@@ -29,23 +28,11 @@ class TouchpointBackend:
     def detect(self, app: str = "", depth: int = 3, named_only: bool = True) -> ScreenContext:
         """检测当前窗口的 UI 元素"""
         import touchpoint as tp
-        from touchpoint import Role
 
         t0 = time.time()
         result = ScreenContext(backend="touchpoint", depth=depth)
 
         # 角色映射
-        role_map = {
-            "button": Role.BUTTON,
-            "text": Role.TEXT,
-            "text_field": Role.TEXT_FIELD,
-            "group": Role.GROUP,
-            "panel": Role.PANEL,
-            "tab_list": Role.TAB_LIST,
-            "scroll_bar": Role.SCROLL_BAR,
-            "image": Role.IMAGE,
-            "table_row": Role.TABLE_ROW,
-        }
 
         # 获取目标窗口
         wins = tp.windows()

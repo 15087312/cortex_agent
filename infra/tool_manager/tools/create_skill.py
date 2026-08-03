@@ -1,5 +1,4 @@
 """create_skill 工具 — 创建 SKILL.md 格式的技能说明书"""
-from typing import Dict, List
 
 from infra.tool_manager.tool_registry import ToolRegistry
 from utils.logger import setup_logger
@@ -37,7 +36,6 @@ async def create_skill(
     if not skill_id or not name:
         return {"status": "error", "message": "skill_id 和 name 不能为空"}
 
-    import yaml
     from pathlib import Path
     from datetime import datetime
 

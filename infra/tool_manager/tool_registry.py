@@ -132,7 +132,7 @@ class ToolInfo:
 
             annotation = param.annotation
             # Optional[X] → 提取 X
-            origin = getattr(annotation, '__origin__', None)
+            getattr(annotation, '__origin__', None)
             args = getattr(annotation, '__args__', ())
             if len(args) == 2 and type(None) in args:
                 annotation = args[0] if args[1] is type(None) else args[1]

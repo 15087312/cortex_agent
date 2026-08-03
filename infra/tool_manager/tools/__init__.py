@@ -22,10 +22,9 @@ for _module_info in pkgutil.iter_modules([str(_package_dir)]):
     _imported.append(_module_info.name)
 
 # 加载分类记忆工具（位于 modules/memory/tools/）
-try:
-    importlib.import_module("modules.memory.tools.classified_memory_tool")
-except Exception as e:
-    logger.warning(f"分类记忆工具加载失败: {e}")
+# 旧架构遗留：classified_memory_tool 已在仓库重构时移除，其功能被
+# memory_match / memory_score / memory_batch_filter / event_query 取代。
+# 此处不再尝试导入，避免误导性告警日志。
 
 # 启动时恢复 AI 自创工具（从 data/ai_tools.json 持久化存储）
 try:

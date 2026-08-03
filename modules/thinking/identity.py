@@ -54,7 +54,7 @@ def load_external_identities(directory: str = None) -> Dict[str, dict]:
     try:
         from modules.thinking.identity_loader import load_and_merge
         _merged_identities = load_and_merge(_load_from_yaml(), directory)
-        logger.info(f"[Identity] 外部身份加载完成: {len(_merged_identities)} 个")
+        logger.debug(f"[Identity] 外部身份加载完成: {len(_merged_identities)} 个")
     except Exception as e:
         logger.warning(f"[Identity] 外部身份加载失败: {e}")
         _merged_identities = _load_from_yaml()
@@ -81,15 +81,15 @@ DEFAULT_TOOL_WHITELISTS: Dict[str, List[str]] = {
     ],
     "expert_code_reviewer": ["memory_match", "event_query", "directory_tree", "list_directory", "read_text_file"],
     "code_reviewer": ["memory_match", "event_query", "directory_tree", "list_directory", "read_text_file"],
-    "expert_code_writer": ["run_command", "event_query", "directory_tree", "list_directory", "read_text_file"],
-    "code_writer": ["run_command", "event_query", "directory_tree", "list_directory", "read_text_file"],
-    "expert_test_writer": ["run_pytest", "run_command", "event_query", "directory_tree", "list_directory", "read_text_file"],
-    "tester": ["run_pytest", "run_command", "event_query", "directory_tree", "list_directory", "read_text_file"],
+    "expert_code_writer": ["run_command", "write_text_file", "event_query", "directory_tree", "list_directory", "read_text_file"],
+    "code_writer": ["run_command", "write_text_file", "event_query", "directory_tree", "list_directory", "read_text_file"],
+    "expert_test_writer": ["run_pytest", "run_command", "write_text_file", "event_query", "directory_tree", "list_directory", "read_text_file"],
+    "tester": ["run_pytest", "run_command", "write_text_file", "event_query", "directory_tree", "list_directory", "read_text_file"],
     "expert_data_analyzer": ["web_search", "memory_match", "event_query", "directory_tree", "list_directory", "read_text_file"],
     "expert_customer": ["event_query"],
     "expert_emotion": ["event_query"],
     "expert_creative_writer": ["event_query"],
-    "expert_ui_designer": ["event_query", "web_fetch", "directory_tree", "list_directory", "read_text_file"],
+    "expert_ui_designer": ["event_query", "web_fetch", "write_text_file", "directory_tree", "list_directory", "read_text_file"],
 }
 
 
@@ -275,9 +275,7 @@ class ModelIdentity:
         # 工具白名单
         whitelist = list(template.get("tool_whitelist", []))
         if not whitelist:
-            if role == "companion":
-                whitelist = DEFAULT_TOOL_WHITELISTS.get("companion", [])
-            elif tier == "large":
+            if tier == "large":
                 whitelist = DEFAULT_TOOL_WHITELISTS["large"]
             elif tier == "supervisor":
                 whitelist = DEFAULT_TOOL_WHITELISTS["supervisor"]

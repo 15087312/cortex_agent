@@ -9,8 +9,6 @@ Flow per user message:
 5. Post-session: extract memory events
 """
 import asyncio
-import json
-from typing import Optional
 
 from backend.chat.model_runner import ModelRunner
 from backend.chat.context_slicer import ContextSlicer
@@ -86,31 +84,64 @@ class ContinuousThinker:
             await message_queue.put({"type": "error", "content": str(e)})
 
     async def _recall_memories(self, query: str, session_id: str) -> str:
-        """Retrieve relevant memories via hybrid RAG."""
+        """Retrieve global event memory（会话记忆即历史对话，由 context_messages 注入）。
+
+        仅当本会话已有历史对话时才注入全局事件记忆，避免新会话被无关历史污染。
+        """
         try:
+            # 会话已有历史对话（当前消息尚未入黑板，取到的是此前消息）
+            prior_msgs = []
+            try:
+                if self._blackboard is not None:
+                    prior_msgs = [
+                        m for m in self._blackboard.get_messages(session_id)
+                        if m.get("role") in ("user", "assistant") and m.get("content")
+                    ]
+            except Exception as e:
+                logger.debug(f"[历史对话检查] 失败: {e}")
+            if not prior_msgs:
+                return ""
+
             from backend.memory.event_retrieval import get_event_retrieval
             from backend.memory.depth_recall import should_trigger_deep_recall
-            from backend.memory.result_fusion import format_retrieve_result
+            from backend.memory.result_fusion import (
+                format_deep_recall_result,
+            )
 
-            retrieval = get_event_retrieval()
+            parts = []
 
-            # Check if deep recall should trigger
-            trigger_deep, reason = should_trigger_deep_recall(query)
-
-            if trigger_deep:
-                try:
+            # 深度回忆（有历史对话时）
+            try:
+                trigger_deep, _ = should_trigger_deep_recall(query)
+                if trigger_deep:
                     from backend.memory.depth_recall import DepthRecallScheduler
-                    from backend.memory.result_fusion import format_deep_recall_result
                     scheduler = DepthRecallScheduler()
                     deep_result = await scheduler.deep_recall(query, max_results=10)
                     if deep_result.success and not deep_result.fallback:
-                        return format_deep_recall_result(deep_result)
-                except Exception as e:
-                    logger.debug(f"Deep recall failed, falling back to shallow: {e}")
+                        parts.append(format_deep_recall_result(deep_result))
+            except Exception as e:
+                logger.debug(f"Deep recall failed: {e}")
 
-            # Shallow recall
-            events = await retrieval.retrieve(query, max_results=10)
-            return format_retrieve_result(events)
+            # 浅层全局事件记忆（标注"曾经发生的事"，提示优先当前会话）
+            try:
+                retrieval = get_event_retrieval()
+                global_events = await retrieval.retrieve(query, max_results=10)
+                if global_events:
+                    lines = [
+                        "【曾经发生的事】",
+                        "（以下为曾经发生的事，是过去的历史事件记忆，仅供参考。"
+                        "回答请优先基于当前会话的【对话历史】进行，不要把下列过去的任务当作当前任务执行）",
+                    ]
+                    for i, ev in enumerate(global_events, 1):
+                        date = str(ev.time or "")[:10] or "未知日期"
+                        lines.append(f"  [{i}] (日期={date}, 重要性={ev.importance:.0%}) {ev.fact}")
+                        if ev.lesson:
+                            lines.append(f"     经验: {ev.lesson}")
+                    parts.append("\n".join(lines))
+            except Exception as e:
+                logger.debug(f"Shallow recall failed: {e}")
+
+            return "\n\n".join(p for p in parts if p and p.strip())
 
         except Exception as e:
             logger.debug(f"Memory recall failed: {e}")

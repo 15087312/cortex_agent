@@ -326,18 +326,26 @@ class TestIncrementalUpdate:
 
     @pytest.mark.asyncio
     async def test_already_linked_event_not_duplicated(self):
+        """事件已关联到节点后，再次深度回忆不应重复计数。"""
         from modules.memory.causal_graph import CausalNode, CausalEdge
-        root = CausalNode(label="项目延期", node_type="root")
+        root = CausalNode(label="项目延期", node_type="root", keywords=["项目", "延期"])
         self.graph.save_node(root)
-        c = CausalNode(label="需求变更", node_type="cause")
+        c = CausalNode(label="需求变更", node_type="cause", keywords=["需求", "需求变更"])
         self.graph.save_node(c)
         self.graph.save_edge(CausalEdge(from_id=c.id, to_id=root.id, relation="causes"))
         from modules.memory.event_store import MemoryEvent
-        ev = MemoryEvent(fact="需求变更导致延期", importance=0.8, keywords=["需求"], causal_node_ids=[c.id])
+        ev = MemoryEvent(fact="需求变更导致延期", importance=0.8, keywords=["需求", "需求变更"])
         self.store.save_event(ev)
         from modules.memory.depth_recall import DepthRecallScheduler
         s = DepthRecallScheduler()
         result = await s.deep_recall("项目延期的原因")
-        # event_count should not double-count
+        # 第一次回忆：事件应被关联到因果节点，event_count 为 1
         node = self.graph.get_node(c.id)
-        assert node.event_count >= 1  # at least one
+        assert node.event_count >= 1, f"首次回忆应关联事件: {node.event_count}"
+
+        # 第二次回忆：已关联的事件不应重复计数（不 double-count）
+        result2 = await s.deep_recall("项目延期的原因")
+        node2 = self.graph.get_node(c.id)
+        assert node2.event_count == node.event_count, (
+            f"再次回忆不应重复计数: {node.event_count} → {node2.event_count}"
+        )

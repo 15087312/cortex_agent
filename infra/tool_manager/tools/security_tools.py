@@ -1,12 +1,10 @@
 """
 安全工具包 — 静态安全扫描、危险代码检测
 """
-import ast
 import re
-import os
 import subprocess
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 
 from infra.tool_manager.tool_registry import ToolRegistry
 from utils.logger import setup_logger

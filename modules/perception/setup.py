@@ -152,7 +152,6 @@ class PerceptionSystem:
         """启动窗口检测器后台线程，定时 publish SCREEN_WINDOW 到事件总线"""
         self._window_stop_event.clear()
         try:
-            import numpy as np
             from modules.perception.detectors.window_detector import WindowDetector
             self.window_detector = WindowDetector()
             if self.window_detector.is_available():

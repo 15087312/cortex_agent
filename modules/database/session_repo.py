@@ -52,11 +52,11 @@ class SessionRepository:
                 row.is_active = False
 
     def set_session_title(self, session_id: str, title: str) -> None:
-        """设置会话标题（取首条用户消息）"""
+        """设置会话标题（覆盖旧标题，支持重命名）"""
         with self._session() as s:
             row = s.query(ChatSession).filter_by(session_id=session_id).first()
-            if row and not row.title:
-                row.title = title[:200]
+            if row:
+                row.title = (title or "")[:200]
 
     def get_all_sessions(self, limit: int = 50) -> List[Dict[str, Any]]:
         """获取所有会话（按最后活跃时间倒序）"""
@@ -90,18 +90,20 @@ class SessionRepository:
     # ── 消息 ──
 
     def save_message(self, session_id: str, role: str, content: str,
-                     round_num: int = 0, tier: str = "") -> None:
-        """保存单条消息"""
+                     round_num: int = 0, tier: str = "") -> str:
+        """保存单条消息，返回消息 ID"""
         if not content or not content.strip():
-            return
+            return ""
         with self._session() as s:
-            s.add(ChatMessage(
+            msg = ChatMessage(
                 session_id=session_id,
                 role=role,
                 content=content[:50000],  # 截断过长内容
                 round_num=round_num,
                 tier=tier,
-            ))
+            )
+            s.add(msg)
+            s.flush()  # 立即生成 msg.id
             # 更新会话消息计数和标题
             session_row = s.query(ChatSession).filter_by(session_id=session_id).first()
             if session_row:
@@ -109,6 +111,38 @@ class SessionRepository:
                 session_row.last_active = datetime.utcnow()
                 if role == "user" and not session_row.title:
                     session_row.title = content[:200]
+            return msg.id
+
+    def delete_message(self, session_id: str, message_id: str) -> bool:
+        """删除单条消息（同步更新会话消息计数）"""
+        with self._session() as s:
+            msg = s.query(ChatMessage).filter_by(
+                session_id=session_id, id=message_id
+            ).first()
+            if not msg:
+                return False
+            s.delete(msg)
+            session_row = s.query(ChatSession).filter_by(session_id=session_id).first()
+            if session_row:
+                session_row.message_count = max(0, session_row.message_count - 1)
+                session_row.last_active = datetime.utcnow()
+            return True
+
+    def update_message(self, session_id: str, message_id: str, content: str) -> bool:
+        """修改单条消息内容"""
+        if not content or not content.strip():
+            return False
+        with self._session() as s:
+            msg = s.query(ChatMessage).filter_by(
+                session_id=session_id, id=message_id
+            ).first()
+            if not msg:
+                return False
+            msg.content = content[:50000]
+            session_row = s.query(ChatSession).filter_by(session_id=session_id).first()
+            if session_row:
+                session_row.last_active = datetime.utcnow()
+            return True
 
     def get_messages(self, session_id: str, limit: int = 100) -> List[Dict[str, Any]]:
         """获取会话消息（按时间正序）"""
@@ -117,6 +151,7 @@ class SessionRepository:
                 session_id=session_id
             ).order_by(ChatMessage.created_at).limit(limit).all()
             return [{
+                "id": r.id,
                 "role": r.role,
                 "content": r.content,
                 "created_at": r.created_at.isoformat() if r.created_at else "",
@@ -132,6 +167,7 @@ class SessionRepository:
             ).order_by(desc(ChatMessage.created_at)).limit(limit).all()
             rows.reverse()  # 正序
             return [{
+                "id": r.id,
                 "role": r.role,
                 "content": r.content,
                 "created_at": r.created_at.isoformat() if r.created_at else "",
@@ -165,6 +201,34 @@ class SessionRepository:
                 logger.info(f"[SessionRepo] 删除会话: {session_id[:12]}... ({msg_count} 条消息)")
                 return True
             return False
+
+    def delete_empty_sessions(self, exclude_ids: Optional[List[str]] = None,
+                              min_idle_minutes: int = 10) -> int:
+        """自动清理没有任何消息（0 对话）的空会话
+
+        新建后从未发过消息的会话会残留占位，这里批量删除。
+        - exclude_ids: 明确需要保留的会话 ID（如当前有活跃 WebSocket 的会话）
+        - min_idle_minutes: 只删除超过该时长未活动的空会话（最近创建/使用中的保留）
+
+        Returns:
+            删除的空会话数量
+        """
+        from datetime import timedelta
+        exclude = set(exclude_ids or [])
+        cutoff = datetime.utcnow() - timedelta(minutes=max(0, min_idle_minutes))
+        with self._session() as s:
+            rows = s.query(ChatSession).filter(ChatSession.message_count == 0).all()
+            deleted = 0
+            for row in rows:
+                if row.session_id in exclude:
+                    continue
+                if row.last_active and row.last_active > cutoff:
+                    continue  # 最近还在活跃，可能正被使用
+                s.delete(row)
+                deleted += 1
+            if deleted:
+                logger.info(f"[SessionRepo] 自动清理 {deleted} 个空会话（无消息且闲置超 {min_idle_minutes} 分钟）")
+            return deleted
 
     def copy_messages_to_session(self, source_id: str, target_id: str) -> int:
         """将源会话的所有消息复制到目标会话，返回复制条数"""

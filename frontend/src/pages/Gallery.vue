@@ -3,7 +3,7 @@
  * Gallery page — displays uploaded images in a responsive grid.
  * Supports: upload, lightbox preview, and toggleable filename display.
  */
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useConfigStore } from '@/stores/config.js'
 import { useToastStore } from '@/stores/toast.js'
 
@@ -77,6 +77,9 @@ function handleKeydown(e) {
 onMounted(() => {
   fetchImages()
   document.addEventListener('keydown', handleKeydown)
+})
+onUnmounted(() => {
+  document.removeEventListener('keydown', handleKeydown)
 })
 </script>
 

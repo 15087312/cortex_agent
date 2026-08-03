@@ -2,8 +2,8 @@
 模型调用基类 - 统一接口定义
 """
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, AsyncGenerator, List, Callable
+from dataclasses import dataclass
+from typing import Any, Dict, Optional, List, Callable
 import aiohttp
 import json
 import ssl
@@ -362,10 +362,17 @@ class BaseModelClient(ABC):
     def _log_payload(self, payload: dict):
         """记录完整请求体（INFO 级别）
 
-        tools 字段压缩为单行，避免占用过多屏幕空间。
+        tools 字段压缩为单行，固定的 system 提示词（人格/规则）省略，
+        避免每次请求重复刷屏。
         """
         # 复制一份，不影响原始 payload
         log_data = {k: v for k, v in payload.items() if k != "tools"}
+        msgs = log_data.get("messages")
+        if isinstance(msgs, list):
+            log_data["messages"] = [
+                (dict(m, content="<固定提示词，省略>") if (isinstance(m, dict) and m.get("role") == "system") else m)
+                for m in msgs
+            ]
         tools = payload.get("tools")
 
         main_part = json.dumps(log_data, ensure_ascii=False, indent=2)

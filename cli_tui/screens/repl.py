@@ -903,10 +903,6 @@ class REPL(Screen):
                 self._manage_config(config_args)
             else:
                 self._show_config()
-        elif cmd.action == "notools":
-            self.state.no_tools = not self.state.no_tools
-            state_str = "禁用（纯聊天）" if self.state.no_tools else "启用"
-            self.notify(f"AI工具: {state_str}", timeout=2)
         else:
             self.notify(f"未知命令: {text}", severity="warning")
 

@@ -9,7 +9,7 @@ import hashlib
 import time
 import uuid
 from enum import Enum
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, Tuple, Optional
 
 
@@ -100,8 +100,14 @@ class TurnContext:
         parts = []
         sorted_frags = sorted(self.fragments.values(), key=lambda f: f.priority)
 
+        # "large" 与 "orchestrator" 是同一角色（总指挥）的两种写法：
+        # 若查看角色是二者之一，则能看到 target_roles 含任一别名的片段。
+        # 否则（supervisor/expert）按精确匹配。
+        aliases = {"large", "orchestrator"}
+
         for frag in sorted_frags:
-            if role not in frag.target_roles:
+            targets = set(frag.target_roles)
+            if role not in targets and not (role in aliases and (targets & aliases)):
                 continue
             parts.append(f"【{frag.section_title}】\n{frag.content}")
 

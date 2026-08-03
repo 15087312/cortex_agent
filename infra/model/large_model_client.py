@@ -6,7 +6,6 @@ from typing import AsyncGenerator, Callable, Dict, Any, List, Optional
 import aiohttp
 import asyncio
 import json
-import re
 import ssl
 import time
 from config.settings import settings
@@ -165,7 +164,7 @@ class LargeModelClient(BaseModelClient):
                                 logger.warning(f"[generate] Response body: {text[:200]}")
                                 # If it's HTML or error message, treat as error
                                 if text.strip().startswith("<"):
-                                    raise Exception(f"Got HTML response instead of JSON")
+                                    raise Exception("Got HTML response instead of JSON")
                                 # If we got text that looks like error, return empty and retry
                                 return ""
                             except Exception as e:
@@ -1012,7 +1011,7 @@ class LargeModelClient(BaseModelClient):
             session = await self._get_session()
             self._log_request("POST", self.api_url, len(json.dumps(payload)))
             self._log_payload(payload)
-            request_start = time.time()
+            time.time()
             async with session.post(
                 self.api_url,
                 headers=headers,

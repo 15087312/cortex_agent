@@ -9,7 +9,6 @@
 5. 必应中国 cn.bing.com（国内可用，英文查询质量高）
 6. 百度搜索（国内兜底，可能触发验证码）
 """
-import json
 import re
 import time
 import asyncio
@@ -655,7 +654,7 @@ def _fetch_page_content(url: str) -> Optional[str]:
     # 1. crawl4ai（能处理 JS 重定向）
     text = None
     try:
-        loop = asyncio.get_running_loop()
+        asyncio.get_running_loop()
         # 已有事件循环（如 aiohttp 环境），用线程池隔离
         from concurrent.futures import ThreadPoolExecutor
         with ThreadPoolExecutor(1) as pool:

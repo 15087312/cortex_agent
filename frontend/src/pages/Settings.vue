@@ -3,14 +3,57 @@ import { ref, computed, onMounted } from 'vue'
 import { getApiKey, setApiKey, endpoints } from '@/api.js'
 import { useConfigStore } from '@/stores/config.js'
 import { useToastStore } from '@/stores/toast.js'
+import { useConfirm, usePrompt } from '@/composables/useDialog.js'
+import Icon from '@/components/Icon.vue'
 
 const toast = useToastStore()
+const prompt = usePrompt()
+const confirm = useConfirm()
 const configStore = useConfigStore()
 const appVersion = __APP_VERSION__
 
 /* ── Tabs ── */
-const tabs = ['通用设置', '人设管理', '授权设置', '关于']
-const activeTab = ref('通用设置')
+const tabs = ['对话', '人设管理', '主动搭话', '安全', '感知', '记忆库', '系统', '高级', '通用设置', '授权设置', '关于']
+const activeTab = ref('对话')
+
+/* ── 记忆库 ── */
+const memoryLibs = ref([])
+const memoryCurrent = ref('')
+const newLibName = ref('')
+async function loadMemoryLibs() {
+  try {
+    const r = await endpoints.memoryLibs()
+    memoryLibs.value = (r.data && r.data.libs) || []
+    memoryCurrent.value = (r.data && r.data.current) || ''
+  } catch { memoryLibs.value = [] }
+}
+async function switchLib(name) {
+  try {
+    await endpoints.switchMemoryLib(name)
+    memoryCurrent.value = name
+    toast.show('已切换到记忆库: ' + name, 'success')
+    await loadMemoryLibs()
+  } catch (e) { toast.show('切换失败: ' + (e.body?.error?.message || e.status), 'error') }
+}
+async function createLib() {
+  const name = newLibName.value.trim()
+  if (!name) return
+  try {
+    await endpoints.createMemoryLib(name)
+    newLibName.value = ''
+    toast.show('已创建记忆库: ' + name, 'success')
+    await loadMemoryLibs()
+  } catch (e) { toast.show('创建失败: ' + (e.body?.error?.message || e.status), 'error') }
+}
+async function renameLib(lib) {
+  const newName = await prompt('重命名记忆库', lib.name)
+  if (newName === null || !newName.trim() || newName.trim() === lib.name) return
+  try {
+    await endpoints.renameMemoryLib(lib.name, newName.trim())
+    toast.show('已重命名', 'success')
+    await loadMemoryLibs()
+  } catch (e) { toast.show('重命名失败: ' + (e.body?.error?.message || e.status), 'error') }
+}
 
 /* ── Config keys (persisted to backend) ── */
 const CK = {
@@ -27,168 +70,596 @@ function _bool(v, fallback) {
   if (v === false || v === 'false' || v === 0 || v === '0') return false
   return fallback
 }
-
 function _str(v, fallback) { return v != null ? String(v) : fallback }
 
-/** Persist a key-value to backend config with optimistic UI update */
-async function _save(k, v) {
-  // Optimistic local update so toggle responds instantly
+/** 保存 Cortex 配置（乐观更新 + 后端持久化） */
+async function saveCfg(k, v) {
   configStore.$patch((state) => { state.config = { ...state.config, [k]: v } })
-  try { await configStore.updateConfig(k, v) } catch (e) {
-    toast.show('保存失败: ' + (e.body?.error?.message || e.status), 'error')
-  }
+  try { await configStore.updateConfig(k, v); toast.show(k + ' 已更新', 'success') }
+  catch (e) { toast.show('保存失败: ' + (e.body?.error?.message || e.status), 'error') }
 }
+function boolCfg(k, fallback) { return computed({ get: () => _bool(configStore.config[k], fallback), set: (v) => saveCfg(k, v) }) }
+function numCfg(k, fallback) {
+  return computed({
+    get: () => { const v = configStore.config[k]; return v != null && v !== '' ? Number(v) : fallback },
+    set: (v) => saveCfg(k, Number(v)),
+  })
+}
+function txtCfg(k, fallback) { return computed({ get: () => _str(configStore.config[k], fallback), set: (v) => saveCfg(k, v.trim() || '') }) }
+function segCfg(k, fallback) { return computed({ get: () => _str(configStore.config[k], fallback), set: (v) => saveCfg(k, v) }) }
 
-/* ── General toggles (computed → reads from configStore, writes via API) ── */
+const cortexMode = segCfg('CORTEX_MODE', 'agent')
+const execMode = segCfg('EXECUTION_MODE', 'edit')
+const userName = txtCfg('USER_NAME', '用户')
+const proactiveEnabled = boolCfg('PROACTIVE_OUTREACH_ENABLED', false)
+const proactiveIdle = numCfg('PROACTIVE_OUTREACH_IDLE_MINUTES', 30)
+const proactiveCooldown = numCfg('PROACTIVE_OUTREACH_COOLDOWN_MINUTES', 60)
+const securityMode = segCfg('SECURITY_REVIEW_MODE', 'auto')
+const ttsEnabled = boolCfg('OUTPUT_TTS_ENABLED', false)
+const debugEnabled = boolCfg('DEBUG', false)
+const loggingEnabled = boolCfg('LOGGING_ENABLED', true)
+const logLevel = segCfg('LOG_LEVEL', 'INFO')
+const maxWorkers = numCfg('MAX_WORKERS', 4)
+const memTtlShort = numCfg('MEMORY_TTL_SHORT', 3600)
+const memTtlLong = numCfg('MEMORY_TTL_LONG', 86400)
+
+/* ── 感知系统模块开关 ── */
+const perceptionEnabled = boolCfg('PERCEPTION_ENABLED', true)
+const perceptionScreen = boolCfg('PERCEPTION_SCREEN_ENABLED', true)
+const perceptionFile = boolCfg('PERCEPTION_FILE_ENABLED', true)
+const perceptionMcp = boolCfg('PERCEPTION_MCP_ENABLED', true)
+const perceptionInternal = boolCfg('PERCEPTION_INTERNAL_ENABLED', true)
+const screenDiff = boolCfg('SCREEN_DIFF_ENABLED', true)
+const triggerThink = boolCfg('PERCEPTION_TRIGGER_THINK', true)
+const triggerCooldown = numCfg('PERCEPTION_TRIGGER_COOLDOWN', 60)
+const triggerMinIntensity = numCfg('PERCEPTION_TRIGGER_MIN_INTENSITY', 50)
+
+/* ── 语音识别（Whisper） ── */
+const voiceEnabled = boolCfg('PERCEPTION_VOICE_ENABLED', true)
+const voiceLlmTrigger = boolCfg('PERCEPTION_VOICE_LLM_TRIGGER_ENABLED', true)
+const voiceModel = segCfg('PERCEPTION_VOICE_MODEL', 'tiny')
+const voiceMode = segCfg('PERCEPTION_VOICE_MODE', 'hotkey')
+const voiceHotkey = txtCfg('PERCEPTION_VOICE_HOTKEY', 'f8')
+const voiceLanguage = txtCfg('PERCEPTION_VOICE_LANGUAGE', 'zh')
+const voiceWakePrefix = txtCfg('PERCEPTION_VOICE_WAKE_PREFIX', '科特')
+const voiceWakeSuffix = txtCfg('PERCEPTION_VOICE_WAKE_SUFFIX', '完毕')
+const voiceEnergy = numCfg('PERCEPTION_VOICE_ENERGY_THRESHOLD', 300)
+const voiceTimeout = numCfg('PERCEPTION_VOICE_TIMEOUT', 10)
+const voiceMaxDuration = numCfg('PERCEPTION_VOICE_MAX_DURATION', 60)
+const voiceEndStop = boolCfg('PERCEPTION_VOICE_END_STOP', true)
+
+/* ── 视觉模型 ── */
+const visionBackend = segCfg('VISION_BACKEND', 'auto')
+const visionApiUrl = txtCfg('VISION_API_URL', '')
+const visionApiKey = txtCfg('VISION_API_KEY', '')
+const visionApiModel = txtCfg('VISION_API_MODEL', '')
+const visionApiFormat = txtCfg('VISION_API_FORMAT', '')
+const visionLocalModel = txtCfg('VISION_LOCAL_MODEL', '')
+const visionMlxModel = txtCfg('VISION_MLX_MODEL', 'mlx-community/Qwen2.5-VL-3B-Instruct-4bit')
+
+/* ── 通用设置 computed（原有） ── */
 const launchAtStartup = computed({
   get: () => _bool(configStore.config[CK.launchAtStartup], true),
-  set: (v) => _save(CK.launchAtStartup, v),
+  set: (v) => saveCfg(CK.launchAtStartup, v),
 })
 const preventSleep = computed({
   get: () => _bool(configStore.config[CK.preventSleep], false),
-  set: (v) => _save(CK.preventSleep, v),
+  set: (v) => saveCfg(CK.preventSleep, v),
 })
 const showFilename = computed({
   get: () => _bool(configStore.config[CK.showFilename], false),
-  set: (v) => _save(CK.showFilename, v),
+  set: (v) => saveCfg(CK.showFilename, v),
 })
 const allowLocation = computed({
   get: () => _bool(configStore.config[CK.allowLocation], false),
-  set: (v) => _save(CK.allowLocation, v),
+  set: (v) => saveCfg(CK.allowLocation, v),
 })
-
-/* ── Shortcut ── */
 const shortcutKeys = computed({
   get: () => _str(configStore.config[CK.shortcutKeys], '⌥ + T'),
-  set: (v) => _save(CK.shortcutKeys, v),
+  set: (v) => saveCfg(CK.shortcutKeys, v),
 })
 const editingShortcut = ref(false)
 function startEditShortcut() { editingShortcut.value = true }
 function saveShortcut() { editingShortcut.value = false }
 
-/* ── File path ── */
 const storagePath = ref('')
-function copyPath() {
-  navigator.clipboard.writeText(storagePath.value).then(() => toast.show('路径已复制', 'success'))
-}
+function copyPath() { navigator.clipboard.writeText(storagePath.value).then(() => toast.show('路径已复制', 'success')) }
 
-/* ── Diagnostics modal ── */
+/* ── 诊断 modal ── */
 const showDiag = ref(false)
 const diagData = ref(null)
 const diagLoading = ref(false)
-
 async function openDiagnostics() {
-  showDiag.value = true
-  diagLoading.value = true
-  diagData.value = null
+  showDiag.value = true; diagLoading.value = true; diagData.value = null
   try {
-    const [sys, health] = await Promise.all([
-      endpoints.systemInfo().catch(() => null),
-      endpoints.health().catch(() => null),
-    ])
+    const [sys, health] = await Promise.all([endpoints.systemInfo().catch(() => null), endpoints.health().catch(() => null)])
     const models = await endpoints.thinkingStatus().catch(() => null)
-    diagData.value = {
-      appVersion,
-      timestamp: new Date().toISOString(),
-      system: sys?.data || sys || {},
-      health: health?.data || health || {},
-      models: models?.data?.models || models?.models || {},
-      configKeys: Object.keys(configStore.config),
-      navigator: {
-        userAgent: navigator.userAgent,
-        platform: navigator.platform,
-        language: navigator.language,
-      },
-    }
-  } catch (e) {
-    diagData.value = { error: String(e) }
-  }
+    diagData.value = { appVersion, timestamp: new Date().toISOString(), system: sys?.data || sys || {}, health: health?.data || health || {}, models: models?.data?.models || models?.models || {}, configKeys: Object.keys(configStore.config), navigator: { userAgent: navigator.userAgent, platform: navigator.platform, language: navigator.language } }
+  } catch (e) { diagData.value = { error: String(e) } }
   diagLoading.value = false
 }
+function copyDiag() { navigator.clipboard.writeText(JSON.stringify(diagData.value, null, 2)).then(() => toast.show('诊断日志已复制', 'success')) }
 
-function copyDiag() {
-  const text = JSON.stringify(diagData.value, null, 2)
-  navigator.clipboard.writeText(text).then(() => toast.show('诊断日志已复制', 'success'))
-}
-
-/* ── Check updates ── */
+/* ── 检查更新 ── */
 const checkingUpdate = ref(false)
 async function checkUpdates() {
   checkingUpdate.value = true
   try {
     const health = await endpoints.health()
     const serverVersion = health?.data?.version || health?.version || null
-    if (serverVersion) {
-      toast.show(serverVersion === appVersion
-        ? '当前已是最新版本 v' + appVersion
-        : '发现新版本: ' + serverVersion + '（当前 v' + appVersion + '）',
-        serverVersion === appVersion ? 'success' : 'info')
-    } else {
-      const sys = await endpoints.systemInfo()
-      const v = sys?.data?.version || sys?.version || ''
-      toast.show(v ? '服务器版本: ' + v : '当前版本 v' + appVersion, 'success')
-    }
-  } catch {
-    toast.show('无法连接后端服务', 'error')
-  }
+    if (serverVersion) toast.show(serverVersion === appVersion ? '当前已是最新版本 v' + appVersion : '发现新版本: ' + serverVersion + '（当前 v' + appVersion + '）', serverVersion === appVersion ? 'success' : 'info')
+    else { const sys = await endpoints.systemInfo(); const v = sys?.data?.version || sys?.version || ''; toast.show(v ? '服务器版本: ' + v : '当前版本 v' + appVersion, 'success') }
+  } catch { toast.show('无法连接后端服务', 'error') }
   checkingUpdate.value = false
 }
-
-/* ── External links ── */
 function openLink(url) { window.open(url, '_blank') }
 
-/* ── Auth ── */
+/* ── 授权 ── */
 const keyInput = ref(getApiKey())
 function saveKey() { setApiKey(keyInput.value); toast.show(keyInput.value ? '已保存' : '已清除', 'success') }
 function clearKey() { keyInput.value = ''; setApiKey(''); toast.show('已清除', 'success') }
 
-/* ── Config table ── */
+/* ── 高级参数表 ── */
+const advancedKeys = computed(() => Object.keys(configStore.config).filter(k => /^(ATTENTION|INTERRUPT|CAUSAL)/.test(k)))
 async function editConfig(k, v) {
-  const nv = prompt('编辑 ' + k, String(v)); if (nv === null) return
-  let val = nv; if (val === 'true') val = true; else if (val === 'false') val = false; else if (!isNaN(val) && val.trim() !== '') val = Number(val)
+  const vs = typeof v === 'object' ? JSON.stringify(v) : String(v)
+  const nv = await prompt('编辑 ' + k, vs)
+  if (nv === null) return
+  let val = nv
+  if (val === 'true') val = true
+  else if (val === 'false') val = false
+  else if (!isNaN(val) && val.trim() !== '') val = Number(val)
   try { await configStore.updateConfig(k, val); toast.show(k + ' 已更新', 'success') } catch (e) { toast.show('更新失败: ' + (e.body?.error?.message || e.status), 'error') }
+}
+
+/* ── 人设 ── */
+const personas = ref([])
+const personaDrafts = ref({})
+const systemOverrideDrafts = ref({})
+const sysOverrideOpen = ref({})
+const tierLabel = { large: '大模型', supervisor: '主管', expert: '专家' }
+// 按层级分组：总指挥 / 主管 / 专家（人设管理分类展示）
+const personasByTier = computed(() => ({
+  large: personas.value.filter(p => p.tier === 'large'),
+  supervisor: personas.value.filter(p => p.tier === 'supervisor'),
+  expert: personas.value.filter(p => p.tier === 'expert'),
+}))
+async function loadPersonas() {
+  try {
+    const r = await endpoints.personas()
+    personas.value = (r.data && r.data.personas) || []
+    personaDrafts.value = {}
+    systemOverrideDrafts.value = {}
+    for (const p of personas.value) {
+      personaDrafts.value[p.role] = p.custom || ''
+      systemOverrideDrafts.value[p.role] = p.system_override || ''
+    }
+  } catch { personas.value = [] }
+}
+async function savePersona(role) {
+  const val = (personaDrafts.value[role] || '').trim()
+  const ovr = (systemOverrideDrafts.value[role] || '').trim()
+  try {
+    await endpoints.updatePersona(role, val, ovr)
+    toast.show(role + ' 人设已保存', 'success')
+    await loadPersonas()
+  } catch (e) { toast.show('保存失败: ' + (e.body?.error?.message || e.status), 'error') }
+}
+async function resetPersona(role) {
+  if (!(await confirm('确定恢复该角色的默认人设？自定义人设与高级系统提示词覆盖将被清除。'))) return
+  personaDrafts.value[role] = ''
+  systemOverrideDrafts.value[role] = ''
+  try {
+    await endpoints.updatePersona(role, '', '')
+    toast.show(role + ' 已恢复默认人设', 'success')
+    await loadPersonas()
+  } catch (e) { toast.show('恢复失败: ' + (e.body?.error?.message || e.status), 'error') }
 }
 
 /* ── Init ── */
 onMounted(async () => {
   await configStore.loadConfig()
   await configStore.loadModelStatus()
-  // Resolve storage path: config first, then system info, then OS fallback
+  await loadPersonas()
   const cfgPath = _str(configStore.config[CK.storagePath], '')
   if (cfgPath) { storagePath.value = cfgPath; return }
-  try {
-    const info = await endpoints.systemInfo()
-    storagePath.value = info?.data?.storage_path || info?.storage_path || ''
-  } catch {}
+  try { const info = await endpoints.systemInfo(); storagePath.value = info?.data?.storage_path || info?.storage_path || '' } catch {}
   if (!storagePath.value) {
     const p = navigator.platform || ''
-    storagePath.value = p.includes('Mac')
-      ? '~/Library/Application Support/com.cortexagent'
-      : p.includes('Win')
-        ? '%APPDATA%\\CortexAgent'
-        : '~/.cortexagent'
+    storagePath.value = p.includes('Mac') ? '~/Library/Application Support/com.cortexagent' : p.includes('Win') ? '%APPDATA%\\CortexAgent' : '~/.cortexagent'
   }
 })
 </script>
 
 <template>
   <div class="settings-layout">
-    <!-- Left Tab Sidebar -->
     <div class="settings-sidebar">
-      <div
-        v-for="tab in tabs" :key="tab"
-        class="settings-tab"
-        :class="{ active: activeTab === tab }"
-        @click="activeTab = tab"
-      >{{ tab }}</div>
+      <div v-for="tab in tabs" :key="tab" class="settings-tab" :class="{ active: activeTab === tab }" @click="activeTab = tab">{{ tab }}</div>
     </div>
 
-    <!-- Right Content Panel -->
     <div class="settings-content">
+
+      <!-- ═══════════════ 对话 ═══════════════ -->
+      <div v-if="activeTab === '对话'" class="settings-section">
+        <div class="settings-group">
+          <div class="settings-group-title">对话模式</div>
+          <p class="settings-hint">选择后端处理对话的方式，切换后新消息立即生效</p>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">处理方式</div></div>
+            <div class="setting-ctl">
+              <div class="seg">
+                <button :class="{ on: cortexMode === 'agent' }" @click="cortexMode = 'agent'" title="多模型协作：主管+专家分解任务，功能完整">智能体模式</button>
+                <button :class="{ on: cortexMode === 'chatonly' }" @click="cortexMode = 'chatonly'" title="轻量单模型直答，无多模型编排，响应更快">纯对话模式</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="settings-divider"></div>
+        <div class="settings-group">
+          <div class="settings-group-title">执行模式</div>
+          <p class="settings-hint">工具调用的安全级别</p>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">安全级别</div></div>
+            <div class="setting-ctl">
+              <div class="seg">
+                <button :class="{ on: execMode === 'plan' }" @click="execMode = 'plan'" title="禁止所有写操作">只读</button>
+                <button :class="{ on: execMode === 'edit' }" @click="execMode = 'edit'" title="写操作前需确认">确认</button>
+                <button :class="{ on: execMode === 'yolo' }" @click="execMode = 'yolo'" title="仅安全检测，跳过确认">宽松</button>
+                <button :class="{ on: execMode === 'control' }" @click="execMode = 'control'" title="MEDIUM+ 工具需单独确认">完全控制</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ═══════════════ 人设管理 ═══════════════ -->
+      <div v-if="activeTab === '人设管理'" class="settings-section">
+        <div class="settings-group">
+          <div class="settings-group-title">用户称呼</div>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">用户称呼</div><div class="d">例如你的名字或昵称</div></div>
+            <div class="setting-ctl"><input class="input" v-model="userName" style="width:200px" /></div>
+          </div>
+        </div>
+        <div class="settings-divider"></div>
+        <div class="settings-group">
+          <div class="settings-group-title">模型状态</div>
+          <table class="data-table">
+            <thead><tr><th>模型</th><th>角色</th><th>状态</th></tr></thead>
+            <tbody>
+              <tr v-for="(bk, lbl) in { big: '总指挥', medium: '主管', small: '专家' }" :key="lbl">
+                <td>{{ lbl }}</td>
+                <td style="color:var(--text-muted)">{{ bk === 'big' ? 'large' : bk === 'medium' ? 'supervisor' : 'expert' }}</td>
+                <td>
+                  <span class="badge" :class="configStore.modelStatus[bk] || configStore.modelStatus[bk === 'big' ? 'large' : bk === 'medium' ? 'supervisor' : 'expert'] ? 'badge-green' : 'badge-red'">
+                    {{ configStore.modelStatus[bk] || configStore.modelStatus[bk === 'big' ? 'large' : bk === 'medium' ? 'supervisor' : 'expert'] ? '可用' : '不可用' }}
+                  </span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="settings-divider"></div>
+        <div class="settings-group">
+          <div class="settings-group-title">角色人设</div>
+          <p class="settings-hint">按角色分类编辑各模型人设，留空使用默认</p>
+          <div v-if="personas.length === 0" class="empty-state" style="padding:24px"><p class="empty-text">暂无角色配置</p></div>
+          <template v-else>
+            <div v-for="grp in [{ key: 'large', title: '总指挥' }, { key: 'supervisor', title: '主管' }, { key: 'expert', title: '专家' }]" :key="grp.key">
+              <div class="settings-subgroup-title">{{ grp.title }} <span class="badge" :class="grp.key === 'large' ? 'badge-blue' : grp.key === 'supervisor' ? 'badge-yellow' : 'badge-gray'">{{ personasByTier[grp.key].length }} 个</span></div>
+              <div v-for="p in personasByTier[grp.key]" :key="p.role" class="card" style="margin-bottom:12px">
+                <div class="card-header" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                  <b>{{ p.name }}</b>
+                  <span class="badge" :class="p.tier === 'large' ? 'badge-blue' : p.tier === 'supervisor' ? 'badge-yellow' : 'badge-gray'">{{ tierLabel[p.tier] || p.tier }}</span>
+                  <code style="font-size:11px;color:var(--text-muted)">{{ p.role }}</code>
+                  <span v-if="p.custom" class="badge badge-green">已自定义</span>
+                  <span v-else style="font-size:11px;color:var(--text-muted)">使用默认</span>
+                </div>
+                <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">{{ p.custom ? '当前生效人设（已自定义）' : '默认人设（当前生效）' }}：</div>
+                <div style="background:var(--bg-tertiary);border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 10px;font-size:12px;color:var(--text-secondary);white-space:pre-wrap;line-height:1.5;margin-bottom:10px">{{ p.custom || p.default }}</div>
+                <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">自定义人设（留空则恢复默认）：</div>
+                <textarea class="input" v-model="personaDrafts[p.role]" rows="3" style="width:100%;font-size:12px;line-height:1.5;white-space:pre-wrap;min-height:64px" placeholder="在此输入该角色的人设，留空使用默认"></textarea>
+                <div style="margin-top:6px;text-align:right;display:flex;gap:8px;justify-content:flex-end">
+                  <button v-if="p.custom" class="btn btn-sm" @click="resetPersona(p.role)">恢复默认人设</button>
+                  <button class="btn btn-sm btn-primary" @click="savePersona(p.role)">保存人设</button>
+                </div>
+
+                <!-- 高级：完全控制系统提示词 -->
+                <div style="margin-top:10px;border-top:1px solid var(--border);padding-top:8px">
+                  <button class="btn btn-sm" :class="{ 'btn-primary': systemOverrideDrafts[p.role] && systemOverrideDrafts[p.role].trim() }" @click="sysOverrideOpen[p.role] = !sysOverrideOpen[p.role]">
+                    高级：完整系统提示词 {{ systemOverrideDrafts[p.role] && systemOverrideDrafts[p.role].trim() ? '（已覆盖）' : '' }}
+                  </button>
+                  <div v-if="sysOverrideOpen[p.role]" style="margin-top:8px">
+                    <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">完整系统提示词（覆盖默认组装的人设/规则/价值观，完全控制；留空恢复自动组装）：</div>
+                    <textarea class="input" v-model="systemOverrideDrafts[p.role]" rows="6" style="width:100%;font-family:var(--font-mono);font-size:11px;line-height:1.5;white-space:pre-wrap" placeholder="在此输入完整系统提示词，留空使用自动组装"></textarea>
+                    <div style="margin-top:6px;text-align:right"><button class="btn btn-sm btn-primary" @click="savePersona(p.role)">保存高级设置</button></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <!-- ═══════════════ 主动搭话 ═══════════════ -->
+      <div v-if="activeTab === '主动搭话'" class="settings-section">
+        <div class="settings-group">
+          <div class="settings-group-title">主动搭话</div>
+          <p class="settings-hint">空闲一段时间后系统会主动关心你</p>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">启用主动搭话</div><div class="d">开启后空闲时自动触发</div></div>
+            <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="proactiveEnabled" @change="proactiveEnabled = !proactiveEnabled" /><span class="toggle-slider"></span></label></div>
+          </div>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">空闲阈值(分钟)</div><div class="d">空闲超过该时长才触发</div></div>
+            <div class="setting-ctl"><input class="input" type="number" v-model.number="proactiveIdle" style="width:110px;text-align:right" /></div>
+          </div>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">冷却时间(分钟)</div><div class="d">两次主动搭话间隔</div></div>
+            <div class="setting-ctl"><input class="input" type="number" v-model.number="proactiveCooldown" style="width:110px;text-align:right" /></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ═══════════════ 安全 ═══════════════ -->
+      <div v-if="activeTab === '安全'" class="settings-section">
+        <div class="settings-group">
+          <div class="settings-group-title">安全</div>
+          <p class="settings-hint">工具调用的审查方式</p>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">安全审查模式</div></div>
+            <div class="setting-ctl">
+              <div class="seg">
+                <button :class="{ on: securityMode === 'auto' }" @click="securityMode = 'auto'" title="按风险等级自动审批">自动</button>
+                <button :class="{ on: securityMode === 'llm' }" @click="securityMode = 'llm'" title="高风险由大模型审查">LLM 审查</button>
+                <button :class="{ on: securityMode === 'user' }" @click="securityMode = 'user'" title="高风险需用户确认">用户确认</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ═══════════════ 感知 ═══════════════ -->
+      <div v-if="activeTab === '感知'" class="settings-section">
+        <div class="settings-group">
+          <div class="settings-group-title">感知系统模块</div>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">感知系统总开关</div></div>
+            <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="perceptionEnabled" @change="perceptionEnabled = !perceptionEnabled" /><span class="toggle-slider"></span></label></div>
+          </div>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">屏幕监控</div><div class="d">监控屏幕变化</div></div>
+            <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="perceptionScreen" @change="perceptionScreen = !perceptionScreen" /><span class="toggle-slider"></span></label></div>
+          </div>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">屏幕差异检测</div></div>
+            <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="screenDiff" @change="screenDiff = !screenDiff" /><span class="toggle-slider"></span></label></div>
+          </div>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">文件监控</div></div>
+            <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="perceptionFile" @change="perceptionFile = !perceptionFile" /><span class="toggle-slider"></span></label></div>
+          </div>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">MCP 监控</div></div>
+            <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="perceptionMcp" @change="perceptionMcp = !perceptionMcp" /><span class="toggle-slider"></span></label></div>
+          </div>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">内部状态监控</div></div>
+            <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="perceptionInternal" @change="perceptionInternal = !perceptionInternal" /><span class="toggle-slider"></span></label></div>
+          </div>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">变化触发思考</div><div class="d">感知到变化后自动触发 AI 思考</div></div>
+            <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="triggerThink" @change="triggerThink = !triggerThink" /><span class="toggle-slider"></span></label></div>
+          </div>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">触发冷却(秒)</div></div>
+            <div class="setting-ctl"><input class="input" type="number" v-model.number="triggerCooldown" style="width:110px;text-align:right" /></div>
+          </div>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">最小变化强度</div></div>
+            <div class="setting-ctl"><input class="input" type="number" v-model.number="triggerMinIntensity" style="width:110px;text-align:right" /></div>
+          </div>
+        </div>
+
+        <div class="settings-divider"></div>
+
+        <div class="settings-group">
+          <div class="settings-group-title">语音识别（Whisper）</div>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">语音输入</div></div>
+            <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="voiceEnabled" @change="voiceEnabled = !voiceEnabled" /><span class="toggle-slider"></span></label></div>
+          </div>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">LLM 触发</div><div class="d">识别后交由大模型处理</div></div>
+            <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="voiceLlmTrigger" @change="voiceLlmTrigger = !voiceLlmTrigger" /><span class="toggle-slider"></span></label></div>
+          </div>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">识别模型</div><div class="d">Whisper 模型大小</div></div>
+            <div class="setting-ctl">
+              <div class="seg">
+                <button v-for="m in ['tiny', 'base', 'small', 'medium', 'large']" :key="m" :class="{ on: voiceModel === m }" @click="voiceModel = m">{{ m }}</button>
+              </div>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">触发模式</div></div>
+            <div class="setting-ctl">
+              <div class="seg">
+                <button :class="{ on: voiceMode === 'hotkey' }" @click="voiceMode = 'hotkey'">热键</button>
+                <button :class="{ on: voiceMode === 'wake' }" @click="voiceMode = 'wake'">唤醒词</button>
+              </div>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">热键</div></div>
+            <div class="setting-ctl"><input class="input" v-model="voiceHotkey" style="width:120px" /></div>
+          </div>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">唤醒词</div><div class="d">说话以唤醒词开头</div></div>
+            <div class="setting-ctl"><input class="input" v-model="voiceWakePrefix" style="width:120px" /></div>
+          </div>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">结束词</div><div class="d">说话以结束词结尾</div></div>
+            <div class="setting-ctl"><input class="input" v-model="voiceWakeSuffix" style="width:120px" /></div>
+          </div>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">语言</div></div>
+            <div class="setting-ctl"><input class="input" v-model="voiceLanguage" style="width:120px" /></div>
+          </div>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">能量阈值</div></div>
+            <div class="setting-ctl"><input class="input" type="number" v-model.number="voiceEnergy" style="width:110px;text-align:right" /></div>
+          </div>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">超时(秒)</div></div>
+            <div class="setting-ctl"><input class="input" type="number" v-model.number="voiceTimeout" style="width:110px;text-align:right" /></div>
+          </div>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">最长录音(秒)</div></div>
+            <div class="setting-ctl"><input class="input" type="number" v-model.number="voiceMaxDuration" style="width:110px;text-align:right" /></div>
+          </div>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">检测到结束词停止</div></div>
+            <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="voiceEndStop" @change="voiceEndStop = !voiceEndStop" /><span class="toggle-slider"></span></label></div>
+          </div>
+        </div>
+
+        <div class="settings-divider"></div>
+
+        <div class="settings-group">
+          <div class="settings-group-title">视觉模型</div>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">后端</div></div>
+            <div class="setting-ctl">
+              <div class="seg">
+                <button :class="{ on: visionBackend === 'auto' }" @click="visionBackend = 'auto'" title="自动选择">自动</button>
+                <button :class="{ on: visionBackend === 'api' }" @click="visionBackend = 'api'" title="OpenAI 兼容 API">API</button>
+                <button :class="{ on: visionBackend === 'mlx' }" @click="visionBackend = 'mlx'" title="Apple Silicon MLX 本地">MLX</button>
+                <button :class="{ on: visionBackend === 'transformers' }" @click="visionBackend = 'transformers'" title="Transformers 本地">本地</button>
+                <button :class="{ on: visionBackend === 'mock' }" @click="visionBackend = 'mock'" title="测试">Mock</button>
+              </div>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">API URL</div></div>
+            <div class="setting-ctl"><input class="input" v-model="visionApiUrl" style="width:240px" placeholder="https://..." /></div>
+          </div>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">API Key</div></div>
+            <div class="setting-ctl"><input class="input" v-model="visionApiKey" type="password" style="width:240px" /></div>
+          </div>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">API 模型名</div></div>
+            <div class="setting-ctl"><input class="input" v-model="visionApiModel" style="width:200px" /></div>
+          </div>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">API 格式</div></div>
+            <div class="setting-ctl"><input class="input" v-model="visionApiFormat" style="width:160px" placeholder="openai / dashscope" /></div>
+          </div>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">本地模型名</div></div>
+            <div class="setting-ctl"><input class="input" v-model="visionLocalModel" style="width:240px" /></div>
+          </div>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">MLX 模型</div></div>
+            <div class="setting-ctl"><input class="input" v-model="visionMlxModel" style="width:280px" /></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ═══════════════ 记忆库 ═══════════════ -->
+      <div v-if="activeTab === '记忆库'" class="settings-section">
+        <div class="settings-group">
+          <div class="settings-group-title">记忆库</div>
+          <p class="settings-hint">事件记忆按记忆库隔离存储，可命名多个库并切换当前使用的库。切换即时生效。</p>
+          <div style="display:flex;gap:8px;margin-bottom:12px">
+            <input class="input" v-model="newLibName" style="flex:1;max-width:260px" placeholder="新记忆库名称" @keydown.enter="createLib" />
+            <button class="btn btn-sm btn-primary" @click="createLib">新建记忆库</button>
+          </div>
+          <div v-if="memoryLibs.length === 0" class="empty-state" style="padding:24px"><p class="empty-text">暂无记忆库</p></div>
+          <div v-for="lib in memoryLibs" :key="lib.name" class="card" style="margin-bottom:10px">
+            <div class="card-header" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+              <b>{{ lib.name }}</b>
+              <span v-if="lib.current" class="badge badge-blue">当前</span>
+              <span class="badge badge-gray">{{ lib.event_count ?? 0 }} 条事件</span>
+            </div>
+            <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+              <button v-if="!lib.current" class="btn btn-sm" @click="switchLib(lib.name)">切换到此库</button>
+              <button class="btn btn-sm" @click="renameLib(lib)">重命名</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ═══════════════ 系统 ═══════════════ -->
+      <div v-if="activeTab === '系统'" class="settings-section">
+        <div class="settings-group">
+          <div class="settings-group-title">语音与输出</div>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">TTS 语音输出</div><div class="d">回复时自动合成语音</div></div>
+            <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="ttsEnabled" @change="ttsEnabled = !ttsEnabled" /><span class="toggle-slider"></span></label></div>
+          </div>
+        </div>
+        <div class="settings-divider"></div>
+        <div class="settings-group">
+          <div class="settings-group-title">调试与日志</div>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">调试模式</div><div class="d">开启 DEBUG 日志</div></div>
+            <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="debugEnabled" @change="debugEnabled = !debugEnabled" /><span class="toggle-slider"></span></label></div>
+          </div>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">日志输出</div><div class="d">记录日志文件</div></div>
+            <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="loggingEnabled" @change="loggingEnabled = !loggingEnabled" /><span class="toggle-slider"></span></label></div>
+          </div>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">日志级别</div></div>
+            <div class="setting-ctl">
+              <div class="seg">
+                <button v-for="lv in ['DEBUG', 'INFO', 'WARNING', 'ERROR']" :key="lv" :class="{ on: logLevel === lv }" @click="logLevel = lv">{{ lv }}</button>
+              </div>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">最大工作线程</div></div>
+            <div class="setting-ctl"><input class="input" type="number" v-model.number="maxWorkers" style="width:110px;text-align:right" /></div>
+          </div>
+        </div>
+        <div class="settings-divider"></div>
+        <div class="settings-group">
+          <div class="settings-group-title">记忆</div>
+          <p class="settings-hint">记忆事件有效期（秒）</p>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">短期记忆 TTL</div></div>
+            <div class="setting-ctl"><input class="input" type="number" v-model.number="memTtlShort" style="width:110px;text-align:right" /></div>
+          </div>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">长期记忆 TTL</div></div>
+            <div class="setting-ctl"><input class="input" type="number" v-model.number="memTtlLong" style="width:110px;text-align:right" /></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ═══════════════ 高级 ═══════════════ -->
+      <div v-if="activeTab === '高级'" class="settings-section">
+        <div class="settings-group">
+          <div class="settings-group-title">注意力 / 因果图</div>
+          <p class="settings-hint">进阶参数，谨慎修改</p>
+          <div v-if="advancedKeys.length === 0" class="empty-state" style="padding:24px"><p class="empty-text">暂无高级参数</p></div>
+          <table v-else class="data-table">
+            <thead><tr><th>参数</th><th>当前值</th><th>操作</th></tr></thead>
+            <tbody>
+              <tr v-for="k in advancedKeys" :key="k">
+                <td><code style="font-size:12px">{{ k }}</code></td>
+                <td><span style="font-family:var(--font-mono);font-size:12px">{{ typeof configStore.config[k] === 'object' ? JSON.stringify(configStore.config[k]) : String(configStore.config[k]) }}</span></td>
+                <td><button class="btn btn-sm" @click="editConfig(k, configStore.config[k])">编辑</button></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
 
       <!-- ═══════════════ 通用设置 ═══════════════ -->
       <div v-if="activeTab === '通用设置'" class="settings-section">
-        <!-- Toggle Switches -->
         <div class="settings-group">
           <label class="settings-row" @click.prevent="launchAtStartup = !launchAtStartup">
             <span class="settings-row-label">开机启动</span>
@@ -207,37 +678,21 @@ onMounted(async () => {
             <span class="toggle-switch"><input type="checkbox" :checked="allowLocation" /><span class="toggle-slider"></span></span>
           </label>
         </div>
-
         <div class="settings-divider"></div>
-
-        <!-- Shortcut -->
         <div class="settings-group">
           <div class="settings-group-title">启动快捷键</div>
           <div class="settings-shortcut" @click="startEditShortcut">
-            <input
-              v-if="editingShortcut"
-              ref="shortcutInput"
-              v-model="shortcutKeys"
-              class="input shortcut-input"
-              @blur="saveShortcut"
-              @keyup.enter="saveShortcut"
-            />
+            <input v-if="editingShortcut" ref="shortcutInput" v-model="shortcutKeys" class="input shortcut-input" @blur="saveShortcut" @keyup.enter="saveShortcut" />
             <span v-else class="shortcut-key">{{ shortcutKeys }}</span>
             <span class="shortcut-desc">点击快捷键可编辑 — 通过快捷键快速唤起应用窗口</span>
           </div>
         </div>
-
         <div class="settings-divider"></div>
-
-        <!-- Dock -->
         <div class="settings-group">
           <div class="settings-group-title">保留在 Dock 栏</div>
           <p class="settings-hint">右键程序坞中 Cortex Agent 图标 &gt; 选项 &gt; 在程序坞中保留</p>
         </div>
-
         <div class="settings-divider"></div>
-
-        <!-- File Path -->
         <div class="settings-group">
           <div class="settings-group-title">文件存储位置</div>
           <div class="settings-path-row">
@@ -247,25 +702,17 @@ onMounted(async () => {
             </button>
           </div>
         </div>
-
         <div class="settings-divider"></div>
-
-        <!-- Version & Actions -->
         <div class="settings-group">
           <div class="settings-version-row">
             <span class="settings-version-label">当前版本：v{{ appVersion }}</span>
             <div class="settings-btn-row">
               <button class="btn btn-sm" @click="openDiagnostics">诊断日志</button>
-              <button class="btn btn-sm" :disabled="checkingUpdate" @click="checkUpdates">
-                {{ checkingUpdate ? '检查中…' : '检查更新' }}
-              </button>
+              <button class="btn btn-sm" :disabled="checkingUpdate" @click="checkUpdates">{{ checkingUpdate ? '检查中…' : '检查更新' }}</button>
             </div>
           </div>
         </div>
-
         <div class="settings-divider"></div>
-
-        <!-- Links -->
         <div class="settings-group">
           <div class="settings-links">
             <a class="settings-link" href="#" @click.prevent="openLink('https://cortexagent.com/terms')">用户协议 <span class="link-arrow">↗</span></a>
@@ -273,31 +720,7 @@ onMounted(async () => {
             <a class="settings-link" href="#" @click.prevent="openLink('https://cortexagent.com')">进入官网 <span class="link-arrow">↗</span></a>
           </div>
         </div>
-
-        <div class="settings-copyright">
-          Copyright 1998 – 2026 Tencent. All Rights Reserved
-        </div>
-      </div>
-
-      <!-- ═══════════════ 人设管理 ═══════════════ -->
-      <div v-if="activeTab === '人设管理'" class="settings-section">
-        <div class="settings-group">
-          <div class="settings-group-title">模型状态</div>
-          <table class="data-table">
-            <thead><tr><th>模型</th><th>角色</th><th>状态</th></tr></thead>
-            <tbody>
-              <tr v-for="(bk, lbl) in { big: '总指挥', medium: '主管', small: '专家' }" :key="lbl">
-                <td>{{ lbl }}</td>
-                <td style="color:var(--text-muted)">{{ bk === 'big' ? 'large' : bk === 'medium' ? 'supervisor' : 'expert' }}</td>
-                <td>
-                  <span class="badge" :class="configStore.modelStatus[bk] || configStore.modelStatus[bk === 'big' ? 'large' : bk === 'medium' ? 'supervisor' : 'expert'] ? 'badge-green' : 'badge-red'">
-                    {{ configStore.modelStatus[bk] || configStore.modelStatus[bk === 'big' ? 'large' : bk === 'medium' ? 'supervisor' : 'expert'] ? '可用' : '不可用' }}
-                  </span>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+        <div class="settings-copyright">Copyright 1998 – 2026 Tencent. All Rights Reserved</div>
       </div>
 
       <!-- ═══════════════ 授权设置 ═══════════════ -->
@@ -311,18 +734,14 @@ onMounted(async () => {
             <button v-if="keyInput" class="btn btn-sm" @click="clearKey">清除</button>
           </div>
           <div style="margin-top:8px;font-size:12px">
-            <span v-if="getApiKey()" class="badge badge-green">✓ 已配置</span>
+            <span v-if="getApiKey()" class="badge badge-green"><Icon name="check" :size="13" /> 已配置</span>
             <span v-else style="color:var(--text-muted)">未配置</span>
           </div>
         </div>
-
         <div class="settings-divider"></div>
-
         <div class="settings-group">
           <div class="settings-group-title">运行时配置 ({{ Object.keys(configStore.config).length }} 项)</div>
-          <div v-if="Object.keys(configStore.config).length === 0" class="empty-state" style="padding:24px">
-            <p class="empty-text">暂无配置项</p>
-          </div>
+          <div v-if="Object.keys(configStore.config).length === 0" class="empty-state" style="padding:24px"><p class="empty-text">暂无配置项</p></div>
           <table v-else class="data-table">
             <thead><tr><th>配置键</th><th>当前值</th><th>操作</th></tr></thead>
             <tbody>
@@ -352,15 +771,13 @@ onMounted(async () => {
             <a class="settings-link" href="#" @click.prevent="openLink('https://cortexagent.com')">进入官网 <span class="link-arrow">↗</span></a>
           </div>
         </div>
-        <div class="settings-copyright">
-          Copyright 1998 – 2026 Tencent. All Rights Reserved
-        </div>
+        <div class="settings-copyright">Copyright 1998 – 2026 Tencent. All Rights Reserved</div>
       </div>
 
     </div>
   </div>
 
-  <!-- ═══════════════ Diagnostics Modal ═══════════════ -->
+  <!-- Diagnostics Modal -->
   <div v-if="showDiag" class="modal-overlay" @click.self="showDiag = false">
     <div class="modal diag-modal">
       <div class="modal-header">
@@ -368,9 +785,7 @@ onMounted(async () => {
         <button class="btn btn-sm" @click="showDiag = false">✕</button>
       </div>
       <div class="modal-body">
-        <div v-if="diagLoading" class="empty-state" style="padding:32px">
-          <p class="empty-text">正在收集诊断信息…</p>
-        </div>
+        <div v-if="diagLoading" class="empty-state" style="padding:32px"><p class="empty-text">正在收集诊断信息…</p></div>
         <pre v-else class="diag-pre">{{ JSON.stringify(diagData, null, 2) }}</pre>
       </div>
       <div class="modal-footer">

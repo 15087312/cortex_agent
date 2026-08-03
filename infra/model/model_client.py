@@ -4,9 +4,7 @@ Ported from reference large_model_client.py, simplified to single client.
 """
 from .base_model import BaseModelClient, ChatMessage, ChatResponse
 from typing import Callable, Dict, List, Optional
-import aiohttp
 import json
-import time
 
 from backend.config.settings import settings
 from backend.utils.logger import setup_logger
@@ -112,11 +110,14 @@ class ModelClient(BaseModelClient):
         headers = self._build_headers("openai")
         url = self.api_url
 
-        # 打印发送给 LLM 的完整上下文
+        # 打印发送给 LLM 的动态上下文（固定 system 提示词省略）
         logger.info("=" * 60)
         logger.info("API REQUEST PAYLOAD:")
         for i, m in enumerate(messages):
             role = m.role
+            if role == "system":
+                logger.info(f"  [{i}] system: <固定提示词，省略>")
+                continue
             content = (m.content or '')[:200]
             logger.info(f"  [{i}] {role}: {content}")
         logger.info("=" * 60)

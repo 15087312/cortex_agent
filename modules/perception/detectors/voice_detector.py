@@ -161,7 +161,6 @@ class VoiceDetector(PerceptionDetector):
         - 不含唤醒词 → 静默丢弃，不触发任何响应
         - 能量阈值仅用于判断是否有人在说话（VAD），不是触发条件
         """
-        import re as _re
         import speech_recognition as sr
 
         while self._running:

@@ -12,7 +12,7 @@
 """
 
 from typing import Any, Dict, List, Optional
-from .blackboard import CognitiveBlackboard, BlackboardSnapshot
+from .blackboard import CognitiveBlackboard
 from utils.logger import setup_logger
 
 logger = setup_logger("context_slicer")

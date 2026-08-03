@@ -94,7 +94,7 @@ def modify_value_system(
             sections_dict = value_sys.get_values_dict()
             for existing_rule in sections_dict.get(section, []):
                 if value_sys._rules_too_similar(rule_text, existing_rule):
-                    logger.info(f"[modify_value_system] 规则与已有规则重复")
+                    logger.info("[modify_value_system] 规则与已有规则重复")
                     return f"⚠️ 规则与已有规则过于相似，已跳过: {existing_rule[:60]}"
 
             # 添加规则

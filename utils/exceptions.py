@@ -15,7 +15,6 @@
     result = safe_call(fn, fallback=[], logger=log)
 """
 
-import asyncio
 import logging
 from typing import Any, Awaitable, Callable, Optional, TypeVar
 

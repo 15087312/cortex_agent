@@ -52,18 +52,6 @@ values:
     - "优先保证安全性"
     - "提供准确信息"
     - "只调用系统明确列出的工具，不得编造、推测或假设存在未列出的工具。不确定有哪些工具时使用 tools_search 查询"
-  weights:
-    integrity: 0.9
-    safety: 0.95
-    responsibility: 0.9
-    respect: 0.9
-    legality: 1.0
-  name_cn:
-    integrity: "诚信"
-    safety: "安全"
-    responsibility: "责任"
-    respect: "尊重"
-    legality: "合法"
 
 # ── 工具调用规则 ──
 tool_rules:

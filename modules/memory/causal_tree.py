@@ -8,7 +8,7 @@ CausalTree — 因果树：两种推理能力
 """
 import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple, Set
+from typing import Dict, List, Optional, Set
 
 from modules.memory.causal_graph import CausalGraph, CausalNode, CausalEdge
 

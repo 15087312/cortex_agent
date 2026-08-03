@@ -90,6 +90,7 @@ class TestParseEventBroadcast:
         """A broadcast event with dialog_id produces a dialog entry."""
         event = {
             "type": "status",
+            "role": "expert",
             "data": {
                 "stage_event": {
                     "type": "message",
@@ -99,7 +100,6 @@ class TestParseEventBroadcast:
                             "content": "Hello from expert",
                             "entry_type": "response",
                             "model_id": "expert-1",
-                            "tier": "expert",
                             "round": 1,
                         },
                         "metadata": {"dialog_id": "dlg-123"},

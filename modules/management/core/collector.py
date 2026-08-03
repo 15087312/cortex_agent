@@ -8,11 +8,14 @@
 """
 import time
 import os
+from pathlib import Path as FilePath
 from typing import Dict, Any, List, Optional, Callable
 from dataclasses import dataclass, field
 from utils.logger import setup_logger
 
 logger = setup_logger("management_core")
+
+PROJECT_ROOT = FilePath(__file__).resolve().parents[2]
 
 
 @dataclass
@@ -153,7 +156,7 @@ class StatusCollector:
                 ],
                 "available": True
             }
-        except Exception as e:
+        except Exception:
             return {"status": "error", "error": "Resource collection failed"}
     
     def _collect_attention(self) -> Dict[str, Any]:
@@ -168,7 +171,7 @@ class StatusCollector:
                 ],
                 "available": True
             }
-        except Exception as e:
+        except Exception:
             return {"status": "error", "error": "Resource collection failed"}
     
     def _collect_info_process(self) -> Dict[str, Any]:
@@ -191,7 +194,7 @@ class StatusCollector:
                     "initialized": recognizer._initialized
                 }
             }
-        except Exception as e:
+        except Exception:
             return {"status": "error", "error": "Resource collection failed"}
     
     def _collect_perception(self) -> Dict[str, Any]:
@@ -200,7 +203,7 @@ class StatusCollector:
             from modules.management.core.interfaces import get_perception_status_port
 
             return get_perception_status_port().get_status()
-        except Exception as e:
+        except Exception:
             return {"status": "error", "error": "Resource collection failed"}
 
     def _collect_security(self) -> Dict[str, Any]:
@@ -209,7 +212,7 @@ class StatusCollector:
             from modules.management.core.interfaces import get_security_status_port
 
             return get_security_status_port().get_status()
-        except Exception as e:
+        except Exception:
             return {"status": "error", "error": "Resource collection failed"}
 
     def _collect_output(self) -> Dict[str, Any]:
@@ -224,14 +227,13 @@ class StatusCollector:
                 ],
                 "available": True
             }
-        except Exception as e:
+        except Exception:
             return {"status": "error", "error": "Resource collection failed"}
     
     def _collect_database(self) -> Dict[str, Any]:
         """收集数据库模块状态"""
         try:
             from modules.database.disk_cache import disk_cache
-            from modules.database.connection import db_manager
             import sqlite3
             
             stats = disk_cache.get_stats()
@@ -266,7 +268,7 @@ class StatusCollector:
                 "tables": tables,
                 "row_counts": row_counts
             }
-        except Exception as e:
+        except Exception:
             return {"status": "error", "error": "Resource collection failed"}
     
     def _collect_tool_manager(self) -> Dict[str, Any]:
@@ -276,7 +278,7 @@ class StatusCollector:
                 "status": "healthy",
                 "available": True
             }
-        except Exception as e:
+        except Exception:
             return {"status": "error", "error": "Resource collection failed"}
 
 

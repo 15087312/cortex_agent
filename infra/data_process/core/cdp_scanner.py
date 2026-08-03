@@ -9,8 +9,6 @@ macOS 无障碍 API 无法读取 Chromium 应用内部，需要通过 CDP 获取
     elements = scanner.scan(port=9222)
 """
 import json
-import subprocess
-import time
 from typing import Any, Dict, List, Optional
 from urllib.request import urlopen, Request
 from urllib.error import URLError

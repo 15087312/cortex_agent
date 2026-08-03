@@ -11,7 +11,6 @@
   4. 大模型开始正式工作
   5. 反馈闭环：大模型的回应 → 调整因果图置信度
 """
-import json
 import re
 from dataclasses import dataclass
 from typing import Optional, List
@@ -76,7 +75,7 @@ class Conscience:
         再展开因果树分析。比纯关键词匹配准得多。
         """
         try:
-            from modules.memory.causal_graph import CausalGraph, CausalNode
+            from modules.memory.causal_graph import CausalGraph
             from modules.memory.causal_tree import CausalTree
 
             graph = CausalGraph.get_instance()
@@ -221,8 +220,8 @@ class Conscience:
                 return
 
             prompt = (
-                f"分析以下对话，判断助手是否确认或否定了某些因果关系。\n\n"
-                f"【已知的因果概念】\n"
+                "分析以下对话，判断助手是否确认或否定了某些因果关系。\n\n"
+                "【已知的因果概念】\n"
                 + "\n".join(f"- {label} ({nid})" for nid, label in known_nodes.items()) + "\n\n"
                 f"对话：\n"
                 f"用户: {user_input}\n"
@@ -297,8 +296,6 @@ class Conscience:
         3. 调用 LLM 生成内心独白
         """
         try:
-            from modules.memory.event_store import EventStore
-            from config.settings import settings
 
             # 1. 从因果图提取相关知识
             causal_knowledge = self._get_causal_knowledge(user_input, owner_id=owner_id)

@@ -4,8 +4,6 @@ import urllib.error
 import os
 import json
 import socketserver
-import hashlib
-import glob
 
 # 防残留: 若启动本服务的 cortex 父进程被强杀，自动退出避免孤儿进程
 try:
@@ -16,26 +14,27 @@ except Exception:
 
 BACKEND_URL = "http://localhost:8080"
 FRONTEND_DIR = os.path.dirname(os.path.abspath(__file__))
+DIST_DIR = os.path.join(FRONTEND_DIR, "dist")
 
-
-def _get_js_hash():
-    """Compute a hash of all JS file mtimes for cache busting."""
-    h = hashlib.md5()
-    pattern = os.path.join(FRONTEND_DIR, "**", "*.js")
-    for f in sorted(glob.glob(pattern, recursive=True)):
-        h.update(str(os.path.getmtime(f)).encode())
-    return h.hexdigest()[:12]
+_MISSING_DIST_PAGE = """<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="UTF-8"><title>Cortex Agent</title></head>
+<body style="font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#111;color:#eee">
+<div style="text-align:center;padding:24px">
+<h2>前端未构建</h2>
+<p>Vue 前端需要先执行构建：</p>
+<pre style="background:#222;padding:12px;border-radius:8px">cd frontend && npm run build</pre>
+</div>
+</body></html>"""
 
 
 class ProxyHandler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
-        self._js_hash_cache = None  # must set before super().__init__
-        super().__init__(*args, directory=FRONTEND_DIR, **kwargs)
-
-    def _get_js_hash(self):
-        if self._js_hash_cache is None:
-            self._js_hash_cache = _get_js_hash()
-        return self._js_hash_cache
+        # 优先服务 Vue 构建产物 dist/（Vite 输出，入口为打包后的 index.html）
+        if os.path.isfile(os.path.join(DIST_DIR, "index.html")):
+            self._serve_dir = DIST_DIR
+        else:
+            self._serve_dir = FRONTEND_DIR
+        super().__init__(*args, directory=self._serve_dir, **kwargs)
 
     def _proxy_request(self, method):
         path = self.path[4:]
@@ -92,16 +91,18 @@ class ProxyHandler(http.server.SimpleHTTPRequestHandler):
         super().do_GET()
 
     def _serve_index(self):
-        """Serve index.html with cache-busting version hash."""
-        path = os.path.join(FRONTEND_DIR, "index.html")
-        if not os.path.isfile(path):
-            self.send_error(404)
+        """Serve the built Vue index.html (dist/index.html)."""
+        if not os.path.isfile(os.path.join(DIST_DIR, "index.html")):
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+            self.end_headers()
+            self.wfile.write(_MISSING_DIST_PAGE.encode("utf-8"))
             return
         try:
+            path = os.path.join(DIST_DIR, "index.html")
             with open(path, "rb") as f:
                 content = f.read()
-            version = self._get_js_hash()
-            content = content.replace(b"v=2", f"v={version}".encode())
             self.send_response(200)
             self.send_header("Content-Type", "text/html")
             self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
@@ -151,7 +152,30 @@ class ProxyHandler(http.server.SimpleHTTPRequestHandler):
 socketserver.TCPServer.allow_reuse_address = True
 
 
+def _ensure_dist():
+    """dist/index.html 缺失时自动执行 npm run build（fresh clone 场景）。"""
+    if os.path.isfile(os.path.join(DIST_DIR, "index.html")):
+        return
+    import subprocess
+    print("[..] 前端未构建 (dist 缺失)，正在执行 npm run build ...")
+    try:
+        r = subprocess.run(
+            ["npm", "run", "build"],
+            cwd=FRONTEND_DIR,
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+        if r.returncode == 0:
+            print("[OK] 前端构建完成")
+        else:
+            print("[ERR] npm run build 失败:\n" + r.stdout[-2000:] + r.stderr[-2000:])
+    except Exception as e:
+        print(f"[ERR] npm run build 失败: {e}")
+
+
 def create_server(port=8765):
+    _ensure_dist()
     return socketserver.ThreadingTCPServer(("", port), ProxyHandler)
 
 

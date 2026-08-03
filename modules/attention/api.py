@@ -16,7 +16,6 @@ from modules.attention import create_attention_analyzer
 router = APIRouter(
     prefix="/attention",
     tags=["注意力"],
-    dependencies=[Depends(require_api_key)],
 )
 logger = setup_logger("attention_api")
 
@@ -30,7 +29,7 @@ def _get_analyzer():
     return _analyzer
 
 
-@router.post("/analyze")
+@router.post("/analyze", dependencies=[Depends(require_api_key)])
 async def analyze_attention(
     user_input: str = Body(...),
     context: Optional[List[Dict]] = Body(default=None),
@@ -66,7 +65,7 @@ async def analyze_attention(
 async def get_status():
     """获取注意力系统状态"""
     try:
-        analyzer = _get_analyzer()
+        _get_analyzer()
         return {
             "success": True,
             "data": {

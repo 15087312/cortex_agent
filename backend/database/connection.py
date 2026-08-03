@@ -63,7 +63,6 @@ class DatabaseManager:
     def create_tables(self):
         if self._tables_created:
             return
-        from . import chat_models
         Base.metadata.create_all(self._engine)
         self._tables_created = True
         logger.info("Database tables created")

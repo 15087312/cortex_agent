@@ -5,6 +5,14 @@ from modules.perception.difference.sources.base import DifferenceSourceRegistry
 from modules.perception.difference.sources.mcp_screen_source import ScreenDiffSource, get_screen_diff_source
 from modules.perception.difference.sources.screen_monitor_source import ScreenMonitorSource, get_screen_monitor_source
 
+__all__ = [
+    "DifferenceDetector", "get_detector",
+    "ExistentialHeartbeat", "get_heartbeat",
+    "DifferenceSourceRegistry",
+    "ScreenDiffSource", "get_screen_diff_source",
+    "ScreenMonitorSource", "get_screen_monitor_source",
+]
+
 
 def get_registry() -> DifferenceSourceRegistry:
     return get_detector().registry

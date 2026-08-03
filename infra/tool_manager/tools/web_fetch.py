@@ -5,7 +5,6 @@
 """
 import asyncio
 import ipaddress
-import re
 import requests
 from typing import Dict, Any, Optional
 from urllib.parse import urlparse

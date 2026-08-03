@@ -10,10 +10,9 @@
 空闲时间由自身维护的 Timer 跟踪，用户活动 (notify_activity) 重置计时。
 """
 import asyncio
-import random
 import threading
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from utils.logger import setup_logger
 
@@ -168,7 +167,7 @@ class ProactiveTrigger:
         idle = self._idle_timer.idle_seconds
         if idle < self._idle_threshold_seconds:
             return False
-        logger.info(f"空闲条件满足: {idle:.0f}s")
+        logger.debug(f"空闲条件满足: {idle:.0f}s")
         return True
 
     def _check_cooldown(self) -> bool:
@@ -225,7 +224,7 @@ class ProactiveTrigger:
                 current_window=current_window,
                 conversation=conversation,
             )
-            response = _run_async(self._call_llm(prompt))
+            response = self._run_in_main_loop(self._call_llm(prompt, session_id))
             if not response:
                 return
 
@@ -233,36 +232,85 @@ class ProactiveTrigger:
             logger.info(f"[主动触发 #{trigger_count}] 推送完成: {response[:60]}")
         except Exception as e:
             logger.error(f"[主动触发 #{trigger_count}] 失败: {e}")
+            try:
+                self._push_error(session_id, f"[主动搭话失败] {e}")
+            except Exception:
+                pass
+
+    def _push_error(self, session_id: str, text: str) -> None:
+        """推送错误事件到活跃 WebSocket（前端 toast 展示）"""
+        try:
+            from modules.thinking.api_stream import connection_manager, _build_event
+            event = _build_event(
+                session_id=session_id,
+                msg_type="error",
+                event="proactive_error",
+                content=text,
+                role="system",
+            )
+            sent = False
+            for sid in list(connection_manager.active_connections.keys()):
+                if connection_manager.send_json_from_thread(sid, event):
+                    sent = True
+            if not sent:
+                logger.warning(f"[主动触发] 无活跃连接，无法显示错误: {text[:60]}")
+        except Exception as e:
+            logger.error(f"主动错误推送失败: {e}")
+
+    def _run_in_main_loop(self, coro, timeout: float = 120.0):
+        """提交协程到主事件循环执行。
+
+        模型 client 的 aiohttp session 池化绑定主 loop；若在 daemon 线程里
+        asyncio.run 新建 loop 调用，session 跨 loop 复用会报
+        'Timeout context manager should be used inside a task'。
+        统一提交到主 loop 执行可复用 session，且 asyncio.Lock 等资源同 loop 安全。
+        """
+        try:
+            from modules.thinking.api_stream import connection_manager, _main_event_loop
+            loop = connection_manager._loop or _main_event_loop
+            if loop and not loop.is_closed():
+                return asyncio.run_coroutine_threadsafe(coro, loop).result(timeout=timeout)
+        except Exception:
+            pass
+        return _run_async(coro)
 
     def _get_session_info(self):
-        """获取最近活跃的 session，附带对话历史"""
+        """选择主动搭话的目标会话
+
+        规则（按你的预期）：
+        1. 目标会话必须有真实消息（用户真正聊过的会话，不含空/voice 残留会话）
+        2. 优先选当前正有 WebSocket 连接的会话（即用户当前正在看的会话）
+        3. 其次选最近一次有过对话的会话（上次对话）
+        4. 如果从来没有过任何对话 → 返回空，上层直接跳过，不启动主动搭话
+        """
         try:
-            from modules.thinking.api_stream import get_thinking_system, connection_manager
+            from modules.thinking.api_stream import get_thinking_system
             system = get_thinking_system()
             if not system.sessions:
                 return "", ""
 
-            active_ws = set(connection_manager.active_connections.keys())
-            best_sid = ""
-            best_ts = 0
-            for sid, data in system.sessions.items():
-                started = data.get("started_at", 0)
-                has_ws = sid in active_ws
-                if (has_ws, started) > (best_sid in active_ws, best_ts):
-                    best_ts = started
-                    best_sid = sid
+            # 只保留有真实消息的会话（真正聊过，不含空/voice 残留会话）
+            candidates = {
+                sid: data for sid, data in system.sessions.items()
+                if data.get("messages")
+            }
+            if not candidates:
+                # 从来没有过对话 → 不启动主动搭话
+                return "", ""
 
-            # 获取最近对话文本
-            conversation = ""
-            if best_sid:
-                session_data = system.sessions.get(best_sid, {})
-                messages = session_data.get("messages", [])
-                if messages:
-                    recent = messages[-6:]  # 最近 6 条（3 轮）
-                    conversation = "\n".join(
-                        f"{'用户' if m.get('role') == 'user' else '助手'}: {str(m.get('content', ''))[:200]}"
-                        for m in recent
-                    )
+            # 自动选择"上一次对话"的会话：最近一次有过对话的（消息时间戳最新）
+            def score(sid, data):
+                msgs = data.get("messages") or []
+                return (msgs[-1].get("timestamp", 0) or 0) if msgs else 0
+
+            best_sid = max(candidates, key=lambda sid: score(sid, candidates[sid]))
+            messages = candidates[best_sid]["messages"]
+            recent = messages[-6:]  # 最近 6 条（3 轮）
+            # 与 agent 模式一致：【对话历史】[role]: content 格式
+            conversation = "\n".join(
+                f"[{m.get('role')}]: {str(m.get('content', ''))[:200]}"
+                for m in recent
+            )
             return best_sid, conversation
         except Exception:
             return "", ""
@@ -321,8 +369,8 @@ class ProactiveTrigger:
 
         return "\n".join(parts)
 
-    async def _call_llm(self, prompt: str) -> str:
-        """调用大模型（复用总指挥人格，单次调用）"""
+    async def _call_llm(self, prompt: str, session_id: str = "") -> str:
+        """调用大模型（复用总指挥人格，单次调用，注入感知/内心独白/时间感知上下文）"""
         try:
             from modules.thinking.model_factory import get_model_factory
             from infra.model.base_model import ChatMessage
@@ -330,6 +378,50 @@ class ProactiveTrigger:
             factory.ensure_ready()
             client = factory.get_client("large")
             system_prompt = _build_outreach_system_prompt()
+
+            # 注入与主流程一致的上下文（调用原有函数，不重复实现）
+            extras = []
+            # 时间感知 + 用户身份
+            try:
+                extras.append(self._build_time_text())
+            except Exception:
+                pass
+            # 内心独白（良知引导）
+            try:
+                from modules.thinking.probes.probe_tools import _session_guidance
+                g = _session_guidance.get(("large_primary", session_id), {})
+                inner = g.get("inner_thoughts", "")
+                if inner:
+                    extras.append(f"【你回忆起的过往经验】\n{inner}")
+            except Exception:
+                pass
+            # 感知上下文
+            try:
+                from modules.thinking.context.sources.perception_source import PerceptionSource
+                frag = await PerceptionSource().collect()
+                if frag and frag.content:
+                    extras.append(frag.content)
+            except Exception:
+                pass
+            # 事件记忆（按对话模式分流：chatonly 用 backend 的记忆系统，agent 用 modules）
+            try:
+                from modules.thinking.chat_gateway import _resolve_mode
+                if _resolve_mode() == "chatonly":
+                    from backend.memory.event_retrieval import get_event_retrieval
+                else:
+                    from modules.memory.event_retrieval import get_event_retrieval
+                events = await get_event_retrieval().retrieve(query=prompt, max_results=3, threshold=0.10)
+                if events:
+                    lines = ["【曾经发生的事】", "（以下为过去的事件记忆，仅供参考，不要把过去任务当作当前任务执行）"]
+                    for i, ev in enumerate(events, 1):
+                        date = str(ev.time or "")[:10] or "未知日期"
+                        lines.append(f"  [{i}] (日期={date}) {str(ev.fact)[:150]}")
+                    extras.append("\n".join(lines))
+            except Exception:
+                pass
+            if extras:
+                system_prompt = f"{system_prompt}\n\n" + "\n\n".join(extras)
+
             messages = [
                 ChatMessage(role="system", content=system_prompt),
                 ChatMessage(role="user", content=prompt),
@@ -338,22 +430,65 @@ class ProactiveTrigger:
             return response.message.content if response and response.message else ""
         except Exception as e:
             logger.error(f"LLM 调用失败: {e}")
-            return ""
+            raise
+
+    def _build_time_text(self) -> str:
+        """时间感知 + 用户身份（与主流程 _build_time_context 一致的格式）"""
+        from datetime import datetime
+        from config.settings import settings as _cfg
+        now = datetime.now()
+        parts = [f"【当前时间】{now.strftime('%Y-%m-%d %H:%M')}"]
+        user_name = getattr(_cfg, "USER_NAME", "用户") or "用户"
+        parts.append(f"【对话对象】{user_name}")
+        return "\n".join(parts)
 
     def _push(self, session_id: str, text: str) -> None:
-        """推送到 WebSocket"""
+        """推送到所有活跃 WebSocket，并持久化到会话历史（AI 上下文同步可见）"""
         try:
-            from modules.thinking.api_stream import connection_manager
-            from modules.thinking.api_stream import _build_event
+            from modules.thinking.api_stream import connection_manager, _build_event
+            from modules.thinking.api_stream import get_thinking_system
+
+            # 1. 持久化到会话（历史 + AI 上下文），获取消息 id
+            msg_id = ""
+            try:
+                system = get_thinking_system()
+                if session_id in system.sessions:
+                    # 必须提交到主事件循环：_append_message 用主 loop 的 asyncio.Lock，
+                    # 在 daemon 线程里 asyncio.run 新 loop 直接调用会跨 loop 报错 → 无法注入会话。
+                    # 优先用 connection_manager._loop，无活跃连接时回退到 lifespan 记录的主 loop。
+                    from modules.thinking.api_stream import connection_manager, _main_event_loop
+                    loop = connection_manager._loop or _main_event_loop
+                    if loop and not loop.is_closed():
+                        fut = asyncio.run_coroutine_threadsafe(
+                            system._append_message(session_id, "assistant", text), loop)
+                        msg_id = fut.result(timeout=10)
+                    else:
+                        msg_id = _run_async(system._append_message(session_id, "assistant", text))
+            except Exception as e:
+                logger.error(f"主动消息持久化失败: {e}")
+
+            # 2. 构造事件
             event = _build_event(
                 session_id=session_id,
                 msg_type="proactive",
                 event="proactive_outreach",
                 content=text,
+                role="assistant",
+                data={"message_id": msg_id},
             )
-            connection_manager.send_json_from_thread(session_id, event)
+
+            # 3. 广播到所有活跃连接（前端 / TUI 都能收到）
+            sent_any = False
+            for sid in list(connection_manager.active_connections.keys()):
+                if connection_manager.send_json_from_thread(sid, event):
+                    sent_any = True
+            if not sent_any:
+                logger.warning(
+                    f"[主动触发] 无活跃 WebSocket 连接，消息已存入会话历史 "
+                    f"(session={session_id[:8]})"
+                )
         except Exception as e:
-            logger.error(f"WebSocket 推送失败: {e}")
+            logger.error(f"主动消息推送失败: {e}")
 
     def get_stats(self) -> Dict[str, Any]:
         with self._lock:
@@ -368,5 +503,8 @@ class ProactiveTrigger:
 
 def _run_async(coro):
     """同步执行异步协程（在独立线程中，不阻塞主事件循环）"""
-    # 主动触发在 daemon 线程中运行，没有运行中的 event loop，asyncio.run 安全
-    return asyncio.run(coro)
+    async def _run_task_wrapped():
+        # 必须用 Task 包装：asyncio.run 直接 run_until_complete 协程时不在 Task 上下文内，
+        # 内部 aiohttp 的 asyncio.timeout 会报 'Timeout context manager should be used inside a task'
+        return await asyncio.create_task(coro)
+    return asyncio.run(_run_task_wrapped())

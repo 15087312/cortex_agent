@@ -3,7 +3,6 @@ API routes — REST + WebSocket endpoints.
 """
 import asyncio
 import json
-import os
 import shutil
 import uuid
 from datetime import datetime, timezone

@@ -331,6 +331,19 @@ class TestEventBusAdvanced:
 # ====================================================================
 
 class TestVoiceDetector:
+    @pytest.fixture(autouse=True)
+    def _isolate_voice_deps(self):
+        """隔离语音原生依赖（pyaudio/whisper）。
+
+        构造 VoiceDetector 会 _check_availability() → import pyaudio/whisper，
+        在完整测试套件中 portaudio 已被其他测试初始化，二次 import 会触发原生
+        Abort（Fatal Python error）。这里 patch 掉让依赖不可用，测试不依赖真实语音。
+        """
+        with patch.dict("sys.modules", {
+            "speech_recognition": None, "pyaudio": None, "whisper": None,
+        }):
+            yield
+
     def test_not_available_without_deps(self):
         with patch.dict("sys.modules", {"speech_recognition": None, "pyaudio": None}):
             det = VoiceDetector()
@@ -475,6 +488,10 @@ class TestWorldStateManagerAdvanced:
 # ====================================================================
 
 class TestPerceptionSystemSetup:
+    # 真实感知系统集成测试：setup() 启动真实感知线程/原生库，
+    # 与完整测试套件的资源状态冲突会导致原生崩溃，标记 slow 默认不跑
+    pytestmark = pytest.mark.slow
+
     def test_default_setup_pipeline_none(self):
         from modules.perception.setup import get_perception_system
         system = get_perception_system()

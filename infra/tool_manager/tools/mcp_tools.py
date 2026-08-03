@@ -118,7 +118,6 @@ async def mcp_register_server(name: str, command: str) -> Dict[str, Any]:
         args = parts[1:]
 
         # 通过 add_server 异步连接
-        import asyncio
         ok = await mgr.add_server(name=name, command=cmd, args=args)
 
         if ok:
@@ -128,7 +127,7 @@ async def mcp_register_server(name: str, command: str) -> Dict[str, Any]:
                 "success": True,
                 "message": f"MCP server「{name}」已启动并连接",
                 "tools_count": len(server_tools),
-                "hint": f"使用 mcp_discover 查看可用工具，使用 mcp_call_tool 调用",
+                "hint": "使用 mcp_discover 查看可用工具，使用 mcp_call_tool 调用",
             }
         else:
             return {"success": False, "error": f"MCP server「{name}」连接失败，请检查命令是否正确"}

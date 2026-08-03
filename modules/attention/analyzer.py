@@ -13,7 +13,6 @@
 """
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Any
-from datetime import datetime
 
 from utils.logger import setup_logger
 
@@ -65,9 +64,9 @@ class AttentionResult:
     def summary_text(self) -> str:
         """生成可直接注入 prompt 的上下文文本"""
         parts = [
-            f"\n\n【注意力状态】",
+            "\n\n【注意力状态】",
             f"任务重要性: {self.attention_level:.2f}/1.0",
-            f"高重要性任务应投入更多思考轮次和工具调用。",
+            "高重要性任务应投入更多思考轮次和工具调用。",
         ]
         if self.vector is not None:
             parts.append(

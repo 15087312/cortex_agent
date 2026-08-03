@@ -13,6 +13,12 @@ import io
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# 真实硬件/屏幕集成测试（真实截屏、OCR、窗口），需要真实环境，默认不跑。
+# 手动运行: python3 -m pytest tests/test_perception_real_screen.py -v -s
+import pytest
+
+pytestmark = pytest.mark.slow
+
 R = "\033[0m"
 B = "\033[1m"
 DIM = "\033[2m"

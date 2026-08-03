@@ -15,11 +15,9 @@ API 端点：
 9. /database - 数据库状态
 10. /resources - 资源状态
 """
-from fastapi import APIRouter, Query, Path, Depends
+from fastapi import APIRouter, Query, Path
 from datetime import datetime
 from pathlib import Path as FilePath
-import sqlite3
-import os
 
 PROJECT_ROOT = FilePath(__file__).resolve().parents[2]
 import time
@@ -308,7 +306,7 @@ async def record_tool_success(
     """记录工具使用成功（旧版 MemoryManager 已废弃）"""
     return {
         "success": True,
-        "data": {"message": f"旧版 MemoryManager 已废弃", "tool": tool_name}
+        "data": {"message": "旧版 MemoryManager 已废弃", "tool": tool_name}
     }
 
 
@@ -319,7 +317,7 @@ async def record_tool_failure(
     """记录工具使用失败（旧版 MemoryManager 已废弃）"""
     return {
         "success": True,
-        "data": {"message": f"旧版 MemoryManager 已废弃", "tool": tool_name}
+        "data": {"message": "旧版 MemoryManager 已废弃", "tool": tool_name}
     }
 
 
@@ -333,7 +331,7 @@ async def clear_memory(
     store.clear_all()
     return {
         "success": True,
-        "data": {"message": f"事件记忆已清空"}
+        "data": {"message": "事件记忆已清空"}
     }
 
 
@@ -575,7 +573,7 @@ async def get_perception_full():
         status = ps.get_status()
 
         watch_paths = []
-        if ps.file_perception and hasattr(ps.file_perception, "watch_paths"):
+        if getattr(ps, "file_perception", None) and hasattr(ps.file_perception, "watch_paths"):
             watch_paths = ps.file_perception.watch_paths
 
         return {
@@ -591,6 +589,7 @@ async def get_perception_full():
             }
         }
     except Exception as e:
+        logger.exception("获取感知模块信息失败: %s", e)
         raise AppError(ErrorCode.INTERNAL_ERROR, "管理操作失败")
 
 
@@ -605,7 +604,7 @@ async def start_perception():
             "success": True,
             "data": {"message": "感知监控已启动"}
         }
-    except Exception as e:
+    except Exception:
         raise AppError(ErrorCode.INTERNAL_ERROR, "管理操作失败")
 
 
@@ -620,7 +619,7 @@ async def stop_perception():
             "success": True,
             "data": {"message": "感知监控已停止"}
         }
-    except Exception as e:
+    except Exception:
         raise AppError(ErrorCode.INTERNAL_ERROR, "管理操作失败")
 
 
@@ -632,7 +631,7 @@ async def clear_perception():
             "success": True,
             "data": {"message": "注意力池功能已迁移至新架构，无需手动清空"}
         }
-    except Exception as e:
+    except Exception:
         raise AppError(ErrorCode.INTERNAL_ERROR, "管理操作失败")
 
 
@@ -691,7 +690,7 @@ async def get_database_info():
                 "tables": tables_info
             }
         }
-    except Exception as e:
+    except Exception:
         raise AppError(ErrorCode.INTERNAL_ERROR, "管理操作失败")
 
 
@@ -726,7 +725,7 @@ async def get_info_process_status():
                 }
             }
         }
-    except Exception as e:
+    except Exception:
         raise AppError(ErrorCode.INTERNAL_ERROR, "管理操作失败")
 
 
@@ -738,7 +737,6 @@ async def get_info_process_status():
 async def get_thinking_status():
     """获取思维模块状态"""
     try:
-        from modules.thinking.core.continuous_thinker import ContinuousThinker
         from modules.thinking.model_factory import get_model_factory
 
         factory = get_model_factory()

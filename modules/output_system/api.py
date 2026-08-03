@@ -8,16 +8,15 @@
 4. 屏幕操作
 """
 import asyncio
-from fastapi import Depends,  APIRouter, Body, Query, Path
+from fastapi import Depends,  APIRouter, Body, Query
 from api.auth import require_api_key
-from fastapi.responses import JSONResponse
-from typing import Dict, Any, List, Optional
+from typing import List, Optional
 from pydantic import BaseModel
 
 from api.errors import AppError, ErrorCode
 from modules.output_system import OutputSystem
-from modules.output_system.input_controller import InputController, input_controller
-from modules.output_system.ui_interactor import UIInteractor, ui_interactor
+from modules.output_system.input_controller import input_controller
+from modules.output_system.ui_interactor import ui_interactor
 
 router = APIRouter(prefix="/output", tags=["输出"],
     dependencies=[Depends(require_api_key)],
@@ -76,9 +75,9 @@ async def text_output(text: str = Body(..., embed=True)):
     """文字输出接口"""
     try:
         output_system = OutputSystem()
-        result = output_system.output_text(text, stream=False)
+        output_system.output_text(text, stream=False)
         return {"success": True, "data": {"output": text}}
-    except Exception as e:
+    except Exception:
         raise AppError(ErrorCode.INTERNAL_ERROR, "输出系统错误")
 
 
@@ -95,7 +94,7 @@ async def speech_output(text: str = Body(..., embed=True)):
         if audio_path:
             return {"success": True, "data": {"audio_url": audio_path, "text": text, "message": "TTS 合成成功"}}
         return {"success": True, "data": {"audio_url": None, "text": text, "message": "TTS 未启用或依赖不可用（OUTPUT_TTS_ENABLED=false 或未安装 gTTS）"}}
-    except Exception as e:
+    except Exception:
         raise AppError(ErrorCode.INTERNAL_ERROR, "输出系统错误")
 
 
@@ -110,7 +109,7 @@ async def mouse_move(request: MouseMoveRequest):
             "success": success,
             "data": {"x": request.x, "y": request.y, "action": "move_to"}
         }
-    except Exception as e:
+    except Exception:
         raise AppError(ErrorCode.INTERNAL_ERROR, "输出系统错误")
 
 
@@ -125,7 +124,7 @@ async def mouse_click(request: MouseClickRequest):
             "success": success,
             "data": {"x": pos_x, "y": pos_y, "action": f"click_{request.button}_{request.clicks}x"}
         }
-    except Exception as e:
+    except Exception:
         raise AppError(ErrorCode.INTERNAL_ERROR, "输出系统错误")
 
 
@@ -135,7 +134,7 @@ async def mouse_double_click(x: int = Query(None), y: int = Query(None)):
     try:
         success = input_controller.double_click(x, y)
         return {"success": success, "data": {"x": x or 0, "y": y or 0, "action": "double_click"}}
-    except Exception as e:
+    except Exception:
         raise AppError(ErrorCode.INTERNAL_ERROR, "输出系统错误")
 
 
@@ -145,7 +144,7 @@ async def mouse_right_click(x: int = Query(None), y: int = Query(None)):
     try:
         success = input_controller.right_click(x, y)
         return {"success": success, "data": {"x": x or 0, "y": y or 0, "action": "right_click"}}
-    except Exception as e:
+    except Exception:
         raise AppError(ErrorCode.INTERNAL_ERROR, "输出系统错误")
 
 
@@ -159,7 +158,7 @@ async def mouse_scroll(
     try:
         success = input_controller.scroll(clicks, x, y)
         return {"success": success, "data": {"clicks": clicks}}
-    except Exception as e:
+    except Exception:
         raise AppError(ErrorCode.INTERNAL_ERROR, "输出系统错误")
 
 
@@ -169,7 +168,7 @@ async def mouse_drag(request: MouseDragRequest):
     try:
         success = input_controller.drag(request.start_x, request.start_y, request.end_x, request.end_y, request.duration)
         return {"success": success, "data": {"x": request.end_x, "y": request.end_y, "action": "drag"}}
-    except Exception as e:
+    except Exception:
         raise AppError(ErrorCode.INTERNAL_ERROR, "输出系统错误")
 
 
@@ -179,7 +178,7 @@ async def get_mouse_position():
     try:
         x, y = input_controller.get_current_position()
         return {"success": True, "data": {"x": x, "y": y}}
-    except Exception as e:
+    except Exception:
         raise AppError(ErrorCode.INTERNAL_ERROR, "输出系统错误")
 
 
@@ -191,7 +190,7 @@ async def keyboard_press(request: KeyboardPressRequest):
     try:
         success = input_controller.press(request.key)
         return {"success": success, "data": {"key": request.key, "action": "press"}}
-    except Exception as e:
+    except Exception:
         raise AppError(ErrorCode.INTERNAL_ERROR, "输出系统错误")
 
 
@@ -201,7 +200,7 @@ async def keyboard_type(request: KeyboardTypeRequest):
     try:
         success = input_controller.typewrite(request.text, request.interval)
         return {"success": success, "data": {"text": request.text, "length": len(request.text)}}
-    except Exception as e:
+    except Exception:
         raise AppError(ErrorCode.INTERNAL_ERROR, "输出系统错误")
 
 
@@ -211,7 +210,7 @@ async def keyboard_hotkey(request: HotkeyRequest):
     try:
         success = input_controller.hotkey(*request.keys)
         return {"success": success, "data": {"keys": request.keys}}
-    except Exception as e:
+    except Exception:
         raise AppError(ErrorCode.INTERNAL_ERROR, "输出系统错误")
 
 
@@ -221,7 +220,7 @@ async def keyboard_key_down(key: str = Body(..., embed=True)):
     try:
         success = input_controller.key_down(key)
         return {"success": success, "data": {"key": key}}
-    except Exception as e:
+    except Exception:
         raise AppError(ErrorCode.INTERNAL_ERROR, "输出系统错误")
 
 
@@ -231,7 +230,7 @@ async def keyboard_key_up(key: str = Body(..., embed=True)):
     try:
         success = input_controller.key_up(key)
         return {"success": success, "data": {"key": key}}
-    except Exception as e:
+    except Exception:
         raise AppError(ErrorCode.INTERNAL_ERROR, "输出系统错误")
 
 
@@ -253,7 +252,7 @@ async def ui_screenshot(
             import base64
             return {"success": True, "data": base64.b64encode(screenshot).decode(), "format": "base64_png"}
         return {"success": False, "message": "截图失败"}
-    except Exception as e:
+    except Exception:
         raise AppError(ErrorCode.INTERNAL_ERROR, "输出系统错误")
 
 
@@ -282,7 +281,7 @@ async def ui_detect_elements(
                 "count": len(elements)
             }
         }
-    except Exception as e:
+    except Exception:
         raise AppError(ErrorCode.INTERNAL_ERROR, "输出系统错误")
 
 
@@ -303,7 +302,7 @@ async def ui_click(request: UIClickRequest):
             "data": {"x": result.x, "y": result.y, "element": result.element, "mode": result.mode},
             "message": result.message if result.message else None
         }
-    except Exception as e:
+    except Exception:
         raise AppError(ErrorCode.INTERNAL_ERROR, "输出系统错误")
 
 
@@ -313,7 +312,7 @@ async def ui_hover(x: int = Body(...), y: int = Body(...)):
     try:
         success = input_controller.move_to(x, y, duration=0.3)
         return {"success": success, "data": {"x": x, "y": y}}
-    except Exception as e:
+    except Exception:
         raise AppError(ErrorCode.INTERNAL_ERROR, "输出系统错误")
 
 
@@ -331,7 +330,7 @@ async def ui_type(
         
         success = input_controller.typewrite(text)
         return {"success": success, "data": {"text": text}}
-    except Exception as e:
+    except Exception:
         raise AppError(ErrorCode.INTERNAL_ERROR, "输出系统错误")
 
 

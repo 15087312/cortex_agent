@@ -29,10 +29,36 @@ class Settings(BaseSettings):
         "CAUSAL_CONFIDENCE_BOOST_DELTA", "CAUSAL_CONFIDENCE_MAX",
         "CAUSAL_UPDATE_STATS_INTERVAL",
         "EXECUTION_MODE",
+        "CORTEX_MODE",   # 对话模式: agent(智能体) / chatonly(纯对话)
+        "USER_NAME",     # 用户称呼（大模型如何称呼用户）
+        "PERSONA_PROMPTS",# 自定义人设提示词（JSON: {role: prompt}）
+        "SYSTEM_PROMPT_OVERRIDES",  # 完整系统提示词覆盖（JSON: {role: prompt}，高级设置）
+        "SECURITY_REVIEW_MODE",  # 安全审查模式: auto / llm / user
+        "OUTPUT_TTS_ENABLED",    # TTS 语音输出总开关
+
+        # ── 感知系统模块开关 ──
+        "PERCEPTION_ENABLED", "PERCEPTION_SCREEN_ENABLED",
+        "PERCEPTION_FILE_ENABLED", "PERCEPTION_MCP_ENABLED",
+        "PERCEPTION_INTERNAL_ENABLED", "SCREEN_DIFF_ENABLED",
+        "PERCEPTION_TRIGGER_THINK",
+        "PERCEPTION_TRIGGER_COOLDOWN", "PERCEPTION_TRIGGER_MIN_INTENSITY",
+
+        # ── 语音识别（Whisper）──
+        "PERCEPTION_VOICE_ENABLED", "PERCEPTION_VOICE_LLM_TRIGGER_ENABLED",
+        "PERCEPTION_VOICE_MODEL", "PERCEPTION_VOICE_MODE", "PERCEPTION_VOICE_HOTKEY",
+        "PERCEPTION_VOICE_LANGUAGE", "PERCEPTION_VOICE_WAKE_PREFIX", "PERCEPTION_VOICE_WAKE_SUFFIX",
+        "PERCEPTION_VOICE_ENERGY_THRESHOLD", "PERCEPTION_VOICE_TIMEOUT",
+        "PERCEPTION_VOICE_MAX_DURATION", "PERCEPTION_VOICE_END_STOP",
+
+        # ── 视觉模型 ──
+        "VISION_BACKEND", "VISION_API_FORMAT", "VISION_API_URL", "VISION_API_KEY",
+        "VISION_API_MODEL", "VISION_LOCAL_MODEL", "VISION_MLX_MODEL",
     }
 
     # 用户身份
     USER_NAME: str = "用户"  # 大模型知道谁在跟它说话
+    PERSONA_PROMPTS: str = "{}"  # 自定义人设提示词（JSON: {role: prompt}，覆盖各角色默认【人格】）
+    SYSTEM_PROMPT_OVERRIDES: str = "{}"  # 完整系统提示词覆盖（JSON: {role: prompt}，高级设置，完全控制 system prompt）
 
     # API 配置
     OPENAI_API_KEY: str = ""
@@ -85,6 +111,11 @@ class Settings(BaseSettings):
 
     # SQLite 数据库配置（默认，可直接打包）
     SQLITE_PATH: str = str(Path(__file__).resolve().parents[1] / "data" / "memory.db")
+
+    # ── 事件记忆库（支持多记忆库切换/命名，见 get_memory_libs / switch_memory_lib）──
+    MEMORY_DB_PATH: str = str(Path(__file__).resolve().parents[1] / "data" / "memory.db")
+    MEMORY_FAISS_INDEX: str = str(Path(__file__).resolve().parents[1] / "data" / "events_faiss.index")
+    MEMORY_ID_MAP: str = str(Path(__file__).resolve().parents[1] / "data" / "events_id_map.json")
 
 
     # 向量数据库配置（可选）
@@ -154,6 +185,80 @@ class Settings(BaseSettings):
     def is_delegation_available(self) -> bool:
         """委托是否可用（始终可用，由 Skill ToolRules 控制可见性）"""
         return True
+
+    def get_persona(self, role: str) -> str:
+        """获取指定角色的自定义人设（未设置返回空串）。
+
+        存储：~/.cortex/personas.yaml（personas: {role: prompt}）；
+        兼容旧数据：settings.json 的 PERSONA_PROMPTS。
+        """
+        data = self._load_personas_yaml()
+        val = (data.get("personas", {}).get(role) or "").strip()
+        if val:
+            return val
+        import json
+        try:
+            old = json.loads(self.PERSONA_PROMPTS or "{}")
+            return (old.get(role) or "").strip()
+        except Exception:
+            return ""
+
+    def set_persona(self, role: str, prompt: str) -> str:
+        """设置指定角色的自定义人设（prompt 为空则清除），写入 ~/.cortex/personas.yaml"""
+        data = self._load_personas_yaml()
+        personas = data.setdefault("personas", {})
+        prompt = (prompt or "").strip()
+        if prompt:
+            personas[role] = prompt
+        else:
+            personas.pop(role, None)
+        self._save_personas_yaml(data)
+        return personas.get(role, "")
+
+    def get_system_override(self, role: str) -> str:
+        """获取指定角色的完整系统提示词覆盖（未设置返回空串）"""
+        data = self._load_personas_yaml()
+        return (data.get("system_overrides", {}).get(role) or "").strip()
+
+    def set_system_override(self, role: str, prompt: str) -> str:
+        """设置指定角色的完整系统提示词覆盖（prompt 为空则清除），写入 yaml"""
+        data = self._load_personas_yaml()
+        overrides = data.setdefault("system_overrides", {})
+        prompt = (prompt or "").strip()
+        if prompt:
+            overrides[role] = prompt
+        else:
+            overrides.pop(role, None)
+        self._save_personas_yaml(data)
+        return overrides.get(role, "")
+
+    @property
+    def _personas_yaml_path(self):
+        return Path.home() / ".cortex" / "personas.yaml"
+
+    def _load_personas_yaml(self) -> dict:
+        """读取 ~/.cortex/personas.yaml"""
+        import yaml
+        try:
+            if self._personas_yaml_path.exists():
+                data = yaml.safe_load(self._personas_yaml_path.read_text(encoding="utf-8")) or {}
+                return data if isinstance(data, dict) else {}
+        except Exception:
+            pass
+        return {}
+
+    def _save_personas_yaml(self, data: dict) -> None:
+        """写入 ~/.cortex/personas.yaml"""
+        import yaml
+        try:
+            self._personas_yaml_path.parent.mkdir(parents=True, exist_ok=True)
+            self._personas_yaml_path.write_text(
+                yaml.safe_dump(data, allow_unicode=True, sort_keys=False),
+                encoding="utf-8",
+            )
+        except Exception as e:
+            import sys
+            print(f"[WARNING] 人设 yaml 保存失败: {e}", file=sys.stderr)
 
     @property
     def effective_vision_api_url(self) -> str:
@@ -366,11 +471,10 @@ class Settings(BaseSettings):
                 encoding="utf-8",
             )
             print(f"[INFO] 已创建用户配置模板: {self._USER_CONFIG_PATH}", file=sys.stderr)
-            print(f"[INFO] 可编辑此文件覆盖 .env 中的模型配置", file=sys.stderr)
+            print("[INFO] 可编辑此文件覆盖 .env 中的模型配置", file=sys.stderr)
 
     def model_post_init(self, __context) -> None:
         """创建必要的数据目录，并加载用户级配置覆盖"""
-        import sys
         db_dir = os.path.dirname(self.SQLITE_PATH)
         if db_dir:
             os.makedirs(db_dir, exist_ok=True)
@@ -406,6 +510,181 @@ class Settings(BaseSettings):
         if overridden:
             import sys
             print(f"[INFO] 已应用用户配置 ({self._USER_CONFIG_PATH}): {', '.join(overridden)}", file=sys.stderr)
+
+    def save_user_config(self, keys: Optional[list] = None) -> bool:
+        """将可持久化配置（含自定义人设/系统提示词覆盖）写回 ~/.cortex/settings.json。
+
+        Args:
+            keys: 要保存的 key 列表；None 时保存人设相关 key（PERSONA_PROMPTS / SYSTEM_PROMPT_OVERRIDES）
+        """
+        import json
+        import sys
+        try:
+            if keys is None:
+                keys = ["PERSONA_PROMPTS", "SYSTEM_PROMPT_OVERRIDES"]
+            path = self._USER_CONFIG_PATH
+            data = {}
+            if path.exists():
+                try:
+                    data = json.loads(path.read_text(encoding="utf-8"))
+                except Exception:
+                    data = {}
+            for key in keys:
+                if hasattr(type(self), "model_fields") and key in type(self).model_fields:
+                    data[key] = getattr(self, key)
+            path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+            return True
+        except Exception as e:
+            print(f"[WARNING] 用户配置保存失败: {e}", file=sys.stderr)
+            return False
+
+    # ------------------------------------------------------------------
+    # 记忆库管理（多记忆库切换 + 命名）
+    # 配置存 ~/.cortex/memory_libs.json：
+    #   {"current": "默认", "libs": {"默认": {"db": "...", "faiss": "...", "id_map": "..."}, ...}}
+    # ------------------------------------------------------------------
+
+    @property
+    def _memory_libs_path(self):
+        return Path.home() / ".cortex" / "memory_libs.json"
+
+    def get_memory_libs(self) -> dict:
+        """读取记忆库配置；无配置时返回默认记忆库（当前 settings 的路径）"""
+        import json
+        try:
+            if self._memory_libs_path.exists():
+                data = json.loads(self._memory_libs_path.read_text(encoding="utf-8"))
+                if data.get("libs"):
+                    return data
+        except Exception:
+            pass
+        return {
+            "current": "默认",
+            "libs": {
+                "默认": {
+                    "db": self.MEMORY_DB_PATH,
+                    "faiss": self.MEMORY_FAISS_INDEX,
+                    "id_map": self.MEMORY_ID_MAP,
+                }
+            },
+        }
+
+    def _save_memory_libs(self, data: dict) -> None:
+        import json
+        import sys
+        try:
+            self._memory_libs_path.parent.mkdir(parents=True, exist_ok=True)
+            self._memory_libs_path.write_text(
+                json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        except Exception as e:
+            print(f"[WARNING] 记忆库配置保存失败: {e}", file=sys.stderr)
+
+    def _reset_memory_singletons(self) -> None:
+        """切换记忆库后重置事件记忆相关单例，使其按新路径重新加载"""
+        try:
+            import modules.memory.event_store as es_mod
+            es_mod.EventStore._instance = None
+        except Exception:
+            pass
+        try:
+            import modules.memory.event_retrieval as er_mod
+            er_mod.EventRetrieval._instance = None
+        except Exception:
+            pass
+        try:
+            import modules.memory.embedding as emb_mod
+            emb_mod.EmbeddingEngine._instance = None
+        except Exception:
+            pass
+        # 事件提取器缓存旧 EventStore，需一并重置
+        try:
+            import modules.memory.event_reducer as red_mod
+            red_mod._reducer_instance = None
+        except Exception:
+            pass
+        # backend（纯对话路线）的记忆系统单例
+        try:
+            import backend.memory.event_store as bes_mod
+            bes_mod.EventStore._instance = None
+        except Exception:
+            pass
+        try:
+            import backend.memory.embedding as be_mod
+            be_mod.EmbeddingEngine._instance = None
+        except Exception:
+            pass
+        try:
+            import backend.memory.event_retrieval as ber_mod
+            ber_mod.EventRetrieval._instance = None
+        except Exception:
+            pass
+        try:
+            import backend.memory.event_reducer as bred_mod
+            bred_mod.EventReducer._instance = None
+        except Exception:
+            pass
+
+    def switch_memory_lib(self, name: str) -> bool:
+        """切换到指定记忆库（更新运行时路径 + 重置记忆单例）"""
+        data = self.get_memory_libs()
+        lib = data.get("libs", {}).get(name)
+        if not lib:
+            return False
+        data["current"] = name
+        self._save_memory_libs(data)
+        object.__setattr__(self, "MEMORY_DB_PATH", lib["db"])
+        object.__setattr__(self, "MEMORY_FAISS_INDEX", lib["faiss"])
+        object.__setattr__(self, "MEMORY_ID_MAP", lib["id_map"])
+        self._reset_memory_singletons()
+        return True
+
+    def create_memory_lib(self, name: str) -> Optional[dict]:
+        """创建并命名一个新记忆库（默认路径 data/memory_{safe}.*），并切换过去"""
+        import re
+        data = self.get_memory_libs()
+        if name in data.get("libs", {}):
+            return None
+        base = str(Path(self.MEMORY_DB_PATH).parent)
+        safe = re.sub(r'[^0-9A-Za-z_\-\u4e00-\u9fff]', '', name) or "lib"
+        lib = {
+            "db": str(Path(base) / f"memory_{safe}.db"),
+            "faiss": str(Path(base) / f"events_faiss_{safe}.index"),
+            "id_map": str(Path(base) / f"events_id_map_{safe}.json"),
+        }
+        data.setdefault("libs", {})[name] = lib
+        data["current"] = name
+        self._save_memory_libs(data)
+        self.switch_memory_lib(name)
+        return lib
+
+    def rename_memory_lib(self, old_name: str, new_name: str) -> bool:
+        """重命名记忆库"""
+        data = self.get_memory_libs()
+        libs = data.get("libs", {})
+        if old_name not in libs or new_name in libs:
+            return False
+        libs[new_name] = libs.pop(old_name)
+        if data.get("current") == old_name:
+            data["current"] = new_name
+        self._save_memory_libs(data)
+        return True
+
+    def memory_lib_event_count(self, name: str) -> int:
+        """返回指定记忆库的事件数量（用于列表展示）"""
+        lib = self.get_memory_libs().get("libs", {}).get(name)
+        if not lib:
+            return 0
+        try:
+            import sqlite3
+            conn = sqlite3.connect(lib["db"])
+            try:
+                cur = conn.cursor()
+                cur.execute("SELECT COUNT(*) FROM events")
+                return cur.fetchone()[0]
+            finally:
+                conn.close()
+        except Exception:
+            return 0
 
     @property
     def sqlite_url(self) -> str:

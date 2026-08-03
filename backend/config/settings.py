@@ -5,7 +5,6 @@ from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import field_validator
 from typing import Set
-import os
 import json
 
 
@@ -91,6 +90,20 @@ class Settings(BaseSettings):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._load_user_overrides()
+        # 复用主配置：backend（纯对话路线）未单独配 MODEL_API_* 时，
+        # 自动沿用主 settings 的总指挥（large）模型配置，避免纯对话模式无 API 可用
+        try:
+            from config.settings import settings as main_settings
+            if not self.MODEL_API_KEY:
+                self.MODEL_API_KEY = main_settings.LARGE_MODEL_API_KEY or ""
+            if not self.MODEL_API_URL:
+                self.MODEL_API_URL = main_settings.LARGE_MODEL_API_URL or ""
+            if not self.MODEL_NAME:
+                self.MODEL_NAME = main_settings.LARGE_MODEL_NAME or ""
+            if not self.MODEL_API_FORMAT:
+                self.MODEL_API_FORMAT = main_settings.LARGE_MODEL_API_FORMAT or ""
+        except Exception:
+            pass
 
     def _load_user_overrides(self):
         """Load user-level overrides from ~/.cortex-mini/settings.json"""

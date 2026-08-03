@@ -108,6 +108,9 @@ class CognitiveBlackboard:
     - 支持快照（snapshot_for）
     """
 
+    # 观察列表容量上限：超过则清理最旧的（读取方只取最近几条，旧观察无推理价值）
+    MAX_OBSERVATIONS = 200
+
     def __init__(self, session_id: str, turn_id: str):
         self._session_id = session_id
         self._turn_id = turn_id
@@ -120,6 +123,8 @@ class CognitiveBlackboard:
         self.observations: List[Observation] = []
         self.risks: List[Dict[str, Any]] = []
         self.memory_refs: List[str] = []
+        # 已从 observations 头部清理掉的条数（用于增量读取 cursor 的逻辑索引→物理索引映射）
+        self._deleted_obs: int = 0
 
         # ── 黑板区块 ──
         self.delegations: Dict[str, Delegation] = {}
@@ -141,7 +146,7 @@ class CognitiveBlackboard:
         self._last_read_index: int = 0
         self._change_callbacks: List[Callable[[str], None]] = []
 
-        logger.info(
+        logger.debug(
             f"[CognitiveBlackboard] 创建: session={session_id[:8]}, turn={turn_id[:8]}"
         )
 
@@ -183,7 +188,7 @@ class CognitiveBlackboard:
         content: str,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> str:
-        """添加观察结果"""
+        """添加观察结果（超过 MAX_OBSERVATIONS 时清理最旧的 observation）"""
         import uuid
         observation_id = f"obs_{uuid.uuid4().hex[:8]}"
         obs = Observation(
@@ -194,6 +199,17 @@ class CognitiveBlackboard:
         )
         with self._lock:
             self.observations.append(obs)
+            # 清理旧 observation：只保留最近 MAX_OBSERVATIONS 条。
+            # 读取方（slice_for_large/system prompt/expert）只取最近 5 条，
+            # 删除最旧的不影响推理，可防止长轮次思考时观察列表无限膨胀。
+            overflow = len(self.observations) - self.MAX_OBSERVATIONS
+            if overflow > 0:
+                del self.observations[:overflow]
+                self._deleted_obs += overflow
+                logger.debug(
+                    f"[CognitiveBlackboard] 清理旧 observation {overflow} 条 "
+                    f"(当前 {len(self.observations)}/{self.MAX_OBSERVATIONS})"
+                )
         logger.debug(f"[CognitiveBlackboard] 添加观察: {observation_id}")
         return observation_id
 
@@ -482,6 +498,8 @@ class CognitiveBlackboard:
         cursor：增量读取位置（用于只读新增条目）
         """
         with self._lock:
+            # 增量读取起点：cursor 为逻辑索引，补偿已清理的头部 observation
+            _obs_start = max(0, cursor - self._deleted_obs)
             # 基础字段所有人都能读
             snapshot_dict = {
                 "goal": self.goal,
@@ -497,13 +515,13 @@ class CognitiveBlackboard:
             # 按 tier 过滤可见内容
             if tier == "large":
                 # Large 看到全部
-                snapshot_dict["observations"] = self.observations[cursor:]
+                snapshot_dict["observations"] = self.observations[_obs_start:]
                 snapshot_dict["delegations"] = self.delegations.copy()
                 snapshot_dict["expert_findings"] = self.expert_findings.copy()
             elif tier == "supervisor":
                 # Q-17: Supervisor只看到自己的发现，不能访问expert的私密发现
                 snapshot_dict["observations"] = [
-                    o for o in self.observations[cursor:]
+                    o for o in self.observations[_obs_start:]
                     if o.tier in ("expert", "supervisor")
                 ]
                 snapshot_dict["delegations"] = self.delegations.copy()
@@ -514,7 +532,7 @@ class CognitiveBlackboard:
                 }
             elif tier == "expert":
                 # Expert 只看到最近的观察和执行历史
-                snapshot_dict["observations"] = self.observations[cursor:][-5:]
+                snapshot_dict["observations"] = self.observations[_obs_start:][-5:]
                 snapshot_dict["delegations"] = {}
                 snapshot_dict["expert_findings"] = {}
             else:
@@ -525,9 +543,10 @@ class CognitiveBlackboard:
             return BlackboardSnapshot(**snapshot_dict)
 
     def get_observations_since(self, cursor: int) -> List[Observation]:
-        """获取自 cursor 之后的新观察"""
+        """获取自 cursor 之后的新观察（cursor 为逻辑索引，自动补偿已清理的头部）"""
         with self._lock:
-            return self.observations[cursor:]
+            start = max(0, cursor - self._deleted_obs)
+            return self.observations[start:]
 
     def get_status(self) -> dict:
         """获取黑板状态摘要"""

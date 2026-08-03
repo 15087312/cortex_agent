@@ -6,6 +6,9 @@
 """
 from infra.tool_manager.tool_registry import ToolRegistry
 from infra.hardware_input import PyAutoGUIController
+from utils.logger import setup_logger
+
+logger = setup_logger("mouse_keyboard")
 
 # 全局控制器实例
 _controller = PyAutoGUIController()

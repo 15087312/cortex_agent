@@ -407,7 +407,7 @@ class ScreenDiffSource(DifferenceSource):
             self._publish_screen_diff_event(change_ratio, regions, data)
 
             if change_ratio >= _HIGH_CHANGE_THRESHOLD:
-                logger.info(f"屏幕大幅变化: {change_ratio:.1%} ({len(regions)} 区域)")
+                logger.debug(f"屏幕大幅变化: {change_ratio:.1%} ({len(regions)} 区域)")
         else:
             self._consecutive_no_change += 1
             self._last_change_ratio = 0.0

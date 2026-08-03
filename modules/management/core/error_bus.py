@@ -17,7 +17,7 @@ import traceback
 import threading
 import asyncio
 from typing import Dict, Any, Optional, Callable
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from datetime import datetime
 import logging
 

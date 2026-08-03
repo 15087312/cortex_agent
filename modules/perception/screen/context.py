@@ -4,7 +4,7 @@ ScreenContext — 统一屏幕理解输出格式
 所有检测后端（touchpoint/cdp/vision）返回统一格式。
 """
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 
 @dataclass

@@ -377,7 +377,14 @@ def test_agent_mode_delegates_to_api_stream(gw_app, monkeypatch):
 
     fake_stream.create_session = fake_create_session
     fake_stream.get_status = fake_get_status
+    # 同时 patch sys.modules 和父包属性：`from modules.thinking import api_stream`
+    # 在 chat_gateway 函数内执行时，Python 会取 sys.modules["modules.thinking"].api_stream
+    # 父包属性（若已绑定），仅替换 sys.modules 不够。完整套件下父包属性已指向
+    # 真实模块，必须一起替换才能让 chat_gateway 委托到 fake。
     monkeypatch.setitem(sys.modules, "modules.thinking.api_stream", fake_stream)
+    parent_pkg = sys.modules.get("modules.thinking")
+    if parent_pkg is not None and getattr(parent_pkg, "api_stream", None) is not None:
+        monkeypatch.setattr(parent_pkg, "api_stream", fake_stream)
 
     with TestClient(app) as client:
         resp = client.post("/stream/session")

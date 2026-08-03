@@ -2,7 +2,7 @@
 Blackboard — simplified session state manager.
 Stores messages and metadata per session.
 """
-from typing import Dict, List, Optional
+from typing import Dict, List
 from dataclasses import dataclass, field
 
 from backend.utils.logger import setup_logger

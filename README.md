@@ -259,27 +259,6 @@ MemoryEvent = {
 
 ## 运行模式
 
-### COMPANION_MODE（陪伴模式开关）
-
-```env
-# False（工作模式）— 推荐生产环境
-# 完整工具委托，仅安全检测，无情感/价值观开销
-COMPANION_MODE=False
-
-# True（陪伴模式）— AI 助手模式
-# 情绪+价值观全开，委托受限
-COMPANION_MODE=True
-```
-
-| 功能 | 工作模式 (False) | 陪伴模式 (True) |
-|------|:---:|:---:|
-| SecurityExpert | ✅ | ✅ |
-| ValuesExpert | ❌ | ✅ |
-| EmotionExpert | ❌ | ✅ |
-| 完整工具委托 | ✅ | ❌ |
-| 感知系统 | 可选 | 可选 |
-| 差异检测器 | 可选 | 可选 |
-
 ### 执行模式（EXECUTION_MODE）
 
 | 模式 | 行为 |

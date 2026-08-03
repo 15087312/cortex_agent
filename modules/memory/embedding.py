@@ -75,52 +75,60 @@ class EmbeddingEngine:
             return False
 
     def _rebuild_faiss_if_needed(self):
-        """检查 FAISS 索引维度，不一致时重建"""
+        """检查 FAISS 索引维度，不一致时重建（新记忆库切换后索引不存在也会触发）"""
         import os, json
         import numpy as np
         index_path = getattr(settings, "MEMORY_FAISS_INDEX", "data/events_faiss.index")
         id_map_path = getattr(settings, "MEMORY_ID_MAP", "data/events_id_map.json")
 
-        old_dim = None
-        if os.path.exists(index_path):
-            try:
-                import faiss
-                old = faiss.read_index(index_path)
-                old_dim = old.d
-            except Exception:
-                pass
+        from utils.faiss_lock import faiss_file_lock
 
-        if old_dim == self.dim:
-            return  # 维度一致，不需要重建
-
-        # 维度不一致 → 删除旧索引，重建
-        logger.info(f"[Embedding] FAISS 索引维度不匹配（旧={old_dim}, 新={self.dim}），重建中...")
-        for path in [index_path, id_map_path]:
-            if os.path.exists(path):
-                os.remove(path)
-
-        # 从 EventStore 读取所有事件，重新向量化并写入 FAISS
-        try:
-            from modules.memory.event_store import EventStore
-            store = EventStore.get_instance()
-            events = store.list_events(limit=5000)
-            if events:
-                texts = [f"{ev.fact} {ev.thought} {ev.lesson}".strip() for ev in events]
-                vecs = self.embed_batch(texts)
-                valid = [(ev, v) for ev, v in zip(events, vecs) if v is not None]
-                if valid:
+        with faiss_file_lock(index_path):
+            old_dim = None
+            if os.path.exists(index_path):
+                try:
                     import faiss
-                    idx = faiss.IndexFlatIP(self.dim)
-                    matrix = np.array([v for _, v in valid], dtype=np.float32)
-                    idx.add(matrix)
-                    faiss.write_index(idx, index_path)
-                    with open(id_map_path, "w") as fp:
-                        json.dump([ev.id for ev, _ in valid], fp)
-                    logger.info(f"[Embedding] FAISS 索引重建完成: {len(valid)} 向量 (dim={self.dim})")
-        except Exception as e:
-            logger.warning(f"[Embedding] FAISS 索引重建失败，向量搜索暂时不可用: {e}")
+                    old = faiss.read_index(index_path)
+                    old_dim = old.d
+                except Exception:
+                    old_dim = None
+
+            if old_dim == self.dim:
+                return  # 维度一致，不需要重建
+
+            # 新记忆库索引不存在 或 维度不一致 → 重建
+            if not os.path.exists(index_path):
+                logger.info(f"[Embedding] FAISS 索引不存在（新记忆库），创建索引 (dim={self.dim})")
+            else:
+                logger.info(f"[Embedding] FAISS 索引维度不匹配（旧={old_dim}, 新={self.dim}），重建中...")
+            for path in [index_path, id_map_path]:
+                if os.path.exists(path):
+                    os.remove(path)
+
+            # 从 EventStore 读取所有事件，重新向量化并写入 FAISS
+            try:
+                from modules.memory.event_store import EventStore
+                store = EventStore.get_instance()
+                events = store.list_events(limit=5000)
+                if events:
+                    texts = [f"{ev.fact} {ev.thought} {ev.lesson}".strip() for ev in events]
+                    vecs = self.embed_batch(texts)
+                    valid = [(ev, v) for ev, v in zip(events, vecs) if v is not None]
+                    if valid:
+                        import faiss
+                        idx = faiss.IndexFlatIP(self.dim)
+                        matrix = np.array([v for _, v in valid], dtype=np.float32)
+                        idx.add(matrix)
+                        faiss.write_index(idx, index_path)
+                        with open(id_map_path, "w") as fp:
+                            json.dump([ev.id for ev, _ in valid], fp)
+                        logger.info(f"[Embedding] FAISS 索引重建完成: {len(valid)} 向量 (dim={self.dim})")
+            except Exception as e:
+                logger.warning(f"[Embedding] FAISS 索引重建失败，向量搜索暂时不可用: {e}")
 
     def embed(self, text: str) -> Optional[List[float]]:
+        if not self._loaded:
+            self._load_model()  # 延迟加载：首次调用自动加载，避免向量检索静默失效
         if not self._loaded or self._model is None:
             return None
         try:
@@ -139,8 +147,12 @@ class EmbeddingEngine:
             return None
 
     def embed_batch(self, texts: List[str]) -> List[Optional[List[float]]]:
-        if not texts or not self._loaded or self._model is None:
-            return [None] * len(texts) if texts else []
+        if not texts:
+            return []
+        if not self._loaded:
+            self._load_model()
+        if not self._loaded or self._model is None:
+            return [None] * len(texts)
         try:
             import torch
             inputs = self._tokenizer(texts, return_tensors="pt", padding=True, truncation=True, max_length=128)

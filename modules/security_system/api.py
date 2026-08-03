@@ -1,7 +1,7 @@
 """
 安全系统统一API - 全局唯一入口 + HTTP路由
 """
-from typing import Tuple, Dict, Optional
+from typing import Tuple, Dict
 from fastapi import Depends,  APIRouter, Body
 from api.auth import require_api_key
 from api.errors import AppError, ErrorCode
@@ -9,15 +9,15 @@ from .security_level import SecurityLevel
 from .switch_manager import SecuritySwitchManager
 from .audit_logger import SecurityAuditLogger
 from .validators import (
-    CoreValidator, ContentValidator, OutputValidator
+    CoreValidator, ContentValidator
 )
 from utils.logger import setup_logger
 
 logger = setup_logger("security_api")
 
-router = APIRouter(prefix="/security", tags=["安全系统"],
-    dependencies=[Depends(require_api_key)],
-)
+# 只读端点（GET）由中间件白名单控制（/security/status、/security/audit 免鉴权）；
+# 写操作端点单独挂 require_api_key。
+router = APIRouter(prefix="/security", tags=["安全系统"])
 
 
 class SecurityAPI:
@@ -77,7 +77,7 @@ async def get_audit_logs(limit: int = 50):
     return {"success": True, "data": {"logs": logs, "count": len(logs)}}
 
 
-@router.post("/switch")
+@router.post("/switch", dependencies=[Depends(require_api_key)])
 async def set_security_switch(
     level: str,
     enable: bool
@@ -92,7 +92,7 @@ async def set_security_switch(
         raise AppError(ErrorCode.BAD_REQUEST, f"无效的安全级别: {level}")
 
 
-@router.post("/validate/input")
+@router.post("/validate/input", dependencies=[Depends(require_api_key)])
 async def validate_input(content: str = Body(..., description="要校验的输入内容")):
     """校验输入 - SEC-13: Use request body instead of query parameters"""
     api = get_security_api()

@@ -5,7 +5,7 @@ TaskNotebook — 任务记事本
 供 ContinuousThinker 追踪多轮思考的进度，跨委托唤醒时保留。
 """
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 
 class TaskNotebook:

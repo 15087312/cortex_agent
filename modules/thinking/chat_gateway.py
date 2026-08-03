@@ -34,7 +34,11 @@ router = APIRouter(prefix="/stream", tags=["流式思考"])
 # ---------------------------------------------------------------------------
 
 def _resolve_mode() -> str:
-    """读取当前对话路线模式（每个会话 / 每次请求开始时调用）"""
+    """读取当前对话路线模式（每个会话 / 每次请求开始时调用）
+
+    env 优先（测试/启动注入）；设置页通过 PUT /config/CORTEX_MODE
+    修改时会在 update_config 里同步写回 os.environ，同样生效。
+    """
     mode = (os.environ.get("CORTEX_MODE")
             or getattr(settings, "CORTEX_MODE", "agent")
             or "agent").strip().lower()
@@ -154,6 +158,15 @@ def _envelope(
     }
 
 
+async def _safe_ws_send(websocket: WebSocket, data: dict) -> bool:
+    """发送 WS 消息；连接已断开（如 voice 瞬时连接）返回 False，不抛异常"""
+    try:
+        await websocket.send_json(data)
+        return True
+    except Exception:
+        return False
+
+
 # ---------------------------------------------------------------------------
 # chatonly WebSocket — 简单路线
 # ---------------------------------------------------------------------------
@@ -172,9 +185,9 @@ async def _consume_turn(
     repo.save_message(session_id, "user", content)
 
     # 与 api_stream 一致：先发 received ack，避免 TUI 等待超时
-    await websocket.send_json(_envelope(
+    if not await _safe_ws_send(websocket, _envelope(
         session_id, "ack", "received", "已接收请求，开始处理", "system",
-    ))
+    )): return
 
     queue: asyncio.Queue = asyncio.Queue()
     think_task = asyncio.create_task(thinker.think(session_id, content, queue))
@@ -197,23 +210,23 @@ async def _consume_turn(
                 # 静默期进度心跳（思考中/无输出）
                 if now - last_progress >= 1.0:
                     last_progress = now
-                    await websocket.send_json(_envelope(
+                    if not await _safe_ws_send(websocket, _envelope(
                         session_id, "status", "thinking_progress",
                         f"思考中 {int(now - turn_start)}s",
                         "system",
-                    ))
+                    )): break
                 # 先看任务是否已收尾（无终态 token 的异常/取消场景）
                 if think_task.done() and queue.empty():
-                    await websocket.send_json(_envelope(
+                    if not await _safe_ws_send(websocket, _envelope(
                         session_id, "error", "error", "任务异常终止", "system",
-                    ))
+                    )): pass
                     errored = True
                     break
                 # 真正的思考超时：累计静默超过 300s
                 if now - last_event >= 300:
-                    await websocket.send_json(_envelope(
+                    if not await _safe_ws_send(websocket, _envelope(
                         session_id, "error", "error", "思考超时", "system",
-                    ))
+                    )): pass
                     errored = True
                     break
                 continue
@@ -229,30 +242,30 @@ async def _consume_turn(
                     text = "".join(flush_buf)
                     flush_buf.clear()
                     flush_deadline = now + 0.2
-                    await websocket.send_json(_envelope(
+                    if not await _safe_ws_send(websocket, _envelope(
                         session_id, "thinking", "thinking_step",
                         text, "thinking",
-                    ))
+                    )): pass
             elif tok.get("type") == "done":
                 if flush_buf:
-                    await websocket.send_json(_envelope(
+                    if not await _safe_ws_send(websocket, _envelope(
                         session_id, "thinking", "thinking_step",
                         "".join(flush_buf), "thinking",
-                    ))
+                    )): pass
                     flush_buf.clear()
                 done = True
                 break
             elif tok.get("type") == "error":
                 if flush_buf:
-                    await websocket.send_json(_envelope(
+                    if not await _safe_ws_send(websocket, _envelope(
                         session_id, "thinking", "thinking_step",
                         "".join(flush_buf), "thinking",
-                    ))
+                    )): pass
                     flush_buf.clear()
-                await websocket.send_json(_envelope(
+                if not await _safe_ws_send(websocket, _envelope(
                     session_id, "error", "error",
                     tok.get("content", "内部错误"), "system",
-                ))
+                )): pass
                 errored = True
                 break
 
@@ -260,11 +273,11 @@ async def _consume_turn(
             now = time.time()
             if now - last_progress >= 1.0:
                 last_progress = now
-                await websocket.send_json(_envelope(
+                if not await _safe_ws_send(websocket, _envelope(
                     session_id, "status", "thinking_progress",
                     f"思考中 {int(now - turn_start)}s",
                     "system",
-                ))
+                )): pass
     finally:
         # 正常结束 / 被 stop / 新消息取消：一律确保底层 think 任务收尾，
         # 取消场景下 CancelledError 由 finally 后的传播路径继续上抛
@@ -274,14 +287,14 @@ async def _consume_turn(
     if done and full_text:
         text = "".join(full_text)
         repo.save_message(session_id, "assistant", text)
-        await websocket.send_json(_envelope(
+        if not await _safe_ws_send(websocket, _envelope(
             session_id, "message", "assistant_message", text, "main",
-        ))
+        )): pass
     # 失败/取消路径：只发过 error，不再发「处理完成」，避免语义矛盾
     if not errored:
-        await websocket.send_json(
+        if not await _safe_ws_send(websocket, 
             _envelope(session_id, "done", "done", "处理完成", "system")
-        )
+        ): pass
 
 
 async def _chatonly_ws(websocket: WebSocket, session_id: str) -> None:
@@ -289,12 +302,15 @@ async def _chatonly_ws(websocket: WebSocket, session_id: str) -> None:
     await websocket.accept()
 
     repo = _get_chat_session_repo()
-    thinker = _get_chat_thinker()
     repo.create_session(session_id)
 
-    await websocket.send_json(
-        _envelope(session_id, "ack", "session_ready", "WebSocket 会话已建立", "system")
-    )
+    try:
+        await websocket.send_json(
+            _envelope(session_id, "ack", "session_ready", "WebSocket 会话已建立", "system")
+        )
+    except Exception:
+        # 客户端已断开（如 voice 会话瞬时连接）→ 直接结束
+        return
 
     active_task: Optional[asyncio.Task] = None
 
@@ -321,22 +337,28 @@ async def _chatonly_ws(websocket: WebSocket, session_id: str) -> None:
                     except asyncio.CancelledError:
                         pass
                 active_task = asyncio.create_task(
-                    _consume_turn(websocket, session_id, repo, thinker, content)
+                    _consume_turn(websocket, session_id, repo, _get_chat_thinker(), content)
                 )
 
             elif msg_type == "ping":
-                await websocket.send_json(
-                    _envelope(session_id, "ack", "pong", "pong", "system")
-                )
+                try:
+                    await websocket.send_json(
+                        _envelope(session_id, "ack", "pong", "pong", "system")
+                    )
+                except Exception:
+                    break
 
             elif msg_type == "stop":
                 # 与 api_stream 一致：取消运行中的思考任务
                 if active_task and not active_task.done():
                     active_task.cancel()
                 active_task = None
-                await websocket.send_json(
-                    _envelope(session_id, "done", "stopped", "会话已停止", "system")
-                )
+                try:
+                    await websocket.send_json(
+                        _envelope(session_id, "done", "stopped", "会话已停止", "system")
+                    )
+                except Exception:
+                    break
                 # 与 api_stream 一致：不 break，保持连接允许后续新消息
 
     except WebSocketDisconnect:
@@ -511,6 +533,41 @@ async def close_session(session_id: str):
         return {"success": True, "data": {"message": "会话已关闭"}}
     from modules.thinking import api_stream
     return await api_stream.close_session(session_id)
+
+
+@router.put("/session/{session_id}/title")
+async def update_session_title(session_id: str, body: dict = None):
+    title = ((body or {}).get("title") or "").strip()
+    if not title:
+        from api.errors import AppError, ErrorCode
+        raise AppError(ErrorCode.BAD_REQUEST, "标题不能为空")
+    if _resolve_mode() == "chatonly":
+        _get_chat_session_repo().set_session_title(session_id, title[:200])
+        return {"success": True, "data": {"message": "标题已更新", "title": title[:200]}}
+    from modules.thinking import api_stream
+    return await api_stream.update_session_title(session_id, body)
+
+
+@router.delete("/sessions/{session_id}/messages/{message_id}")
+async def delete_message(session_id: str, message_id: str):
+    if _resolve_mode() == "chatonly":
+        _get_chat_session_repo().delete_message(session_id, message_id)
+        return {"success": True, "data": {"message": "消息已删除"}}
+    from modules.thinking import api_stream
+    return await api_stream.delete_message(session_id, message_id)
+
+
+@router.put("/sessions/{session_id}/messages/{message_id}")
+async def update_message(session_id: str, message_id: str, body: dict = None):
+    content = ((body or {}).get("content") or "").strip()
+    if not content:
+        from api.errors import AppError, ErrorCode
+        raise AppError(ErrorCode.BAD_REQUEST, "内容不能为空")
+    if _resolve_mode() == "chatonly":
+        _get_chat_session_repo().update_message(session_id, message_id, content)
+        return {"success": True, "data": {"message": "消息已更新", "content": content}}
+    from modules.thinking import api_stream
+    return await api_stream.update_message(session_id, message_id, body)
 
 
 @router.get("/status")

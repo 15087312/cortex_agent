@@ -8,7 +8,6 @@
 """
 import json
 import re
-import inspect
 import time
 import threading
 from collections import deque

@@ -447,3 +447,36 @@ def read_text_file(path: str, max_length: int = 50000, **kwargs) -> Dict[str, An
     truncated = len(content) > max_length
     text = content[:max_length] + ("\n... [截断]" if truncated else "")
     return {"success": True, "path": str(target), "content": text, "truncated": truncated, "size": len(content)}
+
+
+@ToolRegistry.register(
+    "write_text_file",
+    description="写入/创建文本文件（覆盖已有内容）。用于创建源码、配置、文档等。父目录不存在会自动创建。",
+    params={
+        "path": "文件路径（必填）",
+        "content": "文件内容（必填，纯文本）",
+        "overwrite": "可选，是否覆盖已存在文件（默认 True）",
+    },
+    risk_level="MEDIUM",
+    category="mutation",
+    tags=["mutation"],
+    core=True,
+)
+def write_text_file(path: str, content: str = "", overwrite: bool = True, **kwargs) -> Dict[str, Any]:
+    """写入文本文件 — 安全文件写入（无需 shell 命令）"""
+    if not path or not path.strip():
+        return {"error": "path 不能为空"}
+    target = Path(path).expanduser()
+    if target.exists() and not overwrite:
+        return {"error": f"文件已存在且 overwrite=False: {target}"}
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content or "", encoding="utf-8")
+    except Exception as e:
+        return {"error": f"写入失败: {e}"}
+    return {
+        "success": True,
+        "path": str(target),
+        "size": len(content or ""),
+        "action": "updated" if target.exists() else "created",
+    }

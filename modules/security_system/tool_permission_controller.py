@@ -20,7 +20,7 @@
   # 可执行性：由 tool_security_gate.py 统一处理（参数级危险检测 + 风险等级审批）
   # 不再在此类中重复实现
 """
-from typing import Dict, List, Any, Optional, Tuple
+from typing import List, Any, Tuple
 from utils.logger import setup_logger
 import threading
 

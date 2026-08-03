@@ -146,7 +146,7 @@ class ScreenMonitorSource:
         resp = self._read_response(timeout=_RESPONSE_TIMEOUT)
         elapsed = time.time() - t0
         if elapsed > 15:
-            logger.warning(f"[{tool_name}] 响应 {elapsed:.1f}s (慢)")
+            logger.debug(f"[{tool_name}] 响应 {elapsed:.1f}s (慢)")
         if resp and "result" in resp:
             for item in resp["result"].get("content", []):
                 if item.get("type") == "text":

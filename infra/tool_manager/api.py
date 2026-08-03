@@ -1,9 +1,8 @@
 """
 工具 API - 工具管理和调用接口
 """
-import os
 from fastapi import APIRouter, HTTPException, Body, Path, Query, Header, Depends
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 
 from infra.tool_manager import tool_manager, ToolRegistry
 from api.errors import AppError, ErrorCode
@@ -42,7 +41,9 @@ def require_tool_auth(x_api_key: str = Header(None), caller_role: str = Header(d
     return caller_role
 
 
-router = APIRouter(prefix="/tools", tags=["工具"], dependencies=[Depends(require_tool_auth)])
+# 只读端点（GET）由中间件白名单控制（/tools/、/tools/events、/tools/info/ 等免鉴权）；
+# 写操作端点单独挂 require_tool_auth，避免无 key 时只读页面被 401 拦截。
+router = APIRouter(prefix="/tools", tags=["工具"])
 
 
 @router.get("/")
@@ -71,7 +72,7 @@ async def get_tool_status():
 
 
 
-@router.post("/call")
+@router.post("/call", dependencies=[Depends(require_tool_auth)])
 async def call_tool(
     tool_name: str = Body(..., description="工具名称"),
     params: Dict[str, Any] = Body(default={}, description="工具参数"),
@@ -83,7 +84,7 @@ async def call_tool(
     return {"success": True, "data": result}
 
 
-@router.post("/call-sync")
+@router.post("/call-sync", dependencies=[Depends(require_tool_auth)])
 async def call_tool_sync(
     tool_name: str = Body(..., description="工具名称"),
     params: Dict[str, Any] = Body(default={}, description="工具参数"),
@@ -95,7 +96,7 @@ async def call_tool_sync(
     return {"success": True, "data": result}
 
 
-@router.post("/call-json")
+@router.post("/call-json", dependencies=[Depends(require_tool_auth)])
 async def call_from_json(json_str: str = Body(..., description="JSON格式的工具调用")):
     """从JSON调用工具（经过安全门检查）"""
     try:
@@ -143,7 +144,7 @@ async def get_tool_event_stats():
     }
 
 
-@router.delete("/events")
+@router.delete("/events", dependencies=[Depends(require_tool_auth)])
 async def clear_tool_events():
     """清空工具调用历史"""
     cleared = tool_manager.clear_tool_events()
@@ -154,7 +155,7 @@ async def clear_tool_events():
     }
 
 
-@router.post("/register")
+@router.post("/register", dependencies=[Depends(require_tool_auth)])
 async def register_tool(
     name: str = Body(...),
     description: str = Body(default=""),

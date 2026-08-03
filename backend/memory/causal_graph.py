@@ -393,7 +393,7 @@ class CausalGraph:
             """
             params = (nid, min_confidence, nid, min_confidence)
             if relation_filter:
-                query = query.replace("WHERE e", f"WHERE e.relation = ? AND e")
+                query = query.replace("WHERE e", "WHERE e.relation = ? AND e")
                 params = (relation_filter, nid, min_confidence, relation_filter, nid, min_confidence)
 
             rows = conn.execute(query, params).fetchall()

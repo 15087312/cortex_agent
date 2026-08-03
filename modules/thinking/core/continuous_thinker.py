@@ -7,12 +7,12 @@
 - 下一轮从记忆模块获取历史记忆注入提示词
 - 支持外部模块动态添加提示词
 """
-from dataclasses import dataclass
 from typing import Dict, Any, List, Optional, Callable, Awaitable
 import asyncio
 import time
 import uuid
 from utils.logger import setup_logger
+from utils.suspension import pausable_wait_for
 from modules.thinking.core.control_tools import (
     ThinkingControlDecision,
     ThinkingTaskContext,
@@ -576,7 +576,7 @@ class ContinuousThinker:
     async def _build_prompt(self, initial_question: str, round_num: int = 0) -> str:
         """构建当前轮 prompt — TurnContext 池化 + PromptComposer"""
         import asyncio as _asyncio_thinker
-        from config.prompts.composer import PromptComposer, PromptRequest
+        from config.prompts.composer import PromptComposer
         from modules.thinking.context.pool import TurnContext, ContextFragment
 
         pool = TurnContext()
@@ -597,33 +597,54 @@ class ContinuousThinker:
         if history_output:
             pool.add(ContextFragment("history", history_output, ("large",), "历史输出（不得重复）", 20))
 
-        # 记忆检索（浅层 RAG，深度因果由 Conscience 在专家引导阶段处理）
+        # 事件记忆（全局记忆）注入：
+        # 会话记忆即【历史对话】，已由 system prompt 注入（_build_system_prompt_for_mode），
+        # 此处不重复。事件记忆 = 全局记忆，仅在本会话已有对话历史时才注入，
+        # 避免新会话被无关历史事件污染（如只发一个"1"）。
         try:
             from modules.memory.event_retrieval import get_event_retrieval
             retrieval = get_event_retrieval()
             # 各模型只看自己的记忆，加上 owner_id 过滤
             owner_id = f"{self._tier}::{self._model_id}" if self._tier and self._model_id else None
+
+            has_conversation = len(getattr(self, "history_thoughts", []) or []) > 0
+
+            events = []
             if self._memory_focus:
+                # 显式记忆聚焦：始终执行（用户主动要求召回）
                 events = await _asyncio_thinker.wait_for(
                     retrieval.retrieve_mixed(mix=self._memory_focus, max_results=5, threshold=0.10, owner_id=owner_id),
                     timeout=10,
                 )
-            else:
+            elif has_conversation:
+                # 会话已有历史对话 → 注入与当前问题相关的全局事件记忆
                 events = await _asyncio_thinker.wait_for(
-                    retrieval.retrieve(query=initial_question, max_results=5, threshold=0.10, owner_id=owner_id),
+                    retrieval.retrieve(query=initial_question or "", max_results=5, threshold=0.10, owner_id=owner_id),
                     timeout=10,
                 )
+            # 无历史对话且无聚焦 → events 为空，不注入事件记忆
 
             if events:
-                parts = []
+                parts = [
+                    "【曾经发生的事】",
+                    "（以下为曾经发生的事，是过去的历史事件记忆，仅供参考。"
+                    "回答请优先基于当前会话的【对话历史】进行，不要把下列过去的任务当作当前任务执行）",
+                ]
                 for i, ev in enumerate(events, 1):
-                    parts.append(f"[历史事件 {i}] (类型={ev.type}, 重要性={ev.importance:.1f})")
-                    parts.append(f"  事实: {ev.fact}")
+                    date = str(ev.time or "")[:10] or "未知日期"
+                    parts.append(f"  [{i}] (日期={date}, 类型={ev.type}, 重要性={ev.importance:.1f})")
+                    parts.append(f"    内容: {ev.fact}")
                     if ev.lesson:
-                        parts.append(f"  经验: {ev.lesson}")
+                        parts.append(f"    经验: {ev.lesson}")
                     if ev.keywords:
-                        parts.append(f"  标签: {', '.join(ev.keywords)}")
+                        parts.append(f"    标签: {', '.join(ev.keywords)}")
                 pool.add(ContextFragment("memory", "\n".join(parts), ("orchestrator", "supervisor", "expert"), "历史记忆", 30))
+                # 存到共享缓存，供 api_stream 发送最终 message 时附带给前端展开栏
+                try:
+                    from modules.thinking.core.model_runner import _session_memory_context
+                    _session_memory_context[self._session_id] = "\n".join(parts)
+                except Exception as e:
+                    self.logger.debug(f"[记忆上下文缓存] 失败 (非致命): {e}")
         except Exception as e:
             self.logger.debug(f"[事件检索] 失败: {e}")
 
@@ -806,7 +827,7 @@ class ContinuousThinker:
         for attempt in range(1, MAX_THINK_RETRIES + 1):
             try:
                 start_time = time.time()
-                raw_thought = await asyncio.wait_for(self.think_fn(context), timeout=SINGLE_THINK_TIMEOUT)
+                raw_thought = await pausable_wait_for(self.think_fn(context), timeout=SINGLE_THINK_TIMEOUT)
                 duration_ms = (time.time() - start_time) * 1000
                 thought = str(raw_thought or "")
                 break
@@ -1130,6 +1151,16 @@ class ContinuousThinker:
                                 f"第{round_num}轮：检测到重复思考 (sim={similarity:.2f}, 阈值={dup_threshold})，"
                                 f"延长等待至 {wait_seconds}s 避免空转"
                             )
+
+                # 通知 runner 更新 continue_think 循环状态（并清除本轮已完成的 React 工具循环）
+                try:
+                    runner = getattr(self, '_runner_ref', None)
+                    if runner is not None:
+                        updater = getattr(runner, '_update_loop_state', None)
+                        if updater:
+                            updater(think_round=round_num, think_max=rounds, think_wait=wait_seconds)
+                except Exception:
+                    pass
 
                 # 等待间隔
                 if i < rounds - 1 and self._running:
