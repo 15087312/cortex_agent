@@ -47,10 +47,23 @@ _frame_count: int = 0
 
 
 def _capture_screen() -> np.ndarray | None:
-    """截图并返回 numpy array (BGR)"""
+    """截图并返回 numpy array (BGR)
+
+    优先 mss（CGDisplayStream）：已授权时不触发系统屏幕录制权限弹窗，
+    未授权时静默失败返回 None。screencapture 命令每次调用都可能触发
+    TCC 权限请求，仅作为 mss 不可用时的兜底。
+    """
     from utils.screen_capture import SCREENSHOT_ENABLED
     if not SCREENSHOT_ENABLED:
         return None
+
+    try:
+        import mss
+        with mss.MSS() as sct:
+            shot = sct.grab(sct.monitors[1])
+        return np.array(shot, dtype=np.uint8)[:, :, :3]  # BGRA → BGR
+    except Exception:
+        pass
 
     try:
         tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)

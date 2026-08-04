@@ -236,17 +236,8 @@ async def _consume_turn(
                 chunk = tok.get("content", "")
                 full_text.append(chunk)
                 flush_buf.append(chunk)
-                now = time.time()
-                # 聚合发送：每 0.2s 或缓冲足够大时发一次 thinking_step（防刷屏）
-                if now >= flush_deadline or len("".join(flush_buf)) >= 40:
-                    text = "".join(flush_buf)
-                    flush_buf.clear()
-                    flush_deadline = now + 0.2
-                    if not await _safe_ws_send(websocket, _envelope(
-                        session_id, "thinking", "thinking_step",
-                        text, "thinking",
-                    )): pass
             elif tok.get("type") == "done":
+                # 思考过程一次性完整发送（不逐段流式，避免前端一小句一小句冒出来）
                 if flush_buf:
                     if not await _safe_ws_send(websocket, _envelope(
                         session_id, "thinking", "thinking_step",

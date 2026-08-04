@@ -18,35 +18,46 @@ SCREENSHOT_ENABLED: bool = True
 
 
 def init_screen_permission():
-    """进程启动时调用一次，检测屏幕录制权限并设置 SCREENSHOT_ENABLED"""
+    """进程启动时调用一次，检测屏幕录制权限并设置 SCREENSHOT_ENABLED
+
+    用 CGPreflightScreenCaptureAccess 做纯检查（不弹窗）——直接执行
+    screencapture 命令会在每次启动时触发系统的「屏幕录制权限」请求，
+    用户即使已授权也可能因 TCC 对命令行工具授权不持久而反复弹窗。
+    """
     global SCREENSHOT_ENABLED
     if sys.platform != "darwin":
         SCREENSHOT_ENABLED = True
         return
 
     try:
-        import subprocess
-        import tempfile
-        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
-            tmp = f.name
-        result = subprocess.run(
-            ["screencapture", "-x", "-R", "0,0,1,1", tmp],
-            timeout=3, capture_output=True,
-        )
-        ok = result.returncode == 0 and os.path.getsize(tmp) > 0
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        SCREENSHOT_ENABLED = ok
-        if ok:
-            logger.info("[屏幕权限] 已授予")
-        else:
-            logger.warning("[屏幕权限] 未授予，截图功能不可用")
-            logger.warning("[屏幕权限] 请在 系统设置 → 隐私与安全性 → 屏幕录制 中授权")
+        # macOS 10.15+：只检查是否已授权，不触发权限请求
+        from Quartz import CGPreflightScreenCaptureAccess
+        SCREENSHOT_ENABLED = bool(CGPreflightScreenCaptureAccess())
     except Exception:
-        SCREENSHOT_ENABLED = False
-        logger.warning("[屏幕权限] 检测失败，截图功能不可用")
+        # 无 Quartz（未装 pyobjc）时退回一次性 screencapture 检测
+        try:
+            import subprocess
+            import tempfile
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+                tmp = f.name
+            result = subprocess.run(
+                ["screencapture", "-x", "-R", "0,0,1,1", tmp],
+                timeout=3, capture_output=True,
+            )
+            ok = result.returncode == 0 and os.path.getsize(tmp) > 0
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            SCREENSHOT_ENABLED = ok
+        except Exception:
+            SCREENSHOT_ENABLED = False
+
+    if SCREENSHOT_ENABLED:
+        logger.info("[屏幕权限] 已授予")
+    else:
+        logger.warning("[屏幕权限] 未授予，截图功能不可用")
+        logger.warning("[屏幕权限] 请在 系统设置 → 隐私与安全性 → 屏幕录制 中授权")
 
 
 def capture_screen(max_width: int = 1280) -> Optional[str]:

@@ -29,11 +29,6 @@ from PyQt6.QtGui import (
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEngineProfile, QWebEnginePage, QWebEngineSettings
 
-# 允许网页访问剪贴板，否则前端「复制」按钮的 navigator.clipboard 不可用
-QWebEngineSettings.defaultSettings().setAttribute(
-    QWebEngineSettings.WebAttribute.JavascriptCanAccessClipboard, True
-)
-
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import server
 
@@ -44,6 +39,13 @@ _server_thread = None
 # ── App Icon ──────────────────────────────────────────────
 
 def _make_app_icon():
+    # 优先使用前端 logo（favicon.jpg，页面左上角鹿图）
+    icon_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "public", "favicon.jpg"
+    )
+    if os.path.isfile(icon_path):
+        return QIcon(icon_path)
+    # 回退：程序化绘制蓝色 "C" 图标
     size = 256
     pixmap = QPixmap(size, size)
     pixmap.fill(Qt.GlobalColor.transparent)
@@ -331,10 +333,15 @@ def main():
     profile = QWebEngineProfile.defaultProfile()
     profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.NoCache)
     profile.setHttpCacheMaximumSize(0)
+    # 允许网页访问剪贴板，否则前端「复制」按钮的 navigator.clipboard 不可用
+    # （必须在 QApplication 创建后调用 defaultProfile()，其 settings() 才是有效的全局设置）
+    profile.settings().setAttribute(
+        QWebEngineSettings.WebAttribute.JavascriptCanAccessClipboard, True
+    )
 
     window = MainWindow(app)
     window.show()
-    print("[OK] Cortex Agent 已启动 (macOS 原生版)")
+    print("[OK] Cortex Agent 已启动")
     print("[..] 如果窗口未自动加载，请手动打开 http://localhost:8765")
 
     exit_code = app.exec()
