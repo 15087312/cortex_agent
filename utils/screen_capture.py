@@ -61,13 +61,15 @@ def init_screen_permission():
 
 
 def capture_screen(max_width: int = 1280) -> Optional[str]:
-    """截取屏幕，返回 base64 编码的 PNG"""
+    """截取屏幕，返回 base64 编码的 PNG
+
+    mss 已移除：其 CGDisplayStream 在本机会挂起 ~30s。
+    优先 PIL ImageGrab（进程内、快），darwin 上回退 screencapture 命令。
+    """
     if not SCREENSHOT_ENABLED:
         return None
 
-    img = _try_mss()
-    if img is None:
-        img = _try_imagegrab()
+    img = _try_imagegrab()
     if img is None and sys.platform == "darwin":
         img = _try_screencapture()
     if img is None:
@@ -84,17 +86,6 @@ def capture_screen(max_width: int = 1280) -> Optional[str]:
 
 
 capture_screen_base64 = capture_screen
-
-
-def _try_mss():
-    try:
-        import mss
-        with mss.MSS() as sct:
-            screenshot = sct.grab(sct.monitors[1])
-            from PIL import Image
-            return Image.frombytes("RGB", screenshot.size, screenshot.bgra, "raw", "BGRX")
-    except Exception:
-        return None
 
 
 def _try_imagegrab():

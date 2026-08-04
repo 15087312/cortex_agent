@@ -471,6 +471,39 @@ class Settings(BaseSettings):
 
         self._ensure_user_config()
         self._load_user_config()
+        self._apply_current_memory_lib()
+
+    def _apply_current_memory_lib(self) -> None:
+        """启动时应用 memory_libs.json 的 current 库到运行时路径。
+
+        否则后端重启后 EventStore 会回落默认库（data/memory.db），
+        即使上次已切换到其他记忆库 —— 导致"切换的库读不到/读错库"。
+        """
+        try:
+            data = self.get_memory_libs()
+            lib = data.get("libs", {}).get(data.get("current", ""))
+            if not lib:
+                return
+            object.__setattr__(self, "MEMORY_DB_PATH", lib["db"])
+            object.__setattr__(self, "MEMORY_FAISS_INDEX", lib["faiss"])
+            object.__setattr__(self, "MEMORY_ID_MAP", lib["id_map"])
+            self._sync_backend_memory_paths(lib)
+        except Exception:
+            pass
+
+    def _sync_backend_memory_paths(self, lib: dict) -> None:
+        """同步 backend（纯对话路线）的 settings 内存路径，跟随当前记忆库。
+
+        backend 用独立的 backend.config.settings，若不同步，切换记忆库后
+        纯对话链路的 EventStore 仍读默认库（data/memory.db），新事件继续写入旧库。
+        """
+        try:
+            import backend.config.settings as _bcfg
+            object.__setattr__(_bcfg.settings, "MEMORY_DB_PATH", lib["db"])
+            object.__setattr__(_bcfg.settings, "MEMORY_FAISS_INDEX", lib["faiss"])
+            object.__setattr__(_bcfg.settings, "MEMORY_ID_MAP", lib["id_map"])
+        except Exception:
+            pass
 
     def _load_user_config(self):
         """加载 ~/.cortex/settings.json，覆盖 .env 中的同名配置
@@ -642,6 +675,7 @@ class Settings(BaseSettings):
         object.__setattr__(self, "MEMORY_DB_PATH", lib["db"])
         object.__setattr__(self, "MEMORY_FAISS_INDEX", lib["faiss"])
         object.__setattr__(self, "MEMORY_ID_MAP", lib["id_map"])
+        self._sync_backend_memory_paths(lib)
         self._reset_memory_singletons()
         return True
 
@@ -677,22 +711,35 @@ class Settings(BaseSettings):
         return True
 
     def delete_memory_lib(self, name: str) -> bool:
-        """删除记忆库（从配置移除；默认库不可删；若删的是当前库则切回默认）。
+        """删除记忆库（允许删除任意库，包括默认库）。
 
-        物理文件（DB/FAISS/id_map）保留，避免误删数据。
+        删除后的兜底保证至少有一个记忆库可用：
+        - 删的是当前库 → 自动切到剩余库（优先"默认"，否则第一个）
+        - 删到最后一个库 → 自动重新生成一个新的"默认"库
         """
         data = self.get_memory_libs()
         libs = data.get("libs", {})
         if name not in libs:
             return False
-        if name == "默认":
-            return False  # 核心库不允许删除
         libs.pop(name, None)
-        if data.get("current") == name:
+        # 兜底：删到最后一个库 → 重新生成默认库
+        if not libs:
+            base = str(Path(self.MEMORY_DB_PATH).parent)
+            libs["默认"] = {
+                "db": str(Path(base) / "memory.db"),
+                "faiss": str(Path(base) / "events_faiss.index"),
+                "id_map": str(Path(base) / "events_id_map.json"),
+            }
             data["current"] = "默认"
+        elif data.get("current") == name:
+            # 删的是当前库 → 切到剩余库（优先默认，否则任意一个）
+            if "默认" in libs:
+                data["current"] = "默认"
+            else:
+                data["current"] = sorted(libs.keys())[0]
         self._save_memory_libs(data)
-        if data.get("current") != name:
-            self.switch_memory_lib(data.get("current"))
+        self.switch_memory_lib(data["current"])
+        return True
         return True
 
     def memory_lib_event_count(self, name: str) -> int:

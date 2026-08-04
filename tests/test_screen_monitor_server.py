@@ -237,10 +237,8 @@ class TestCaptureScreen:
                         assert result is None or isinstance(result, np.ndarray)
 
     def test_returns_none_on_failure(self):
-        # mss 不可用时回退 screencapture，且失败应返回 None
-        with patch("mss.MSS", side_effect=Exception("mss disabled")):
-            with patch("subprocess.run") as mock_run:
-                mock_run.side_effect = Exception("no display")
-                from infra.mcp.servers.screen_monitor_server import _capture_screen
-                result = _capture_screen()
-                assert result is None
+        with patch("subprocess.run") as mock_run:
+            mock_run.side_effect = Exception("no display")
+            from infra.mcp.servers.screen_monitor_server import _capture_screen
+            result = _capture_screen()
+            assert result is None

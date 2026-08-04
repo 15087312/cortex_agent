@@ -257,20 +257,17 @@ class TestCaptureScreen:
 
     def test_screencapture_failure(self):
         from infra.mcp.servers.screen_diff_server import _capture_screen
-        # mss 不可用时回退 screencapture，且失败应返回 None
-        with patch("mss.MSS", side_effect=Exception("mss disabled")):
-            with patch("subprocess.run") as mock_run:
-                mock_run.return_value.returncode = 1
-                result = _capture_screen()
-                assert result is None
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value.returncode = 1
+            result = _capture_screen()
+            assert result is None
 
     def test_screencapture_timeout(self):
         from infra.mcp.servers.screen_diff_server import _capture_screen
-        with patch("mss.MSS", side_effect=Exception("mss disabled")):
-            with patch("subprocess.run") as mock_run:
-                mock_run.side_effect = TimeoutError("timeout")
-                result = _capture_screen()
-            assert result is None
+        with patch("subprocess.run") as mock_run:
+            mock_run.side_effect = TimeoutError("timeout")
+            result = _capture_screen()
+        assert result is None
 
 
 class TestMain:

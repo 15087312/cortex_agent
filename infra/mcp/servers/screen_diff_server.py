@@ -49,21 +49,13 @@ _frame_count: int = 0
 def _capture_screen() -> np.ndarray | None:
     """截图并返回 numpy array (BGR)
 
-    优先 mss（CGDisplayStream）：已授权时不触发系统屏幕录制权限弹窗，
-    未授权时静默失败返回 None。screencapture 命令每次调用都可能触发
-    TCC 权限请求，仅作为 mss 不可用时的兜底。
+    用 screencapture 命令（~3s，快）。mss 在本机 CGDisplayStream 会挂起
+    ~30s 导致 MCP 超时，已移除。SCREENSHOT_ENABLED 由 CGPreflight 检测
+    （不弹窗），未授权时直接返回 None。
     """
     from utils.screen_capture import SCREENSHOT_ENABLED
     if not SCREENSHOT_ENABLED:
         return None
-
-    try:
-        import mss
-        with mss.MSS() as sct:
-            shot = sct.grab(sct.monitors[1])
-        return np.array(shot, dtype=np.uint8)[:, :, :3]  # BGRA → BGR
-    except Exception:
-        pass
 
     try:
         tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
@@ -74,21 +66,19 @@ def _capture_screen() -> np.ndarray | None:
             ["screencapture", "-x", "-C", "-t", "png", tmp_path],
             capture_output=True, timeout=10,
         )
-        if result.returncode != 0 or not os.path.exists(tmp_path):
-            return None
-
-        img_data = np.frombuffer(open(tmp_path, "rb").read(), dtype=np.uint8)
-        os.unlink(tmp_path)
-        if _cv2:
-            return _cv2.imdecode(img_data, _cv2.IMREAD_COLOR)
-        else:
-            # numpy-only: 用 PIL 兜底
-            from PIL import Image
-            io.BytesIO(img_data.tobytes())
-            pil_img = Image.open(io.BytesIO(open(tmp_path, "rb").read()))
-            return np.array(pil_img)[:, :, ::-1]  # RGB → BGR
+        if result.returncode == 0 and os.path.exists(tmp_path):
+            img_data = np.frombuffer(open(tmp_path, "rb").read(), dtype=np.uint8)
+            os.unlink(tmp_path)
+            if _cv2:
+                return _cv2.imdecode(img_data, _cv2.IMREAD_COLOR)
+            else:
+                # numpy-only: 用 PIL 兜底
+                from PIL import Image
+                pil_img = Image.open(io.BytesIO(img_data.tobytes()))
+                return np.array(pil_img)[:, :, ::-1]  # RGB → BGR
     except Exception:
-        return None
+        pass
+    return None
 
 
 def _compute_frame_diff(current: np.ndarray, prev: np.ndarray) -> dict:
