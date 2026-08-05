@@ -210,6 +210,12 @@ class CognitiveBlackboard:
                     f"[CognitiveBlackboard] 清理旧 observation {overflow} 条 "
                     f"(当前 {len(self.observations)}/{self.MAX_OBSERVATIONS})"
                 )
+        # 落库追溯（内存溢出清理后旧观察仍可查询，不阻塞/不影响内存逻辑）
+        try:
+            from modules.database.blackboard_repo import save_observation
+            save_observation(self._session_id, obs)
+        except Exception:
+            pass
         logger.debug(f"[CognitiveBlackboard] 添加观察: {observation_id}")
         return observation_id
 

@@ -118,6 +118,52 @@ const userName = txtCfg('USER_NAME', '用户')
 const proactiveEnabled = boolCfg('PROACTIVE_OUTREACH_ENABLED', false)
 const proactiveIdle = numCfg('PROACTIVE_OUTREACH_IDLE_MINUTES', 30)
 const proactiveCooldown = numCfg('PROACTIVE_OUTREACH_COOLDOWN_MINUTES', 60)
+
+/* ── 主动搭话会话级配置 ── */
+const outreachSessions = ref([])
+const outreachLoading = ref(false)
+
+async function loadOutreachSessions() {
+  outreachLoading.value = true
+  try {
+    const r = await endpoints.sessions()
+    outreachSessions.value = (r.data || []).map((s) => {
+      const oc = (s.metadata && s.metadata.outreach) || {}
+      const range = Array.isArray(oc.cooldown_range) ? oc.cooldown_range : [15, 15]
+      return {
+        session_id: s.session_id,
+        title: s.title || s.session_id.slice(0, 12),
+        enabled: !!oc.enabled,
+        cooldownMin: range[0] ?? 15,
+        cooldownMax: range[1] ?? 15,
+        timeWindowsText: (oc.time_windows || []).map((w) => `${w.start}-${w.end}`).join(','),
+      }
+    })
+  } catch (e) {
+    toast.show('加载会话失败: ' + (e.body?.error?.message || e.status), 'error')
+  } finally {
+    outreachLoading.value = false
+  }
+}
+
+async function saveOutreachConfig(s) {
+  const timeWindows = s.timeWindowsText.split(',').map((t) => t.trim()).filter(Boolean)
+    .map((t) => {
+      const [start, end] = t.split('-')
+      return { start: (start || '').trim(), end: (end || '').trim() }
+    }).filter((w) => w.start && w.end)
+  const cfg = {
+    enabled: !!s.enabled,
+    cooldown_range: [Math.max(1, s.cooldownMin || 15), Math.max(1, s.cooldownMax || 15)],
+    time_windows: timeWindows,
+  }
+  try {
+    await endpoints.setOutreachConfig(s.session_id, cfg)
+    toast.show('已保存', 'success')
+  } catch (e) {
+    toast.show('保存失败: ' + (e.body?.error?.message || e.status), 'error')
+  }
+}
 const ttsEnabled = boolCfg('OUTPUT_TTS_ENABLED', false)
 const debugEnabled = boolCfg('DEBUG', false)
 const loggingEnabled = boolCfg('LOGGING_ENABLED', true)
@@ -434,6 +480,32 @@ onMounted(async () => {
           <div class="setting-row">
             <div class="lbl"><div class="t">冷却时间(分钟)</div><div class="d">两次主动搭话间隔</div></div>
             <div class="setting-ctl"><input class="input" type="number" v-model.number="proactiveCooldown" style="width:110px;text-align:right" /></div>
+          </div>
+        </div>
+
+        <div class="settings-divider"></div>
+        <div class="settings-group">
+          <div class="settings-group-title">会话级配置</div>
+          <p class="settings-hint">按会话设置是否允许主动搭话、随机间隔与时间区间（全局总开关关闭时全部不触发；默认关闭，需开启才搭话）</p>
+          <div style="display:flex;gap:8px;margin-bottom:10px">
+            <button class="btn btn-sm" @click="loadOutreachSessions"><Icon name="refresh" :size="14" /> {{ outreachLoading ? '加载中…' : '加载会话' }}</button>
+          </div>
+          <div v-if="outreachSessions.length === 0" class="empty-state" style="padding:16px"><p class="empty-text">暂无会话（点击加载）</p></div>
+          <div v-for="s in outreachSessions" :key="s.session_id" class="card" style="margin-bottom:10px;padding:12px">
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+              <b style="flex:1;min-width:110px">{{ s.title }}</b>
+              <span class="lbl" style="display:flex;align-items:center;gap:4px"><span class="t">允许</span>
+                <label class="toggle-switch"><input type="checkbox" v-model="s.enabled" /><span class="toggle-slider"></span></label>
+              </span>
+              <span class="lbl" style="display:flex;align-items:center;gap:4px"><span class="t">随机间隔</span>
+                <input class="input" type="number" v-model.number="s.cooldownMin" style="width:64px;text-align:right" /> ~
+                <input class="input" type="number" v-model.number="s.cooldownMax" style="width:64px;text-align:right" /><span class="t" style="font-size:11px">min</span>
+              </span>
+              <span class="lbl" style="display:flex;align-items:center;gap:4px"><span class="t">时间区间</span>
+                <input class="input" v-model="s.timeWindowsText" style="width:200px" placeholder="09:00-12:00,14:00-18:00" />
+              </span>
+              <button class="btn btn-sm btn-primary" @click="saveOutreachConfig(s)">保存</button>
+            </div>
           </div>
         </div>
       </div>

@@ -5,6 +5,7 @@
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 from sqlalchemy import desc
+import threading
 
 from modules.database.connection import get_db_manager
 from modules.database.chat_models import ChatSession, ChatMessage
@@ -14,12 +15,14 @@ logger = setup_logger("session_repo")
 
 
 # 本次进程启动后是否保存过用户消息（主动搭话前提判定用，进程级标志）
+_boot_spoken_lock = threading.Lock()
 _boot_has_spoken = False
 
 
 def get_boot_has_spoken() -> bool:
     """本次进程启动后是否真正发过消息（进程级标志，重启自动归零）。"""
-    return _boot_has_spoken
+    with _boot_spoken_lock:
+        return _boot_has_spoken
 
 
 class SessionRepository:
@@ -67,6 +70,52 @@ class SessionRepository:
             if row:
                 row.title = (title or "")[:200]
 
+    def get_session_metadata(self, session_id: str) -> dict:
+        """读取会话 metadata_json（不存在返回 {}）"""
+        import json as _json
+        with self._session() as s:
+            row = s.query(ChatSession).filter_by(session_id=session_id).first()
+            if not row:
+                return {}
+            try:
+                return _json.loads(row.metadata_json or "{}")
+            except Exception:
+                return {}
+
+    def set_session_metadata(self, session_id: str, metadata: dict) -> bool:
+        """覆盖写入会话 metadata_json（合并写，保留其他键）"""
+        import json as _json
+        with self._session() as s:
+            row = s.query(ChatSession).filter_by(session_id=session_id).first()
+            if not row:
+                return False
+            current = {}
+            try:
+                current = _json.loads(row.metadata_json or "{}")
+            except Exception:
+                current = {}
+            current.update(metadata or {})
+            row.metadata_json = _json.dumps(current, ensure_ascii=False)
+            return True
+
+    def get_outreach_config(self, session_id: str) -> dict:
+        """读取会话的主动搭话配置（未配置返回空 dict）"""
+        meta = self.get_session_metadata(session_id)
+        cfg = meta.get("outreach") or {}
+        return cfg if isinstance(cfg, dict) else {}
+
+    def set_outreach_config(self, session_id: str, config: dict) -> bool:
+        """写入会话的主动搭话配置 {enabled, cooldown_range:[min,max], time_windows:[{start,end}]}"""
+        return self.set_session_metadata(session_id, {"outreach": config or {}})
+
+    @staticmethod
+    def _parse_metadata(metadata_json) -> dict:
+        import json as _json
+        try:
+            return _json.loads(metadata_json or "{}")
+        except Exception:
+            return {}
+
     def get_all_sessions(self, limit: int = 50) -> List[Dict[str, Any]]:
         """获取所有会话（按最后活跃时间倒序）"""
         with self._session() as s:
@@ -79,6 +128,7 @@ class SessionRepository:
                 "message_count": r.message_count,
                 "is_active": r.is_active,
                 "execution_mode": r.execution_mode,
+                "metadata": self._parse_metadata(r.metadata_json),
             } for r in rows]
 
     def get_active_sessions(self) -> List[Dict[str, Any]]:
@@ -103,7 +153,8 @@ class SessionRepository:
         """保存单条消息，返回消息 ID"""
         global _boot_has_spoken
         if role == "user":
-            _boot_has_spoken = True
+            with _boot_spoken_lock:
+                _boot_has_spoken = True
         if not content or not content.strip():
             return ""
         with self._session() as s:

@@ -1,11 +1,11 @@
 """
-ContextSlicer — 滑动窗口 + 分块摘要的上下文管理
+ContextSlicer — 会话记忆裁剪：前 15 条全文 + 总上限字数 + 超出部分 LLM 总结
 
 策略：
-1. 保留最近 15 条消息作为当前窗口（全文保留）
-2. 更早的历史消息拼接成文本，每满 1000 字调用一次 LLM 生成重点摘要
-3. 所有历史摘要合并成一条系统消息，插入窗口最前面
-4. 结合记忆上下文与 token 预算做最终裁剪
+1. 保留最近 window_size(15) 条消息全文（不逐条截断）
+2. 更早的历史从新到旧累计，直到总字数达到 CHAT_CONTEXT_MAX_CHARS 上限
+3. 超出上限的最旧部分，调用 LLM 总结成一条系统摘要（不直接丢弃，可追溯）
+4. 记忆上下文前置
 """
 import asyncio
 from typing import List
@@ -15,30 +15,34 @@ from utils.logger import setup_logger
 
 logger = setup_logger("context_slicer")
 
-CHARS_PER_TOKEN = 3
 _MAX_SUMMARIZE_CONCURRENCY = 2
 _SUMMARIZE_SEM = asyncio.Semaphore(_MAX_SUMMARIZE_CONCURRENCY)
 
 
 class ContextSlicer:
-    """上下文裁剪器：滑动窗口 + 历史分块摘要"""
-
-    _tiktoken_enc = None
+    """会话记忆裁剪器：前 N 条全文 + 超上限旧内容 LLM 总结"""
 
     def __init__(self, window_size: int = 15, chunk_chars: int = 1000):
         self.window_size = window_size
         self.chunk_chars = chunk_chars
+        self._client = None  # 懒建一次，复用避免每块新建 aiohttp session
+
+    def _get_client(self):
+        if self._client is None:
+            from infra.model.large_model_client import LargeModelClient
+            self._client = LargeModelClient()
+        return self._client
 
     async def slice(
         self,
         messages: List[dict],
         memory_context: str = "",
-        max_tokens: int = None,
+        max_chars: int = None,
     ) -> List[dict]:
-        if max_tokens is None:
-            max_tokens = settings.CHAT_CONTEXT_MAX_TOKENS
+        if max_chars is None:
+            max_chars = settings.CHAT_CONTEXT_MAX_CHARS
 
-        # 1. 分离最近 window_size 条和更早的历史
+        # 1. 分离最近 window_size 条（窗口全文）与更早历史
         if len(messages) <= self.window_size:
             window = list(messages)
             history = []
@@ -46,70 +50,79 @@ class ContextSlicer:
             window = list(messages[-self.window_size:])
             history = messages[:-self.window_size]
 
-        # 2. 将历史消息拼接成文本，按 chunk_chars 分块，并发生成摘要
-        num_chunks = 0
-        if history:
-            history_text = ""
-            for m in history:
-                role = m.get("role", "")
-                content = m.get("content", "")
-                history_text += f"{role}: {content}\n"
+        # 2. 从新到旧累计，超出上限的最旧部分交给 LLM 总结
+        to_summarize: List[dict] = []
+        kept = list(window)
+        kept_chars = len(memory_context or "") + sum(
+            len(m.get("content", "")) for m in window
+        )
 
-            chunks = self._split_text_into_chunks(history_text)
-            num_chunks = len(chunks)
+        for m in reversed(history):  # 历史从最新开始往回累计
+            c = len(m.get("content", ""))
+            if kept_chars + c <= max_chars:
+                kept.insert(0, m)
+                kept_chars += c
+            else:
+                to_summarize.append(m)
+        to_summarize.reverse()  # 旧 → 新
 
-            summaries = await asyncio.gather(
-                *[self._summarize_chunk(chunk) for chunk in chunks],
-                return_exceptions=True,
-            )
+        # 窗口本身超上限时，从窗口最旧开始总结
+        while kept_chars > max_chars and len(kept) > 1:
+            oldest = kept.pop(0)
+            to_summarize.insert(0, oldest)
+            kept_chars -= len(oldest.get("content", ""))
 
-            valid_summaries = [s for s in summaries if isinstance(s, str) and s]
-            if valid_summaries:
-                combined = "；".join(valid_summaries)
-                window.insert(0, {
-                    "role": "system",
-                    "content": f"[历史对话重点摘要] {combined}",
-                })
+        # 3. 组装结果：摘要(system) + 记忆(system) + 保留消息
+        result: List[dict] = []
+        if to_summarize:
+            summary = await self._summarize_overflow(to_summarize)
+            if summary:
+                result.append({"role": "system", "content": f"[历史对话重点摘要] {summary}"})
+            else:
+                # 总结失败则降级：保留每条约首 30 字
+                fallback = "\n".join(
+                    f"[{m.get('role')}]: {str(m.get('content', ''))[:30]}"
+                    for m in to_summarize
+                )
+                result.append({"role": "system", "content": f"[历史对话重点摘要] {fallback}"})
 
-        result_messages = window
-
-        # 3. 按 token 预算从后向前裁剪
-        trimmed = []
-        used_tokens = 0
-
-        # 记忆上下文预先计入 token
         if memory_context and memory_context.strip():
-            mem_tokens = self._estimate_tokens(memory_context)
-            used_tokens += mem_tokens
-
-        for msg in reversed(result_messages):
-            msg_tokens = self._estimate_tokens(msg.get("content", ""))
-            if used_tokens + msg_tokens > max_tokens * 0.8:
-                break
-            trimmed.insert(0, msg)
-            used_tokens += msg_tokens
-
-        # 记忆上下文始终放在最前面
-        if memory_context and memory_context.strip():
-            trimmed.insert(0, {
+            result.append({
                 "role": "system",
                 "content": f"以下是从历史记忆中检索到的相关信息：\n\n{memory_context}",
             })
+        result.extend(kept)
 
         logger.info(
-            f"[Slicer] 窗口大小={self.window_size} 历史块数={num_chunks} "
-            f"输出消息数={len(trimmed)} 预估 tokens={used_tokens}"
+            f"[Slicer] 窗口={len(window)} 保留={len(kept)} 总结={len(to_summarize)} "
+            f"总字数={kept_chars}/{max_chars} 输出消息数={len(result)}"
         )
-        return trimmed
+        return result
+
+    async def _summarize_overflow(self, messages: List[dict]) -> str:
+        """将超出上限的旧消息 LLM 总结为一条摘要（超长时分块并发生成）"""
+        if not messages:
+            return ""
+        text = "\n".join(
+            f"{m.get('role', '')}: {m.get('content', '')}" for m in messages
+        )
+        if len(text) <= self.chunk_chars:
+            return await self._summarize_chunk(text)
+        chunks = self._split_text_into_chunks(text)
+        summaries = await asyncio.gather(
+            *[self._summarize_chunk(c) for c in chunks],
+            return_exceptions=True,
+        )
+        valid = [s for s in summaries if isinstance(s, str) and s]
+        return "；".join(valid) if valid else ""
 
     def _split_text_into_chunks(self, text: str) -> List[str]:
-        """将文本按 chunk_chars 切分成多个块（尽量保持句子完整）"""
+        """将文本按 chunk_chars 切分（尽量在句子边界切）"""
         chunks = []
         start = 0
         n = len(text)
         while start < n:
             end = min(start + self.chunk_chars, n)
-            # 向后寻找最近的换行或标点作为切割点，避免截断句子
             if end < n:
                 search_start = max(start, end - 50)
                 best = end
@@ -142,8 +155,7 @@ class ContextSlicer:
         )
 
         try:
-            from infra.model.large_model_client import LargeModelClient
-            client = LargeModelClient()
+            client = self._get_client()
             async with _SUMMARIZE_SEM:
                 summary = await client.generate(prompt, max_tokens=120, temperature=0.3)
             summary = summary.strip()
@@ -153,15 +165,3 @@ class ContextSlicer:
         except Exception as e:
             logger.warning(f"历史摘要生成失败，降级处理: {e}")
             return chunk.replace("\n", " ")[:30] + "..."
-
-    @staticmethod
-    def _estimate_tokens(text: str) -> int:
-        if not text:
-            return 0
-        try:
-            if ContextSlicer._tiktoken_enc is None:
-                import tiktoken
-                ContextSlicer._tiktoken_enc = tiktoken.get_encoding("cl100k_base")
-            return len(ContextSlicer._tiktoken_enc.encode(text))
-        except Exception:
-            return max(1, len(text) // CHARS_PER_TOKEN)

@@ -9,6 +9,8 @@ Flow per user message:
 5. Post-session: extract memory events
 """
 import asyncio
+import threading
+from typing import Dict
 
 from modules.thinking.chat_light.model_runner import ModelRunner
 from modules.thinking.chat_light.context_slicer import ContextSlicer
@@ -28,6 +30,17 @@ class ContinuousThinker:
         self._slicer = ContextSlicer()
         self._blackboard = Blackboard()
         self._composer = PromptComposer()
+        # 每会话串行锁：防止新消息打断时旧 think 异步收尾把 assistant 乱序写进黑板
+        self._session_locks: Dict[str, asyncio.Lock] = {}
+        self._session_locks_guard = threading.Lock()
+
+    def _session_lock(self, session_id: str) -> asyncio.Lock:
+        with self._session_locks_guard:
+            lock = self._session_locks.get(session_id)
+            if lock is None:
+                lock = asyncio.Lock()
+                self._session_locks[session_id] = lock
+            return lock
 
     async def think(
         self,
@@ -42,48 +55,50 @@ class ContinuousThinker:
             user_message: User's message text
             message_queue: Async queue for streaming tokens to client
         """
-        try:
-            # 1. Retrieve memories
-            memory_context = await self._recall_memories(user_message, session_id)
+        # 每会话串行：防止打断时旧 think 异步收尾与新一轮 think 并发写黑板导致乱序
+        async with self._session_lock(session_id):
+            try:
+                # 1. Retrieve memories
+                memory_context = await self._recall_memories(user_message, session_id)
 
-            self._blackboard.add_message(session_id, "user", user_message)
-            history = self._blackboard.get_messages(session_id)
-            context_messages = await self._slicer.slice(history, memory_context)
+                self._blackboard.add_message(session_id, "user", user_message)
+                history = self._blackboard.get_messages(session_id)
+                context_messages = await self._slicer.slice(history, memory_context)
 
-            # 3. Compose system prompt
-            system_prompt = self._composer.build_system(memory_context)
+                # 3. Compose system prompt
+                system_prompt = self._composer.build_system(memory_context)
 
-            # 4. Stream response
-            full_response = []
+                # 4. Stream response
+                full_response = []
 
-            def on_token(token: str):
-                full_response.append(token)
-                try:
-                    message_queue.put_nowait({"type": "message", "content": token})
-                except asyncio.QueueFull:
-                    pass
+                def on_token(token: str):
+                    full_response.append(token)
+                    try:
+                        message_queue.put_nowait({"type": "message", "content": token})
+                    except asyncio.QueueFull:
+                        pass
 
-            response = await self._runner.run(
-                messages=context_messages,
-                system_prompt=system_prompt,
-                on_token=on_token,
-            )
+                response = await self._runner.run(
+                    messages=context_messages,
+                    system_prompt=system_prompt,
+                    on_token=on_token,
+                )
 
-            # 5. Store assistant response
-            assistant_content = response.message.content or "".join(full_response)
-            self._blackboard.add_message(session_id, "assistant", assistant_content)
+                # 5. Store assistant response
+                assistant_content = response.message.content or "".join(full_response)
+                self._blackboard.add_message(session_id, "assistant", assistant_content)
 
-            # 6. Signal completion
-            await message_queue.put({"type": "done"})
+                # 6. Signal completion
+                await message_queue.put({"type": "done"})
 
-            # 7. Post-session memory extraction (background)
-            # 传完整对话历史（user + assistant），而非 slice 上下文（只含 user）
-            full_history = self._blackboard.get_messages(session_id)
-            asyncio.create_task(self._extract_memory(session_id, full_history))
+                # 7. Post-session memory extraction (background)
+                # 传完整对话历史（user + assistant），而非 slice 上下文（只含 user）
+                full_history = self._blackboard.get_messages(session_id)
+                asyncio.create_task(self._extract_memory(session_id, full_history))
 
-        except Exception as e:
-            logger.error(f"Thinking failed: {e}")
-            await message_queue.put({"type": "error", "content": str(e)})
+            except Exception as e:
+                logger.error(f"Thinking failed: {e}")
+                await message_queue.put({"type": "error", "content": str(e)})
 
     async def _recall_memories(self, query: str, session_id: str) -> str:
         """Retrieve global event memory（会话记忆即历史对话，由 context_messages 注入）。
@@ -101,6 +116,17 @@ class ContinuousThinker:
                     ]
             except Exception as e:
                 logger.debug(f"[历史对话检查] 失败: {e}")
+            # DB 兜底：Blackboard 是内存（断开清理/重启后为空），有持久历史也应视为有历史
+            if not prior_msgs:
+                try:
+                    from modules.database.session_repo import get_session_repo
+                    db_msgs = get_session_repo().get_recent_messages(session_id, limit=20)
+                    prior_msgs = [
+                        m for m in db_msgs
+                        if m.get("role") in ("user", "assistant") and m.get("content")
+                    ]
+                except Exception:
+                    pass
             if not prior_msgs:
                 return ""
 
@@ -169,8 +195,8 @@ class ContinuousThinker:
                 return
 
             from modules.memory.event_reducer import EventReducer
-            from infra.model.large_model_client import LargeModelClient
-            reducer = EventReducer(model_client=LargeModelClient())
+            # 复用 ContinuousThinker 单例内 ModelRunner 的 client，避免每轮新建 aiohttp session 泄漏
+            reducer = EventReducer(model_client=self._runner.client)
             events = await reducer.reduce(session_id, conversation_text)
 
             if events:

@@ -204,10 +204,9 @@ class ProactiveTrigger:
     def _execute_outreach(self, idle_minutes: float, event, trigger_count: int):
         """执行主动询问（在 daemon 线程中）
 
-        设计目的：主动搭话以「本次启动过会话且真实说过话」为前提。
-        防止用户只是打开程序、还没说过话时，程序就去检索上一次的会话
-        主动搭话打扰用户 —— 只有本次启动确实发过消息，才认为主动搭话
-        （哪怕目标是接上次会话继续聊）是合适的。
+        设计目的：主动搭话以「本次启动过会话且真实说过话」为前提，
+        并按会话级配置（enabled / 随机间隔 / 时间区间）与活跃连接做源头防浪费——
+        没有可接收的会话就不调 LLM，避免白跑。
         """
         try:
             if not self._has_spoken_this_boot():
@@ -217,6 +216,28 @@ class ProactiveTrigger:
             session_id, conversation = self._get_session_info()
             if not session_id:
                 logger.warning(f"[主动触发 #{trigger_count}] 无活跃 session，跳过")
+                return
+
+            # ── 会话级主动搭话配置 ──
+            cfg = self._get_session_outreach_config(session_id)
+            if not cfg.get("enabled"):
+                logger.info(f"[主动触发 #{trigger_count}] 会话 {session_id[:8]} 未开启主动搭话，跳过")
+                return
+            if not self._in_time_window(cfg):
+                logger.info(f"[主动触发 #{trigger_count}] 当前不在会话允许的时间区间，跳过")
+                return
+            # 会话配置了随机间隔 → 用会话冷却检查（未配置依赖全局冷却，已在 _do_trigger 检查）
+            if cfg.get("cooldown_range"):
+                with self._lock:
+                    now = time.time()
+                    if now - self._last_trigger_time < self._get_session_cooldown_seconds(cfg):
+                        logger.debug(f"[主动触发 #{trigger_count}] 会话冷却未到，跳过")
+                        return
+                    self._last_trigger_time = now
+
+            # ── 源头防浪费：目标会话无活跃连接则跳过（不调 LLM）──
+            if not self._has_active_connection(session_id):
+                logger.info(f"[主动触发 #{trigger_count}] 会话 {session_id[:8]} 无活跃连接，跳过（防浪费）")
                 return
 
             # 获取屏幕变化详情
@@ -295,6 +316,49 @@ class ProactiveTrigger:
         try:
             from modules.database.session_repo import get_boot_has_spoken
             return bool(get_boot_has_spoken())
+        except Exception:
+            return False
+
+    def _get_session_outreach_config(self, session_id: str) -> dict:
+        """读取会话级主动搭话配置（存 chat_sessions.metadata_json.outreach）"""
+        try:
+            from modules.database.session_repo import get_session_repo
+            return get_session_repo().get_outreach_config(session_id)
+        except Exception:
+            return {}
+
+    def _in_time_window(self, cfg: dict) -> bool:
+        """当前时间是否在会话配置的任一允许区间（未配置则不限）"""
+        windows = cfg.get("time_windows")
+        if not isinstance(windows, list) or not windows:
+            return True
+        from datetime import datetime
+        cur = datetime.now().strftime("%H:%M")
+        for w in windows:
+            start, end = w.get("start", ""), w.get("end", "")
+            if start and end and start <= cur <= end:
+                return True
+        return False
+
+    def _get_session_cooldown_seconds(self, cfg: dict) -> float:
+        """会话随机间隔（cooldown_range 内随机；未配置回退全局默认 15 分钟）"""
+        import random
+        r = cfg.get("cooldown_range")
+        if isinstance(r, (list, tuple)) and len(r) == 2:
+            lo, hi = max(1, int(r[0])), max(1, int(r[1]))
+            if hi < lo:
+                lo, hi = hi, lo
+            return random.randint(lo, hi) * 60
+        try:
+            return settings.PROACTIVE_OUTREACH_COOLDOWN_MINUTES * 60
+        except Exception:
+            return 15 * 60
+
+    def _has_active_connection(self, session_id: str) -> bool:
+        """目标会话是否有活跃 WebSocket 连接（无则跳过搭话，防 LLM 白跑）"""
+        try:
+            from modules.thinking.api_stream import connection_manager
+            return session_id in connection_manager.active_connections
         except Exception:
             return False
 
@@ -503,6 +567,13 @@ class ProactiveTrigger:
                         msg_id = fut.result(timeout=10)
                     else:
                         msg_id = _run_async(system._append_message(session_id, "assistant", text))
+                else:
+                    # chatonly 等非 agent 内存会话：直接落 DB（会话记忆由 DB 恢复，前端可追溯）
+                    try:
+                        from modules.database.session_repo import get_session_repo
+                        msg_id = get_session_repo().save_message(session_id, "assistant", text)
+                    except Exception:
+                        pass
             except Exception as e:
                 logger.error(f"主动消息持久化失败: {e}")
 

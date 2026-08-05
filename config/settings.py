@@ -7,6 +7,9 @@ from pydantic import field_validator
 from typing import Optional
 import os
 
+# 记忆库切换互斥锁（模块级，避免作为类属性参与 pydantic pickle）
+_MEMORY_SWITCH_LOCK = __import__("threading").RLock()
+
 
 class Settings(BaseSettings):
     """全局配置类"""
@@ -166,6 +169,7 @@ class Settings(BaseSettings):
     CHAT_MAX_ROUNDS: int = 5
     CHAT_CONTEXT_MAX_MESSAGES: int = 50
     CHAT_CONTEXT_MAX_TOKENS: int = 8000
+    CHAT_CONTEXT_MAX_CHARS: int = 6000  # 会话记忆总上限字数（超出部分由 LLM 总结）
 
     # ── 因果记忆（backend 并入）──
     CAUSAL_DB_PATH: str = "data/causal.db"
@@ -648,13 +652,12 @@ class Settings(BaseSettings):
         try:
             import modules.memory.event_retrieval as er_mod
             er_mod.EventRetrieval._instance = None
+            # 生产检索单例（get_event_retrieval() 返回），漏重置会导致切库后仍读旧库
+            er_mod._retrieval_instance = None
         except Exception:
             pass
-        try:
-            import modules.memory.embedding as emb_mod
-            emb_mod.EmbeddingEngine._instance = None
-        except Exception:
-            pass
+        # Embedding 模型与记忆库无关（同一个模型），切库保留实例，避免反复重载模型
+        # （旧 backend 时代因两套单例需重置；合并后唯一单例可复用）
         # 事件提取器缓存旧 EventStore，需一并重置
         try:
             import modules.memory.event_reducer as red_mod
@@ -663,17 +666,18 @@ class Settings(BaseSettings):
             pass
 
     def switch_memory_lib(self, name: str) -> bool:
-        """切换到指定记忆库（更新运行时路径 + 重置记忆单例）"""
-        data = self.get_memory_libs()
-        lib = data.get("libs", {}).get(name)
-        if not lib:
-            return False
-        data["current"] = name
-        self._save_memory_libs(data)
-        object.__setattr__(self, "MEMORY_DB_PATH", lib["db"])
-        object.__setattr__(self, "MEMORY_FAISS_INDEX", lib["faiss"])
-        object.__setattr__(self, "MEMORY_ID_MAP", lib["id_map"])
-        self._reset_memory_singletons()
+        """切换到指定记忆库（更新运行时路径 + 重置记忆单例，原子化）"""
+        with _MEMORY_SWITCH_LOCK:
+            data = self.get_memory_libs()
+            lib = data.get("libs", {}).get(name)
+            if not lib:
+                return False
+            data["current"] = name
+            self._save_memory_libs(data)
+            object.__setattr__(self, "MEMORY_DB_PATH", lib["db"])
+            object.__setattr__(self, "MEMORY_FAISS_INDEX", lib["faiss"])
+            object.__setattr__(self, "MEMORY_ID_MAP", lib["id_map"])
+            self._reset_memory_singletons()
         return True
 
     def create_memory_lib(self, name: str) -> Optional[dict]:

@@ -45,3 +45,20 @@ class ChatMessage(Base):
     __table_args__ = (
         Index("ix_chat_messages_session_round", "session_id", "round_num"),
     )
+
+
+class BlackboardObservation(Base):
+    """agent 黑板协作观察（落库追溯；内存保持 MAX_OBSERVATIONS 上限，旧的可查此表）"""
+    __tablename__ = "blackboard_observations"
+
+    id = Column(String(100), primary_key=True, default=lambda: f"obs_{uuid.uuid4().hex[:12]}")
+    session_id = Column(String(100), nullable=False, index=True)
+    observation_id = Column(String(100), default="")       # 黑板 Observation.observation_id
+    tier = Column(String(20), default="")                  # large / supervisor / expert / user
+    content = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    metadata_json = Column(Text, default="{}")
+
+    __table_args__ = (
+        Index("ix_blackboard_obs_session_time", "session_id", "created_at"),
+    )

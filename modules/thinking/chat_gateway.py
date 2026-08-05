@@ -20,11 +20,15 @@ import uuid
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi.responses import JSONResponse
 
 from config.settings import settings
 from utils.logger import setup_logger
 
 logger = setup_logger("chat_gateway")
+
+# chatonly 运行中任务注册表（session_id → active_task），供 REST /stream/stop 跨连接取消
+_CHATONLY_TASKS: Dict[str, asyncio.Task] = {}
 
 router = APIRouter(prefix="/stream", tags=["流式思考"])
 
@@ -291,6 +295,17 @@ async def _chatonly_ws(websocket: WebSocket, session_id: str) -> None:
     ensure_shared_schema()
     await websocket.accept()
 
+    # 注册到统一投送系统（主动搭话等可实时推送；协议与 api_stream 同构，前端统一解析）
+    _ws_registered = False
+    try:
+        from modules.thinking.api_stream import connection_manager
+        async with connection_manager._lock:
+            connection_manager.active_connections[session_id] = websocket
+            connection_manager._loop = asyncio.get_running_loop()
+        _ws_registered = True
+    except Exception:
+        pass
+
     repo = _get_chat_session_repo()
     repo.create_session(session_id)
 
@@ -329,6 +344,11 @@ async def _chatonly_ws(websocket: WebSocket, session_id: str) -> None:
                 active_task = asyncio.create_task(
                     _consume_turn(websocket, session_id, repo, _get_chat_thinker(), content)
                 )
+                # 注册到全局表，供 REST /stream/stop 跨连接取消
+                _CHATONLY_TASKS[session_id] = active_task
+                active_task.add_done_callback(
+                    lambda _t, _sid=session_id: _CHATONLY_TASKS.pop(_sid, None)
+                )
 
             elif msg_type == "ping":
                 try:
@@ -356,6 +376,19 @@ async def _chatonly_ws(websocket: WebSocket, session_id: str) -> None:
     finally:
         if active_task and not active_task.done():
             active_task.cancel()
+        # 断开清理会话记忆内存（消息已落 DB，重连由 /context DB 兜底恢复）
+        try:
+            _get_chat_thinker().get_blackboard().clear_session(session_id)
+        except Exception:
+            pass
+        # 注销统一投送注册
+        if _ws_registered:
+            try:
+                from modules.thinking.api_stream import connection_manager
+                async with connection_manager._lock:
+                    connection_manager.active_connections.pop(session_id, None)
+            except Exception:
+                pass
         try:
             await websocket.close()
         except Exception:
@@ -504,6 +537,12 @@ async def get_context(session_id: str):
     if _resolve_mode() == "chatonly":
         thinker = _get_chat_thinker()
         messages = thinker.get_blackboard().get_messages(session_id)
+        # 会话记忆 DB 兜底：Blackboard 是进程内存，重启/重连后为空时从 DB 恢复
+        if not messages:
+            try:
+                messages = _get_chat_session_repo().get_recent_messages(session_id, limit=20)
+            except Exception:
+                messages = []
         return {
             "success": True,
             "data": {
@@ -520,9 +559,50 @@ async def get_context(session_id: str):
 async def close_session(session_id: str):
     if _resolve_mode() == "chatonly":
         _get_chat_session_repo().delete_session(session_id)
+        # 同步清理会话记忆内存（纯修复：已删会话的 Blackboard 数据成为孤儿）
+        try:
+            _get_chat_thinker().get_blackboard().clear_session(session_id)
+        except Exception:
+            pass
         return {"success": True, "data": {"message": "会话已关闭"}}
     from modules.thinking import api_stream
     return await api_stream.close_session(session_id)
+
+
+@router.get("/session/{session_id}/outreach-config")
+async def get_outreach_config(session_id: str):
+    """读取会话的主动搭话配置（agent/chatonly 同一套，存 chat_sessions.metadata_json）"""
+    cfg = _get_chat_session_repo().get_outreach_config(session_id)
+    return {"success": True, "data": {"session_id": session_id, "outreach": cfg}}
+
+
+@router.put("/session/{session_id}/outreach-config")
+async def set_outreach_config(session_id: str, body: dict = None):
+    """写入会话的主动搭话配置
+    {enabled: bool, cooldown_range: [min,max], time_windows: [{start,end}, ...]}
+    """
+    cfg = (body or {}).get("outreach")
+    if not isinstance(cfg, dict):
+        return JSONResponse(status_code=422, content={"success": False,
+                            "error": {"code": "VALIDATION_ERROR", "message": "outreach 需为对象"}})
+    # 校验结构
+    clean = {}
+    if "enabled" in cfg:
+        clean["enabled"] = bool(cfg["enabled"])
+    if "cooldown_range" in cfg and isinstance(cfg["cooldown_range"], (list, tuple)) and len(cfg["cooldown_range"]) == 2:
+        a, b = int(cfg["cooldown_range"][0]), int(cfg["cooldown_range"][1])
+        clean["cooldown_range"] = [min(a, b), max(a, b)]
+    if "time_windows" in cfg and isinstance(cfg["time_windows"], list):
+        windows = []
+        for w in cfg["time_windows"]:
+            if isinstance(w, dict) and w.get("start") and w.get("end"):
+                windows.append({"start": str(w["start"]), "end": str(w["end"])})
+        clean["time_windows"] = windows
+    ok = _get_chat_session_repo().set_outreach_config(session_id, clean)
+    if not ok:
+        return JSONResponse(status_code=404, content={"success": False,
+                            "error": {"code": "NOT_FOUND", "message": "会话不存在"}})
+    return {"success": True, "data": {"session_id": session_id, "outreach": clean}}
 
 
 @router.put("/session/{session_id}/title")
@@ -591,6 +671,10 @@ async def get_session_messages(session_id: str, limit: int = 100):
 @router.post("/stop")
 async def stop_thinking(body: dict = None, session_id: str = ""):
     if _resolve_mode() == "chatonly":
-        return {"success": True, "data": {"message": "已发送停止信号"}}
+        # 真正取消该会话运行中的思考任务（此前是空操作）
+        task = _CHATONLY_TASKS.get(session_id)
+        if task and not task.done():
+            task.cancel()
+        return {"success": True, "data": {"message": "已发送停止信号", "cancelled": bool(task and not task.done())}}
     from modules.thinking import api_stream
     return await api_stream.stop_thinking(body, session_id)

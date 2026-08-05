@@ -188,6 +188,8 @@ export const endpoints = {
   sessions: (signal) => request('GET', '/stream/sessions', undefined, signal),
   deleteSession: (id, signal) => request('DELETE', '/stream/session/' + encodeURIComponent(id), undefined, signal),
   updateSessionTitle: (id, title, signal) => request('PUT', '/stream/session/' + encodeURIComponent(id) + '/title', { title }, signal),
+  getOutreachConfig: (id, signal) => request('GET', '/stream/session/' + encodeURIComponent(id) + '/outreach-config', undefined, signal),
+  setOutreachConfig: (id, cfg, signal) => request('PUT', '/stream/session/' + encodeURIComponent(id) + '/outreach-config', { outreach: cfg }, signal),
   deleteMessage: (sid, mid, signal) => request('DELETE', '/stream/sessions/' + encodeURIComponent(sid) + '/messages/' + encodeURIComponent(mid), undefined, signal),
   updateMessage: (sid, mid, content, signal) => request('PUT', '/stream/sessions/' + encodeURIComponent(sid) + '/messages/' + encodeURIComponent(mid), { content }, signal),
   sessionMessages: (id, limit, signal) => request('GET', '/stream/sessions/' + encodeURIComponent(id) + '/messages?limit=' + (limit || 100), undefined, signal),
