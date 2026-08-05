@@ -140,7 +140,6 @@ const triggerMinIntensity = numCfg('PERCEPTION_TRIGGER_MIN_INTENSITY', 50)
 
 /* ── 语音识别（Whisper） ── */
 const voiceEnabled = boolCfg('PERCEPTION_VOICE_ENABLED', true)
-const voiceLlmTrigger = boolCfg('PERCEPTION_VOICE_LLM_TRIGGER_ENABLED', true)
 const voiceModel = segCfg('PERCEPTION_VOICE_MODEL', 'tiny')
 const voiceMode = segCfg('PERCEPTION_VOICE_MODE', 'hotkey')
 const voiceHotkey = txtCfg('PERCEPTION_VOICE_HOTKEY', 'f8')
@@ -493,10 +492,6 @@ onMounted(async () => {
           <div class="setting-row">
             <div class="lbl"><div class="t">语音输入</div></div>
             <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="voiceEnabled" @change="voiceEnabled = !voiceEnabled" /><span class="toggle-slider"></span></label></div>
-          </div>
-          <div class="setting-row">
-            <div class="lbl"><div class="t">LLM 触发</div><div class="d">识别后交由大模型处理</div></div>
-            <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="voiceLlmTrigger" @change="voiceLlmTrigger = !voiceLlmTrigger" /><span class="toggle-slider"></span></label></div>
           </div>
           <div class="setting-row">
             <div class="lbl"><div class="t">识别模型</div><div class="d">Whisper 模型大小</div></div>
