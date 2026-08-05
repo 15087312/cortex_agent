@@ -3,7 +3,6 @@
 from textual.app import App
 
 from .screens.help_screen import HelpScreen
-from .screens.session_picker import SessionPicker
 from .screens.repl import REPL
 from .services.api_client import APIClient
 from .services.ws_client import WSClient

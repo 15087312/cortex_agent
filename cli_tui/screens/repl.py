@@ -6,15 +6,14 @@ from typing import Optional
 from textual import work
 from utils.logger import setup_logger
 
-logger = setup_logger("tui_repl")
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import Screen
-from textual.widgets import Footer, Static, TextArea
+from textual.widgets import TextArea
 from cli_tui.widgets.approval_select import ApprovalSelect
 
-from ..commands import find_command, is_command, get_all, Command
+from ..commands import find_command, is_command, Command
 from ..services.api_client import APIClient
 from ..services.ws_client import WSClient
 from ..state import AppState
@@ -26,6 +25,8 @@ from ..widgets.status_line import StatusLine
 from ..widgets.debug_panel import DebugPanel
 from ..widgets.tool_panel import ToolPanel
 from ..widgets.command_suggestions import CommandSuggestions
+
+logger = setup_logger("tui_repl")
 
 
 class REPL(Screen):
@@ -894,7 +895,7 @@ class REPL(Screen):
             if toggle_value in ("plan", "edit", "yolo", "control"):
                 asyncio.create_task(self._set_execution_mode(toggle_value))
             else:
-                self.notify(f"用法: /mode plan/edit/yolo/control", severity="information", timeout=2)
+                self.notify("用法: /mode plan/edit/yolo/control", severity="information", timeout=2)
         elif cmd.action == "config":
             # 支持 /config 查看或 /config KEY VALUE 修改
             parts = text.split(" ", 1)
@@ -1115,7 +1116,7 @@ class REPL(Screen):
             if ok:
                 if ml:
                     ml.write(f"[bold red]🗑 已删除会话 {session_id[:16]}...[/bold red]")
-                self.notify(f"会话已删除", severity="information", timeout=2)
+                self.notify("会话已删除", severity="information", timeout=2)
                 # 如果删除的是当前会话，切换到新会话
                 if session_id == self.state.session_id:
                     await self.ws.close()
@@ -1173,11 +1174,11 @@ class REPL(Screen):
 
             # 5. 显示结果
             if ml:
-                lines = [f"[bold yellow]⏪ 回滚完成[/bold yellow]"]
+                lines = ["[bold yellow]⏪ 回滚完成[/bold yellow]"]
                 if restored > 0:
                     lines.append(f"  已恢复 {restored} 个文件" + (f"，{failed} 个失败" if failed else ""))
                 else:
-                    lines.append(f"  无文件需要回滚")
+                    lines.append("  无文件需要回滚")
                 lines.append(f"  {clipboard_msg}")
                 lines.append(f"  [red]🗑 会话 {session_id[:16]}... 已删除[/red]")
                 ml.write("\n".join(lines))
@@ -1331,7 +1332,7 @@ class REPL(Screen):
 
             if ml:
                 # 显示暂停状态面板
-                pause_info = f"⏸ [bold yellow]思考已暂停[/bold yellow]"
+                pause_info = "⏸ [bold yellow]思考已暂停[/bold yellow]"
                 if elapsed_s > 0:
                     pause_info += f"  [dim](已运行 {elapsed_s}s)[/dim]"
                 if self._paused_state.get("thinking_hint"):
@@ -1340,7 +1341,7 @@ class REPL(Screen):
                     experts = ", ".join(self._paused_state["active_experts"][:3])
                     pause_info += f"\n  [dim]活跃专家: {experts}[/dim]"
                 pause_info += (
-                    f"\n  [dim]Ctrl+Y 重试上次请求  |  直接输入新内容继续[/dim]"
+                    "\n  [dim]Ctrl+Y 重试上次请求  |  直接输入新内容继续[/dim]"
                 )
                 ml.write(pause_info)
 
@@ -1377,7 +1378,7 @@ class REPL(Screen):
         try:
             await asyncio.wait_for(self.api.update_config("EXECUTION_MODE", mode), timeout=5.0)
         except asyncio.TimeoutError:
-            self.notify(f"模式切换超时（后端无响应），本地已切换", severity="warning", timeout=3)
+            self.notify("模式切换超时（后端无响应），本地已切换", severity="warning", timeout=3)
         except Exception as e:
             self.notify(f"模式切换失败: {e}", severity="error", timeout=3)
         _LABELS = {"plan": "📋 Plan (只读)", "edit": "✏️ Edit (确认)", "yolo": "🚀 YOLO (宽松)", "control": "🎛️ Control (审批)"}

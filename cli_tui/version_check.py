@@ -6,8 +6,7 @@ import json
 import time
 import asyncio
 from pathlib import Path
-from typing import Optional, Dict, Tuple
-from datetime import datetime, timedelta
+from typing import Optional, Dict
 from utils.logger import setup_logger
 
 logger = setup_logger("version_check")
@@ -60,7 +59,7 @@ class VersionChecker:
 
         cls._write_cache({"last_check": time.time()})
 
-        from cortex.version import __version__, __version_core__
+        from cortex.version import __version_core__
 
         # 尝试从 GitHub 获取最新版本
         latest_version = await cls._fetch_latest_version_from_github()

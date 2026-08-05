@@ -1,10 +1,7 @@
 """顶栏 — 连接状态 + session + 统计 + 版本"""
 
-from datetime import datetime
 
 from rich.panel import Panel
-from rich.table import Table
-from rich.text import Text
 from textual.widgets import Static
 
 from ..state import AppState

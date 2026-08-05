@@ -7,7 +7,6 @@ from __future__ import annotations
 from typing import Optional, List, Callable
 
 from textual.app import ComposeResult
-from textual.containers import Vertical, Horizontal
 from textual.widget import Widget
 from textual.widgets import Static, Input
 from textual.reactive import reactive

@@ -6,10 +6,8 @@
 - 实时过滤
 """
 
-from typing import List, Optional
+from typing import List
 
-from rich.text import Text
-from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import VerticalScroll
 from textual.widgets import Static

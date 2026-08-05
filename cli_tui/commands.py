@@ -1,6 +1,6 @@
 """命令注册表 — 参考 Open-ClaudeCode 的 commands.ts"""
 
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
 
 class Command:

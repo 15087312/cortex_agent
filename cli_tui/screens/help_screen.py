@@ -1,7 +1,7 @@
 """帮助屏幕"""
 
 from textual.app import ComposeResult
-from textual.containers import Vertical, Container
+from textual.containers import Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Static, Button
 
