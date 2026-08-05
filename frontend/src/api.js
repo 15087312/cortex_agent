@@ -187,6 +187,7 @@ export const endpoints = {
 
   sessions: (signal) => request('GET', '/stream/sessions', undefined, signal),
   deleteSession: (id, signal) => request('DELETE', '/stream/session/' + encodeURIComponent(id), undefined, signal),
+  batchDeleteSessions: (ids, signal) => request('POST', '/stream/sessions/batch-delete', { session_ids: ids }, signal),
   updateSessionTitle: (id, title, signal) => request('PUT', '/stream/session/' + encodeURIComponent(id) + '/title', { title }, signal),
   getOutreachConfig: (id, signal) => request('GET', '/stream/session/' + encodeURIComponent(id) + '/outreach-config', undefined, signal),
   setOutreachConfig: (id, cfg, signal) => request('PUT', '/stream/session/' + encodeURIComponent(id) + '/outreach-config', { outreach: cfg }, signal),

@@ -576,6 +576,30 @@ async def close_session(session_id: str):
     return await api_stream.close_session(session_id)
 
 
+@router.post("/sessions/batch-delete")
+async def batch_delete_sessions(body: dict = None):
+    """批量删除会话（agent/chatonly 同一套，同步清理会话记忆内存）"""
+    ids = (body or {}).get("session_ids") or []
+    if not isinstance(ids, list) or not ids:
+        return JSONResponse(status_code=422, content={"success": False,
+                            "error": {"code": "VALIDATION_ERROR", "message": "session_ids 需为非空数组"}})
+    repo = _get_chat_session_repo()
+    deleted = []
+    for sid in ids:
+        if not isinstance(sid, str) or not sid:
+            continue
+        try:
+            repo.delete_session(sid)
+        except Exception:
+            pass
+        try:
+            _get_chat_thinker().get_blackboard().clear_session(sid)
+        except Exception:
+            pass
+        deleted.append(sid)
+    return {"success": True, "data": {"deleted": deleted, "count": len(deleted)}}
+
+
 @router.get("/session/{session_id}/outreach-config")
 async def get_outreach_config(session_id: str):
     """读取会话的主动搭话配置（agent/chatonly 同一套，存 chat_sessions.metadata_json）"""

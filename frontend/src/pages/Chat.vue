@@ -263,6 +263,11 @@ async function handleSessionSelect(sid) {
 }
 
 async function handleSessionDelete(sid) {
+  // 批量删除完成（SessionList 已处理），仅刷新会话列表
+  if (!sid) {
+    await session.loadSessions()
+    return
+  }
   if (!(await confirm('确定删除此会话？删除后不可恢复。'))) return
   await session.deleteSession(sid)
   if (sid === session.sessionId) {

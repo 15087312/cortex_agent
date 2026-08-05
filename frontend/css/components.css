@@ -561,3 +561,7 @@ textarea.input { resize: vertical; min-height: 60px; font-family: var(--font-mon
 /* ── 规则开关禁用态 ── */
 .outreach-unit.off { opacity: .45; }
 .outreach-body input:disabled { opacity: .45; }
+
+/* ── 会话批量管理 ── */
+.session-manage-bar { display:flex; align-items:center; gap:8px; padding:4px 6px; margin-bottom:6px; background:var(--bg-tertiary); border-radius:var(--radius-sm); }
+.session-item.manage-checked { background: var(--accent-bg); border-color: var(--accent); }
