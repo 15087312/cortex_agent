@@ -353,7 +353,7 @@ function handleAnswerIntent(requestId, answer) {
 </script>
 
 <template>
-  <div style="display:flex;height:100%">
+  <div style="display:flex;flex-direction:row;height:100%">
     <SessionList
       :sessions="session.sessions"
       :activeId="session.sessionId"

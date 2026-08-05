@@ -62,19 +62,21 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
       <Sidebar />
       <main class="main-content">
         <ErrorBoundary>
-          <router-view v-slot="{ Component }">
-            <!-- 缓存 Chat：切换页面不销毁，保持 WS 监听与思考状态。
-                 不用 <transition mode="out-in">：与 KeepAlive 组合在从设置页切回时
-                 会丢失缓存的 Chat（空白页，需再点一次才恢复）——Vue 3.5 已知问题 -->
-            <KeepAlive :include="['Chat']">
-              <Suspense>
-                <component :is="Component" />
-                <template #fallback>
-                  <LoadingState text="加载中..." />
-                </template>
-              </Suspense>
-            </KeepAlive>
-          </router-view>
+          <div class="page-view">
+            <router-view v-slot="{ Component }">
+              <!-- 缓存 Chat：切换页面不销毁，保持 WS 监听与思考状态。
+                   不用 <transition mode="out-in">：与 KeepAlive 组合在从设置页切回时
+                   会丢失缓存的 Chat（空白页，需再点一次才恢复）——Vue 3.5 已知问题 -->
+              <KeepAlive :include="['Chat']">
+                <Suspense>
+                  <component :is="Component" />
+                  <template #fallback>
+                    <LoadingState text="加载中..." />
+                  </template>
+                </Suspense>
+              </KeepAlive>
+            </router-view>
+          </div>
         </ErrorBoundary>
       </main>
     </div>
