@@ -339,6 +339,31 @@ class EventStore:
             row = conn.execute("SELECT COUNT(*) as cnt FROM events").fetchone()
             return row["cnt"] if row else 0
 
+    def search_by_time(self, start_time: str = "", end_time: str = "", limit: int = 50) -> List[MemoryEvent]:
+        """按时间范围检索事件（ISO 时间字符串，闭区间）。
+
+        - start_time 为空：不限开始
+        - end_time 为空：不限结束
+        - 支持 "2026-07-01"（日期）或完整 ISO "2026-07-01T10:00:00+00:00"
+        - 结果按时间倒序（最新在前）
+        """
+        with self._write_lock:
+            conn = self._get_conn()
+            conds, args = [], []
+            if start_time:
+                conds.append("time >= ?")
+                args.append(start_time)
+            if end_time:
+                conds.append("time <= ?")
+                args.append(end_time)
+            sql = "SELECT * FROM events"
+            if conds:
+                sql += " WHERE " + " AND ".join(conds)
+            sql += " ORDER BY time DESC LIMIT ?"
+            args.append(limit)
+            rows = conn.execute(sql, args).fetchall()
+            return [MemoryEvent.from_dict(dict(r)) for r in rows]
+
     # ------------------------------------------------------------------
     # FAISS 索引管理
     # ------------------------------------------------------------------

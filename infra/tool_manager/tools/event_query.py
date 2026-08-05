@@ -14,11 +14,14 @@ logger = setup_logger("event_query")
         "top_k": "返回条数，默认10（最多20）",
         "min_importance": "最低重要性过滤 0.0~1.0，默认0.0（只返回重要事件时设为0.3）",
         "types": "可选，逗号分隔的类型过滤: fact,thought,strategy,emotion",
+        "start_time": "可选，只返回该时间之后的事件，格式 YYYY-MM-DD 或完整 ISO（如 2026-07-01 或 2026-07-01T10:00:00）",
+        "end_time": "可选，只返回该时间之前的事件，同上（纯日期含当天）",
     },
     source="builtin",
     core=True,
 )
-async def event_query(query: str, top_k: str = "10", min_importance: str = "0.0", types: str = "") -> str:
+async def event_query(query: str, top_k: str = "10", min_importance: str = "0.0", types: str = "",
+                      start_time: str = "", end_time: str = "") -> str:
     """主动查询事件记忆系统
 
     大模型可以在需要时主动调用此工具查找历史记忆。
@@ -40,6 +43,8 @@ async def event_query(query: str, top_k: str = "10", min_importance: str = "0.0"
             max_results=k,
             min_importance=imp,
             types=type_list,
+            start_time=start_time.strip(),
+            end_time=end_time.strip(),
         )
 
         formatted = []

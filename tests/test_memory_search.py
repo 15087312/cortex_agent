@@ -779,3 +779,86 @@ class TestResultFusion:
         assert "相关记忆" in text
         assert "事件A" in text
         assert "事件B" in text
+
+
+# ===========================================================================
+# 17. 按时间检索
+# ===========================================================================
+
+class TestTimeSearch:
+    def setup_method(self):
+        self.store, self.tmpdir = _make_store()
+        self.store._embedding_dim = 16
+        from modules.memory.embedding import EmbeddingEngine
+        _em = MagicMock()
+        _em._loaded = False
+        _em._attempted = True
+        self._emb_patch = patch.object(EmbeddingEngine, "get_instance", return_value=_em)
+        self._emb_patch.start()
+
+    def teardown_method(self):
+        self._emb_patch.stop()
+        self.store.clear_all()
+        self.store.close()
+
+    def _seed(self):
+        self.store.save_event(_make_event(fact="7月事件A", time="2026-07-15T10:00:00"))
+        self.store.save_event(_make_event(fact="7月事件B", time="2026-07-02T09:00:00"))
+        self.store.save_event(_make_event(fact="6月事件C", time="2026-06-20T18:00:00"))
+        self.store.save_event(_make_event(fact="6月事件D", time="2026-06-05T08:00:00"))
+
+    def test_search_by_time_range(self):
+        self._seed()
+        r = self.store.search_by_time("2026-07-01", "2026-07-31")
+        facts = sorted(e.fact for e in r)
+        assert facts == ["7月事件A", "7月事件B"]
+
+    def test_search_by_time_open_bounds(self):
+        self._seed()
+        r = self.store.search_by_time(start_time="2026-07-01")
+        assert len(r) == 2  # 只含7月
+        r = self.store.search_by_time(end_time="2026-06-30")
+        assert len(r) == 2  # 只含6月
+
+    def test_search_by_time_no_match(self):
+        self._seed()
+        r = self.store.search_by_time("2025-01-01", "2025-12-31")
+        assert r == []
+
+    def test_search_by_time_desc_order(self):
+        self._seed()
+        r = self.store.search_by_time(start_time="2026-06-01")
+        assert len(r) == 4
+        # 倒序：最新在前
+        times = [e.time for e in r]
+        assert times == sorted(times, reverse=True)
+
+    def test_in_time_range_unit(self):
+        from modules.memory.event_retrieval import EventRetrieval
+        assert EventRetrieval._in_time_range("2026-07-15T10:00:00", "2026-07-01", "") is True
+        assert EventRetrieval._in_time_range("2026-07-15T10:00:00", "", "2026-06-30") is False
+        # 纯日期 end 含当天整天
+        assert EventRetrieval._in_time_range("2026-07-15T10:00:00", "", "2026-07-15") is True
+        # 完整 ISO 精确边界
+        assert EventRetrieval._in_time_range("2026-07-15T10:00:00", "", "2026-07-15T09:00:00") is False
+        # 空时间视为命中（不排除）
+        assert EventRetrieval._in_time_range("", "", "") is True
+
+    def test_retrieve_time_filter(self):
+        """retrieve 带时间过滤：只返回范围内事件"""
+        from modules.memory.event_retrieval import EventRetrieval
+        ret = EventRetrieval.__new__(EventRetrieval)
+        ret._store = MagicMock()
+        evs = [
+            _make_event(fact="7月事件A", time="2026-07-15T10:00:00", keywords=["7月"]),
+            _make_event(fact="6月事件C", time="2026-06-20T18:00:00", keywords=["6月"]),
+        ]
+        async def fake_vector(q, top_k=15):
+            return [(e, 0.5) for e in evs]
+        ret._vector_search = fake_vector
+        ret._keyword_search = lambda kw: []
+        ret._causal_search = lambda q: []
+        r = asyncio.run(ret.retrieve("查询", max_results=5, start_time="2026-07-01"))
+        assert [e.fact for e in r] == ["7月事件A"]
+        r = asyncio.run(ret.retrieve("查询", max_results=5, end_time="2026-06-30"))
+        assert [e.fact for e in r] == ["6月事件C"]

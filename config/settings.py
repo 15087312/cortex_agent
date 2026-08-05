@@ -478,6 +478,7 @@ class Settings(BaseSettings):
 
         否则后端重启后 EventStore 会回落默认库（data/memory.db），
         即使上次已切换到其他记忆库 —— 导致"切换的库读不到/读错库"。
+        backend（纯对话）的记忆路径通过委托本 settings 实时读取，无需单独同步。
         """
         try:
             data = self.get_memory_libs()
@@ -487,21 +488,6 @@ class Settings(BaseSettings):
             object.__setattr__(self, "MEMORY_DB_PATH", lib["db"])
             object.__setattr__(self, "MEMORY_FAISS_INDEX", lib["faiss"])
             object.__setattr__(self, "MEMORY_ID_MAP", lib["id_map"])
-            self._sync_backend_memory_paths(lib)
-        except Exception:
-            pass
-
-    def _sync_backend_memory_paths(self, lib: dict) -> None:
-        """同步 backend（纯对话路线）的 settings 内存路径，跟随当前记忆库。
-
-        backend 用独立的 backend.config.settings，若不同步，切换记忆库后
-        纯对话链路的 EventStore 仍读默认库（data/memory.db），新事件继续写入旧库。
-        """
-        try:
-            import backend.config.settings as _bcfg
-            object.__setattr__(_bcfg.settings, "MEMORY_DB_PATH", lib["db"])
-            object.__setattr__(_bcfg.settings, "MEMORY_FAISS_INDEX", lib["faiss"])
-            object.__setattr__(_bcfg.settings, "MEMORY_ID_MAP", lib["id_map"])
         except Exception:
             pass
 

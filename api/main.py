@@ -74,6 +74,13 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.debug(f"屏幕权限检测跳过: {e}")
 
+    # 启动时应用当前记忆库（含同步 backend 纯对话链路的记忆路径）。
+    # 主 settings 构造期因循环 import 跳过了 backend 同步，此处补上。
+    try:
+        settings._apply_current_memory_lib()
+    except Exception as e:
+        logger.debug(f"应用当前记忆库失败: {e}")
+
     # 预加载 Embedding 模型（阻塞启动，加载失败则启动失败）
     from modules.memory.embedding import EmbeddingEngine
     eng = EmbeddingEngine.get_instance()

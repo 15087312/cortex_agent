@@ -87,6 +87,8 @@ class EventRetrieval:
         min_importance: float = 0.0,
         types: Optional[List[str]] = None,
         owner_id: Optional[str] = None,
+        start_time: str = "",
+        end_time: str = "",
     ) -> List[MemoryEvent]:
         """根据查询检索最相关的记忆事件
 
@@ -99,6 +101,8 @@ class EventRetrieval:
             owner_id: 可选，只返回指定模型所有者的记忆
                       "large_primary" / "large_coder" / "supervisor_xx" / "expert_xx"
                       "large" 开头的表示 Large 系列总指挥（可看全部记忆）
+            start_time: 可选，只返回该时间之后的事件（ISO "2026-07-01" 或完整 ISO）
+            end_time: 可选，只返回该时间之前的事件（同上，含当天）
 
         流程:
         1. 向量语义搜索
@@ -139,6 +143,10 @@ class EventRetrieval:
             scored = [(ev, s) for ev, s in scored if ev.type in types_set]
         if min_importance > 0:
             scored = [(ev, s) for ev, s in scored if ev.importance >= min_importance]
+        # 时间范围过滤
+        if start_time or end_time:
+            scored = [(ev, s) for ev, s in scored
+                      if self._in_time_range(ev.time, start_time, end_time)]
 
         # owner_id 过滤：各模型只看自己的记忆
         # large 系列（large_primary / large::large_primary）作为总指挥可以看到所有记忆
@@ -341,6 +349,41 @@ class EventRetrieval:
     # ------------------------------------------------------------------
     # 工具
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _parse_dt(s: str) -> Optional[datetime]:
+        """解析 ISO 时间串为 aware datetime；纯日期视为当天 00:00 UTC。"""
+        if not s:
+            return None
+        try:
+            s = s.strip()
+            if len(s) == 10:  # YYYY-MM-DD
+                return datetime.fromisoformat(s).replace(tzinfo=timezone.utc)
+            t = datetime.fromisoformat(s)
+            if t.tzinfo is None:
+                t = t.replace(tzinfo=timezone.utc)
+            return t
+        except (ValueError, TypeError):
+            return None
+
+    @classmethod
+    def _in_time_range(cls, iso_time: str, start: str, end: str) -> bool:
+        """判断事件时间是否在 [start, end] 闭区间；空边界表示不限。"""
+        t = cls._parse_dt(iso_time)
+        if t is None:
+            return True
+        s = cls._parse_dt(start)
+        if s and t < s:
+            return False
+        e = cls._parse_dt(end)
+        if e:
+            # 纯日期 end 视为含当天整天（次日 00:00 为界）
+            if len(end.strip()) == 10:
+                from datetime import timedelta
+                e = e + timedelta(days=1)
+            if t >= e:
+                return False
+        return True
 
     @staticmethod
     def _days_since(iso_time: str, now: datetime) -> float:

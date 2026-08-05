@@ -35,11 +35,9 @@ class Settings(BaseSettings):
     }
 
     # ── Model Provider ──
-    MODEL_API_KEY: str = ""
-    MODEL_API_URL: str = ""
-    PROXY_URL: str = ""
-    MODEL_NAME: str = ""
-    MODEL_API_FORMAT: str = ""  # "openai" / "anthropic" / "dashscope" / auto-detect
+    # 模型 API 配置（key/url/name/format）不再在 backend 保存副本——
+    # 通过下方 property 实时委托主 settings 的 LARGE_MODEL_*（单一事实来源），
+    # 避免"双 settings 各自持有运行时状态 + 构造期互相 import"的循环依赖。
     MODEL_MAX_TOKENS: int = 4096
     MODEL_TEMPERATURE: float = 0.7
 
@@ -51,9 +49,8 @@ class Settings(BaseSettings):
     HF_MIRROR: str = ""
 
     # ── Memory System ──
-    MEMORY_DB_PATH: str = "data/memory.db"
-    MEMORY_FAISS_INDEX: str = "data/events_faiss.index"
-    MEMORY_ID_MAP: str = "data/events_id_map.json"
+    # 记忆库路径同模型配置：委托主 settings 的 MEMORY_DB_PATH/FAISS/ID_MAP，
+    # 切换记忆库后纯对话链路自动跟随当前库，无需手动同步。
     MEMORY_REDUCE_ENABLED: bool = True
 
     # ── Causal System ──
@@ -90,20 +87,61 @@ class Settings(BaseSettings):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._load_user_overrides()
-        # 复用主配置：backend（纯对话路线）未单独配 MODEL_API_* 时，
-        # 自动沿用主 settings 的总指挥（large）模型配置，避免纯对话模式无 API 可用
+
+    # ------------------------------------------------------------------
+    # 委托主 settings（单一事实来源）
+    # 模型 API 配置与记忆库路径实时读主 settings，改配置/切库即时生效，
+    # 无需手动同步；backend 独立部署时主 settings 不可用则回退默认值。
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _main():
         try:
-            from config.settings import settings as main_settings
-            if not self.MODEL_API_KEY:
-                self.MODEL_API_KEY = main_settings.LARGE_MODEL_API_KEY or ""
-            if not self.MODEL_API_URL:
-                self.MODEL_API_URL = main_settings.LARGE_MODEL_API_URL or ""
-            if not self.MODEL_NAME:
-                self.MODEL_NAME = main_settings.LARGE_MODEL_NAME or ""
-            if not self.MODEL_API_FORMAT:
-                self.MODEL_API_FORMAT = main_settings.LARGE_MODEL_API_FORMAT or ""
+            import config.settings as _ms
+            return getattr(_ms, "settings", None)
         except Exception:
-            pass
+            return None
+
+    @property
+    def MODEL_API_KEY(self) -> str:
+        ms = self._main()
+        return (ms.LARGE_MODEL_API_KEY or "") if ms is not None else ""
+
+    @property
+    def MODEL_API_URL(self) -> str:
+        ms = self._main()
+        return (ms.LARGE_MODEL_API_URL or "") if ms is not None else ""
+
+    @property
+    def MODEL_NAME(self) -> str:
+        ms = self._main()
+        return (ms.LARGE_MODEL_NAME or "") if ms is not None else ""
+
+    @property
+    def MODEL_API_FORMAT(self) -> str:
+        ms = self._main()
+        return (ms.LARGE_MODEL_API_FORMAT or "") if ms is not None else ""
+
+    @property
+    def MEMORY_DB_PATH(self) -> str:
+        ms = self._main()
+        if ms is not None:
+            return getattr(ms, "MEMORY_DB_PATH", "") or "data/memory.db"
+        return "data/memory.db"
+
+    @property
+    def MEMORY_FAISS_INDEX(self) -> str:
+        ms = self._main()
+        if ms is not None:
+            return getattr(ms, "MEMORY_FAISS_INDEX", "") or "data/events_faiss.index"
+        return "data/events_faiss.index"
+
+    @property
+    def MEMORY_ID_MAP(self) -> str:
+        ms = self._main()
+        if ms is not None:
+            return getattr(ms, "MEMORY_ID_MAP", "") or "data/events_id_map.json"
+        return "data/events_id_map.json"
 
     def _load_user_overrides(self):
         """Load user-level overrides from ~/.cortex-mini/settings.json"""
