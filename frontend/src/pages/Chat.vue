@@ -1,6 +1,7 @@
 <script setup>
 defineOptions({ name: 'Chat' })
 import { ref, computed, onMounted, onActivated, onUnmounted, nextTick } from 'vue'
+import { useRoute } from 'vue-router'
 import { useChatStore } from '@/stores/chat.js'
 import { useSessionStore } from '@/stores/session.js'
 import { useToastStore } from '@/stores/toast.js'
@@ -15,6 +16,7 @@ import ThinkingIndicator from '@/components/ThinkingIndicator.vue'
 import ThinkingStatusPanel from '@/components/ThinkingStatusPanel.vue'
 import Icon from '@/components/Icon.vue'
 
+const route = useRoute()
 const chat = useChatStore()
 const session = useSessionStore()
 const ws = useWsStore()
@@ -205,6 +207,11 @@ function scrollBottom() {
 onMounted(async () => {
   await session.loadSessions()
   await chat.init()
+  // 支持从仪表盘等通过 ?session= 跳转到指定会话
+  const qsid = route.query?.session
+  if (qsid) {
+    try { await session.switchSession(String(qsid)) } catch {}
+  }
   ws.wsClient.on('thinking', _onThinking)
   ws.wsClient.on('message', _onMessage)
   ws.wsClient.on('done', _onDone)

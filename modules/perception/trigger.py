@@ -229,7 +229,7 @@ class ProactiveTrigger:
                 current_window=current_window,
                 conversation=conversation,
             )
-            response = self._run_in_main_loop(self._call_llm(prompt, session_id))
+            response = await self._call_llm(prompt, session_id)
             if not response:
                 return
 
