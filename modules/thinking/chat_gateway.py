@@ -198,7 +198,6 @@ async def _consume_turn(
     last_progress = turn_start
     last_event = turn_start      # 最后一次收到队列事件的时间（判断真超时）
     flush_buf: list = []         # token 聚合缓冲，避免逐 token 刷屏
-    flush_deadline = 0.0
 
     try:
         while True:

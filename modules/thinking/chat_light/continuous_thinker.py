@@ -77,7 +77,9 @@ class ContinuousThinker:
             await message_queue.put({"type": "done"})
 
             # 7. Post-session memory extraction (background)
-            asyncio.create_task(self._extract_memory(session_id, context_messages))
+            # 传完整对话历史（user + assistant），而非 slice 上下文（只含 user）
+            full_history = self._blackboard.get_messages(session_id)
+            asyncio.create_task(self._extract_memory(session_id, full_history))
 
         except Exception as e:
             logger.error(f"Thinking failed: {e}")
@@ -167,7 +169,7 @@ class ContinuousThinker:
                 return
 
             from modules.memory.event_reducer import EventReducer
-            
+            from infra.model.large_model_client import LargeModelClient
             reducer = EventReducer(model_client=LargeModelClient())
             events = await reducer.reduce(session_id, conversation_text)
 
@@ -175,7 +177,7 @@ class ContinuousThinker:
                 logger.info(f"Extracted {len(events)} memory events from session {session_id[:12]}...")
 
         except Exception as e:
-            logger.debug(f"Memory extraction failed: {e}")
+            logger.warning(f"Memory extraction failed: {e}")
 
     @staticmethod
     def _is_new_topic(new_msg, history):
