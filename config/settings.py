@@ -46,7 +46,7 @@ class Settings(BaseSettings):
         "PERCEPTION_TRIGGER_COOLDOWN", "PERCEPTION_TRIGGER_MIN_INTENSITY",
 
         # ── 语音识别（Whisper）──
-        "PERCEPTION_VOICE_ENABLED", "PERCEPTION_VOICE_LLM_TRIGGER_ENABLED",
+        "PERCEPTION_VOICE_ENABLED",
         "PERCEPTION_VOICE_MODEL", "PERCEPTION_VOICE_MODE", "PERCEPTION_VOICE_HOTKEY",
         "PERCEPTION_VOICE_LANGUAGE", "PERCEPTION_VOICE_WAKE_PREFIX", "PERCEPTION_VOICE_WAKE_SUFFIX",
         "PERCEPTION_VOICE_ENERGY_THRESHOLD", "PERCEPTION_VOICE_TIMEOUT",
@@ -186,6 +186,10 @@ class Settings(BaseSettings):
 
     # ── 身份（backend 并入）──
     ASSISTANT_NAME: str = "Cortex"
+
+    # ── 桌面宠物（桌宠）──
+    DESKTOP_PET_ENABLED: bool = True            # 是否启用桌宠（语音触发与主会话对话）
+    DESKTOP_PET_SESSION_ID: str = "pet_main"     # 桌宠主会话（永不删除，对话记忆延续）
 
     # ── 前端 UI 设置（原 backend ~/.cortex-mini/settings.json 持久化，并入主 settings）──
     launch_at_startup: bool = True
@@ -401,7 +405,6 @@ class Settings(BaseSettings):
     PERCEPTION_VOICE_LANGUAGE: str = "zh"              # 语音识别语言
     PERCEPTION_VOICE_ENERGY_THRESHOLD: int = 300       # 静音能量阈值（越低越灵敏）
     PERCEPTION_VOICE_TIMEOUT: float = 10.0             # 单次录音超时（秒）
-    PERCEPTION_VOICE_LLM_TRIGGER_ENABLED: bool = False  # 语音识别后是否自动触发大模型
     PERCEPTION_VOICE_WAKE_PREFIX: str = "科特"           # 语音触发大模型时的唤醒前缀
     PERCEPTION_VOICE_WAKE_SUFFIX: str = "完毕"           # 语音触发大模型时的结束后缀（同时作为停止词）
     PERCEPTION_VOICE_END_STOP: bool = True             # 结束词（完毕）作为停止词: 说完即止

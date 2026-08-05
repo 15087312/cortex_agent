@@ -285,12 +285,14 @@ class SessionRepository:
             for row in rows:
                 if row.session_id in exclude:
                     continue
-                if row.last_active and row.last_active > cutoff:
+                # voice_* 是语音指令处理器每次启动创建的残留专用会话，无消息立即清
+                is_voice = row.session_id.startswith("voice_")
+                if not is_voice and row.last_active and row.last_active > cutoff:
                     continue  # 最近还在活跃，可能正被使用
                 s.delete(row)
                 deleted += 1
             if deleted:
-                logger.info(f"[SessionRepo] 自动清理 {deleted} 个空会话（无消息且闲置超 {min_idle_minutes} 分钟）")
+                logger.info(f"[SessionRepo] 自动清理 {deleted} 个空会话（voice 残留/闲置超 {min_idle_minutes} 分钟）")
             return deleted
 
     def copy_messages_to_session(self, source_id: str, target_id: str) -> int:

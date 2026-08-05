@@ -28,7 +28,6 @@ class PerceptionSystem:
         self.world_state = None
         self.event_bus = None
         self.voice_detector = None
-        self.voice_llm_handler = None
         self.proactive_trigger = None
         self.window_detector = None
         self.ocr_detector = None
@@ -41,7 +40,6 @@ class PerceptionSystem:
             self.stop()
 
         self.voice_detector = None
-        self.voice_llm_handler = None
         self.proactive_trigger = None
         self.ocr_detector = None
 
@@ -51,7 +49,6 @@ class PerceptionSystem:
 
         cfg = {
             "voice_enabled": getattr(settings, "PERCEPTION_VOICE_ENABLED", False),
-            "voice_llm_trigger_enabled": getattr(settings, "PERCEPTION_VOICE_LLM_TRIGGER_ENABLED", False),
             "voice_wake_prefix": getattr(settings, "PERCEPTION_VOICE_WAKE_PREFIX", "科特"),
             "voice_wake_suffix": getattr(settings, "PERCEPTION_VOICE_WAKE_SUFFIX", "完毕"),
             "voice_mode": getattr(settings, "PERCEPTION_VOICE_MODE", "hotkey"),
@@ -77,13 +74,7 @@ class PerceptionSystem:
         else:
             logger.info("语音感知已禁用")
 
-        # 3. 语音 LLM 指令处理器（语音识别后自动触发大模型）
-        if cfg.get("voice_llm_trigger_enabled", False):
-            self._setup_voice_llm_handler()
-        else:
-            logger.info("语音 LLM 触发已禁用")
-
-        # 4. 世界状态管理器
+        # 3. 世界状态管理器
         self.world_state = WorldStateManager()
         if self.event_bus:
             self.world_state.start(self.event_bus)
@@ -96,6 +87,15 @@ class PerceptionSystem:
             logger.info("主动触发已启动")
         else:
             logger.info("主动触发已禁用")
+
+        # 5b. 桌面宠物（语音触发 + 主会话对话）
+        try:
+            from modules.desktop_pet.pet_engine import PetEngine
+            self.pet_engine = PetEngine.get_instance(self.event_bus)
+            self.pet_engine.start()
+        except Exception as e:
+            logger.warning(f"桌面宠物启动失败: {e}")
+            self.pet_engine = None
 
         # 6. 窗口检测器（定时 publish SCREEN_WINDOW 到事件总线）
         self._setup_window_detector()
@@ -140,13 +140,6 @@ class PerceptionSystem:
         else:
             logger.warning("语音检测器: 依赖不可用")
             self.voice_detector = None
-
-    def _setup_voice_llm_handler(self):
-        """设置语音 LLM 指令处理器"""
-        from modules.perception.voice_llm_handler import VoiceLLMHandler
-        self.voice_llm_handler = VoiceLLMHandler(event_bus=self.event_bus)
-        self.voice_llm_handler.start()
-        logger.info("语音 LLM 处理器: 已启动")
 
     def _setup_window_detector(self) -> None:
         """启动窗口检测器后台线程，定时 publish SCREEN_WINDOW 到事件总线"""
@@ -214,8 +207,6 @@ class PerceptionSystem:
             return
         if self.ocr_detector:
             self.ocr_detector.stop()
-        if self.voice_llm_handler:
-            self.voice_llm_handler.stop()
         if self.proactive_trigger:
             self.proactive_trigger.stop()
         if self._window_detector_thread:
@@ -233,7 +224,6 @@ class PerceptionSystem:
             "started": self._started,
             "voice_available": self.voice_detector is not None,
             "voice_detector_type": self.voice_detector.detector_type if self.voice_detector else None,
-            "voice_llm_handler_active": self.voice_llm_handler.is_active if self.voice_llm_handler else False,
             "window_detector_available": self.window_detector is not None and self.window_detector.is_available(),
             "ocr_detector_available": self.ocr_detector is not None and self.ocr_detector.is_available(),
             "proactive_trigger": self.proactive_trigger.get_stats() if self.proactive_trigger else None,

@@ -564,6 +564,11 @@ async def get_context(session_id: str):
 
 @router.delete("/session/{session_id}")
 async def close_session(session_id: str):
+    pet_session = getattr(settings, "DESKTOP_PET_SESSION_ID", "pet_main") or "pet_main"
+    if session_id == pet_session:
+        return JSONResponse(status_code=400, content={"success": False,
+                            "error": {"code": "PET_SESSION_PROTECTED",
+                                      "message": "桌宠主会话永不删除"}})
     if _resolve_mode() == "chatonly":
         _get_chat_session_repo().delete_session(session_id)
         # 同步清理会话记忆内存（纯修复：已删会话的 Blackboard 数据成为孤儿）
@@ -584,9 +589,12 @@ async def batch_delete_sessions(body: dict = None):
         return JSONResponse(status_code=422, content={"success": False,
                             "error": {"code": "VALIDATION_ERROR", "message": "session_ids 需为非空数组"}})
     repo = _get_chat_session_repo()
+    pet_session = getattr(settings, "DESKTOP_PET_SESSION_ID", "pet_main") or "pet_main"
     deleted = []
     for sid in ids:
         if not isinstance(sid, str) or not sid:
+            continue
+        if sid == pet_session:
             continue
         try:
             repo.delete_session(sid)
@@ -598,6 +606,16 @@ async def batch_delete_sessions(body: dict = None):
             pass
         deleted.append(sid)
     return {"success": True, "data": {"deleted": deleted, "count": len(deleted)}}
+
+
+@router.get("/pet/last-reply")
+async def pet_last_reply():
+    """桌宠最近一条回复（桌宠窗口轮询）"""
+    try:
+        from modules.desktop_pet.pet_engine import PetEngine
+        return {"success": True, "data": PetEngine.get_instance().last_reply or None}
+    except Exception:
+        return {"success": True, "data": None}
 
 
 @router.get("/session/{session_id}/outreach-config")
@@ -795,6 +813,15 @@ async def get_status():
 async def get_sessions():
     if _resolve_mode() == "chatonly":
         ensure_shared_schema()
+        # 清理空会话（voice_* 残留立即删，普通空会话按闲置时长）
+        try:
+            from modules.thinking.api_stream import connection_manager
+            _get_chat_session_repo().delete_empty_sessions(
+                exclude_ids=list(connection_manager.active_connections.keys()),
+                min_idle_minutes=10,
+            )
+        except Exception:
+            pass
         sessions = _get_chat_session_repo().get_all_sessions(limit=50)
         return {"success": True, "data": sessions}
     from modules.thinking import api_stream

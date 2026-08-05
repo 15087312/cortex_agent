@@ -344,6 +344,13 @@ def main():
     print("[OK] Cortex Agent 已启动")
     print("[..] 如果窗口未自动加载，请手动打开 http://localhost:8765")
 
+    # 桌宠窗口（无边框置顶透明小窗，语音触发与主会话对话）
+    try:
+        from pet_widget import create_pet_widget
+        _pet = create_pet_widget()
+    except Exception as e:
+        print(f"[..] 桌宠启动失败: {e}")
+
     exit_code = app.exec()
     _stop_server()
     sys.exit(exit_code)
