@@ -154,6 +154,8 @@ class ProactiveTrigger:
         for session_id, cfg in self._get_enabled_outreach_sessions().items():
             try:
                 screen = cfg.get("screen") or {}
+                if not screen.get("enabled", True):
+                    continue
                 if change_ratio < screen.get("change_ratio", 1.0):
                     continue
                 if random.random() > screen.get("probability", 1.0):
@@ -358,9 +360,9 @@ class ProactiveTrigger:
             return True
 
     def _check_schedule(self, cfg: dict) -> bool:
-        """定点发送：当前在 schedule.time ± jitter 内则触发"""
+        """定点发送：schedule.enabled 且当前在 schedule.time ± jitter 内则触发"""
         sched = cfg.get("schedule")
-        if not sched or not sched.get("time"):
+        if not sched or not sched.get("enabled", True) or not sched.get("time"):
             return False
         from datetime import datetime, timedelta
         target = str(sched["time"]).strip()
@@ -375,8 +377,8 @@ class ProactiveTrigger:
         return target_dt - window <= now <= target_dt + window
 
     def _check_idle_rule(self, idle_cfg: dict) -> bool:
-        """空闲触发：空闲 >= idle_minutes，按 probability 概率触发"""
-        if not idle_cfg:
+        """空闲触发：idle.enabled 且空闲 >= idle_minutes，按 probability 概率触发"""
+        if not idle_cfg or not idle_cfg.get("enabled", True):
             return False
         if self._idle_timer.idle_minutes < (idle_cfg.get("idle_minutes") or 30):
             return False
@@ -384,7 +386,9 @@ class ProactiveTrigger:
         return random.random() < (1.0 if prob is None else float(prob))
 
     def _check_time_windows(self, cfg: dict) -> bool:
-        """时段触发：当前在某 time_window 内，按该窗口概率触发"""
+        """时段触发：time_windows_enabled 且当前在某 time_window 内，按该窗口概率触发"""
+        if not cfg.get("time_windows_enabled", True):
+            return False
         windows = cfg.get("time_windows")
         if not isinstance(windows, list) or not windows:
             return False

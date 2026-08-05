@@ -557,3 +557,7 @@ textarea.input { resize: vertical; min-height: 60px; font-family: var(--font-mon
 .memory-timeline-item { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); margin-bottom: 6px; cursor: pointer; background: var(--bg-secondary); }
 .memory-timeline-item:hover { border-color: var(--border-accent); }
 .memory-timeline-fact { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+
+/* ── 规则开关禁用态 ── */
+.outreach-unit.off { opacity: .45; }
+.outreach-body input:disabled { opacity: .45; }

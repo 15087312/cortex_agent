@@ -31,15 +31,19 @@ async function loadAll() {
         title: s.title || s.session_id.slice(0, 12),
         enabled: !!oc.enabled,
         cooldownMin: oc.cooldown_minutes ?? 30,
+        scheduleOn: !!sched.enabled,
         scheduleTime: sched.time || '',
         scheduleJitter: sched.jitter_minutes ?? 10,
+        screenOn: !!scr.enabled,
         screenRatio: scr.change_ratio ?? 0.5,
         screenProb: scr.probability ?? 0.5,
         screenInterval: scr.check_interval_seconds ?? 30,
         screenCooldown: scr.cooldown_minutes ?? 30,
+        idleOn: !!idle.enabled,
         idleMinutes: idle.idle_minutes ?? 30,
         idleProb: idle.probability ?? 0.5,
         idleInterval: idle.check_interval_seconds ?? 60,
+        windowsOn: !!oc.time_windows_enabled,
         timeWindowsText: (oc.time_windows || []).map((w) =>
           `${w.start}-${w.end}` + (w.probability != null ? `@${w.probability}` : '')).join(','),
         _open: false,
@@ -64,18 +68,21 @@ async function saveConfig(s) {
   const cfg = {
     enabled: !!s.enabled,
     cooldown_minutes: Math.max(0, s.cooldownMin || 30),
-    schedule: s.scheduleTime ? { time: s.scheduleTime, jitter_minutes: Math.max(0, s.scheduleJitter || 0) } : {},
+    schedule: s.scheduleOn ? { enabled: true, time: s.scheduleTime, jitter_minutes: Math.max(0, s.scheduleJitter || 0) } : {},
     screen: {
+      enabled: !!s.screenOn,
       change_ratio: Math.max(0, Math.min(1, s.screenRatio ?? 0.5)),
       probability: Math.max(0, Math.min(1, s.screenProb ?? 0.5)),
       check_interval_seconds: Math.max(1, s.screenInterval || 30),
       cooldown_minutes: Math.max(0, s.screenCooldown || 30),
     },
     idle: {
+      enabled: !!s.idleOn,
       idle_minutes: Math.max(0, s.idleMinutes || 30),
       probability: Math.max(0, Math.min(1, s.idleProb ?? 0.5)),
       check_interval_seconds: Math.max(1, s.idleInterval || 60),
     },
+    time_windows_enabled: !!s.windowsOn,
     time_windows: timeWindows,
   }
   try {
@@ -126,26 +133,31 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
             </div>
             <div class="outreach-row">
               <span class="outreach-lbl">定点发送</span>
-              <input class="input" v-model="s.scheduleTime" style="width:80px" placeholder="14:00" />
-              <span class="outreach-unit">±</span>
-              <input class="input" type="number" v-model.number="s.scheduleJitter" style="width:56px;text-align:right" title="误差(分钟)" /> <span class="outreach-unit">min</span>
+              <label class="toggle-switch" @click.stop><input type="checkbox" v-model="s.scheduleOn" /><span class="toggle-slider"></span></label>
+              <span class="outreach-unit" :class="{ off: !s.scheduleOn }">时间</span>
+              <input class="input" v-model="s.scheduleTime" style="width:80px" placeholder="14:00" :disabled="!s.scheduleOn" />
+              <span class="outreach-unit" :class="{ off: !s.scheduleOn }">±</span>
+              <input class="input" type="number" v-model.number="s.scheduleJitter" style="width:56px;text-align:right" title="误差(分钟)" :disabled="!s.scheduleOn" /> <span class="outreach-unit" :class="{ off: !s.scheduleOn }">min</span>
             </div>
             <div class="outreach-row">
               <span class="outreach-lbl">屏幕触发</span>
-              <input class="input" type="number" v-model.number="s.screenRatio" style="width:52px;text-align:right" title="变化幅度" /> 变化
-              <input class="input" type="number" v-model.number="s.screenProb" style="width:52px;text-align:right" title="概率 0-1" /> 概率
-              <input class="input" type="number" v-model.number="s.screenInterval" style="width:52px;text-align:right" title="判定间隔(s)" /> s
-              <input class="input" type="number" v-model.number="s.screenCooldown" style="width:52px;text-align:right" title="冷却(min)" /> min
+              <label class="toggle-switch" @click.stop><input type="checkbox" v-model="s.screenOn" /><span class="toggle-slider"></span></label>
+              <input class="input" type="number" v-model.number="s.screenRatio" style="width:52px;text-align:right" title="变化幅度" :disabled="!s.screenOn" /> 变化
+              <input class="input" type="number" v-model.number="s.screenProb" style="width:52px;text-align:right" title="概率 0-1" :disabled="!s.screenOn" /> 概率
+              <input class="input" type="number" v-model.number="s.screenInterval" style="width:52px;text-align:right" title="判定间隔(s)" :disabled="!s.screenOn" /> s
+              <input class="input" type="number" v-model.number="s.screenCooldown" style="width:52px;text-align:right" title="冷却(min)" :disabled="!s.screenOn" /> min
             </div>
             <div class="outreach-row">
               <span class="outreach-lbl">空闲触发</span>
-              <input class="input" type="number" v-model.number="s.idleMinutes" style="width:52px;text-align:right" title="空闲(min)" /> min
-              <input class="input" type="number" v-model.number="s.idleProb" style="width:52px;text-align:right" title="概率 0-1" /> 概率
-              <input class="input" type="number" v-model.number="s.idleInterval" style="width:52px;text-align:right" title="判定间隔(s)" /> s
+              <label class="toggle-switch" @click.stop><input type="checkbox" v-model="s.idleOn" /><span class="toggle-slider"></span></label>
+              <input class="input" type="number" v-model.number="s.idleMinutes" style="width:52px;text-align:right" title="空闲(min)" :disabled="!s.idleOn" /> min
+              <input class="input" type="number" v-model.number="s.idleProb" style="width:52px;text-align:right" title="概率 0-1" :disabled="!s.idleOn" /> 概率
+              <input class="input" type="number" v-model.number="s.idleInterval" style="width:52px;text-align:right" title="判定间隔(s)" :disabled="!s.idleOn" /> s
             </div>
             <div class="outreach-row">
               <span class="outreach-lbl">时段触发</span>
-              <input class="input" v-model="s.timeWindowsText" style="flex:1;min-width:180px" placeholder="09:00-12:00@0.5,14:00-18:00@0.8" />
+              <label class="toggle-switch" @click.stop><input type="checkbox" v-model="s.windowsOn" /><span class="toggle-slider"></span></label>
+              <input class="input" v-model="s.timeWindowsText" style="flex:1;min-width:180px" placeholder="09:00-12:00@0.5,14:00-18:00@0.8" :disabled="!s.windowsOn" />
             </div>
             <div style="display:flex;justify-content:flex-end;margin-top:10px">
               <button class="btn btn-sm btn-primary" @click="saveConfig(s)"><Icon name="check" :size="14" /> 保存</button>

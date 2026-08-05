@@ -56,3 +56,46 @@
     .message { max-width: 100%; }
     .modal { min-width: auto !important; width: 90vw; }
 }
+
+/* ═══ 全局交互与流畅度优化 ═══ */
+html { scroll-behavior: smooth; }
+
+/* 滚动条：更细、主题化 */
+::-webkit-scrollbar { width: 7px; height: 7px; }
+::-webkit-scrollbar-thumb { background: var(--border-accent); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* 输入聚焦：accent 光晕 */
+.input:focus, select.input:focus, textarea.input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg); outline: none; }
+
+/* 按钮按压：轻微缩放 */
+.btn:active { transform: scale(0.96); }
+
+/* 导航项：hover 背景 + 激活指示条 */
+.nav-item { position: relative; transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out); }
+.nav-item::before { content: ''; position: absolute; left: 0; top: 50%; transform: translateY(-50%) scaleY(0); width: 3px; height: 55%; background: var(--accent); border-radius: 2px; transition: transform var(--duration) var(--ease-out); }
+.nav-item:hover { background: var(--bg-tertiary); }
+.nav-item.active::before { transform: translateY(-50%) scaleY(1); }
+
+/* 侧边栏 hover 微动效 */
+.sidebar { transition: background var(--duration) var(--ease-out); }
+.sidebar-header .logo { transition: transform var(--duration) var(--ease-out); }
+.sidebar-header:hover .logo { transform: scale(1.05); }
+
+/* 统计卡 hover 提升 */
+.stat-card { transition: transform var(--duration) var(--ease-out), border-color var(--duration) var(--ease-out), box-shadow var(--duration) var(--ease-out); }
+.stat-card:hover { transform: translateY(-3px); box-shadow: var(--shadow-lg); border-color: var(--border-accent); }
+
+/* 列表项 hover 细腻反馈 */
+.tool-item, .session-item, .outreach-session, .memory-timeline-item { transition: border-color var(--duration) var(--ease-out), background var(--duration) var(--ease-out), transform var(--duration-fast) var(--ease-out); }
+.session-item:hover { transform: translateX(2px); }
+
+/* 可交互元素统一指针 */
+a, button, select, label.toggle-switch, [role="button"] { cursor: pointer; }
+
+/* 输入框禁用态 */
+.input:disabled { opacity: .5; cursor: not-allowed; }
+
+/* 页面内容 fade 微动 */
+.page-body { animation: fadeIn var(--duration-slow) var(--ease-out); }

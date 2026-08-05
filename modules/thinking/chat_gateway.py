@@ -635,8 +635,10 @@ async def set_outreach_config(session_id: str, body: dict = None):
             pass
     # schedule
     sched = cfg.get("schedule")
-    if isinstance(sched, dict) and sched.get("time"):
+    if isinstance(sched, dict):
         cs = {}
+        if "enabled" in sched:
+            cs["enabled"] = bool(sched["enabled"])
         if sched.get("time"):
             cs["time"] = str(sched["time"]).strip()
         if "jitter_minutes" in sched:
@@ -649,6 +651,8 @@ async def set_outreach_config(session_id: str, body: dict = None):
     scr = cfg.get("screen")
     if isinstance(scr, dict):
         cs = {}
+        if "enabled" in scr:
+            cs["enabled"] = bool(scr["enabled"])
         if "change_ratio" in scr:
             try:
                 cs["change_ratio"] = max(0.0, min(1.0, float(scr["change_ratio"])))
@@ -674,6 +678,8 @@ async def set_outreach_config(session_id: str, body: dict = None):
     idle = cfg.get("idle")
     if isinstance(idle, dict):
         cs = {}
+        if "enabled" in idle:
+            cs["enabled"] = bool(idle["enabled"])
         if "idle_minutes" in idle:
             try:
                 cs["idle_minutes"] = max(0, int(idle["idle_minutes"]))
@@ -690,6 +696,8 @@ async def set_outreach_config(session_id: str, body: dict = None):
             except Exception:
                 pass
         clean["idle"] = cs
+    if "time_windows_enabled" in cfg:
+        clean["time_windows_enabled"] = bool(cfg["time_windows_enabled"])
     # time_windows
     if isinstance(cfg.get("time_windows"), list):
         windows = []
