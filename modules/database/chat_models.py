@@ -62,3 +62,14 @@ class BlackboardObservation(Base):
     __table_args__ = (
         Index("ix_blackboard_obs_session_time", "session_id", "created_at"),
     )
+
+
+class ProactiveLog(Base):
+    """主动搭话触发记录（追溯 + 统计：时间/会话/触发原因/内容）"""
+    __tablename__ = "proactive_log"
+
+    id = Column(String(100), primary_key=True, default=lambda: f"pal_{uuid.uuid4().hex[:12]}")
+    session_id = Column(String(100), nullable=False, index=True)
+    reason = Column(String(20), default="")   # schedule / screen / idle / time_window
+    content = Column(Text, default="")
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)

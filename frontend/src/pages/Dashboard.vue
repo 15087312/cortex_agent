@@ -11,6 +11,8 @@ const dash = ref(null)
 const libs = ref([])
 const sessions = ref([])
 const perception = ref(null)
+const proactiveLogs = ref([])
+const enabledOutreach = ref(0)
 
 const modules = computed(() =>
   Object.entries(dash.value?.modules || {}).map(([n, s]) => ({ name: n, status: s }))
@@ -29,18 +31,21 @@ function statusBadge(s) { return s === 'healthy' ? 'badge-green' : s === 'degrad
 
 async function loadData() {
   try {
-    const [d, health, libsR, sess, perc] = await Promise.all([
+    const [d, health, libsR, sess, perc, plog] = await Promise.all([
       endpoints.dashboard().catch(() => null),
       endpoints.health().catch(() => null),
       endpoints.memoryLibs().catch(() => null),
       endpoints.sessions().catch(() => null),
       endpoints.perceptionStatus().catch(() => null),
+      endpoints.proactiveLogs(5).catch(() => null),
     ])
     dash.value = d?.data || null
     apiStatus.value = health?.data?.status === 'healthy' ? '健康' : health?.data?.status || '-'
     libs.value = libsR?.data?.libs || []
     sessions.value = sess?.data || []
     perception.value = perc?.data || null
+    proactiveLogs.value = plog?.data?.logs || []
+    enabledOutreach.value = (sess?.data || []).filter((s) => (s.metadata || {}).outreach?.enabled).length
   } catch {} finally { loading.value = false }
 }
 
@@ -79,12 +84,40 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
           </div>
           <div class="health-name">记忆 {{ totalEvents }} 条</div>
         </div>
-        <div class="health-card" @click="router.push('/sessions')" title="点击查看会话">
+        <div class="health-card" @click="router.push('/chat')" title="点击进入对话">
           <div class="health-ring">
             <svg viewBox="0 0 72 72"><circle class="ring-bg" cx="36" cy="36" r="30"/><circle class="ring-fill" cx="36" cy="36" r="30" :style="{ strokeDasharray: 188.5, strokeDashoffset: 188.5 }"/></svg>
             <div class="ring-label">{{ totalSessions }}</div>
           </div>
           <div class="health-name">会话</div>
+        </div>
+      </div>
+
+      <!-- 主动搭话状态 -->
+      <div class="card" style="margin-top:12px">
+        <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+          <span>主动搭话</span>
+          <button class="btn btn-sm" @click="router.push('/outreach')">管理规则</button>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div>
+            <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px">已开启会话</div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap">
+              <span v-for="s in sessions.filter(x => (x.metadata||{}).outreach?.enabled).slice(0,5)" :key="s.session_id" class="badge badge-green" style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ s.title || s.session_id.slice(0,8) }}</span>
+              <span v-if="!enabledOutreach" style="color:var(--text-muted);font-size:13px">未开启任何会话</span>
+            </div>
+          </div>
+          <div>
+            <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px">最近触发</div>
+            <div v-if="proactiveLogs.length">
+              <div v-for="l in proactiveLogs.slice(0,3)" :key="l.created_at" style="display:flex;gap:6px;align-items:baseline;font-size:13px;margin-bottom:4px">
+                <span class="badge badge-blue" style="font-size:10px">{{ ({schedule:'定点',screen:'屏幕',idle:'空闲',time_window:'时段'})[l.reason] || l.reason }}</span>
+                <span style="color:var(--text-muted);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ l.content }}</span>
+                <span style="color:var(--text-muted);font-size:11px">{{ (l.created_at||'').slice(5,16) }}</span>
+              </div>
+            </div>
+            <div v-else style="color:var(--text-muted);font-size:13px">暂无触发记录</div>
+          </div>
         </div>
       </div>
 

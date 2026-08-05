@@ -111,6 +111,7 @@ textarea.input { resize: vertical; min-height: 60px; font-family: var(--font-mon
 .message.user .message-bubble { background: var(--accent); color: var(--text-inverse); border-bottom-right-radius: 4px; }
 .message.ai .message-bubble { background: var(--bg-secondary); color: var(--text-primary); border: 1px solid var(--border); border-bottom-left-radius: 4px; box-shadow: var(--shadow-xs); }
 .message.ai .message-bubble:hover { box-shadow: var(--shadow-sm); }
+.message.ai .bubble-proactive { border-left: 3px solid var(--accent); background: linear-gradient(90deg, rgba(88,166,255,.08), var(--bg-secondary)); }
 .message-body { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0; max-width: 100%; }
 .message.user .message-body { align-items: flex-end; }
 
@@ -520,3 +521,39 @@ textarea.input { resize: vertical; min-height: 60px; font-family: var(--font-mon
 /* 人设分组标题 */
 .settings-subgroup-title { font-size: 13px; font-weight: 600; color: var(--text-primary); margin: 14px 0 8px; display: flex; align-items: center; gap: 8px; }
 .settings-subgroup-title:first-child { margin-top: 4px; }
+
+/* ── Sidebar 开发者分组折叠 ── */
+.nav-section.dev-toggle { display:flex; align-items:center; justify-content:space-between; cursor:pointer; user-select:none; }
+.nav-section.dev-toggle:hover { color: var(--text-primary); }
+
+/* ── 主动搭话页会话规则 ── */
+.outreach-session { border: 1px solid var(--border); border-radius: var(--radius-md); margin-bottom: 10px; background: var(--bg-secondary); overflow: hidden; }
+.outreach-head { display: flex; align-items: center; gap: 8px; padding: 12px 14px; cursor: pointer; }
+.outreach-head:hover { background: var(--bg-tertiary); }
+.outreach-body { padding: 4px 14px 14px; border-top: 1px solid var(--border); background: var(--bg-primary); }
+.outreach-row { display: flex; align-items: center; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+.outreach-lbl { font-size: 12px; font-weight: 600; color: var(--text-muted); min-width: 64px; }
+.outreach-unit { font-size: 11px; color: var(--text-muted); }
+
+/* ── 会话列表搜索 ── */
+.session-search { display:flex; align-items:center; gap:6px; background:var(--bg-tertiary); border:1px solid var(--border); border-radius:var(--radius-sm); padding:2px 10px; margin-bottom:8px; }
+.session-search:focus-within { border-color: var(--border-accent); }
+
+/* ── 感知检测器卡片 ── */
+.pipeline-card { display:flex; align-items:center; gap:8px; padding:10px 12px; background:var(--bg-tertiary); border:1px solid var(--border); border-radius:var(--radius-md); font-size:13px; }
+.pipeline-card.ok { border-color: rgba(63,185,80,.4); }
+
+/* ── 工具参数行 ── */
+.tool-param-row { display:flex; align-items:center; gap:8px; margin-top:8px; }
+.tool-param-row .detail-label { min-width: 90px; }
+.tool-item { padding: 8px 12px; cursor: pointer; border-bottom: 1px solid var(--border); }
+.tool-item:hover { background: var(--bg-tertiary); }
+.tool-item.selected { background: rgba(88,166,255,.12); border-left: 3px solid var(--accent); }
+
+/* ── 记忆时间线 ── */
+.memory-timeline { padding: 12px; }
+.memory-timeline-group { margin-bottom: 16px; }
+.memory-timeline-date { font-size: 12px; font-weight: 600; color: var(--text-muted); margin-bottom: 8px; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+.memory-timeline-item { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); margin-bottom: 6px; cursor: pointer; background: var(--bg-secondary); }
+.memory-timeline-item:hover { border-color: var(--border-accent); }
+.memory-timeline-fact { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }

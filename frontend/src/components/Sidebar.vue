@@ -1,4 +1,5 @@
 <script setup>
+import { ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useThemeStore } from '@/stores/theme.js'
 import Icon from '@/components/Icon.vue'
@@ -10,36 +11,40 @@ const appVersion = __APP_VERSION__
 
 const navSections = [
   {
-    label: '概览',
+    label: '我的',
     items: [
       { route: '/dashboard', label: '仪表盘', icon: 'dashboard' },
       { route: '/chat', label: '对话', icon: 'message' },
+      { route: '/memory', label: '记忆', icon: 'file' },
+      { route: '/outreach', label: '主动搭话', icon: 'heart' },
+      { route: '/settings', label: '设置', icon: 'settings' },
     ]
   },
+]
+
+// 开发者分组（默认折叠）
+const devSections = [
   {
-    label: '管理',
+    label: '开发者',
     items: [
       { route: '/modules', label: '模块', icon: 'puzzle' },
-      { route: '/memory', label: '记忆', icon: 'file' },
       { route: '/causal', label: '因果图', icon: 'network' },
       { route: '/tools', label: '工具', icon: 'wrench' },
       { route: '/gallery', label: '图库', icon: 'image' },
       { route: '/security', label: '安全', icon: 'shield' },
       { route: '/perception', label: '感知', icon: 'eye' },
+      { route: '/system', label: '系统', icon: 'info' },
     ]
   },
-  {
-    label: '系统',
-    items: [
-      { route: '/sessions', label: '会话', icon: 'list' },
-      { route: '/system', label: '系统', icon: 'info' },
-      { route: '/settings', label: '设置', icon: 'settings' },
-    ]
-  }
 ]
+const devExpanded = ref(false)
 
 function isActive(itemRoute) {
   return route.path === itemRoute || route.path.startsWith(itemRoute + '/')
+}
+function navTo(item) {
+  router.push(item.route)
+  if (item.route === '/outreach') devExpanded.value = false
 }
 </script>
 
@@ -54,7 +59,25 @@ function isActive(itemRoute) {
           :key="item.route"
           class="nav-item"
           :class="{ active: isActive(item.route) }"
-          @click="router.push(item.route)"
+          @click="navTo(item)"
+        >
+          <span class="nav-item-icon"><Icon :name="item.icon" :size="16" /></span>
+          <span>{{ item.label }}</span>
+        </div>
+      </template>
+
+      <!-- 开发者分组（默认折叠） -->
+      <div class="nav-section dev-toggle" @click="devExpanded = !devExpanded">
+        <span>{{ devSections[0].label }}</span>
+        <Icon :name="devExpanded ? 'down' : 'right'" :size="12" />
+      </div>
+      <template v-if="devExpanded">
+        <div
+          v-for="item in devSections[0].items"
+          :key="item.route"
+          class="nav-item"
+          :class="{ active: isActive(item.route) }"
+          @click="navTo(item)"
         >
           <span class="nav-item-icon"><Icon :name="item.icon" :size="16" /></span>
           <span>{{ item.label }}</span>

@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { endpoints } from '@/api.js'
 import { useToastStore } from '@/stores/toast.js'
 import { useConfirm } from '@/composables/useDialog.js'
@@ -15,6 +15,17 @@ const filter = ref({ type: '', keyword: '' })
 const showCreate = ref(false)
 const newEvent = ref({ fact: '', keywords: '', importance: 0.5, event_type: 'fact' })
 const detailEvent = ref(null)
+const viewMode = ref('list')
+
+const groupedByDate = computed(() => {
+  const groups = {}
+  for (const e of events.value) {
+    const date = (e.time || '').slice(0, 10) || '未知日期'
+    if (!groups[date]) groups[date] = []
+    groups[date].push(e)
+  }
+  return Object.entries(groups).sort((a, b) => b[0].localeCompare(a[0]))
+})
 
 onMounted(loadData)
 
@@ -54,8 +65,15 @@ function starRating(v) { const s = Math.round(v * 5); return '★'.repeat(s) + '
         <button class="btn btn-sm" @click="showCreate = true">+新建</button>
       </div>
       <div class="card">
-        <div class="card-header">记忆列表</div>
-        <table class="data-table" v-if="events.length > 0">
+        <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+          <span>记忆列表 ({{ total }})</span>
+          <div style="display:flex;gap:4px">
+            <button class="btn btn-sm" :class="{ 'btn-primary': viewMode === 'list' }" @click="viewMode = 'list'">列表</button>
+            <button class="btn btn-sm" :class="{ 'btn-primary': viewMode === 'timeline' }" @click="viewMode = 'timeline'">时间线</button>
+          </div>
+        </div>
+        <!-- 列表视图 -->
+        <table class="data-table" v-if="events.length > 0 && viewMode === 'list'">
           <thead><tr><th>类型</th><th>内容</th><th>重要性</th><th>时间</th><th>操作</th></tr></thead>
           <tbody>
             <tr v-for="e in events" :key="e.id">
@@ -67,6 +85,19 @@ function starRating(v) { const s = Math.round(v * 5); return '★'.repeat(s) + '
             </tr>
           </tbody>
         </table>
+        <!-- 时间线视图 -->
+        <div v-else-if="events.length > 0 && viewMode === 'timeline'" class="memory-timeline">
+          <div v-for="(group, gi) in groupedByDate" :key="gi" class="memory-timeline-group">
+            <div class="memory-timeline-date">{{ group[0] }}</div>
+            <div v-for="e in group[1]" :key="e.id" class="memory-timeline-item" @click="handleDetail(e.id)">
+              <span class="badge" :class="typeBadgeClass(e.type)">{{ e.type }}</span>
+              <span class="memory-timeline-fact">{{ e.fact || '' }}</span>
+              <span style="color:var(--text-muted);font-size:12px">{{ formatTime(e.time) }}</span>
+              <span style="flex:1"></span>
+              <button class="btn btn-sm btn-danger" @click.stop="handleDelete(e.id)"><Icon name="trash" :size="13" /></button>
+            </div>
+          </div>
+        </div>
         <div v-else class="empty-state" style="padding:40px"><span class="empty-icon"><Icon name="inbox" :size="20" /></span><p class="empty-text">暂无记忆</p></div>
       </div>
       <Modal v-if="showCreate" title="新建记忆" @close="showCreate = false">

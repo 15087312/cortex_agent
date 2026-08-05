@@ -234,6 +234,12 @@ class ProactiveTrigger:
                 return
 
             self._push(session_id, response)
+            # 记录主动搭话历史（追溯/统计）
+            try:
+                from modules.database.proactive_repo import save_proactive_log
+                save_proactive_log(session_id, reason, response[:500])
+            except Exception:
+                pass
             # 任意主动搭话触发 → 更新综合冷却；screen 额外更新该规则冷却
             with self._lock:
                 self._session_last_trigger[session_id] = time.time()

@@ -141,7 +141,7 @@ function submitIntent() {
       <div class="message-avatar" :class="isUser ? 'avatar-user' : 'avatar-large'"></div>
       <div class="message-body">
         <div class="message-name">{{ isUser ? '我' : (message.identity_name || '总指挥') }}</div>
-        <div class="message-bubble" :class="{ 'bubble-error': message.error }">
+        <div class="message-bubble" :class="{ 'bubble-error': message.error, 'bubble-proactive': !isUser && message.proactive }">
           <!-- 用户消息：纯文本 -->
           <div v-if="isUser" v-html="userHtml"></div>
 

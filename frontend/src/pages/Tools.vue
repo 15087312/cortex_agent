@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { endpoints } from '@/api.js'
 import { useToastStore } from '@/stores/toast.js'
 import { formatTime } from '@/utils/format.js'
@@ -12,16 +12,17 @@ const bySource = ref(0)
 const query = ref('')
 const selected = ref(null)
 const toolInfo = ref(null)
-const toolParams = ref('{}')
 const toolResult = ref(null)
 const infoLoading = ref(false)
 
-onMounted(loadData)
+// 简单参数表单（primitive），复杂参数用 JSON
+const formFields = ref([])
+const formValues = ref({})
+const showJson = ref(false)
 
 async function loadData() {
   try {
     const [tr, er] = await Promise.all([endpoints.tools().catch(() => null), endpoints.toolEvents(20).catch(() => null)])
-    // 后端返回 dict {name: spec} 或数组两种结构
     const rawTools = tr?.data?.tools || {}
     tools.value = Array.isArray(rawTools)
       ? rawTools.map(t => (typeof t === 'string' ? { name: t } : t))
@@ -41,11 +42,17 @@ async function handleSelect(name) {
   selected.value = name
   toolInfo.value = null
   toolResult.value = null
-  toolParams.value = '{}'
+  formFields.value = []
+  formValues.value = {}
+  showJson.value = false
   infoLoading.value = true
   try {
     const r = await endpoints.toolInfo(name)
-    toolInfo.value = r.data
+    toolInfo.value = r.data || r
+    // 尽力解析参数定义：spec.params / params / parameters（对象或数组）
+    const spec = toolInfo.value?.spec || toolInfo.value?.tool || {}
+    const rawParams = spec.params || spec.parameters || toolInfo.value?.params || {}
+    formFields.value = buildFields(rawParams)
   } catch {
     toolInfo.value = null
   } finally {
@@ -53,11 +60,44 @@ async function handleSelect(name) {
   }
 }
 
+function buildFields(rawParams) {
+  if (!rawParams || typeof rawParams !== 'object') return []
+  const fields = []
+  const entries = Array.isArray(rawParams) ? rawParams.map((p, i) => [String(i), p]) : Object.entries(rawParams)
+  for (const [key, def] of entries) {
+    const d = (def && typeof def === 'object') ? def : { description: String(def) }
+    const type = d.type || d.kind || 'string'
+    const ft = ['integer', 'number'].includes(type) ? 'number' : ['boolean'].includes(type) ? 'boolean' : 'string'
+    fields.push({ key, type: ft, required: !!d.required, description: d.description || '' })
+  }
+  return fields
+}
+
+function buildParamsFromForm() {
+  const params = {}
+  for (const f of formFields.value) {
+    const v = formValues.value[f.key]
+    if (v === '' || v == null) continue
+    if (f.type === 'number') params[f.key] = Number(v)
+    else if (f.type === 'boolean') params[f.key] = v
+    else params[f.key] = String(v)
+  }
+  return params
+}
+
 async function handleCall() {
   let params = {}
-  try { params = JSON.parse(toolParams.value) } catch { toast.show('JSON格式错误', 'error'); return }
+  try {
+    params = showJson.value ? JSON.parse(jsonText.value) : buildParamsFromForm()
+  } catch { toast.show('参数格式错误', 'error'); return }
   try { const r = await endpoints.callTool(selected.value, params); toolResult.value = JSON.stringify(r.data, null, 2) } catch (e) { toolResult.value = '错误: ' + (e.body?.error?.message || e.status) }
 }
+
+const jsonText = ref('{}')
+
+let timer = null
+onMounted(() => { loadData(); timer = setInterval(loadData, 30000) })
+onBeforeUnmount(() => { if (timer) clearInterval(timer) })
 </script>
 
 <template>
@@ -67,39 +107,58 @@ async function handleCall() {
       <button class="btn btn-sm" @click="loadData"><Icon name="refresh" :size="14" /> 刷新</button>
     </div>
     <div class="page-body">
-      <div class="stat-grid">
-        <div class="stat-card"><div class="stat-value">{{ tools.length }}</div><div class="stat-label">总工具</div></div>
-        <div class="stat-card"><div class="stat-value">{{ bySource }}</div><div class="stat-label">来源分类</div></div>
-        <div class="stat-card"><div class="stat-value">{{ events.length }}</div><div class="stat-label">最近调用</div></div>
+      <div class="stat-grid" style="grid-template-columns:repeat(3,1fr)">
+        <div class="stat-card"><div class="stat-icon" style="background:rgba(88,166,255,.15);color:#58a6ff"><Icon name="wrench" :size="18" /></div><div class="stat-value">{{ tools.length }}</div><div class="stat-label">总工具</div></div>
+        <div class="stat-card"><div class="stat-icon" style="background:rgba(163,113,247,.15);color:#a371f7"><Icon name="layers" :size="18" /></div><div class="stat-value">{{ bySource }}</div><div class="stat-label">来源分类</div></div>
+        <div class="stat-card"><div class="stat-icon" style="background:rgba(63,185,80,.15);color:#3fb950"><Icon name="activity" :size="18" /></div><div class="stat-value">{{ events.length }}</div><div class="stat-label">最近调用</div></div>
       </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+
+      <div style="display:grid;grid-template-columns:1fr 1.2fr;gap:12px;margin-top:12px">
         <div class="card" style="max-height:400px;overflow-y:auto">
           <div class="card-header">工具列表 ({{ tools.length }})</div>
-          <input class="input" v-model="query" placeholder="搜索工具..." style="margin:8px 12px;width:calc(100% - 24px)" />
-          <div v-if="filteredTools.length === 0" class="empty-state" style="padding:32px"><span class="empty-icon"><Icon name="wrench" :size="20" /></span><p class="empty-text">工具注册后自动出现于此</p></div>
+          <div style="padding:8px 12px"><input class="input" v-model="query" placeholder="搜索工具..." style="width:100%" /></div>
+          <div v-if="filteredTools.length === 0" class="empty-state" style="padding:32px"><p class="empty-text">工具注册后自动出现于此</p></div>
           <div v-else v-for="t in filteredTools" :key="t.name" class="tool-item" :class="{ selected: selected === t.name }" @click="handleSelect(t.name)">
-            {{ t.name }}
+            <div style="font-weight:600">{{ t.name }}</div>
+            <div v-if="t.description" style="font-size:12px;color:var(--text-muted);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ t.description }}</div>
           </div>
         </div>
         <div class="card" style="max-height:400px;overflow-y:auto">
           <div class="card-header">工具详情</div>
-          <div v-if="!selected" class="empty-state" style="padding:32px"><span class="empty-icon"><Icon name="list" :size="20" /></span><p class="empty-text">选择一个工具查看详情</p></div>
+          <div v-if="!selected" class="empty-state" style="padding:32px"><p class="empty-text">选择一个工具查看详情并调用</p></div>
           <div v-else class="tool-detail">
             <div v-if="infoLoading" style="padding:12px;color:var(--text-muted)">加载中...</div>
             <template v-else>
               <div class="detail-row"><span class="detail-label">描述</span>{{ toolInfo?.description || toolInfo?.name || '-' }}</div>
               <div class="detail-row"><span class="detail-label">来源</span>{{ toolInfo?.source || 'builtin' }}</div>
-              <div style="margin-top:12px"><strong>调用工具</strong></div>
-              <textarea class="input" v-model="toolParams" style="width:100%;min-height:60px;font-family:var(--font-mono);margin-top:8px"></textarea>
+
+              <div style="margin-top:12px;display:flex;align-items:center;gap:8px">
+                <strong>调用工具</strong>
+                <button v-if="formFields.length" class="btn btn-sm" @click="showJson = !showJson">{{ showJson ? '表单模式' : 'JSON 模式' }}</button>
+              </div>
+
+              <!-- 参数表单（简单参数） -->
+              <div v-if="formFields.length && !showJson" style="margin-top:8px">
+                <div v-for="f in formFields" :key="f.key" class="tool-param-row">
+                  <span class="detail-label">{{ f.key }}<template v-if="f.required"> *</template></span>
+                  <input v-if="f.type === 'number'" class="input" type="number" v-model="formValues[f.key]" style="width:100%;max-width:240px" />
+                  <label v-else-if="f.type === 'boolean'" class="toggle-switch" style="margin:0"><input type="checkbox" v-model="formValues[f.key]" /><span class="toggle-slider"></span></label>
+                  <input v-else class="input" v-model="formValues[f.key]" style="width:100%;max-width:240px" />
+                </div>
+              </div>
+              <!-- JSON 参数（复杂/无 schema） -->
+              <textarea v-else class="input" v-model="jsonText" style="width:100%;min-height:70px;font-family:var(--font-mono);margin-top:8px" placeholder='{"param": "value"}'></textarea>
+
               <div style="margin-top:8px"><button class="btn btn-sm" @click="handleCall"><Icon name="play" :size="14" /> 执行</button></div>
               <pre v-if="toolResult" class="json-output">{{ toolResult }}</pre>
             </template>
           </div>
         </div>
       </div>
+
       <div class="card" style="margin-top:12px"><div class="card-header">调用历史 ({{ events.length }})</div>
         <table class="data-table" v-if="events.length > 0"><thead><tr><th>工具</th><th>时间</th></tr></thead><tbody><tr v-for="e in events" :key="e.id || e.timestamp"><td>{{ e.tool_name || e.name || '' }}</td><td>{{ formatTime(e.timestamp || e.time) }}</td></tr></tbody></table>
-        <div v-else class="empty-state" style="padding:32px"><span class="empty-icon"><Icon name="activity" :size="20" /></span><p class="empty-text">工具调用记录将显示在此</p></div>
+        <div v-else class="empty-state" style="padding:32px"><p class="empty-text">工具调用记录将显示在此</p></div>
       </div>
     </div>
   </div>

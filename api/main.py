@@ -338,6 +338,7 @@ _AUTH_WHITELIST = {
 }
 _AUTH_WHITELIST_PREFIXES = ("/management/causal-graph", "/management/memory",
                              "/stream/session/", "/stream/sessions/",
+                             "/stream/proactive-log",
                              "/management/sessions/", "/config/",
                              "/tools/info/",
                              "/audio")  # TTS 音频供前端 <audio> 无鉴权播放

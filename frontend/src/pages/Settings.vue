@@ -13,7 +13,10 @@ const configStore = useConfigStore()
 const appVersion = __APP_VERSION__
 
 /* ── Tabs ── */
-const tabs = ['对话', '人设管理', '主动搭话', '感知', '记忆库', '系统', '高级', '通用设置', '授权设置', '关于']
+const tabGroups = [
+  { label: '用户', tabs: ['对话', '人设管理', '感知', '记忆库', '主动搭话'] },
+  { label: '高级', tabs: ['系统', '高级', '通用设置', '授权设置', '关于'] },
+]
 const activeTab = ref('对话')
 
 /* ── 记忆库 ── */
@@ -116,82 +119,6 @@ const cortexMode = segCfg('CORTEX_MODE', 'agent')
 const execMode = segCfg('EXECUTION_MODE', 'edit')
 const userName = txtCfg('USER_NAME', '用户')
 const proactiveEnabled = boolCfg('PROACTIVE_OUTREACH_ENABLED', false)
-const proactiveIdle = numCfg('PROACTIVE_OUTREACH_IDLE_MINUTES', 30)
-const proactiveCooldown = numCfg('PROACTIVE_OUTREACH_COOLDOWN_MINUTES', 60)
-
-/* ── 主动搭话会话级配置 ── */
-const outreachSessions = ref([])
-const outreachLoading = ref(false)
-
-async function loadOutreachSessions() {
-  outreachLoading.value = true
-  try {
-    const r = await endpoints.sessions()
-    outreachSessions.value = (r.data || []).map((s) => {
-      const oc = (s.metadata && s.metadata.outreach) || {}
-      const scr = oc.screen || {}
-      const idle = oc.idle || {}
-      const sched = oc.schedule || {}
-      return {
-        session_id: s.session_id,
-        title: s.title || s.session_id.slice(0, 12),
-        enabled: !!oc.enabled,
-        cooldownMin: oc.cooldown_minutes ?? 30,
-        scheduleTime: sched.time || '',
-        scheduleJitter: sched.jitter_minutes ?? 10,
-        screenRatio: scr.change_ratio ?? 0.5,
-        screenProb: scr.probability ?? 0.5,
-        screenInterval: scr.check_interval_seconds ?? 30,
-        screenCooldown: scr.cooldown_minutes ?? 30,
-        idleMinutes: idle.idle_minutes ?? 30,
-        idleProb: idle.probability ?? 0.5,
-        idleInterval: idle.check_interval_seconds ?? 60,
-        timeWindowsText: (oc.time_windows || []).map((w) =>
-          `${w.start}-${w.end}` + (w.probability != null ? `@${w.probability}` : '')).join(','),
-      }
-    })
-  } catch (e) {
-    toast.show('加载会话失败: ' + (e.body?.error?.message || e.status), 'error')
-  } finally {
-    outreachLoading.value = false
-  }
-}
-
-async function saveOutreachConfig(s) {
-  const timeWindows = s.timeWindowsText.split(',').map((t) => t.trim()).filter(Boolean)
-    .map((t) => {
-      let prob
-      const m = t.split('@')
-      const [start, end] = m[0].split('-')
-      if (m[1] != null) prob = parseFloat(m[1])
-      const w = { start: (start || '').trim(), end: (end || '').trim() }
-      if (prob != null) w.probability = prob
-      return w
-    }).filter((w) => w.start && w.end)
-  const cfg = {
-    enabled: !!s.enabled,
-    cooldown_minutes: Math.max(0, s.cooldownMin || 30),
-    schedule: s.scheduleTime ? { time: s.scheduleTime, jitter_minutes: Math.max(0, s.scheduleJitter || 0) } : {},
-    screen: {
-      change_ratio: Math.max(0, Math.min(1, s.screenRatio ?? 0.5)),
-      probability: Math.max(0, Math.min(1, s.screenProb ?? 0.5)),
-      check_interval_seconds: Math.max(1, s.screenInterval || 30),
-      cooldown_minutes: Math.max(0, s.screenCooldown || 30),
-    },
-    idle: {
-      idle_minutes: Math.max(0, s.idleMinutes || 30),
-      probability: Math.max(0, Math.min(1, s.idleProb ?? 0.5)),
-      check_interval_seconds: Math.max(1, s.idleInterval || 60),
-    },
-    time_windows: timeWindows,
-  }
-  try {
-    await endpoints.setOutreachConfig(s.session_id, cfg)
-    toast.show('已保存', 'success')
-  } catch (e) {
-    toast.show('保存失败: ' + (e.body?.error?.message || e.status), 'error')
-  }
-}
 const ttsEnabled = boolCfg('OUTPUT_TTS_ENABLED', false)
 const debugEnabled = boolCfg('DEBUG', false)
 const loggingEnabled = boolCfg('LOGGING_ENABLED', true)
@@ -385,7 +312,16 @@ onMounted(async () => {
 <template>
   <div class="settings-layout">
     <div class="settings-sidebar">
-      <div v-for="tab in tabs" :key="tab" class="settings-tab" :class="{ active: activeTab === tab }" @click="activeTab = tab">{{ tab }}</div>
+      <template v-for="g in tabGroups" :key="g.label">
+        <div class="settings-group-label">{{ g.label }}</div>
+        <div
+          v-for="tab in g.tabs"
+          :key="tab"
+          class="settings-tab"
+          :class="{ active: activeTab === tab }"
+          @click="activeTab = tab"
+        >{{ tab }}</div>
+      </template>
     </div>
 
     <div class="settings-content">
@@ -496,61 +432,14 @@ onMounted(async () => {
       <div v-if="activeTab === '主动搭话'" class="settings-section">
         <div class="settings-group">
           <div class="settings-group-title">主动搭话</div>
-          <p class="settings-hint">空闲一段时间后系统会主动关心你</p>
+          <p class="settings-hint">空闲/屏幕变化/指定时段时系统会主动关心你，按会话配置规则触发</p>
           <div class="setting-row">
-            <div class="lbl"><div class="t">启用主动搭话</div><div class="d">开启后空闲时自动触发</div></div>
+            <div class="lbl"><div class="t">启用主动搭话</div><div class="d">全局总开关（关闭后所有会话不触发）</div></div>
             <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="proactiveEnabled" @change="proactiveEnabled = !proactiveEnabled" /><span class="toggle-slider"></span></label></div>
           </div>
-          <div class="setting-row">
-            <div class="lbl"><div class="t">空闲阈值(分钟)</div><div class="d">空闲超过该时长才触发</div></div>
-            <div class="setting-ctl"><input class="input" type="number" v-model.number="proactiveIdle" style="width:110px;text-align:right" /></div>
-          </div>
-          <div class="setting-row">
-            <div class="lbl"><div class="t">冷却时间(分钟)</div><div class="d">两次主动搭话间隔</div></div>
-            <div class="setting-ctl"><input class="input" type="number" v-model.number="proactiveCooldown" style="width:110px;text-align:right" /></div>
-          </div>
-        </div>
-
-        <div class="settings-divider"></div>
-        <div class="settings-group">
-          <div class="settings-group-title">会话级配置</div>
-          <p class="settings-hint">按会话设置是否允许主动搭话、随机间隔与时间区间（全局总开关关闭时全部不触发；默认关闭，需开启才搭话）</p>
-          <div style="display:flex;gap:8px;margin-bottom:10px">
-            <button class="btn btn-sm" @click="loadOutreachSessions"><Icon name="refresh" :size="14" /> {{ outreachLoading ? '加载中…' : '加载会话' }}</button>
-          </div>
-          <div v-if="outreachSessions.length === 0" class="empty-state" style="padding:16px"><p class="empty-text">暂无会话（点击加载）</p></div>
-          <div v-for="s in outreachSessions" :key="s.session_id" class="card" style="margin-bottom:10px;padding:12px">
-            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-              <b style="flex:1;min-width:110px">{{ s.title }}</b>
-              <span class="lbl" style="display:flex;align-items:center;gap:4px"><span class="t">允许</span>
-                <label class="toggle-switch"><input type="checkbox" v-model="s.enabled" /><span class="toggle-slider"></span></label>
-              </span>
-              <span class="lbl" style="display:flex;align-items:center;gap:4px"><span class="t">综合冷却</span>
-                <input class="input" type="number" v-model.number="s.cooldownMin" style="width:64px;text-align:right" /><span class="t" style="font-size:11px">min</span>
-              </span>
-            </div>
-            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:8px">
-              <span class="lbl" style="display:flex;align-items:center;gap:4px"><span class="t">定点发送</span>
-                <input class="input" v-model="s.scheduleTime" style="width:80px" placeholder="14:00" />
-                <input class="input" type="number" v-model.number="s.scheduleJitter" style="width:56px;text-align:right" title="误差(分钟)" />
-                <span class="t" style="font-size:11px">min 误差</span>
-              </span>
-              <span class="lbl" style="display:flex;align-items:center;gap:4px"><span class="t">屏幕触发</span>
-                <input class="input" type="number" v-model.number="s.screenRatio" style="width:52px;text-align:right" title="变化幅度阈值" /> 变化
-                <input class="input" type="number" v-model.number="s.screenProb" style="width:52px;text-align:right" title="触发概率 0-1" /> 概率
-                <input class="input" type="number" v-model.number="s.screenInterval" style="width:52px;text-align:right" title="判定间隔(秒)" /> s
-                <input class="input" type="number" v-model.number="s.screenCooldown" style="width:52px;text-align:right" title="触发后冷却(分钟)" /> min
-              </span>
-              <span class="lbl" style="display:flex;align-items:center;gap:4px"><span class="t">空闲触发</span>
-                <input class="input" type="number" v-model.number="s.idleMinutes" style="width:52px;text-align:right" title="空闲阈值(分钟)" /> min
-                <input class="input" type="number" v-model.number="s.idleProb" style="width:52px;text-align:right" title="触发概率 0-1" /> 概率
-                <input class="input" type="number" v-model.number="s.idleInterval" style="width:52px;text-align:right" title="判定间隔(秒)" /> s
-              </span>
-              <span class="lbl" style="display:flex;align-items:center;gap:4px"><span class="t">时段触发</span>
-                <input class="input" v-model="s.timeWindowsText" style="width:240px" placeholder="09:00-12:00@0.5,14:00-18:00@0.8" />
-              </span>
-              <button class="btn btn-sm btn-primary" @click="saveOutreachConfig(s)">保存</button>
-            </div>
+          <div style="display:flex;align-items:center;gap:8px;margin-top:12px">
+            <button class="btn btn-primary btn-sm" @click="router.push('/outreach')"><Icon name="heart" :size="14" /> 管理会话规则与触发记录</button>
+            <span style="font-size:12px;color:var(--text-muted)">在「主动搭话」页按会话配置规则（定点/屏幕/空闲/时段 + 概率）</span>
           </div>
         </div>
       </div>

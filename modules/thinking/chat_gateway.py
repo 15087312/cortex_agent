@@ -583,6 +583,15 @@ async def get_outreach_config(session_id: str):
     return {"success": True, "data": {"session_id": session_id, "outreach": cfg}}
 
 
+@router.get("/proactive-log")
+async def get_proactive_logs(limit: int = 50, session_id: str = ""):
+    """主动搭话触发记录（时间/会话/触发原因/内容）"""
+    from modules.database.proactive_repo import query_proactive_logs, count_proactive_logs
+    logs = query_proactive_logs(limit=limit, session_id=session_id)
+    total = count_proactive_logs()
+    return {"success": True, "data": {"logs": logs, "total": total}}
+
+
 @router.put("/session/{session_id}/outreach-config")
 async def set_outreach_config(session_id: str, body: dict = None):
     """写入会话的主动搭话配置（会话级独立规则）

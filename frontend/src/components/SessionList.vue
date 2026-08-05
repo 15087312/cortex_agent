@@ -1,25 +1,33 @@
 <script setup>
+import { ref, computed } from 'vue'
 import Icon from '@/components/Icon.vue'
 
-defineProps({
+const props = defineProps({
   sessions: { type: Array, default: () => [] },
   activeId: { type: String, default: null },
   collapsed: { type: Boolean, default: false },
 })
 
 const emit = defineEmits(['select', 'delete', 'rename', 'new', 'update:collapsed'])
+
+const search = ref('')
+const filtered = computed(() => {
+  const q = search.value.trim().toLowerCase()
+  if (!q) return props.sessions
+  return props.sessions.filter((s) =>
+    (s.title || '').toLowerCase().includes(q) || (s.session_id || '').toLowerCase().includes(q)
+  )
+})
 </script>
 
 <template>
   <div class="session-list" :class="{ collapsed }">
-    <!-- 收起态：窄条 + 展开按钮 -->
     <template v-if="collapsed">
       <div class="session-list-collapsed-inner">
         <button class="session-expand-btn" @click="emit('update:collapsed', false)" title="展开会话列表"><Icon name="right" :size="16" /></button>
       </div>
     </template>
 
-    <!-- 展开态：完整列表 -->
     <template v-else>
       <div class="session-list-header">
         <h3 style="font-size:14px;color:var(--text-secondary)">会话列表</h3>
@@ -27,9 +35,13 @@ const emit = defineEmits(['select', 'delete', 'rename', 'new', 'update:collapsed
       </div>
       <div class="session-list-body">
         <button class="btn btn-primary btn-sm" style="width:100%;justify-content:center;margin-bottom:8px" @click="emit('new')">+ 新建会话</button>
-        <div v-if="sessions.length === 0" class="chat-sessions-empty">暂无会话</div>
+        <div class="session-search">
+          <Icon name="search" :size="14" style="color:var(--text-muted)" />
+          <input class="input" v-model="search" placeholder="搜索会话..." style="border:none;background:transparent;flex:1;padding:4px 0;outline:none" />
+        </div>
+        <div v-if="filtered.length === 0" class="chat-sessions-empty">暂无会话</div>
         <div
-          v-for="s in sessions"
+          v-for="s in filtered"
           :key="s.session_id"
           class="session-item"
           :class="{ active: activeId === s.session_id }"
