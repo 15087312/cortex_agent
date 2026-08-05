@@ -129,14 +129,25 @@ async function loadOutreachSessions() {
     const r = await endpoints.sessions()
     outreachSessions.value = (r.data || []).map((s) => {
       const oc = (s.metadata && s.metadata.outreach) || {}
-      const range = Array.isArray(oc.cooldown_range) ? oc.cooldown_range : [15, 15]
+      const scr = oc.screen || {}
+      const idle = oc.idle || {}
+      const sched = oc.schedule || {}
       return {
         session_id: s.session_id,
         title: s.title || s.session_id.slice(0, 12),
         enabled: !!oc.enabled,
-        cooldownMin: range[0] ?? 15,
-        cooldownMax: range[1] ?? 15,
-        timeWindowsText: (oc.time_windows || []).map((w) => `${w.start}-${w.end}`).join(','),
+        cooldownMin: oc.cooldown_minutes ?? 30,
+        scheduleTime: sched.time || '',
+        scheduleJitter: sched.jitter_minutes ?? 10,
+        screenRatio: scr.change_ratio ?? 0.5,
+        screenProb: scr.probability ?? 0.5,
+        screenInterval: scr.check_interval_seconds ?? 30,
+        screenCooldown: scr.cooldown_minutes ?? 30,
+        idleMinutes: idle.idle_minutes ?? 30,
+        idleProb: idle.probability ?? 0.5,
+        idleInterval: idle.check_interval_seconds ?? 60,
+        timeWindowsText: (oc.time_windows || []).map((w) =>
+          `${w.start}-${w.end}` + (w.probability != null ? `@${w.probability}` : '')).join(','),
       }
     })
   } catch (e) {
@@ -149,12 +160,29 @@ async function loadOutreachSessions() {
 async function saveOutreachConfig(s) {
   const timeWindows = s.timeWindowsText.split(',').map((t) => t.trim()).filter(Boolean)
     .map((t) => {
-      const [start, end] = t.split('-')
-      return { start: (start || '').trim(), end: (end || '').trim() }
+      let prob
+      const m = t.split('@')
+      const [start, end] = m[0].split('-')
+      if (m[1] != null) prob = parseFloat(m[1])
+      const w = { start: (start || '').trim(), end: (end || '').trim() }
+      if (prob != null) w.probability = prob
+      return w
     }).filter((w) => w.start && w.end)
   const cfg = {
     enabled: !!s.enabled,
-    cooldown_range: [Math.max(1, s.cooldownMin || 15), Math.max(1, s.cooldownMax || 15)],
+    cooldown_minutes: Math.max(0, s.cooldownMin || 30),
+    schedule: s.scheduleTime ? { time: s.scheduleTime, jitter_minutes: Math.max(0, s.scheduleJitter || 0) } : {},
+    screen: {
+      change_ratio: Math.max(0, Math.min(1, s.screenRatio ?? 0.5)),
+      probability: Math.max(0, Math.min(1, s.screenProb ?? 0.5)),
+      check_interval_seconds: Math.max(1, s.screenInterval || 30),
+      cooldown_minutes: Math.max(0, s.screenCooldown || 30),
+    },
+    idle: {
+      idle_minutes: Math.max(0, s.idleMinutes || 30),
+      probability: Math.max(0, Math.min(1, s.idleProb ?? 0.5)),
+      check_interval_seconds: Math.max(1, s.idleInterval || 60),
+    },
     time_windows: timeWindows,
   }
   try {
@@ -497,12 +525,29 @@ onMounted(async () => {
               <span class="lbl" style="display:flex;align-items:center;gap:4px"><span class="t">允许</span>
                 <label class="toggle-switch"><input type="checkbox" v-model="s.enabled" /><span class="toggle-slider"></span></label>
               </span>
-              <span class="lbl" style="display:flex;align-items:center;gap:4px"><span class="t">随机间隔</span>
-                <input class="input" type="number" v-model.number="s.cooldownMin" style="width:64px;text-align:right" /> ~
-                <input class="input" type="number" v-model.number="s.cooldownMax" style="width:64px;text-align:right" /><span class="t" style="font-size:11px">min</span>
+              <span class="lbl" style="display:flex;align-items:center;gap:4px"><span class="t">综合冷却</span>
+                <input class="input" type="number" v-model.number="s.cooldownMin" style="width:64px;text-align:right" /><span class="t" style="font-size:11px">min</span>
               </span>
-              <span class="lbl" style="display:flex;align-items:center;gap:4px"><span class="t">时间区间</span>
-                <input class="input" v-model="s.timeWindowsText" style="width:200px" placeholder="09:00-12:00,14:00-18:00" />
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:8px">
+              <span class="lbl" style="display:flex;align-items:center;gap:4px"><span class="t">定点发送</span>
+                <input class="input" v-model="s.scheduleTime" style="width:80px" placeholder="14:00" />
+                <input class="input" type="number" v-model.number="s.scheduleJitter" style="width:56px;text-align:right" title="误差(分钟)" />
+                <span class="t" style="font-size:11px">min 误差</span>
+              </span>
+              <span class="lbl" style="display:flex;align-items:center;gap:4px"><span class="t">屏幕触发</span>
+                <input class="input" type="number" v-model.number="s.screenRatio" style="width:52px;text-align:right" title="变化幅度阈值" /> 变化
+                <input class="input" type="number" v-model.number="s.screenProb" style="width:52px;text-align:right" title="触发概率 0-1" /> 概率
+                <input class="input" type="number" v-model.number="s.screenInterval" style="width:52px;text-align:right" title="判定间隔(秒)" /> s
+                <input class="input" type="number" v-model.number="s.screenCooldown" style="width:52px;text-align:right" title="触发后冷却(分钟)" /> min
+              </span>
+              <span class="lbl" style="display:flex;align-items:center;gap:4px"><span class="t">空闲触发</span>
+                <input class="input" type="number" v-model.number="s.idleMinutes" style="width:52px;text-align:right" title="空闲阈值(分钟)" /> min
+                <input class="input" type="number" v-model.number="s.idleProb" style="width:52px;text-align:right" title="触发概率 0-1" /> 概率
+                <input class="input" type="number" v-model.number="s.idleInterval" style="width:52px;text-align:right" title="判定间隔(秒)" /> s
+              </span>
+              <span class="lbl" style="display:flex;align-items:center;gap:4px"><span class="t">时段触发</span>
+                <input class="input" v-model="s.timeWindowsText" style="width:240px" placeholder="09:00-12:00@0.5,14:00-18:00@0.8" />
               </span>
               <button class="btn btn-sm btn-primary" @click="saveOutreachConfig(s)">保存</button>
             </div>

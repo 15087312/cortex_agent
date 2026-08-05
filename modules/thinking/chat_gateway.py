@@ -314,7 +314,14 @@ async def _chatonly_ws(websocket: WebSocket, session_id: str) -> None:
             _envelope(session_id, "ack", "session_ready", "WebSocket 会话已建立", "system")
         )
     except Exception:
-        # 客户端已断开（如 voice 会话瞬时连接）→ 直接结束
+        # 客户端已断开（如 voice 会话瞬时连接）→ 注销注册后结束，避免 connection_manager 残留僵尸连接
+        if _ws_registered:
+            try:
+                from modules.thinking.api_stream import connection_manager
+                async with connection_manager._lock:
+                    connection_manager.active_connections.pop(session_id, None)
+            except Exception:
+                pass
         return
 
     active_task: Optional[asyncio.Task] = None
@@ -578,27 +585,122 @@ async def get_outreach_config(session_id: str):
 
 @router.put("/session/{session_id}/outreach-config")
 async def set_outreach_config(session_id: str, body: dict = None):
-    """写入会话的主动搭话配置
-    {enabled: bool, cooldown_range: [min,max], time_windows: [{start,end}, ...]}
+    """写入会话的主动搭话配置（会话级独立规则）
+
+    {
+      enabled: bool,
+      cooldown_minutes: int,                    # 综合冷却（距上次任意主动搭话）
+      schedule: {time: "HH:MM", jitter_minutes: int},          # 定点发送（误差随机）
+      screen: {change_ratio, probability, check_interval_seconds, cooldown_minutes},  # 屏幕触发
+      idle: {idle_minutes, probability, check_interval_seconds},                      # 空闲触发
+      time_windows: [{start, end, probability, check_interval_seconds}, ...]          # 时段触发
+    }
     """
     cfg = (body or {}).get("outreach")
     if not isinstance(cfg, dict):
         return JSONResponse(status_code=422, content={"success": False,
                             "error": {"code": "VALIDATION_ERROR", "message": "outreach 需为对象"}})
-    # 校验结构
-    clean = {}
+
+    repo = _get_chat_session_repo()
+
+    # 最多 5 个 enabled 会话
+    if cfg.get("enabled"):
+        current = repo.get_outreach_config(session_id)
+        if not current.get("enabled"):
+            enabled_count = sum(
+                1 for s in repo.get_all_sessions(limit=100)
+                if (s.get("metadata") or {}).get("outreach", {}).get("enabled")
+            )
+            if enabled_count >= 5:
+                return JSONResponse(status_code=422, content={"success": False,
+                                    "error": {"code": "LIMIT_EXCEEDED",
+                                              "message": "最多 5 个会话可开启主动搭话，请先关闭其他会话"}})
+
+    clean: Dict[str, Any] = {}
     if "enabled" in cfg:
         clean["enabled"] = bool(cfg["enabled"])
-    if "cooldown_range" in cfg and isinstance(cfg["cooldown_range"], (list, tuple)) and len(cfg["cooldown_range"]) == 2:
-        a, b = int(cfg["cooldown_range"][0]), int(cfg["cooldown_range"][1])
-        clean["cooldown_range"] = [min(a, b), max(a, b)]
-    if "time_windows" in cfg and isinstance(cfg["time_windows"], list):
+    if "cooldown_minutes" in cfg:
+        try:
+            clean["cooldown_minutes"] = max(0, int(cfg["cooldown_minutes"]))
+        except Exception:
+            pass
+    # schedule
+    sched = cfg.get("schedule")
+    if isinstance(sched, dict) and sched.get("time"):
+        cs = {}
+        if sched.get("time"):
+            cs["time"] = str(sched["time"]).strip()
+        if "jitter_minutes" in sched:
+            try:
+                cs["jitter_minutes"] = max(0, int(sched["jitter_minutes"]))
+            except Exception:
+                pass
+        clean["schedule"] = cs
+    # screen
+    scr = cfg.get("screen")
+    if isinstance(scr, dict):
+        cs = {}
+        if "change_ratio" in scr:
+            try:
+                cs["change_ratio"] = max(0.0, min(1.0, float(scr["change_ratio"])))
+            except Exception:
+                pass
+        if "probability" in scr:
+            try:
+                cs["probability"] = max(0.0, min(1.0, float(scr["probability"])))
+            except Exception:
+                pass
+        if "check_interval_seconds" in scr:
+            try:
+                cs["check_interval_seconds"] = max(1, int(scr["check_interval_seconds"]))
+            except Exception:
+                pass
+        if "cooldown_minutes" in scr:
+            try:
+                cs["cooldown_minutes"] = max(0, int(scr["cooldown_minutes"]))
+            except Exception:
+                pass
+        clean["screen"] = cs
+    # idle
+    idle = cfg.get("idle")
+    if isinstance(idle, dict):
+        cs = {}
+        if "idle_minutes" in idle:
+            try:
+                cs["idle_minutes"] = max(0, int(idle["idle_minutes"]))
+            except Exception:
+                pass
+        if "probability" in idle:
+            try:
+                cs["probability"] = max(0.0, min(1.0, float(idle["probability"])))
+            except Exception:
+                pass
+        if "check_interval_seconds" in idle:
+            try:
+                cs["check_interval_seconds"] = max(1, int(idle["check_interval_seconds"]))
+            except Exception:
+                pass
+        clean["idle"] = cs
+    # time_windows
+    if isinstance(cfg.get("time_windows"), list):
         windows = []
         for w in cfg["time_windows"]:
             if isinstance(w, dict) and w.get("start") and w.get("end"):
-                windows.append({"start": str(w["start"]), "end": str(w["end"])})
+                cw = {"start": str(w["start"]).strip(), "end": str(w["end"]).strip()}
+                if "probability" in w:
+                    try:
+                        cw["probability"] = max(0.0, min(1.0, float(w["probability"])))
+                    except Exception:
+                        pass
+                if "check_interval_seconds" in w:
+                    try:
+                        cw["check_interval_seconds"] = max(1, int(w["check_interval_seconds"]))
+                    except Exception:
+                        pass
+                windows.append(cw)
         clean["time_windows"] = windows
-    ok = _get_chat_session_repo().set_outreach_config(session_id, clean)
+
+    ok = repo.set_outreach_config(session_id, clean)
     if not ok:
         return JSONResponse(status_code=404, content={"success": False,
                             "error": {"code": "NOT_FOUND", "message": "会话不存在"}})

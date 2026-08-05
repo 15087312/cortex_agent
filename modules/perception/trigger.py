@@ -10,6 +10,7 @@
 空闲时间由自身维护的 Timer 跟踪，用户活动 (notify_activity) 重置计时。
 """
 import asyncio
+import random
 import threading
 import time
 from typing import Any, Dict
@@ -97,21 +98,16 @@ class ProactiveTrigger:
     订阅 SCREEN_DIFF 事件，条件满足时触发 LLM 调用并推送到 WebSocket。
     """
 
-    def __init__(
-        self,
-        change_ratio_threshold: float = 0.15,
-        idle_threshold_seconds: int = 300,
-        cooldown_seconds: int = 900,
-    ):
+    def __init__(self):
         self._idle_timer = IdleTimer()
-        self._change_ratio_threshold = change_ratio_threshold
-        self._idle_threshold_seconds = idle_threshold_seconds
-        self._cooldown_seconds = cooldown_seconds
-        self._last_trigger_time: float = 0.0
+        self._session_last_trigger: Dict[str, float] = {}       # 综合冷却（会话级，距上次任意主动搭话）
+        self._screen_last_trigger: Dict[str, float] = {}        # screen 规则触发后冷却
+        self._last_rule_check: Dict[str, Dict[str, float]] = {}  # 各规则 check_interval 判定跟踪
         self._trigger_count = 0
         self._lock = threading.Lock()
         self._sub_id: str = ""
         self._event_bus = None
+        self._timer_task = None
 
     # ── 生命周期 ──
 
@@ -122,135 +118,113 @@ class ProactiveTrigger:
             PerceptionEventType.SCREEN_DIFF,
             handler=self._on_screen_diff,
         )
-        logger.info(
-            f"主动触发启动: change_ratio>={self._change_ratio_threshold:.0%} "
-            f"idle>{self._idle_threshold_seconds}s "
-            f"cooldown={self._cooldown_seconds}s"
-        )
+        # 定时判定（schedule / idle / time_windows 规则），每 5s 检查
+        try:
+            import asyncio
+            loop = asyncio.get_event_loop()
+            self._timer_task = loop.create_task(self._check_loop())
+        except Exception as e:
+            logger.warning(f"主动搭话定时判定未启动: {e}")
+        logger.info("主动触发已启动（会话级规则：schedule/screen/idle/time_windows，最多 5 会话）")
 
     def stop(self) -> None:
         if self._event_bus and self._sub_id:
             self._event_bus.unsubscribe(self._sub_id)
             self._sub_id = ""
+        if self._timer_task:
+            try:
+                self._timer_task.cancel()
+            except Exception:
+                pass
+            self._timer_task = None
         logger.info("主动触发已停止")
 
     def notify_activity(self) -> None:
         """用户有活动时调用，重置空闲计时"""
         self._idle_timer.notify_activity()
 
-    def reset_cooldown(self) -> None:
-        """用户主动交互时调用，重置冷却期（避免在用户说话时主动搭话）"""
-        with self._lock:
-            self._last_trigger_time = time.time()
-            self._idle_timer.notify_activity()
-
     # ── 事件处理 ──
 
     def _on_screen_diff(self, event) -> None:
-        """SCREEN_DIFF 事件回调"""
+        """SCREEN_DIFF 事件：按各 enabled 会话的 screen 规则判定"""
         change_ratio = event.payload.get("change_ratio", 0)
-        if change_ratio < self._change_ratio_threshold:
+        changed_regions = event.payload.get("changed_regions", [])
+        if not self._qt_active():
             return
-
-        if not self._check_idle():
-            return
-
-        if not self._check_cooldown():
-            return
-
-        self._do_trigger(event)
-
-    # ── 条件检查 ──
-
-    def _check_idle(self) -> bool:
-        """检查是否空闲足够久"""
-        idle = self._idle_timer.idle_seconds
-        if idle < self._idle_threshold_seconds:
-            return False
-        logger.debug(f"空闲条件满足: {idle:.0f}s")
-        return True
-
-    def _check_cooldown(self) -> bool:
-        with self._lock:
-            elapsed = time.time() - self._last_trigger_time
-            if elapsed < self._cooldown_seconds:
-                return False
-            return True
+        for session_id, cfg in self._get_enabled_outreach_sessions().items():
+            try:
+                screen = cfg.get("screen") or {}
+                if change_ratio < screen.get("change_ratio", 1.0):
+                    continue
+                if random.random() > screen.get("probability", 1.0):
+                    continue
+                if not self._cooldown_ok(session_id, cfg):
+                    continue
+                if not self._screen_cooldown_ok(session_id, screen):
+                    continue
+                if not self._rule_ready(session_id, "screen", screen.get("check_interval_seconds", 30)):
+                    continue
+                self._run_in_main_loop(self._try_outreach(session_id, "screen", change_ratio, changed_regions))
+            except Exception as e:
+                logger.debug(f"screen 规则判定失败: {e}")
 
     # ── 触发执行 ──
 
-    def _do_trigger(self, event) -> None:
-        change_ratio = event.payload.get("change_ratio", 0)
-        idle_minutes = self._idle_timer.idle_minutes
+    # ── 定时判定（schedule / idle / time_windows 规则）──
 
-        with self._lock:
-            elapsed = time.time() - self._last_trigger_time
-            if elapsed < self._cooldown_seconds:
-                logger.debug(f"跳过重复触发: 距上次仅 {elapsed:.0f}s")
+    async def _check_loop(self) -> None:
+        """后台定时循环：每 5s 检查所有 enabled 会话的规则"""
+        while True:
+            try:
+                await asyncio.sleep(5)
+                await self._run_periodic_check()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.debug(f"主动搭话定时判定失败: {e}")
+
+    async def _run_periodic_check(self) -> None:
+        """按各会话规则（schedule/idle/time_windows）做一次判定"""
+        if not self._qt_active():
+            return
+        for session_id, cfg in self._get_enabled_outreach_sessions().items():
+            try:
+                if not self._cooldown_ok(session_id, cfg):
+                    continue
+                # schedule：定点（±jitter 窗口内），每次判定
+                if self._check_schedule(cfg):
+                    await self._try_outreach(session_id, "schedule")
+                    continue
+                # idle：空闲 + 概率，按该规则 check_interval
+                idle_cfg = cfg.get("idle") or {}
+                if self._rule_ready(session_id, "idle", idle_cfg.get("check_interval_seconds", 60)) \
+                   and self._check_idle_rule(idle_cfg):
+                    await self._try_outreach(session_id, "idle")
+                    continue
+                # time_windows：时段 + 概率，按判定间隔
+                if self._rule_ready(session_id, "time_windows", 30) and self._check_time_windows(cfg):
+                    await self._try_outreach(session_id, "time_window")
+            except Exception as e:
+                logger.debug(f"会话 {session_id[:8]} 规则判定失败: {e}")
+
+    async def _try_outreach(self, session_id: str, reason: str,
+                            change_ratio: float = 0, changed_regions: list = None) -> None:
+        """触发一次主动搭话：综合冷却检查 → 会话记忆构建 prompt → LLM → 推送 → 更新冷却"""
+        try:
+            cfg = self._get_session_outreach_config(session_id)
+            if not self._cooldown_ok(session_id, cfg):
                 return
-            self._last_trigger_time = time.time()
+
             self._trigger_count += 1
             count = self._trigger_count
 
-        logger.info(f"触发主动询问 #{count}: change_ratio={change_ratio:.0%} idle={idle_minutes:.0f}min")
-
-        # 后台执行，不阻塞事件总线
-        threading.Thread(
-            target=self._execute_outreach,
-            args=(idle_minutes, event, count),
-            daemon=True,
-        ).start()
-
-    def _execute_outreach(self, idle_minutes: float, event, trigger_count: int):
-        """执行主动询问（在 daemon 线程中）
-
-        设计目的：主动搭话以「本次启动过会话且真实说过话」为前提，
-        并按会话级配置（enabled / 随机间隔 / 时间区间）与活跃连接做源头防浪费——
-        没有可接收的会话就不调 LLM，避免白跑。
-        """
-        try:
-            if not self._has_spoken_this_boot():
-                logger.info(f"[主动触发 #{trigger_count}] 本次启动未说过话，跳过主动搭话")
-                return
-
-            session_id, conversation = self._get_session_info()
-            if not session_id:
-                logger.warning(f"[主动触发 #{trigger_count}] 无活跃 session，跳过")
-                return
-
-            # ── 会话级主动搭话配置 ──
-            cfg = self._get_session_outreach_config(session_id)
-            if not cfg.get("enabled"):
-                logger.info(f"[主动触发 #{trigger_count}] 会话 {session_id[:8]} 未开启主动搭话，跳过")
-                return
-            if not self._in_time_window(cfg):
-                logger.info(f"[主动触发 #{trigger_count}] 当前不在会话允许的时间区间，跳过")
-                return
-            # 会话配置了随机间隔 → 用会话冷却检查（未配置依赖全局冷却，已在 _do_trigger 检查）
-            if cfg.get("cooldown_range"):
-                with self._lock:
-                    now = time.time()
-                    if now - self._last_trigger_time < self._get_session_cooldown_seconds(cfg):
-                        logger.debug(f"[主动触发 #{trigger_count}] 会话冷却未到，跳过")
-                        return
-                    self._last_trigger_time = now
-
-            # ── 源头防浪费：目标会话无活跃连接则跳过（不调 LLM）──
-            if not self._has_active_connection(session_id):
-                logger.info(f"[主动触发 #{trigger_count}] 会话 {session_id[:8]} 无活跃连接，跳过（防浪费）")
-                return
-
-            # 获取屏幕变化详情
-            change_ratio = event.payload.get("change_ratio", 0)
-            changed_regions = event.payload.get("changed_regions", [])
-
-            # 获取当前窗口信息
+            # 该会话的会话记忆（历史对话）作为搭话上下文
+            conversation = self._get_session_conversation(session_id)
             current_app, current_window = self._get_current_window()
-
             prompt = self._build_prompt(
-                idle_minutes=idle_minutes,
+                idle_minutes=self._idle_timer.idle_minutes,
                 change_ratio=change_ratio,
-                changed_regions=changed_regions,
+                changed_regions=changed_regions or [],
                 current_app=current_app,
                 current_window=current_window,
                 conversation=conversation,
@@ -260,9 +234,14 @@ class ProactiveTrigger:
                 return
 
             self._push(session_id, response)
-            logger.info(f"[主动触发 #{trigger_count}] 推送完成: {response[:60]}")
+            # 任意主动搭话触发 → 更新综合冷却；screen 额外更新该规则冷却
+            with self._lock:
+                self._session_last_trigger[session_id] = time.time()
+                if reason == "screen":
+                    self._screen_last_trigger[session_id] = time.time()
+            logger.info(f"[主动触发 #{count}] ({reason}) 推送完成: {response[:60]}")
         except Exception as e:
-            logger.error(f"[主动触发 #{trigger_count}] 失败: {e}")
+            logger.error(f"[主动触发] 失败: {e}")
             try:
                 self._push_error(session_id, f"[主动搭话失败] {e}")
             except Exception:
@@ -305,20 +284,6 @@ class ProactiveTrigger:
             pass
         return _run_async(coro)
 
-    def _has_spoken_this_boot(self) -> bool:
-        """本次进程启动后是否真正发过消息（主动搭话的前提）。
-
-        设计目的：防止「只是打开程序、没说话」时，程序就去检索上一次的
-        会话主动搭话打扰用户。所有真实用户消息都会经 session_repo.
-        save_message 保存，那里会置位进程级标志（重启自动归零），按对话
-        模式读对应的 repo 判定即可。
-        """
-        try:
-            from modules.database.session_repo import get_boot_has_spoken
-            return bool(get_boot_has_spoken())
-        except Exception:
-            return False
-
     def _get_session_outreach_config(self, session_id: str) -> dict:
         """读取会话级主动搭话配置（存 chat_sessions.metadata_json.outreach）"""
         try:
@@ -327,100 +292,104 @@ class ProactiveTrigger:
         except Exception:
             return {}
 
-    def _in_time_window(self, cfg: dict) -> bool:
-        """当前时间是否在会话配置的任一允许区间（未配置则不限）"""
+    def _qt_active(self) -> bool:
+        """Qt 端开着（有活跃 WS 连接）是主动搭话的前提"""
+        try:
+            from modules.thinking.api_stream import connection_manager
+            return bool(connection_manager.active_connections)
+        except Exception:
+            return False
+
+    def _get_enabled_outreach_sessions(self) -> Dict[str, dict]:
+        """获取所有 enabled 的会话及其 outreach 配置"""
+        try:
+            from modules.database.session_repo import get_session_repo
+            result: Dict[str, dict] = {}
+            for s in get_session_repo().get_all_sessions(limit=100):
+                cfg = (s.get("metadata") or {}).get("outreach") or {}
+                if cfg.get("enabled"):
+                    result[s["session_id"]] = cfg
+            return result
+        except Exception:
+            return {}
+
+    def _get_session_conversation(self, session_id: str) -> str:
+        """该会话的会话记忆（历史对话）作为搭话上下文"""
+        try:
+            from modules.database.session_repo import get_session_repo
+            msgs = get_session_repo().get_recent_messages(session_id, limit=6)
+            real = [m for m in msgs if m.get("role") in ("user", "assistant") and m.get("content")]
+            return "\n".join(
+                f"[{m.get('role')}]: {str(m.get('content', ''))[:200]}" for m in real
+            )
+        except Exception:
+            return ""
+
+    def _cooldown_ok(self, session_id: str, cfg: dict) -> bool:
+        """综合冷却：距上次该会话任意主动搭话 >= cooldown_minutes 才允许触发"""
+        cooldown = cfg.get("cooldown_minutes")
+        cooldown = 30 if cooldown is None else int(cooldown)
+        with self._lock:
+            last = self._session_last_trigger.get(session_id, 0.0)
+            return time.time() - last >= cooldown * 60
+
+    def _screen_cooldown_ok(self, session_id: str, screen: dict) -> bool:
+        """screen 规则触发后冷却（与综合冷却同时满足才触发）"""
+        cd = screen.get("cooldown_minutes") or 30
+        with self._lock:
+            last = self._screen_last_trigger.get(session_id, 0.0)
+            return time.time() - last >= cd * 60
+
+    def _rule_ready(self, session_id: str, rule_key: str, interval_seconds: int) -> bool:
+        """按规则判定间隔（check_interval_seconds）控制判定频率"""
+        with self._lock:
+            now = time.time()
+            checks = self._last_rule_check.setdefault(session_id, {})
+            last = checks.get(rule_key, 0.0)
+            if now - last < interval_seconds:
+                return False
+            checks[rule_key] = now
+            return True
+
+    def _check_schedule(self, cfg: dict) -> bool:
+        """定点发送：当前在 schedule.time ± jitter 内则触发"""
+        sched = cfg.get("schedule")
+        if not sched or not sched.get("time"):
+            return False
+        from datetime import datetime, timedelta
+        target = str(sched["time"]).strip()
+        try:
+            hh, mm = map(int, target.split(":"))
+        except Exception:
+            return False
+        now = datetime.now()
+        target_dt = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+        jitter = int(sched.get("jitter_minutes") or 0)
+        window = timedelta(minutes=abs(jitter))
+        return target_dt - window <= now <= target_dt + window
+
+    def _check_idle_rule(self, idle_cfg: dict) -> bool:
+        """空闲触发：空闲 >= idle_minutes，按 probability 概率触发"""
+        if not idle_cfg:
+            return False
+        if self._idle_timer.idle_minutes < (idle_cfg.get("idle_minutes") or 30):
+            return False
+        prob = idle_cfg.get("probability")
+        return random.random() < (1.0 if prob is None else float(prob))
+
+    def _check_time_windows(self, cfg: dict) -> bool:
+        """时段触发：当前在某 time_window 内，按该窗口概率触发"""
         windows = cfg.get("time_windows")
         if not isinstance(windows, list) or not windows:
-            return True
+            return False
         from datetime import datetime
         cur = datetime.now().strftime("%H:%M")
         for w in windows:
             start, end = w.get("start", ""), w.get("end", "")
             if start and end and start <= cur <= end:
-                return True
+                prob = w.get("probability")
+                return random.random() < (1.0 if prob is None else float(prob))
         return False
-
-    def _get_session_cooldown_seconds(self, cfg: dict) -> float:
-        """会话随机间隔（cooldown_range 内随机；未配置回退全局默认 15 分钟）"""
-        import random
-        r = cfg.get("cooldown_range")
-        if isinstance(r, (list, tuple)) and len(r) == 2:
-            lo, hi = max(1, int(r[0])), max(1, int(r[1]))
-            if hi < lo:
-                lo, hi = hi, lo
-            return random.randint(lo, hi) * 60
-        try:
-            return settings.PROACTIVE_OUTREACH_COOLDOWN_MINUTES * 60
-        except Exception:
-            return 15 * 60
-
-    def _has_active_connection(self, session_id: str) -> bool:
-        """目标会话是否有活跃 WebSocket 连接（无则跳过搭话，防 LLM 白跑）"""
-        try:
-            from modules.thinking.api_stream import connection_manager
-            return session_id in connection_manager.active_connections
-        except Exception:
-            return False
-
-    def _get_session_info(self):
-        """选择主动搭话的目标会话
-
-        规则（按你的预期）：
-        1. 目标会话必须有真实消息（用户真正聊过的会话，不含空/voice 残留会话）
-        2. 优先选当前正有 WebSocket 连接的会话（即用户当前正在看的会话）
-        3. 其次选最近一次有过对话的会话（上次对话）
-        4. 如果从来没有过任何对话 → 返回空，上层直接跳过，不启动主动搭话
-
-        内存 sessions 可能因重启/长时间无人用而为空 → 兜底查询数据库最近会话。
-        """
-        system = None
-        try:
-            from modules.thinking.api_stream import get_thinking_system
-            system = get_thinking_system()
-        except Exception:
-            system = None
-
-        candidates = {}
-        if system and system.sessions:
-            # 只保留有真实消息的会话（真正聊过，不含空/voice 残留会话）
-            candidates = {
-                sid: data for sid, data in system.sessions.items()
-                if data.get("messages")
-            }
-
-        if candidates:
-            # 自动选择"上一次对话"的会话：最近一次有过对话的（消息时间戳最新）
-            def score(sid, data):
-                msgs = data.get("messages") or []
-                return (msgs[-1].get("timestamp", 0) or 0) if msgs else 0
-
-            best_sid = max(candidates, key=lambda sid: score(sid, candidates[sid]))
-            messages = candidates[best_sid]["messages"]
-            recent = messages[-6:]  # 最近 6 条（3 轮）
-            # 与 agent 模式一致：【对话历史】[role]: content 格式
-            conversation = "\n".join(
-                f"[{m.get('role')}]: {str(m.get('content', ''))[:200]}"
-                for m in recent
-            )
-            return best_sid, conversation
-
-        # 内存无会话 → 兜底查数据库最近一次有真实消息的会话（重启/长空闲后仍能搭话）
-        try:
-            from modules.database.session_repo import get_session_repo
-            repo = get_session_repo()
-            for sess in repo.get_all_sessions(limit=20):
-                msgs = repo.get_recent_messages(sess["session_id"], limit=6)
-                real = [m for m in msgs if m.get("role") in ("user", "assistant")]
-                if not real:
-                    continue
-                conversation = "\n".join(
-                    f"[{m.get('role')}]: {str(m.get('content', ''))[:200]}"
-                    for m in real
-                )
-                return sess["session_id"], conversation
-        except Exception:
-            pass
-        return "", ""
 
     def _get_current_window(self) -> tuple:
         """获取当前活动窗口信息"""
@@ -605,9 +574,8 @@ class ProactiveTrigger:
             return {
                 "trigger_count": self._trigger_count,
                 "idle_seconds": round(self._idle_timer.idle_seconds, 1),
-                "change_ratio_threshold": self._change_ratio_threshold,
-                "idle_threshold_seconds": self._idle_threshold_seconds,
-                "cooldown_seconds": self._cooldown_seconds,
+                "session_last_trigger_count": len(self._session_last_trigger),
+                "active_sessions": len(self._get_enabled_outreach_sessions()),
             }
 
 
