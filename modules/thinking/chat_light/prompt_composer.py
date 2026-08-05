@@ -4,8 +4,8 @@ Prompt assembly engine — builds system prompts from base rules + identity + me
 from pathlib import Path
 import yaml
 
-from backend.config.settings import settings
-from backend.utils.logger import setup_logger
+from config.settings import settings
+from utils.logger import setup_logger
 
 logger = setup_logger("prompt_composer")
 

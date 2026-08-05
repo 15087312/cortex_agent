@@ -45,6 +45,9 @@ logs/
 # Runtime data (all)
 data/events_faiss.index
 data/events_id_map.json
+data/events_faiss_*.index
+data/events_id_map_*.json
+data/memory_*.db
 data/*.lock
 data/cache/
 data/memory/

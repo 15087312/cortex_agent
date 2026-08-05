@@ -10,12 +10,12 @@ Flow per user message:
 """
 import asyncio
 
-from backend.chat.model_runner import ModelRunner
-from backend.chat.context_slicer import ContextSlicer
-from backend.chat.blackboard import Blackboard
-from backend.config.prompts.composer import PromptComposer
-from backend.config.settings import settings
-from backend.utils.logger import setup_logger
+from modules.thinking.chat_light.model_runner import ModelRunner
+from modules.thinking.chat_light.context_slicer import ContextSlicer
+from modules.thinking.chat_light.blackboard import Blackboard
+from modules.thinking.chat_light.prompt_composer import PromptComposer
+from config.settings import settings
+from utils.logger import setup_logger
 
 logger = setup_logger("continuous_thinker")
 
@@ -102,9 +102,9 @@ class ContinuousThinker:
             if not prior_msgs:
                 return ""
 
-            from backend.memory.event_retrieval import get_event_retrieval
-            from backend.memory.depth_recall import should_trigger_deep_recall
-            from backend.memory.result_fusion import (
+            from modules.memory.event_retrieval import get_event_retrieval
+            from modules.memory.depth_recall import should_trigger_deep_recall
+            from modules.memory.result_fusion import (
                 format_deep_recall_result,
             )
 
@@ -114,7 +114,7 @@ class ContinuousThinker:
             try:
                 trigger_deep, _ = should_trigger_deep_recall(query)
                 if trigger_deep:
-                    from backend.memory.depth_recall import DepthRecallScheduler
+                    from modules.memory.depth_recall import DepthRecallScheduler
                     scheduler = DepthRecallScheduler()
                     deep_result = await scheduler.deep_recall(query, max_results=10)
                     if deep_result.success and not deep_result.fallback:
@@ -166,10 +166,9 @@ class ContinuousThinker:
             if len(conversation_text.strip()) < 50:
                 return
 
-            from backend.memory.event_reducer import EventReducer
-            from infra.model.model_client import get_model_client
-
-            reducer = EventReducer(model_client=get_model_client())
+            from modules.memory.event_reducer import EventReducer
+            
+            reducer = EventReducer(model_client=LargeModelClient())
             events = await reducer.reduce(session_id, conversation_text)
 
             if events:

@@ -158,6 +158,39 @@ class Settings(BaseSettings):
     # 日志
     LOGGING_ENABLED: bool = True
 
+    # ── 纯对话（chatonly）兼容字段（原 backend/config/settings 并入，统一基础设施）──
+    MODEL_MAX_TOKENS: int = 4096
+    MODEL_TEMPERATURE: float = 0.7
+    EMBEDDING_DEVICE: str = "cpu"
+    MEMORY_REDUCE_ENABLED: bool = True
+    CHAT_MAX_ROUNDS: int = 5
+    CHAT_CONTEXT_MAX_MESSAGES: int = 50
+    CHAT_CONTEXT_MAX_TOKENS: int = 8000
+
+    # ── 因果记忆（backend 并入）──
+    CAUSAL_DB_PATH: str = "data/causal.db"
+    CAUSAL_MAX_ANCHORS: int = 3
+    CAUSAL_MAX_NEIGHBORS_PER_HOP: int = 10
+    CAUSAL_MAX_TREE_DEPTH: int = 4
+    CAUSAL_MAX_EVENTS_RECALL: int = 30
+    CAUSAL_MIN_CONFIDENCE: float = 0.2
+
+    # ── 服务（backend/main 并入，统一入口后以 api/main 为准）──
+    HOST: str = "0.0.0.0"
+    PORT: int = 8000
+    CORS_ORIGINS: str = "http://localhost:5173"
+
+    # ── 身份（backend 并入）──
+    ASSISTANT_NAME: str = "Cortex"
+
+    # ── 前端 UI 设置（原 backend ~/.cortex-mini/settings.json 持久化，并入主 settings）──
+    launch_at_startup: bool = True
+    prevent_sleep: bool = False
+    show_filename_in_gallery: bool = False
+    allow_geolocation: bool = False
+    shortcut_keys: str = "⌥ + T"
+    storage_path: str = ""
+
     @property
     def effective_execution_mode(self) -> str:
         """实际执行模式"""
@@ -628,27 +661,6 @@ class Settings(BaseSettings):
             red_mod._reducer_instance = None
         except Exception:
             pass
-        # backend（纯对话路线）的记忆系统单例
-        try:
-            import backend.memory.event_store as bes_mod
-            bes_mod.EventStore._instance = None
-        except Exception:
-            pass
-        try:
-            import backend.memory.embedding as be_mod
-            be_mod.EmbeddingEngine._instance = None
-        except Exception:
-            pass
-        try:
-            import backend.memory.event_retrieval as ber_mod
-            ber_mod.EventRetrieval._instance = None
-        except Exception:
-            pass
-        try:
-            import backend.memory.event_reducer as bred_mod
-            bred_mod.EventReducer._instance = None
-        except Exception:
-            pass
 
     def switch_memory_lib(self, name: str) -> bool:
         """切换到指定记忆库（更新运行时路径 + 重置记忆单例）"""
@@ -661,7 +673,6 @@ class Settings(BaseSettings):
         object.__setattr__(self, "MEMORY_DB_PATH", lib["db"])
         object.__setattr__(self, "MEMORY_FAISS_INDEX", lib["faiss"])
         object.__setattr__(self, "MEMORY_ID_MAP", lib["id_map"])
-        self._sync_backend_memory_paths(lib)
         self._reset_memory_singletons()
         return True
 

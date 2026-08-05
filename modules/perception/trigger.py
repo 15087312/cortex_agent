@@ -293,11 +293,7 @@ class ProactiveTrigger:
         模式读对应的 repo 判定即可。
         """
         try:
-            from modules.thinking.chat_gateway import _resolve_mode
-            if _resolve_mode() == "chatonly":
-                from backend.database.session_repo import get_boot_has_spoken
-            else:
-                from modules.database.session_repo import get_boot_has_spoken
+            from modules.database.session_repo import get_boot_has_spoken
             return bool(get_boot_has_spoken())
         except Exception:
             return False
@@ -346,11 +342,7 @@ class ProactiveTrigger:
 
         # 内存无会话 → 兜底查数据库最近一次有真实消息的会话（重启/长空闲后仍能搭话）
         try:
-            from modules.thinking.chat_gateway import _resolve_mode
-            if _resolve_mode() == "chatonly":
-                from backend.database.session_repo import get_session_repo
-            else:
-                from modules.database.session_repo import get_session_repo
+            from modules.database.session_repo import get_session_repo
             repo = get_session_repo()
             for sess in repo.get_all_sessions(limit=20):
                 msgs = repo.get_recent_messages(sess["session_id"], limit=6)
@@ -454,13 +446,9 @@ class ProactiveTrigger:
                     extras.append(frag.content)
             except Exception:
                 pass
-            # 事件记忆（按对话模式分流：chatonly 用 backend 的记忆系统，agent 用 modules）
+            # 事件记忆（统一 modules 记忆系统）
             try:
-                from modules.thinking.chat_gateway import _resolve_mode
-                if _resolve_mode() == "chatonly":
-                    from backend.memory.event_retrieval import get_event_retrieval
-                else:
-                    from modules.memory.event_retrieval import get_event_retrieval
+                from modules.memory.event_retrieval import get_event_retrieval
                 events = await get_event_retrieval().retrieve(query=prompt, max_results=3, threshold=0.10)
                 if events:
                     lines = ["【曾经发生的事】", "（以下为过去的事件记忆，仅供参考，不要把过去任务当作当前任务执行）"]

@@ -10,8 +10,8 @@ ContextSlicer — 滑动窗口 + 分块摘要的上下文管理
 import asyncio
 from typing import List
 
-from backend.config.settings import settings
-from backend.utils.logger import setup_logger
+from config.settings import settings
+from utils.logger import setup_logger
 
 logger = setup_logger("context_slicer")
 
@@ -142,8 +142,8 @@ class ContextSlicer:
         )
 
         try:
-            from infra.model.model_client import get_model_client
-            client = get_model_client()
+            from infra.model.large_model_client import LargeModelClient
+            client = LargeModelClient()
             async with _SUMMARIZE_SEM:
                 summary = await client.generate(prompt, max_tokens=120, temperature=0.3)
             summary = summary.strip()

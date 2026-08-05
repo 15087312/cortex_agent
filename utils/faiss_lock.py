@@ -1,7 +1,7 @@
 """
 FAISS 索引跨实例文件锁
 
-两套 EventStore（modules.memory 与 backend.memory）共用同一份
+多记忆库 EventStore 共用同一份
 data/events_faiss.index + data/events_id_map.json，且都在同一进程内运行。
 本模块提供「进程内可重入 RLock + 跨进程 flock」的文件锁，防止两套
 EventStore 并发写同一索引导致文件损坏或 id_map 与向量数不一致。

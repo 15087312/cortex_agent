@@ -115,7 +115,7 @@ def ensure_shared_schema() -> None:
 
 
 # ---------------------------------------------------------------------------
-# chatonly 路线：backend 懒加载（agent 模式绝不 import backend.*）
+# chatonly 路线：chat_light 懒加载（agent 模式绝不 import chat_light.*）
 # ---------------------------------------------------------------------------
 
 _chat_thinker: Optional[Any] = None
@@ -123,18 +123,18 @@ _chat_thinker_lock = threading.Lock()
 
 
 def _get_chat_thinker():
-    """懒加载 backend 的 ContinuousThinker 单例"""
+    """懒加载 chat_light 的 ContinuousThinker 单例"""
     global _chat_thinker
     if _chat_thinker is None:
         with _chat_thinker_lock:
             if _chat_thinker is None:
-                from backend.chat.continuous_thinker import ContinuousThinker
+                from modules.thinking.chat_light.continuous_thinker import ContinuousThinker
                 _chat_thinker = ContinuousThinker()
     return _chat_thinker
 
 
 def _get_chat_session_repo():
-    from backend.database.session_repo import get_session_repo
+    from modules.database.session_repo import get_session_repo
     return get_session_repo()
 
 

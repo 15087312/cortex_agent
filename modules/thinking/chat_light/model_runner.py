@@ -1,28 +1,27 @@
 """
 ModelRunner — single-model execution engine.
-Wraps ModelClient for single execution with streaming.
+Wraps LargeModelClient for single execution with streaming.
 """
 from typing import Callable, List, Optional
 
-from infra.model.model_client import ModelClient
+from infra.model.large_model_client import LargeModelClient
 from infra.model.base_model import ChatMessage, ChatResponse
-from backend.config.settings import settings
-from backend.utils.logger import setup_logger
+from config.settings import settings
+from utils.logger import setup_logger
 
 logger = setup_logger("model_runner")
 
 
 class ModelRunner:
-    """Wraps a ModelClient for single execution."""
+    """Wraps a LargeModelClient for single execution."""
 
-    def __init__(self, client: ModelClient = None):
+    def __init__(self, client: LargeModelClient = None):
         self._client = client
 
     @property
-    def client(self) -> ModelClient:
+    def client(self) -> LargeModelClient:
         if self._client is None:
-            from infra.model.model_client import get_model_client
-            self._client = get_model_client()
+            self._client = LargeModelClient()
         return self._client
 
     async def run(
