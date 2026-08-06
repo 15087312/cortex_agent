@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>桌宠</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: transparent;
+    font-family: system-ui, -apple-system, sans-serif;
+  }
+  #stage {
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    width: 100%;
+    height: 100%;
+  }
+  #bubble {
+    position: absolute;
+    left: 50%;
+    top: 4px;
+    transform: translateX(-50%);
+    max-width: 230px;
+    background: rgba(255, 255, 255, 0.95);
+    color: #333;
+    border-radius: 14px;
+    padding: 10px 14px;
+    font-size: 13px;
+    line-height: 1.5;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.25s ease, transform 0.25s ease;
+    z-index: 5;
+  }
+  #bubble.visible {
+    opacity: 1;
+    transform: translateX(-50%) translateY(4px);
+  }
+  #status {
+    position: absolute;
+    left: 50%;
+    bottom: 4px;
+    transform: translateX(-50%);
+    color: rgba(60, 60, 60, 0.75);
+    font-size: 11px;
+    background: rgba(255, 255, 255, 0.7);
+    border-radius: 8px;
+    padding: 2px 8px;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+    z-index: 6;
+    white-space: nowrap;
+  }
+  #status.visible { opacity: 1; }
+</style>
+</head>
+<body>
+<div id="bubble"></div>
+<div id="status"></div>
+<canvas id="stage"></canvas>
+
+<script src="lib/pixi.min.js"></script>
+<script src="lib/live2dcubismcore.min.js"></script>
+<script src="lib/pixi-live2d-display.min.js"></script>
+<script>
+(function () {
+  var MODEL_URL = 'models/hiyori/Hiyori.model3.json';
+  var bubbleEl = document.getElementById('bubble');
+  var statusEl = document.getElementById('status');
+  var model = null;
+  var app = null;
+  var tweenFrame = 0;
+
+  try {
+    var live2d = (window.PIXI && window.PIXI.live2d) || window.live2d;
+    app = new PIXI.Application({
+      view: document.getElementById('stage'),
+      width: window.innerWidth,
+      height: window.innerHeight,
+      transparent: true,
+      autoStart: true,
+      resizeTo: window,
+      antialias: true,
+      autoDensity: true,
+    });
+
+    live2d.Live2DModel.from(MODEL_URL, { autoInteract: false }).then(function (m) {
+      model = m;
+      window.__m = { loaded: true };
+      model.anchor.set(0.5, 1);
+      model.position.set(window.innerWidth / 2, window.innerHeight - 4);
+      var fit = Math.min(window.innerWidth / model.width, window.innerHeight / model.height);
+      model.scale.set(Math.min(fit, 1));
+      app.stage.addChild(model);
+      if (typeof m.internalModel !== 'undefined' && m.internalModel.coreModel) {
+        try { m.internalModel.coreModel.startRandomMotionGroup('Idle'); } catch (e) {}
+      }
+    }).catch(function (err) {
+      console.error('Live2D 模型加载失败:', err);
+      window.__err = String(err && err.message ? err.message : err);
+    });
+  } catch (err) {
+    console.error('Live2D 初始化失败:', err);
+  }
+
+  function showReply(text) {
+    bubbleEl.textContent = text || '';
+    bubbleEl.classList.add('visible');
+    clearTimeout(showReply._timer);
+    showReply._timer = setTimeout(function () {
+      bubbleEl.classList.remove('visible');
+    }, 9000);
+    speak(true);
+    setTimeout(function () { speak(false); }, Math.min(4000, 900 + (text ? text.length * 120 : 0)));
+  }
+
+  function speak(on) {
+    if (!model) return;
+    if (on) {
+      model._speak = 0;
+      if (!model._speakTimer) {
+        model._speakTimer = setInterval(function () {
+          if (model._speak === null) return;
+          model._speak += 0.16;
+          var dy = Math.sin(model._speak) * 0.03;
+          model.position.y = window.innerHeight - 4 - dy * model.height;
+        }, 90);
+      }
+    } else {
+      model._speak = null;
+      if (model._speakTimer) {
+        clearInterval(model._speakTimer);
+        model._speakTimer = null;
+      }
+      model.position.y = window.innerHeight - 4;
+    }
+  }
+
+  function setStatus(text) {
+    if (!text) {
+      statusEl.classList.remove('visible');
+      return;
+    }
+    statusEl.textContent = text;
+    statusEl.classList.add('visible');
+  }
+
+  window.showReply = showReply;
+  window.speak = speak;
+  window.setStatus = setStatus;
+})();
+</script>
+</body>
+</html>
