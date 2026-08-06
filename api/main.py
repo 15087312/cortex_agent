@@ -274,6 +274,11 @@ app = FastAPI(
 _tts_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/audio", StaticFiles(directory=str(_tts_dir), check_dir=False), name="audio")
 
+# ── 桌宠静态挂载（Live2D 需经 http 加载 wasm，file:// 会被 Chromium 阻止） ──
+_PET_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend", "pet")
+if os.path.isdir(_PET_DIR):
+    app.mount("/pet", StaticFiles(directory=_PET_DIR), name="pet")
+
 # ── Dashboard 静态文件 ──
 _DASHBOARD_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "dashboard")
 
@@ -339,10 +344,10 @@ _AUTH_WHITELIST = {
 _AUTH_WHITELIST_PREFIXES = ("/management/causal-graph", "/management/memory",
                              "/stream/session/", "/stream/sessions/",
                              "/stream/proactive-log",
-                             "/stream/pet/",
-                             "/management/sessions/", "/config/",
-                             "/tools/info/",
-                             "/audio")  # TTS 音频供前端 <audio> 无鉴权播放
+                              "/stream/pet/",
+                              "/management/sessions/", "/config/",
+                              "/tools/info/",
+                              "/audio", "/pet/")  # TTS 音频供前端 <audio> 无鉴权播放；/pet/ 桌宠 Live2D 资源
 
 
 @app.middleware("http")

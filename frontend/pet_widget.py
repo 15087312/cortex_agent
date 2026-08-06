@@ -12,7 +12,7 @@ import urllib.request
 
 from PyQt6.QtCore import QTimer, Qt, QUrl, QPoint
 from PyQt6.QtGui import QColor
-from PyQt6.QtWebEngineCore import QWebEngineSettings
+from PyQt6.QtWebEngineCore import QWebEngineProfile, QWebEngineSettings
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWidgets import QWidget
 
@@ -21,6 +21,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 BACKEND_URL = os.environ.get("CORTEX_BACKEND_URL", "http://localhost:8080")
 _PET_DIR = os.path.dirname(os.path.abspath(__file__))
 _PET_HTML = os.path.join(_PET_DIR, "pet", "index.html")
+
+
+def _pet_url(backend_url: str) -> QUrl:
+    """Live2D wasm 需经 http 加载（file:// 被 Chromium 阻止），经后端 /pet/ 静态服务；
+    加版本参数避免 QWebEngine 缓存旧页面"""
+    return QUrl(f"{backend_url.rstrip('/')}/pet/index.html?v={int(time.time())}")
 
 
 class _DragView(QWebEngineView):
@@ -71,13 +77,16 @@ class PetWidget(QWidget):
         self.view.setGeometry(0, 0, 320, 540)
         self.view.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.view.setStyleSheet("background: transparent;")
+        _profile = QWebEngineProfile.defaultProfile()
+        _profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.NoCache)
+        _profile.setHttpCacheMaximumSize(0)
         settings = self.view.settings()
         settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessFileUrls, True)
         settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
         settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
         settings.setAttribute(QWebEngineSettings.WebAttribute.AllowRunningInsecureContent, True)
         self.view.page().setBackgroundColor(QColor(0, 0, 0, 0))
-        self.view.load(QUrl.fromLocalFile(_PET_HTML))
+        self.view.load(_pet_url(self.backend_url))
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._poll)

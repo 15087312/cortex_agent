@@ -68,6 +68,7 @@
 <script src="lib/pixi.min.js"></script>
 <script src="lib/live2dcubismcore.min.js"></script>
 <script src="lib/pixi-live2d-display.min.js"></script>
+<script src="lib/cubism4.min.js"></script>
 <script>
 (function () {
   var MODEL_URL = 'models/hiyori/Hiyori.model3.json';
@@ -154,6 +155,23 @@
   window.showReply = showReply;
   window.speak = speak;
   window.setStatus = setStatus;
+
+  // 页面自轮询后端最近回复（与 Qt 桥接双保险，Live2D 渲染不依赖 Qt）
+  (function () {
+    var lastTime = 0;
+    setInterval(function () {
+      fetch('/stream/pet/last-reply', { headers: { 'Accept': 'application/json' } })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          var data = d && d.data;
+          if (data && data.time && data.time !== lastTime) {
+            lastTime = data.time;
+            showReply(data.text || '');
+          }
+        })
+        .catch(function () {});
+    }, 1200);
+  })();
 })();
 </script>
 </body>
