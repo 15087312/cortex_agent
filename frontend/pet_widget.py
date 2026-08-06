@@ -62,9 +62,12 @@ class PetWidget(QWidget):
         self.view.setGeometry(0, 0, PET_W, PET_H)
         self.view.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.view.setStyleSheet("background: transparent;")
-        _profile = QWebEngineProfile.defaultProfile()
+        # 独立 QWebEngineProfile（与主窗口隔离，避免两个 WebEngine 透明窗口共享冲突）
+        _profile = QWebEngineProfile("pet_profile")
         _profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.NoCache)
         _profile.setHttpCacheMaximumSize(0)
+        from PyQt6.QtWebEngineCore import QWebEnginePage
+        self.view.setPage(QWebEnginePage(_profile, self.view))
         settings = self.view.settings()
         settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessFileUrls, True)
         settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)

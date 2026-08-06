@@ -367,24 +367,28 @@ def main():
     print("[OK] Cortex Agent 已启动")
     print("[..] 如果窗口未自动加载，请手动打开 http://localhost:8765")
 
-    # 桌宠窗口（无边框置顶透明小窗，语音触发与主会话对话）——跟随前端生命周期
-    global _pet
-    try:
-        from pet_widget import create_pet_widget
-        _pet = create_pet_widget()
-        # 检测桌宠渲染进程崩溃（macOS 透明 WebEngine 偶发）
+    # 桌宠窗口（无边框置顶透明小窗）——延迟创建，等主窗口 WebEngine 稳定后再建，
+    # 避免两个 WebEngine 同时初始化透明窗口导致 macOS 崩溃（could not create image from display）
+    def _create_pet_later():
+        global _pet
         try:
-            _pet.view.page().renderProcessTerminated.connect(
-                lambda status, code, desc: print(
-                    f"[DBG] 桌宠渲染进程终止: status={status} code={code} {desc}", flush=True
+            from pet_widget import create_pet_widget
+            _pet = create_pet_widget()
+            try:
+                _pet.view.page().renderProcessTerminated.connect(
+                    lambda status, code, desc: print(
+                        f"[DBG] 桌宠渲染进程终止: status={status} code={code} {desc}", flush=True
+                    )
                 )
-            )
-        except Exception:
-            pass
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        print(f"[..] 桌宠启动失败: {e}")
+            except Exception:
+                pass
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            print(f"[..] 桌宠启动失败: {e}")
+
+    from PyQt6.QtCore import QTimer
+    QTimer.singleShot(2500, _create_pet_later)
 
     try:
         window.browser.page().renderProcessTerminated.connect(
