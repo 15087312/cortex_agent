@@ -155,9 +155,12 @@
         }
       })
       .catch(function (err) {
-        console.error('Live2D 模型加载失败:', err);
-        // 后端可能尚未就绪（cortex --qt 后端启动慢），3 秒后重试
-        setTimeout(function () { loadModel(idx); }, 3000);
+        console.error('[PET] Live2D 模型加载失败:', err);
+        // 后端可能尚未就绪（cortex --qt 后端启动慢），最多重试 6 次（每 3s）
+        loadModel._tries = (loadModel._tries || 0) + 1;
+        if (loadModel._tries <= 6) {
+          setTimeout(function () { loadModel(idx); }, 3000);
+        }
       });
   }
 

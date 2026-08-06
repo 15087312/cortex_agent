@@ -11,6 +11,10 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+# macOS 透明 WebEngine 窗口 GPU 合成问题（could not create image from display）——
+# 改用软件渲染，避免渲染进程崩溃导致模型加载失败
+os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--disable-gpu --disable-software-rasterizer")
+
 from PyQt6.QtWidgets import QApplication
 
 from pet_widget import create_pet_widget
