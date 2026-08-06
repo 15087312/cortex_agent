@@ -396,6 +396,8 @@ _request_counter_ref: list = [0]
 _rate_limit_lock = asyncio.Lock()
 _TRUSTED_PROXIES = {"127.0.0.1", "::1"}  # Q-7: Whitelist of trusted reverse proxies (IPv4 + IPv6)
 _MAX_RATE_LIMIT_KEYS = 10000  # 防止内存泄漏：最多跟踪的 IP:minute 组合数
+# 高频本地轮询端点跳过限流（桌宠拖动轮询 50-150ms 一次）
+_RATE_LIMIT_WHITELIST_PATHS = ("/stream/pet/move",)
 
 
 # 每处理 500 次请求清理一次过期的分钟 key（key 格式: ip|minute）
@@ -429,6 +431,8 @@ def _get_client_ip(request: Request) -> str:
 
 @app.middleware("http")
 async def rate_limit_middleware(request: Request, call_next):
+    if request.url.path in _RATE_LIMIT_WHITELIST_PATHS:
+        return await call_next(request)
     client_ip = _get_client_ip(request)
     current_minute = int(time.time() / 60)
 

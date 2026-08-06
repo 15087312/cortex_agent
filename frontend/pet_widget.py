@@ -90,7 +90,7 @@ class PetWidget(QWidget):
         # 拖动：页面 fetch 后端累积位移 → Qt 轮询移动窗口（规避 QWebChannel 段错误）
         self._move_timer = QTimer(self)
         self._move_timer.timeout.connect(self._poll_move)
-        self._move_timer.start(50)
+        self._move_timer.start(150)
 
         self._place_default()
 
