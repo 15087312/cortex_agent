@@ -226,22 +226,25 @@
     closeMenu();
     suppressClick = true;
     backdropEl.style.display = 'block';
+    // 菜单中心 clamp 到窗口内，确保最外圈按钮（ACT_R）不超窗
+    var cx = Math.max(ACT_R + 34, Math.min(x, window.innerWidth - ACT_R - 34));
+    var cy = Math.max(ACT_R + 34, Math.min(y, window.innerHeight - ACT_R - 34));
     CATS.forEach(function (c, i) {
       var a = -90 + (360 / CATS.length) * i;
       var btn = document.createElement('div');
       btn.className = 'pet-btn cat';
       btn.innerHTML = '<i data-lucide="' + c.icon + '"></i><span class="lbl">' + c.label + '</span>';
-      btn.style.left = (x + MENU_R * Math.cos(a * Math.PI / 180)) + 'px';
-      btn.style.top = (y + MENU_R * Math.sin(a * Math.PI / 180)) + 'px';
-      btn.onclick = function () { showActions(c, x, y); };
+      btn.style.left = (cx + MENU_R * Math.cos(a * Math.PI / 180)) + 'px';
+      btn.style.top = (cy + MENU_R * Math.sin(a * Math.PI / 180)) + 'px';
+      btn.onclick = function () { showActions(c, cx, cy); };
       menuEl.appendChild(btn);
     });
     // 中心换装按钮：循环切换 Live2D 模型
     var swap = document.createElement('div');
     swap.className = 'pet-btn';
     swap.innerHTML = '<i data-lucide="repeat"></i><span class="lbl">换装</span>';
-    swap.style.left = x + 'px';
-    swap.style.top = y + 'px';
+    swap.style.left = cx + 'px';
+    swap.style.top = cy + 'px';
     swap.onclick = function () {
       closeMenu();
       var next = MODELS[(curModelIdx + 1) % MODELS.length];
@@ -293,7 +296,7 @@
         return reader.read().then(function (r) {
           if (r.done) return;
           buf += decoder.decode(r.value, { stream: true });
-          var parts = buf.split('\n\n');
+          var parts = buf.split(/\r?\n\r?\n/);  // 兼容 SSE 的 \r\n\r\n 与 \n\n
           buf = parts.pop();
           parts.forEach(function (p) {
             var data = p.split('\n')

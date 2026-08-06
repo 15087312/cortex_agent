@@ -165,8 +165,12 @@ class PetEngine:
         queue: "asyncio.Queue" = asyncio.Queue()
         collected: list = []
 
-        async def on_token(t: str):
-            await queue.put(t)
+        # 注意：chat_stream 的 on_token 是同步回调（不 await），须用同步 put_nowait
+        def on_token(t: str):
+            try:
+                queue.put_nowait(t)
+            except Exception:
+                pass
 
         task = asyncio.create_task(self._chat_stream_task(text, on_token, collected, extra_system))
         try:
