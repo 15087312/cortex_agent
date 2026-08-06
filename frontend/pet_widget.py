@@ -1,7 +1,8 @@
 """桌宠窗口 — 透明置顶小窗 + Live2D 角色（稳定方案）
 
-窗口只占角色区域（不挡桌面，无需鼠标穿透），角色区域内可交互
-（单击开圆环互动菜单 / 拖动角色）。语音触发走后端（F8 / 唤醒词"科特"）。
+窗口只占角色区域（不挡桌面，无需鼠标穿透）。
+交互：页面内拖动 → QWebChannel 调 Qt 移动整个窗口；单击角色 → 圆环互动菜单。
+语音触发走后端（F8 / 唤醒词"科特"→ 主会话对话）。
 """
 import json
 import os
@@ -9,8 +10,9 @@ import sys
 import time
 import urllib.request
 
-from PyQt6.QtCore import QPoint, QTimer, Qt, QUrl
+from PyQt6.QtCore import QObject, QPoint, QTimer, Qt, QUrl, pyqtSlot
 from PyQt6.QtGui import QColor
+from PyQt6.QtWebChannel import QWebChannel
 from PyQt6.QtWebEngineCore import QWebEngineProfile, QWebEngineSettings
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWidgets import QWidget
@@ -29,46 +31,16 @@ def _pet_url(backend_url: str) -> QUrl:
     return QUrl(f"{backend_url.rstrip('/')}/pet/index.html?v={int(time.time())}")
 
 
-class _DragView(QWebEngineView):
-    """Qt 层交互：单击开互动菜单 / 拖动移动整个窗口（角色固定在窗口内）"""
+class _PetBridge(QObject):
+    """页面 JS 经 QWebChannel 调用：拖动时移动整个窗口"""
 
-    def __init__(self, parent):
-        super().__init__(parent)
-        self._press_pos = None
-        self._dragging = False
+    def __init__(self, pet: "PetWidget"):
+        super().__init__()
+        self._pet = pet
 
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self._press_pos = event.globalPosition().toPoint()
-            self._dragging = False
-            event.accept()
-            return
-        super().mousePressEvent(event)
-
-    def mouseMoveEvent(self, event):
-        if self._press_pos is not None and event.buttons() & Qt.MouseButton.LeftButton:
-            cur = event.globalPosition().toPoint()
-            if self._dragging:
-                self.parentWidget().move(self.parentWidget().pos() + (cur - self._press_pos))
-                self._press_pos = cur
-            elif (cur - self._press_pos).manhattanLength() > 10:
-                self._dragging = True  # 移动超过阈值 = 拖动窗口
-            event.accept()
-            return
-        super().mouseMoveEvent(event)
-
-    def mouseReleaseEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton and self._press_pos is not None:
-            cur = event.globalPosition().toPoint()
-            if not self._dragging and (cur - self._press_pos).manhattanLength() <= 10:
-                # 单击 → 开互动菜单（窗口内坐标，页面判定是否命中角色）
-                local = self.parentWidget().mapFromGlobal(cur)
-                self.page().runJavaScript(f"openMenuAt({local.x()}, {local.y()})")
-            self._press_pos = None
-            self._dragging = False
-            event.accept()
-            return
-        super().mouseReleaseEvent(event)
+    @pyqtSlot(int, int)
+    def moveWin(self, dx: int, dy: int):
+        self._pet.move(self._pet.pos() + QPoint(dx, dy))
 
 
 class PetWidget(QWidget):
@@ -86,7 +58,7 @@ class PetWidget(QWidget):
         self.setFixedSize(PET_W, PET_H)
         self.backend_url = backend_url.rstrip("/")
 
-        self.view = _DragView(self)
+        self.view = QWebEngineView(self)
         self.view.setGeometry(0, 0, PET_W, PET_H)
         self.view.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.view.setStyleSheet("background: transparent;")
@@ -99,6 +71,12 @@ class PetWidget(QWidget):
         settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
         settings.setAttribute(QWebEngineSettings.WebAttribute.AllowRunningInsecureContent, True)
         self.view.page().setBackgroundColor(QColor(0, 0, 0, 0))
+
+        # 页面 JS → Qt 桥（拖动移动窗口）——须在 load 之前设置
+        self._channel = QWebChannel(self.view.page())
+        self._channel.registerObject("petBridge", _PetBridge(self))
+        self.view.page().setWebChannel(self._channel)
+
         self.view.load(_pet_url(self.backend_url))
 
         self._cfg_timer = QTimer(self)
