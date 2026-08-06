@@ -11,8 +11,12 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# macOS 透明 QWebEngineView 需要共享 OpenGL 上下文（could not create image from display 的常见修复）。
-# 必须在 QApplication 实例创建前设置。注意：不能禁用 GPU——Live2D 渲染依赖 WebGL。
+# macOS 透明 QWebEngineView 需要共享 OpenGL 上下文 + Chromium 透明视觉 flag
+# （could not create image from display 的修复）。必须在 QApplication 实例创建前设置。
+# 注意：不能禁用 GPU——Live2D 渲染依赖 WebGL。
+os.environ.setdefault(
+    "QTWEBENGINE_CHROMIUM_FLAGS", "--enable-transparent-visuals"
+)
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication
 QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)

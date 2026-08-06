@@ -31,7 +31,7 @@ class ApiLogStore:
         os.makedirs(os.path.dirname(self._path), exist_ok=True)
         self._queue: list = []
         self._qlock = threading.Lock()
-        self._conn = sqlite3.connect(self._path)
+        self._conn = sqlite3.connect(self._path, check_same_thread=False, timeout=3)
         self._conn.execute(
             """CREATE TABLE IF NOT EXISTS api_requests (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -113,7 +113,7 @@ class ApiLogStore:
             sql += " WHERE " + " AND ".join(where)
         sql += " ORDER BY ts DESC LIMIT ? OFFSET ?"
         params.extend([int(limit), int(offset)])
-        conn = sqlite3.connect(self._path)
+        conn = sqlite3.connect(self._path, timeout=3)
         try:
             rows = conn.execute(sql, params).fetchall()
         finally:
@@ -136,14 +136,14 @@ class ApiLogStore:
         sql = "SELECT COUNT(*) FROM api_requests"
         if where:
             sql += " WHERE " + " AND ".join(where)
-        conn = sqlite3.connect(self._path)
+        conn = sqlite3.connect(self._path, timeout=3)
         try:
             return conn.execute(sql, params).fetchone()[0]
         finally:
             conn.close()
 
     def stats(self, since_hours: float = 0.0) -> dict:
-        conn = sqlite3.connect(self._path)
+        conn = sqlite3.connect(self._path, timeout=3)
         try:
             since = time.time() - since_hours * 3600 if since_hours > 0 else 0
             base = "FROM api_requests"
