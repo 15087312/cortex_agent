@@ -34,7 +34,7 @@ import server
 
 _server_instance = None
 _server_thread = None
-_pet = None
+_pet_proc = None
 
 
 # ── App Icon ──────────────────────────────────────────────
@@ -262,36 +262,15 @@ class MainWindow(QMainWindow):
             self._dev_tools.show()
 
     def _quit_app(self):
-        global _pet
-        if _pet is not None:
-            try:
-                _pet.close()
-            except Exception:
-                pass
+        _stop_pet()
         _stop_server()
         self._app.quit()
 
     def closeEvent(self, event):
-        global _pet
         self._settings.setValue("window/geometry", self.saveGeometry())
         self.browser.stop()
-        # 桌宠跟随前端：隐藏到 Dock 时桌宠一起隐藏
-        if _pet is not None:
-            try:
-                _pet.hide()
-            except Exception:
-                pass
         self.hide()
         event.ignore()
-
-    def showEvent(self, event):
-        super().showEvent(event)
-        global _pet
-        if _pet is not None:
-            try:
-                _pet.show()
-            except Exception:
-                pass
 
     def changeEvent(self, event):
         if event.type() == event.Type.WindowStateChange:
@@ -326,6 +305,13 @@ def _port_in_use(port=8765):
 
 def main():
     global _server_thread
+
+    # 未捕获异常打印（定位"自动退出"根因）
+    def _excepthook(tp, val, tb):
+        import traceback
+        traceback.print_exception(tp, val, tb)
+        print("[DBG] 未捕获异常导致退出", flush=True)
+    sys.excepthook = _excepthook
 
     if _port_in_use():
         print("[OK] 前端服务已在运行 (端口 8765)")
@@ -371,6 +357,9 @@ def main():
     # 避免两个 WebEngine 同时初始化透明窗口导致 macOS 崩溃（could not create image from display）
     def _create_pet_later():
         global _pet
+        if os.environ.get("CORTEX_DISABLE_PET", "0") == "1":
+            print("[DBG] 桌宠已禁用 (CORTEX_DISABLE_PET=1)", flush=True)
+            return
         try:
             from pet_widget import create_pet_widget
             _pet = create_pet_widget()
