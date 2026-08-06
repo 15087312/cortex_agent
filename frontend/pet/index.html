@@ -174,6 +174,25 @@
         .catch(function () {});
     }, 1200);
   })();
+
+  // 角色拖动（在交互区域内可达；双击复位到底部中间）
+  (function () {
+    var dragging = false, dragOff = null;
+    document.addEventListener('mousedown', function (e) {
+      if (!model) return;
+      dragging = true;
+      dragOff = { x: e.clientX - model.position.x, y: e.clientY - model.position.y };
+    });
+    document.addEventListener('mousemove', function (e) {
+      if (!dragging || !model) return;
+      model.position.set(e.clientX - dragOff.x, e.clientY - dragOff.y);
+    });
+    document.addEventListener('mouseup', function () { dragging = false; });
+    document.addEventListener('dblclick', function () {
+      if (!model) return;
+      model.position.set(window.innerWidth / 2, window.innerHeight - 2);
+    });
+  })();
 })();
 </script>
 </body>
