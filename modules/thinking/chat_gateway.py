@@ -692,6 +692,17 @@ async def pet_move_stream():
     return EventSourceResponse(gen())
 
 
+@router.post("/pet/state/reset")
+async def pet_state_reset():
+    """重置桌宠状态为默认（设置页用）"""
+    from modules.desktop_pet.pet_state import PetState, DEFAULTS
+    st = PetState.get_instance()
+    st._values = dict(DEFAULTS)
+    st._updated_at = time.time()
+    st._save()
+    return {"success": True, "data": {"values": st.read()}}
+
+
 @router.post("/pet/chat")
 async def pet_chat_stream(body: PetChatRequest):
     """互动对话（SSE 流式）：应用状态效果 → 状态注入提示词 → 流式 LLM → 保存会话"""

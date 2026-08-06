@@ -155,7 +155,7 @@
         }
       })
       .catch(function (err) {
-        console.error('[PET] Live2D 模型加载失败:', err);
+        console.error('[PET] 模型加载失败:', cfg.dir + '/' + cfg.file, err, err && err.stack ? err.stack.split('\n')[0] : '');
         // 后端可能尚未就绪（cortex --qt 后端启动慢），最多重试 6 次（每 3s）
         loadModel._tries = (loadModel._tries || 0) + 1;
         if (loadModel._tries <= 6) {

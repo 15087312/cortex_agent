@@ -122,6 +122,27 @@ const proactiveEnabled = boolCfg('PROACTIVE_OUTREACH_ENABLED', false)
 const ttsEnabled = boolCfg('OUTPUT_TTS_ENABLED', false)
 const petEnabled = boolCfg('DESKTOP_PET_ENABLED', true)
 const petSessionId = txtCfg('DESKTOP_PET_SESSION_ID', 'pet_main')
+
+// ── 桌宠状态（实时显示 + 重置）──
+const petState = ref({})
+const petStateText = ref('')
+const petStateLabels = { mood: '心情', satiety: '饱食', energy: '精力', cleanliness: '清洁' }
+async function loadPetState() {
+  try {
+    const r = await fetch('/stream/pet/state', { headers: { Accept: 'application/json' } })
+    const d = await r.json()
+    if (d?.data?.values) petState.value = d.data.values
+    if (d?.data?.text) petStateText.value = d.data.text
+  } catch (e) {}
+}
+async function resetPetState() {
+  try {
+    const r = await fetch('/stream/pet/state/reset', { method: 'POST' })
+    const d = await r.json()
+    if (d?.data?.values) { petState.value = d.data.values; toast.show('桌宠状态已重置', 'success') }
+  } catch (e) { toast.show('重置失败', 'error') }
+}
+onMounted(() => { loadPetState(); setInterval(loadPetState, 5000) })
 const debugEnabled = boolCfg('DEBUG', false)
 const loggingEnabled = boolCfg('LOGGING_ENABLED', true)
 const logLevel = segCfg('LOG_LEVEL', 'INFO')
@@ -593,12 +614,30 @@ onMounted(async () => {
         <div class="settings-group">
           <div class="settings-group-title">桌面宠物</div>
           <div class="setting-row">
-            <div class="lbl"><div class="t">桌宠开关</div><div class="d">全屏透明桌宠 + 语音对话</div></div>
+            <div class="lbl"><div class="t">桌宠开关</div><div class="d">桌宠窗口 + 语音对话（实时生效）</div></div>
             <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="petEnabled" @change="petEnabled = !petEnabled" /><span class="toggle-slider"></span></label></div>
           </div>
           <div class="setting-row">
             <div class="lbl"><div class="t">主会话 ID</div><div class="d">桌宠对话记忆，永不删除</div></div>
             <div class="setting-ctl"><input class="input" v-model="petSessionId" style="width:160px" /></div>
+          </div>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">当前状态</div><div class="d">互动影响状态，随时间衰减</div></div>
+            <div class="setting-ctl" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+              <span v-for="(label, key) in petStateLabels" :key="key" class="badge" :style="{ background: 'rgba(88,166,255,.12)', color: 'var(--accent)' }">
+                {{ label }} <b>{{ petState[key] ?? '-' }}</b>
+              </span>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">状态描述</div></div>
+            <div class="setting-ctl"><span style="font-size:12px;color:var(--text-secondary)">{{ petStateText || '—' }}</span></div>
+          </div>
+          <div class="setting-row">
+            <div class="lbl"></div>
+            <div class="setting-ctl">
+              <button class="btn btn-sm" @click="resetPetState">重置状态</button>
+            </div>
           </div>
           <p class="settings-hint">语音触发：按 <b>{{ voiceHotkey }}</b> 或说"<b>{{ voiceWakePrefix }}</b>…"后开始说话，桌宠回复会语音播报并显示气泡。关闭开关后桌宠窗口自动隐藏。</p>
         </div>
