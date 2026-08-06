@@ -103,7 +103,6 @@
 <script src="lib/pixi-live2d-display.min.js"></script>
 <script src="lib/cubism4.min.js"></script>
 <script src="lib/lucide.min.js"></script>
-<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
 <script>
 (function () {
   console.log('[PET] cubismcore =', typeof Live2DCubismCore,
@@ -327,16 +326,7 @@
     });
   }
 
-  /* ═══════════ 交互：拖动移动窗口（QWebChannel → Qt）/ 单击开菜单 ═══════════ */
-  var petBridge = null;
-  (function () {
-    if (typeof QWebChannel !== 'undefined' && typeof qt !== 'undefined' && qt.webChannelTransport) {
-      new QWebChannel(qt.webChannelTransport, function (channel) {
-        petBridge = channel.objects.petBridge;
-      });
-    }
-  })();
-
+  /* ═══════════ 交互：页面内拖动角色 / 单击开菜单 ═══════════ */
   function openMenuAt(x, y) {
     if (!model) return;
     var mw = (model.width || 200) * 0.5 + 24;
@@ -346,27 +336,29 @@
     }
   }
 
-  var dragging = false, pressPos = null, lastScreen = null;
+  var dragging = false, dragOff = null, pressPos = null;
   document.addEventListener('mousedown', function (e) {
     pressPos = { x: e.clientX, y: e.clientY };
-    lastScreen = { x: e.screenX, y: e.screenY };
-    dragging = true;
+    if (!model) return;
+    try {
+      var b = model.getBounds();
+      if (b && b.contains(e.clientX, e.clientY)) {
+        dragging = true;
+        dragOff = { x: e.clientX - model.position.x, y: e.clientY - model.position.y };
+      }
+    } catch (err) { dragging = false; }
   });
   document.addEventListener('mousemove', function (e) {
-    if (!dragging || !lastScreen || !petBridge) return;
-    if (Math.abs(e.clientX - pressPos.x) + Math.abs(e.clientY - pressPos.y) > 10) {
-      petBridge.moveWin(e.screenX - lastScreen.x, e.screenY - lastScreen.y);
-      lastScreen = { x: e.screenX, y: e.screenY };
-    }
+    if (!dragging || !model) return;
+    model.position.set(e.clientX - dragOff.x, e.clientY - dragOff.y);
   });
   document.addEventListener('mouseup', function (e) {
-    if (dragging && pressPos) {
+    if (pressPos && model && !dragging) {
       var dist = Math.hypot(e.clientX - pressPos.x, e.clientY - pressPos.y);
       if (dist < 8) openMenuAt(e.clientX, e.clientY);
     }
     dragging = false;
     pressPos = null;
-    lastScreen = null;
   });
 
   /* ═══════════ 回复轮询（语音/互动 done 后显示） ═══════════ */

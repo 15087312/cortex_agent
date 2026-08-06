@@ -74,10 +74,10 @@ class PetWidget(QWidget):
         settings.setAttribute(QWebEngineSettings.WebAttribute.AllowRunningInsecureContent, True)
         self.view.page().setBackgroundColor(QColor(0, 0, 0, 0))
 
-        # 页面 JS → Qt 桥（拖动移动窗口）——须在 load 之前设置
-        self._channel = QWebChannel(self.view.page())
-        self._channel.registerObject("petBridge", _PetBridge(self))
-        self.view.page().setWebChannel(self._channel)
+        # QWebChannel（页面拖动移动窗口）——疑似 macOS 段错误源，暂时禁用定位
+        # self._channel = QWebChannel(self.view.page())
+        # self._channel.registerObject("petBridge", _PetBridge(self))
+        # self.view.page().setWebChannel(self._channel)
 
         # 页面加载失败自动重试（cortex --qt 后端启动慢，桌宠早拉起时后端未就绪）
         self.view.page().loadFinished.connect(self._on_load_finished)

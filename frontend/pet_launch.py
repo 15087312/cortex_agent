@@ -34,6 +34,9 @@ def _start_watchdog():
 
 
 def main():
+    import faulthandler
+    faulthandler.enable()  # 段错误时输出 Python 调用栈（定位崩溃点）
+
     app = QApplication(sys.argv)
     app.setApplicationName("Cortex Pet")
     app.setQuitOnLastWindowClosed(False)
