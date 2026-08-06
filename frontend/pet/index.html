@@ -106,6 +106,9 @@
 <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
 <script>
 (function () {
+  console.log('[PET] cubismcore =', typeof Live2DCubismCore,
+    '| pixi =', typeof PIXI,
+    '| live2dNS =', typeof (window.PIXI && window.PIXI.live2d));
   var MODEL_URL = 'models/hiyori/Hiyori.model3.json';
   var MODELS = [
     { dir: 'hiyori', file: 'Hiyori.model3.json', name: 'Hiyori' },
@@ -141,6 +144,7 @@
     if (model) { try { model.destroy(); } catch (e) {} model = null; }
     live2d.Live2DModel.from('models/' + cfg.dir + '/' + cfg.file, { autoInteract: false })
       .then(function (m) {
+        console.log('[PET] Live2D 模型加载成功:', cfg.name);
         model = m;
         model.anchor.set(0.5, 1);
         model.position.set(window.innerWidth / 2, window.innerHeight - 2);

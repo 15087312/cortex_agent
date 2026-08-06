@@ -46,6 +46,9 @@ def main():
         print("[PET]", *args, flush=True)
     try:
         _log("窗口 visible =", pet.isVisible(), "size =", pet.width(), "x", pet.height())
+        pet.view.page().javaScriptConsoleMessage = (
+            lambda level, msg, line, sid: _log(f"[JS:{level}] {msg}")
+        )
         pet.view.page().loadFinished.connect(
             lambda ok: _log("页面加载完成 ok =", ok)
         )
