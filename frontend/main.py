@@ -34,6 +34,7 @@ import server
 
 _server_instance = None
 _server_thread = None
+_pet = None
 
 
 # ── App Icon ──────────────────────────────────────────────
@@ -261,14 +262,36 @@ class MainWindow(QMainWindow):
             self._dev_tools.show()
 
     def _quit_app(self):
+        global _pet
+        if _pet is not None:
+            try:
+                _pet.close()
+            except Exception:
+                pass
         _stop_server()
         self._app.quit()
 
     def closeEvent(self, event):
+        global _pet
         self._settings.setValue("window/geometry", self.saveGeometry())
         self.browser.stop()
+        # 桌宠跟随前端：隐藏到 Dock 时桌宠一起隐藏
+        if _pet is not None:
+            try:
+                _pet.hide()
+            except Exception:
+                pass
         self.hide()
         event.ignore()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        global _pet
+        if _pet is not None:
+            try:
+                _pet.show()
+            except Exception:
+                pass
 
     def changeEvent(self, event):
         if event.type() == event.Type.WindowStateChange:
@@ -344,7 +367,8 @@ def main():
     print("[OK] Cortex Agent 已启动")
     print("[..] 如果窗口未自动加载，请手动打开 http://localhost:8765")
 
-    # 桌宠窗口（无边框置顶透明小窗，语音触发与主会话对话）
+    # 桌宠窗口（无边框置顶透明小窗，语音触发与主会话对话）——跟随前端生命周期
+    global _pet
     try:
         from pet_widget import create_pet_widget
         _pet = create_pet_widget()
