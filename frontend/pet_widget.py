@@ -22,8 +22,8 @@ BACKEND_URL = os.environ.get("CORTEX_BACKEND_URL", "http://localhost:8080")
 _PET_DIR = os.path.dirname(os.path.abspath(__file__))
 _PET_HTML = os.path.join(_PET_DIR, "pet", "index.html")
 
-# 角色可交互区域（底部中间固定，拖动角色在区域内；其余屏幕鼠标穿透）
-PET_ZONE_W, PET_ZONE_H = 420, 720
+# 角色可交互区域（紧贴角色默认大小：底部中间；拖动判定在页面内仅角色身上）
+PET_ZONE_W, PET_ZONE_H = 190, 420
 
 
 def _pet_url(backend_url: str) -> QUrl:

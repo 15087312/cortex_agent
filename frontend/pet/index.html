@@ -98,7 +98,7 @@
       window.__m = { loaded: true };
       model.anchor.set(0.5, 1);
       model.position.set(window.innerWidth / 2, window.innerHeight - 2);
-      var fit = Math.min(window.innerWidth / model.width, window.innerHeight / model.height);
+      var fit = Math.min(window.innerWidth / model.width, (window.innerHeight * 0.55) / model.height);
       model.scale.set(fit);
       app.stage.addChild(model);
       if (typeof m.internalModel !== 'undefined' && m.internalModel.coreModel) {
@@ -175,11 +175,15 @@
     }, 1200);
   })();
 
-  // 角色拖动（在交互区域内可达；双击复位到底部中间）
+  // 角色拖动（仅点在角色身上时启动；双击复位到底部中间）
   (function () {
     var dragging = false, dragOff = null;
     document.addEventListener('mousedown', function (e) {
       if (!model) return;
+      try {
+        var b = model.getBounds();
+        if (!b.contains(e.clientX, e.clientY)) return;
+      } catch (err) { return; }
       dragging = true;
       dragOff = { x: e.clientX - model.position.x, y: e.clientY - model.position.y };
     });
