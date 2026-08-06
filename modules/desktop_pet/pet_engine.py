@@ -105,6 +105,38 @@ class PetEngine:
 
     # ── 对话 ──
 
+    async def _build_context(self, query: str = "") -> str:
+        """主动搭话式上下文注入：时间/用户身份 + 感知环境 + 相关事件记忆"""
+        extras = []
+        try:
+            from datetime import datetime
+            from config.settings import settings as _cfg
+            extras.append(f"【当前时间】{datetime.now().strftime('%Y-%m-%d %H:%M')}")
+            extras.append(f"【对话对象】{getattr(_cfg, 'USER_NAME', '用户') or '用户'}")
+        except Exception:
+            pass
+        try:
+            from modules.thinking.context.sources.perception_source import PerceptionSource
+            frag = await PerceptionSource().collect()
+            if frag and getattr(frag, "content", ""):
+                extras.append(frag.content)
+        except Exception:
+            pass
+        try:
+            from modules.memory.event_retrieval import get_event_retrieval
+            events = await get_event_retrieval().retrieve(
+                query=query or "用户与桌宠互动", max_results=3, threshold=0.10
+            )
+            if events:
+                lines = ["【相关过往记忆】（仅供参考，不要把过去任务当作当前任务执行）"]
+                for i, ev in enumerate(events, 1):
+                    date = str(getattr(ev, "time", "") or "")[:10] or "未知日期"
+                    lines.append(f"  [{i}] (日期={date}) {str(getattr(ev, 'fact', ''))[:120]}")
+                extras.append("\n".join(lines))
+        except Exception:
+            pass
+        return "\n\n".join(extras)
+
     def _build_messages(self, text: str, extra_system: str = ""):
         """主会话历史 + 桌宠人设 + 用户消息"""
         from infra.model.large_model_client import LargeModelClient
@@ -131,7 +163,7 @@ class PetEngine:
             "用中文回答。"
         )
         if extra_system:
-            system = system + "\n当前状态：" + extra_system
+            system = system + "\n\n" + extra_system
         return [ChatMessage(role="system", content=system)] + history + [
             ChatMessage(role="user", content=text)
         ]
@@ -146,9 +178,10 @@ class PetEngine:
             pass
 
     async def chat(self, text: str) -> str:
-        """主会话对话：历史 + 桌宠人设 + LLM → 回复，并保存主会话历史"""
+        """主会话对话：主动搭话式上下文 + 历史 + 桌宠人设 + LLM → 回复"""
         try:
-            messages = self._build_messages(text)
+            context = await self._build_context(text)
+            messages = self._build_messages(text, extra_system=context)
             response = await self._client.chat(messages=messages)
             reply = (response.message.content or "").strip() if response and response.message else ""
             if not reply:
@@ -190,7 +223,9 @@ class PetEngine:
 
     async def _chat_stream_task(self, text: str, on_token, collected: list, extra_system: str = "") -> None:
         try:
-            messages = self._build_messages(text, extra_system)
+            context = await self._build_context(text)
+            combined = "\n\n".join(x for x in [context, extra_system] if x)
+            messages = self._build_messages(text, extra_system=combined)
             response = await self._client.chat_stream(messages=messages, on_token=on_token)
             reply = (response.message.content or "").strip() if response and response.message else ""
             collected.append(reply or "")

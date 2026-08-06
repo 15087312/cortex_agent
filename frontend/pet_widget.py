@@ -22,7 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 BACKEND_URL = os.environ.get("CORTEX_BACKEND_URL", "http://localhost:8080")
 _PET_DIR = os.path.dirname(os.path.abspath(__file__))
 
-PET_W, PET_H = 320, 520
+PET_W, PET_H = 300, 470
 
 
 def _pet_url(backend_url: str) -> QUrl:
