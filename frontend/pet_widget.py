@@ -137,7 +137,6 @@ class PetWidget(QWidget):
     def _apply_move(self, dx: int, dy: int):
         try:
             self.move(self.pos() + QPoint(dx, dy))
-            print(f"[Pet] move -> ({self.x()}, {self.y()})", flush=True)
         except Exception:
             pass
 
