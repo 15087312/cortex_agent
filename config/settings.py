@@ -55,6 +55,9 @@ class Settings(BaseSettings):
         # ── 视觉模型 ──
         "VISION_BACKEND", "VISION_API_FORMAT", "VISION_API_URL", "VISION_API_KEY",
         "VISION_API_MODEL", "VISION_LOCAL_MODEL", "VISION_MLX_MODEL",
+
+        # ── 桌面宠物 ──
+        "DESKTOP_PET_ENABLED", "DESKTOP_PET_SESSION_ID",
     }
 
     # 用户身份

@@ -66,7 +66,27 @@ class PetWidget(QWidget):
         self._pt_timer.timeout.connect(self._update_passthrough)
         self._pt_timer.start(120)
 
+        self._cfg_timer = QTimer(self)
+        self._cfg_timer.timeout.connect(self._check_pet_enabled)
+        self._cfg_timer.start(5000)
+
         self._place_fullscreen()
+
+    # ── 桌宠开关（DESKTOP_PET_ENABLED）实时控制窗口显示 ──
+
+    def _check_pet_enabled(self):
+        try:
+            req = urllib.request.Request(
+                f"{self.backend_url}/config",
+                headers={"Accept": "application/json"},
+            )
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                cfg = json.loads(resp.read().decode("utf-8")).get("data", {})
+            want = bool(cfg.get("DESKTOP_PET_ENABLED", True))
+        except Exception:
+            want = True  # 后端不可达时默认显示
+        if want != self.isVisible():
+            self.setVisible(want)
 
     # ── 鼠标穿透：仅角色区域可交互 ──
 

@@ -90,6 +90,8 @@ class PetEngine:
 
     async def _on_speech(self, event) -> None:
         """语音事件 → 桌宠对话"""
+        if not self.enabled:
+            return
         try:
             text = (event.payload or {}).get("text", "") if hasattr(event, "payload") else ""
             if not text or not text.strip():

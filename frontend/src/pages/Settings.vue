@@ -120,6 +120,8 @@ const execMode = segCfg('EXECUTION_MODE', 'edit')
 const userName = txtCfg('USER_NAME', '用户')
 const proactiveEnabled = boolCfg('PROACTIVE_OUTREACH_ENABLED', false)
 const ttsEnabled = boolCfg('OUTPUT_TTS_ENABLED', false)
+const petEnabled = boolCfg('DESKTOP_PET_ENABLED', true)
+const petSessionId = txtCfg('DESKTOP_PET_SESSION_ID', 'pet_main')
 const debugEnabled = boolCfg('DEBUG', false)
 const loggingEnabled = boolCfg('LOGGING_ENABLED', true)
 const logLevel = segCfg('LOG_LEVEL', 'INFO')
@@ -584,6 +586,21 @@ onMounted(async () => {
             <div class="lbl"><div class="t">MLX 模型</div></div>
             <div class="setting-ctl"><input class="input" v-model="visionMlxModel" style="width:280px" /></div>
           </div>
+        </div>
+
+        <div class="settings-divider"></div>
+
+        <div class="settings-group">
+          <div class="settings-group-title">桌面宠物</div>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">桌宠开关</div><div class="d">全屏透明桌宠 + 语音对话</div></div>
+            <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="petEnabled" @change="petEnabled = !petEnabled" /><span class="toggle-slider"></span></label></div>
+          </div>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">主会话 ID</div><div class="d">桌宠对话记忆，永不删除</div></div>
+            <div class="setting-ctl"><input class="input" v-model="petSessionId" style="width:160px" /></div>
+          </div>
+          <p class="settings-hint">语音触发：按 <b>{{ voiceHotkey }}</b> 或说"<b>{{ voiceWakePrefix }}</b>…"后开始说话，桌宠回复会语音播报并显示气泡。关闭开关后桌宠窗口自动隐藏。</p>
         </div>
       </div>
 
