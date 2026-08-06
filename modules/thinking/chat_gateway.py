@@ -21,6 +21,12 @@ from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+
+
+class PetChatRequest(BaseModel):
+    action_id: str = ""
+    text: str = ""
 
 from config.settings import settings
 from utils.logger import setup_logger
@@ -616,6 +622,65 @@ async def pet_last_reply():
         return {"success": True, "data": PetEngine.get_instance().last_reply or None}
     except Exception:
         return {"success": True, "data": None}
+
+
+@router.get("/pet/state")
+async def pet_state():
+    """桌宠当前状态（状态栏轮询）"""
+    try:
+        from modules.desktop_pet.pet_state import PetState
+        st = PetState.get_instance()
+        values = st.read()
+        return {"success": True, "data": {"values": values, "text": st.describe(values)}}
+    except Exception as e:
+        return {"success": True, "data": None}
+
+
+@router.get("/pet/actions")
+async def pet_actions():
+    """桌宠互动动作模板（圆环菜单 + Chat 图标检测统一数据源）"""
+    from modules.desktop_pet.actions import CATEGORIES, public_actions
+    return {"success": True, "data": {"categories": CATEGORIES, "actions": public_actions()}}
+
+
+@router.post("/pet/chat")
+async def pet_chat_stream(body: PetChatRequest):
+    """互动对话（SSE 流式）：应用状态效果 → 状态注入提示词 → 流式 LLM → 保存会话"""
+    from sse_starlette.sse import EventSourceResponse
+
+    async def gen():
+        try:
+            from modules.desktop_pet.pet_state import PetState
+            from modules.desktop_pet.actions import get_action
+            from modules.desktop_pet.pet_engine import PetEngine
+
+            state = PetState.get_instance()
+            action_id = (body.action_id or "").strip()
+            if action_id and get_action(action_id):
+                before = state.read()
+                state.apply(action_id)
+                prompt = get_action(action_id)["prompt"]
+                text = prompt
+                extra_system = state.describe(before)
+            else:
+                text = (body.text or "").strip()
+                extra_system = state.describe(state.read())
+            if not text:
+                yield {"event": "error", "data": json.dumps({"error": "empty text"}, ensure_ascii=False)}
+                return
+
+            engine = PetEngine.get_instance()
+            async for token in engine.stream_chat(text, extra_system=extra_system):
+                yield {"event": "token", "data": json.dumps({"token": token}, ensure_ascii=False)}
+            new_state = state.read()
+            yield {"event": "done", "data": json.dumps(
+                {"state": new_state, "state_text": state.describe(new_state)},
+                ensure_ascii=False,
+            )}
+        except Exception as e:
+            yield {"event": "error", "data": json.dumps({"error": str(e)}, ensure_ascii=False)}
+
+    return EventSourceResponse(gen())
 
 
 @router.get("/session/{session_id}/outreach-config")

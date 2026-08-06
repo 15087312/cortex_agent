@@ -5,202 +5,356 @@
 <title>桌宠</title>
 <style>
   html, body {
-    margin: 0;
-    padding: 0;
-    width: 100%;
-    height: 100%;
-    overflow: hidden;
-    background: transparent;
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    overflow: hidden; background: transparent;
     font-family: system-ui, -apple-system, sans-serif;
   }
-  #stage {
-    position: absolute;
-    left: 0;
-    bottom: 0;
-    width: 100%;
-    height: 100%;
-  }
+  #stage { position: absolute; left: 0; top: 0; width: 100%; height: 100%; }
+
+  /* ── 气泡 ── */
   #bubble {
-    position: absolute;
-    left: 50%;
-    top: 4px;
-    transform: translateX(-50%);
-    max-width: 230px;
-    background: rgba(255, 255, 255, 0.95);
-    color: #333;
-    border-radius: 14px;
-    padding: 10px 14px;
-    font-size: 13px;
-    line-height: 1.5;
-    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
-    opacity: 0;
+    position: absolute; left: 50%; top: 8px; transform: translateX(-50%);
+    max-width: 320px; min-width: 60px;
+    background: rgba(255,255,255,.92); color: #333;
+    border-radius: 16px; padding: 10px 14px; font-size: 13px; line-height: 1.55;
+    box-shadow: 0 6px 24px rgba(0,0,0,.16), 0 0 0 1px rgba(255,255,255,.5);
+    opacity: 0; pointer-events: none; z-index: 5;
+    transition: opacity .22s ease, transform .22s ease;
+  }
+  #bubble.visible { opacity: 1; transform: translateX(-50%) translateY(4px); }
+
+  /* ── 状态栏（角色下方）── */
+  #state-bar {
+    position: fixed; left: 50%; bottom: 10px; transform: translateX(-50%);
+    display: flex; gap: 14px; align-items: center;
+    padding: 8px 16px; border-radius: 18px; z-index: 6;
+    background: linear-gradient(135deg, rgba(255,255,255,.82), rgba(255,240,245,.62));
+    backdrop-filter: blur(10px);
+    box-shadow: 0 8px 28px rgba(0,0,0,.18), inset 0 1px 0 rgba(255,255,255,.7);
+    opacity: 0; pointer-events: none; transition: opacity .3s ease;
+  }
+  #state-bar.visible { opacity: 1; }
+  .st-item { display: flex; align-items: center; gap: 6px; min-width: 90px; }
+  .st-ic { width: 20px; height: 20px; color: #d25b8e; display: flex; align-items: center; justify-content: center; }
+  .st-bar {
+    width: 52px; height: 7px; border-radius: 4px; overflow: hidden;
+    background: rgba(0,0,0,.12);
+  }
+  .st-fill {
+    height: 100%; border-radius: 4px; width: 70%;
+    background: linear-gradient(90deg, #ff8fb3, #ff5f8f);
+    box-shadow: 0 0 6px rgba(255,95,143,.6); transition: width .5s ease;
+  }
+  .st-item:nth-child(2) .st-fill { background: linear-gradient(90deg, #ffd98a, #ffab3d); box-shadow: 0 0 6px rgba(255,171,61,.6); }
+  .st-item:nth-child(3) .st-fill { background: linear-gradient(90deg, #8fd4ff, #3da9ff); box-shadow: 0 0 6px rgba(61,169,255,.6); }
+  .st-item:nth-child(4) .st-fill { background: linear-gradient(90deg, #a7f0c0, #4ecb7a); box-shadow: 0 0 6px rgba(78,203,122,.6); }
+
+  /* ── 圆环菜单 ── */
+  #menu {
+    position: fixed; left: 0; top: 0; width: 0; height: 0; z-index: 8;
     pointer-events: none;
-    transition: opacity 0.25s ease, transform 0.25s ease;
-    z-index: 5;
   }
-  #bubble.visible {
-    opacity: 1;
-    transform: translateX(-50%) translateY(4px);
+  .pet-btn {
+    position: fixed; transform: translate(-50%, -50%);
+    width: 52px; height: 52px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    color: #fff; cursor: pointer; pointer-events: auto;
+    background: radial-gradient(circle at 30% 30%, rgba(255,255,255,.35), transparent 45%),
+                linear-gradient(135deg, #ff7eb3, #ff5f8f);
+    box-shadow: 0 6px 18px rgba(255,95,143,.45), inset 0 1px 0 rgba(255,255,255,.4);
+    border: 1px solid rgba(255,255,255,.35);
+    opacity: 0; z-index: 9;
+    animation: petPop .28s cubic-bezier(.34,1.56,.64,1) forwards;
   }
-  #status {
-    position: absolute;
-    left: 50%;
-    bottom: 4px;
-    transform: translateX(-50%);
-    color: rgba(60, 60, 60, 0.75);
-    font-size: 11px;
-    background: rgba(255, 255, 255, 0.7);
-    border-radius: 8px;
-    padding: 2px 8px;
-    opacity: 0;
-    transition: opacity 0.2s ease;
-    z-index: 6;
-    white-space: nowrap;
+  .pet-btn .lucide { width: 24px; height: 24px; }
+  .pet-btn:hover { transform: translate(-50%, -50%) scale(1.12); filter: brightness(1.1); }
+  .pet-btn.cat {
+    width: 60px; height: 60px; font-size: 12px;
+    background: radial-gradient(circle at 30% 30%, rgba(255,255,255,.4), transparent 45%),
+                linear-gradient(135deg, #a78bfa, #7c5cff);
+    box-shadow: 0 8px 22px rgba(124,92,255,.5), inset 0 1px 0 rgba(255,255,255,.45);
+    color: #fff;
   }
-  #status.visible { opacity: 1; }
+  .pet-btn .lbl {
+    position: absolute; bottom: -20px; left: 50%; transform: translateX(-50%);
+    font-size: 11px; color: #555; white-space: nowrap;
+    background: rgba(255,255,255,.85); padding: 1px 8px; border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0,0,0,.12);
+  }
+  @keyframes petPop {
+    0% { opacity: 0; scale: .3; }
+    100% { opacity: 1; scale: 1; }
+  }
+  #menu-backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,0);
+    pointer-events: auto; z-index: 7;
+  }
 </style>
 </head>
 <body>
+<div id="menu-backdrop" style="display:none"></div>
+<div id="menu"></div>
 <div id="bubble"></div>
-<div id="status"></div>
+<div id="state-bar"></div>
 <canvas id="stage"></canvas>
 
 <script src="lib/pixi.min.js"></script>
 <script src="lib/live2dcubismcore.min.js"></script>
 <script src="lib/pixi-live2d-display.min.js"></script>
 <script src="lib/cubism4.min.js"></script>
+<script src="lib/lucide.min.js"></script>
 <script>
 (function () {
   var MODEL_URL = 'models/hiyori/Hiyori.model3.json';
+  var MODELS = [
+    { dir: 'hiyori', file: 'Hiyori.model3.json', name: 'Hiyori' },
+    { dir: 'mao', file: 'Mao.model3.json', name: 'Mao' },
+    { dir: 'wanko', file: 'Wanko.model3.json', name: 'Wanko' },
+    { dir: 'natori', file: 'Natori.model3.json', name: 'Natori' },
+  ];
+  var curModelIdx = 0;
   var bubbleEl = document.getElementById('bubble');
-  var statusEl = document.getElementById('status');
+  var stateBarEl = document.getElementById('state-bar');
+  var menuEl = document.getElementById('menu');
+  var backdropEl = document.getElementById('menu-backdrop');
   var model = null;
   var app = null;
-  var tweenFrame = 0;
+  var live2d = null;
 
+  /* ═══════════ Live2D ═══════════ */
   try {
-    var live2d = (window.PIXI && window.PIXI.live2d) || window.live2d;
+    live2d = (window.PIXI && window.PIXI.live2d) || window.live2d;
     var dpr = window.devicePixelRatio || 1;
     app = new PIXI.Application({
       view: document.getElementById('stage'),
-      width: window.innerWidth,
-      height: window.innerHeight,
-      transparent: true,
-      autoStart: true,
-      resizeTo: window,
-      antialias: true,
-      autoDensity: true,
-      resolution: dpr,
+      width: window.innerWidth, height: window.innerHeight,
+      transparent: true, autoStart: true, resizeTo: window,
+      antialias: true, autoDensity: true, resolution: dpr,
     });
+    loadModel(curModelIdx);
+  } catch (err) { console.error('Live2D 初始化失败:', err); }
 
-    live2d.Live2DModel.from(MODEL_URL, { autoInteract: false }).then(function (m) {
-      model = m;
-      window.__m = { loaded: true };
-      model.anchor.set(0.5, 1);
-      model.position.set(window.innerWidth / 2, window.innerHeight - 2);
-      var fit = Math.min(window.innerWidth / model.width, (window.innerHeight * 0.55) / model.height);
-      model.scale.set(fit);
-      app.stage.addChild(model);
-      if (typeof m.internalModel !== 'undefined' && m.internalModel.coreModel) {
-        try { m.internalModel.coreModel.startRandomMotionGroup('Idle'); } catch (e) {}
-      }
-    }).catch(function (err) {
-      console.error('Live2D 模型加载失败:', err);
-      window.__err = String(err && err.message ? err.message : err);
-    });
-  } catch (err) {
-    console.error('Live2D 初始化失败:', err);
+  function loadModel(idx) {
+    curModelIdx = idx % MODELS.length;
+    var cfg = MODELS[curModelIdx];
+    if (model) { try { model.destroy(); } catch (e) {} model = null; }
+    live2d.Live2DModel.from('models/' + cfg.dir + '/' + cfg.file, { autoInteract: false })
+      .then(function (m) {
+        model = m;
+        model.anchor.set(0.5, 1);
+        model.position.set(window.innerWidth / 2, window.innerHeight - 2);
+        var fit = Math.min(window.innerWidth / model.width, (window.innerHeight * 0.55) / model.height);
+        model.scale.set(fit);
+        app.stage.addChild(model);
+        if (typeof m.internalModel !== 'undefined' && m.internalModel.coreModel) {
+          try { m.internalModel.coreModel.startRandomMotionGroup('Idle'); } catch (e) {}
+        }
+      })
+      .catch(function (err) { console.error('Live2D 模型加载失败:', err); });
   }
 
-  function showReply(text) {
+  /* ═══════════ 气泡 ═══════════ */
+  var bubbleTimer = null;
+  function showBubble(text) {
     bubbleEl.textContent = text || '';
     bubbleEl.classList.add('visible');
-    clearTimeout(showReply._timer);
-    showReply._timer = setTimeout(function () {
-      bubbleEl.classList.remove('visible');
-    }, 9000);
-    speak(true);
-    setTimeout(function () { speak(false); }, Math.min(4000, 900 + (text ? text.length * 120 : 0)));
+    clearTimeout(bubbleTimer);
+    bubbleTimer = setTimeout(function () { bubbleEl.classList.remove('visible'); }, 9000);
+  }
+  function appendBubble(token) {
+    bubbleEl.textContent += token;
+    bubbleEl.classList.add('visible');
+    clearTimeout(bubbleTimer);
+    bubbleTimer = setTimeout(function () { bubbleEl.classList.remove('visible'); }, 9000);
+  }
+  function clearBubble() {
+    bubbleEl.textContent = '';
+    bubbleEl.classList.add('visible');
+    clearTimeout(bubbleTimer);
+    bubbleTimer = setTimeout(function () { bubbleEl.classList.remove('visible'); }, 9000);
   }
 
-  function speak(on) {
+  /* ═══════════ 状态栏 ═══════════ */
+  var ST_KEYS = [
+    { key: 'mood', icon: 'smile' },
+    { key: 'satiety', icon: 'drumstick' },
+    { key: 'energy', icon: 'zap' },
+    { key: 'cleanliness', icon: 'sparkles' },
+  ];
+  function renderState(values) {
+    if (!values) return;
+    stateBarEl.innerHTML = '';
+    ST_KEYS.forEach(function (s) {
+      var v = Math.max(0, Math.min(100, values[s.key] || 0));
+      var item = document.createElement('div');
+      item.className = 'st-item';
+      item.innerHTML = '<div class="st-ic" data-lucide="' + s.icon + '"></div>' +
+        '<div class="st-bar"><div class="st-fill" style="width:' + v + '%"></div></div>';
+      stateBarEl.appendChild(item);
+    });
+    stateBarEl.classList.add('visible');
+    if (window.lucide) lucide.createIcons();
+  }
+  function pollState() {
+    fetch('/stream/pet/state', { headers: { 'Accept': 'application/json' } })
+      .then(function (r) { return r.json(); })
+      .then(function (d) { if (d && d.data && d.data.values) renderState(d.data.values); })
+      .catch(function () {});
+  }
+  pollState();
+  setInterval(pollState, 4000);
+
+  /* ═══════════ 圆环菜单 ═══════════ */
+  var CATS = [];
+  var ACTS = [];
+  var MENU_R = 78, ACT_R = 132;
+
+  function loadActions() {
+    fetch('/stream/pet/actions', { headers: { 'Accept': 'application/json' } })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        var data = d && d.data;
+        if (data) { CATS = data.categories || []; ACTS = data.actions || []; }
+      })
+      .catch(function () {});
+  }
+  loadActions();
+
+  function openMenu(x, y) {
+    if (!CATS.length) loadActions();
+    closeMenu();
+    backdropEl.style.display = 'block';
+    CATS.forEach(function (c, i) {
+      var a = -90 + (360 / CATS.length) * i;
+      var btn = document.createElement('div');
+      btn.className = 'pet-btn cat';
+      btn.innerHTML = '<i data-lucide="' + c.icon + '"></i><span class="lbl">' + c.label + '</span>';
+      btn.style.left = (x + MENU_R * Math.cos(a * Math.PI / 180)) + 'px';
+      btn.style.top = (y + MENU_R * Math.sin(a * Math.PI / 180)) + 'px';
+      btn.onclick = function () { showActions(c, x, y); };
+      menuEl.appendChild(btn);
+    });
+    // 中心换装按钮：循环切换 Live2D 模型
+    var swap = document.createElement('div');
+    swap.className = 'pet-btn';
+    swap.innerHTML = '<i data-lucide="repeat"></i><span class="lbl">换装</span>';
+    swap.style.left = x + 'px';
+    swap.style.top = y + 'px';
+    swap.onclick = function () {
+      closeMenu();
+      var next = MODELS[(curModelIdx + 1) % MODELS.length];
+      loadModel(curModelIdx + 1);
+      showBubble('换上新造型啦，我是 ' + next.name + '！');
+    };
+    menuEl.appendChild(swap);
+    if (window.lucide) lucide.createIcons();
+  }
+
+  function showActions(cat, x, y) {
+    clearMenu();
+    var list = ACTS.filter(function (a) { return a.category === cat.id; });
+    list.forEach(function (a, i) {
+      var a0 = -90 + (360 / list.length) * i;
+      var btn = document.createElement('div');
+      btn.className = 'pet-btn';
+      btn.innerHTML = '<i data-lucide="' + a.icon + '"></i><span class="lbl">' + a.label + '</span>';
+      btn.style.left = (x + ACT_R * Math.cos(a0 * Math.PI / 180)) + 'px';
+      btn.style.top = (y + ACT_R * Math.sin(a0 * Math.PI / 180)) + 'px';
+      btn.onclick = function () { sendAction(a); };
+      menuEl.appendChild(btn);
+    });
+    if (window.lucide) lucide.createIcons();
+  }
+
+  function clearMenu() { menuEl.innerHTML = ''; }
+  function closeMenu() { clearMenu(); backdropEl.style.display = 'none'; }
+  backdropEl.addEventListener('click', closeMenu);
+
+  /* ═══════════ 发送互动（SSE 流式） ═══════════ */
+  function sendAction(action) {
+    closeMenu();
+    clearBubble();
+    fetch('/stream/pet/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action_id: action.id }),
+    }).then(function (res) {
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      var reader = res.body.getReader();
+      var decoder = new TextDecoder();
+      var buf = '';
+      function pump() {
+        return reader.read().then(function (r) {
+          if (r.done) return;
+          buf += decoder.decode(r.value, { stream: true });
+          var parts = buf.split('\n\n');
+          buf = parts.pop();
+          parts.forEach(function (p) {
+            var data = p.split('\n')
+              .filter(function (l) { return l.indexOf('data:') === 0; })
+              .map(function (l) { return l.slice(5).trim(); })
+              .join('');
+            if (!data) return;
+            try {
+              var ev = JSON.parse(data);
+              if (ev.token) appendBubble(ev.token);
+              if (ev.state) renderState(ev.state);
+            } catch (e) {}
+          });
+          return pump();
+        });
+      }
+      return pump();
+    }).catch(function (e) {
+      showBubble('哎呀，桌宠没回应…');
+    });
+  }
+
+  /* ═══════════ 单击 / 拖动 ═══════════ */
+  var dragging = false, dragOff = null, pressPos = null;
+  document.addEventListener('mousedown', function (e) {
+    pressPos = { x: e.clientX, y: e.clientY };
     if (!model) return;
-    if (on) {
-      model._speak = 0;
-      if (!model._speakTimer) {
-        model._speakTimer = setInterval(function () {
-          if (model._speak === null) return;
-          model._speak += 0.16;
-          var dy = Math.sin(model._speak) * 0.03;
-          model.position.y = window.innerHeight - 4 - dy * model.height;
-        }, 90);
+    try {
+      var b = model.getBounds();
+      if (b.contains(e.clientX, e.clientY)) {
+        dragging = true;
+        dragOff = { x: e.clientX - model.position.x, y: e.clientY - model.position.y };
       }
-    } else {
-      model._speak = null;
-      if (model._speakTimer) {
-        clearInterval(model._speakTimer);
-        model._speakTimer = null;
+    } catch (err) { dragging = false; }
+  });
+  document.addEventListener('mousemove', function (e) {
+    if (!dragging || !model) return;
+    model.position.set(e.clientX - dragOff.x, e.clientY - dragOff.y);
+  });
+  document.addEventListener('mouseup', function (e) {
+    if (pressPos && model) {
+      var dist = Math.hypot(e.clientX - pressPos.x, e.clientY - pressPos.y);
+      if (dist < 8) {
+        try {
+          var b = model.getBounds();
+          if (b.contains(e.clientX, e.clientY)) openMenu(e.clientX, e.clientY);
+        } catch (err) {}
       }
-      model.position.y = window.innerHeight - 2;
     }
-  }
+    dragging = false;
+    pressPos = null;
+  });
 
-  function setStatus(text) {
-    if (!text) {
-      statusEl.classList.remove('visible');
-      return;
-    }
-    statusEl.textContent = text;
-    statusEl.classList.add('visible');
-  }
-
-  window.showReply = showReply;
-  window.speak = speak;
-  window.setStatus = setStatus;
-
-  // 页面自轮询后端最近回复（与 Qt 桥接双保险，Live2D 渲染不依赖 Qt）
-  (function () {
-    var lastTime = 0;
-    setInterval(function () {
-      fetch('/stream/pet/last-reply', { headers: { 'Accept': 'application/json' } })
-        .then(function (r) { return r.json(); })
-        .then(function (d) {
-          var data = d && d.data;
-          if (data && data.time && data.time !== lastTime) {
-            lastTime = data.time;
-            showReply(data.text || '');
-          }
-        })
-        .catch(function () {});
-    }, 1200);
-  })();
-
-  // 角色拖动（仅点在角色身上时启动；双击复位到底部中间）
-  (function () {
-    var dragging = false, dragOff = null;
-    document.addEventListener('mousedown', function (e) {
-      if (!model) return;
-      try {
-        var b = model.getBounds();
-        if (!b.contains(e.clientX, e.clientY)) return;
-      } catch (err) { return; }
-      dragging = true;
-      dragOff = { x: e.clientX - model.position.x, y: e.clientY - model.position.y };
-    });
-    document.addEventListener('mousemove', function (e) {
-      if (!dragging || !model) return;
-      model.position.set(e.clientX - dragOff.x, e.clientY - dragOff.y);
-    });
-    document.addEventListener('mouseup', function () { dragging = false; });
-    document.addEventListener('dblclick', function (e) {
-      if (!model) return;
-      try {
-        var b = model.getBounds();
-        if (!b.contains(e.clientX, e.clientY)) return;
-      } catch (err) { return; }
-      model.position.set(window.innerWidth / 2, window.innerHeight - 2);
-    });
-  })();
+  /* ═══════════ 回复轮询（语音/互动 done 后显示） ═══════════ */
+  var lastReplyTime = 0;
+  setInterval(function () {
+    fetch('/stream/pet/last-reply', { headers: { 'Accept': 'application/json' } })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        var data = d && d.data;
+        if (data && data.time && data.time !== lastReplyTime) {
+          lastReplyTime = data.time;
+          showBubble(data.text || '');
+        }
+      })
+      .catch(function () {});
+  }, 1500);
 })();
 </script>
 </body>

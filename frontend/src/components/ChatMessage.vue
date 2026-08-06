@@ -15,6 +15,17 @@ const emit = defineEmits(['copy', 'delete', 'edit', 'approve', 'answer-intent'])
 const isUser = computed(() => props.message.role === 'user')
 const kind = computed(() => props.message.kind || '')
 
+// ── 桌宠互动消息：content 匹配动作提示词 → 显示图标（提示词不展示） ──
+const petActions = ref([])
+fetch('/stream/pet/actions', { headers: { Accept: 'application/json' } })
+  .then((r) => r.json())
+  .then((d) => { petActions.value = (d?.data?.actions) || [] })
+  .catch(() => {})
+const petAction = computed(() => {
+  if (!isUser.value || !props.message.content) return null
+  return petActions.value.find((a) => a.prompt === props.message.content) || null
+})
+
 const messageClass = computed(() => {
   if (kind.value === 'approval') return 'approval-banner'
   if (kind.value === 'intent') return 'intent-banner'
@@ -142,8 +153,11 @@ function submitIntent() {
       <div class="message-body">
         <div class="message-name">{{ isUser ? '我' : (message.identity_name || '总指挥') }}</div>
         <div class="message-bubble" :class="{ 'bubble-error': message.error, 'bubble-proactive': !isUser && message.proactive }">
-          <!-- 用户消息：纯文本 -->
-          <div v-if="isUser" v-html="userHtml"></div>
+          <!-- 用户消息：桌宠互动 → 图标；否则纯文本 -->
+          <div v-if="isUser && petAction" class="pet-interaction" :title="petAction.label">
+            <span class="pet-interaction-ic"><Icon :name="petAction.icon" :size="22" /></span>
+          </div>
+          <div v-else-if="isUser" v-html="userHtml"></div>
 
           <!-- AI 消息打字中：纯文本逐字揭示 -->
           <template v-else-if="typing">

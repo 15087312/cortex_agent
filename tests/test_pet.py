@@ -73,3 +73,55 @@ def test_pet_last_reply_endpoint(gw_app):
         body = resp.json()
         assert body["success"] is True
         assert "data" in body
+
+
+def test_pet_actions_endpoint(gw_app):
+    app, _ = gw_app
+    with TestClient(app) as client:
+        resp = client.get("/stream/pet/actions")
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert len(data["categories"]) == 5
+        assert len(data["actions"]) == 19
+        ids = {a["id"] for a in data["actions"]}
+        assert "cake" in ids and "hug" in ids and "joke" in ids
+
+
+def test_pet_state_endpoint(gw_app):
+    app, _ = gw_app
+    with TestClient(app) as client:
+        resp = client.get("/stream/pet/state")
+        assert resp.status_code == 200
+        values = resp.json()["data"]["values"]
+        for k in ("mood", "satiety", "energy", "cleanliness"):
+            assert k in values and 0 <= values[k] <= 100
+
+
+def test_pet_state_model(tmp_path):
+    from modules.desktop_pet.pet_state import PetState, DEFAULTS
+    st = PetState(path=str(tmp_path / "pet_state.json"))
+    # 衰减：1 小时后饱食下降
+    t0 = st._updated_at
+    v = st.read(t0 + 3600)
+    assert v["satiety"] < DEFAULTS["satiety"]
+    # 效果应用
+    v2 = st.apply("cake", t0 + 3600)
+    assert v2["satiety"] > v["satiety"]
+    assert v2["energy"] == v["energy"]
+
+
+def test_pet_chat_stream(gw_app, monkeypatch):
+    app, _ = gw_app
+    async def _fake_stream(self, text, extra_system=""):
+        assert extra_system
+        yield "你好"
+        yield "呀"
+
+    from modules.desktop_pet import pet_engine as pe
+    monkeypatch.setattr(pe.PetEngine, "stream_chat", _fake_stream)
+    with TestClient(app) as client:
+        with client.stream("POST", "/stream/pet/chat", json={"action_id": "cake"}) as r:
+            body = r.read().decode()
+            assert "token" in body
+            assert "你好" in body
+            assert "done" in body

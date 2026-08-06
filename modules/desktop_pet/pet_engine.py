@@ -105,54 +105,97 @@ class PetEngine:
 
     # ── 对话 ──
 
+    def _build_messages(self, text: str, extra_system: str = ""):
+        """主会话历史 + 桌宠人设 + 用户消息"""
+        from infra.model.large_model_client import LargeModelClient
+        from infra.model.base_model import ChatMessage
+        if self._client is None:
+            self._client = LargeModelClient()
+
+        history = []
+        try:
+            from modules.database.session_repo import get_session_repo
+            msgs = get_session_repo().get_recent_messages(self.pet_session_id, limit=20)
+            for m in msgs:
+                role = m.get("role")
+                content = m.get("content")
+                if role in ("user", "assistant") and content:
+                    history.append(ChatMessage(role=role, content=content))
+        except Exception:
+            pass
+
+        system = (
+            "你是桌面上的 AI 桌宠助手，像 Siri 一样用语音和用户交流。"
+            "性格友善、可爱、贴心。回答要简短自然（通常一两句话），适合语音朗读。"
+            "用户可能会给你送礼物或和你互动，请配合演出、开心地回应。"
+            "用中文回答。"
+        )
+        if extra_system:
+            system = system + "\n当前状态：" + extra_system
+        return [ChatMessage(role="system", content=system)] + history + [
+            ChatMessage(role="user", content=text)
+        ]
+
+    def _save_pair(self, text: str, reply: str) -> None:
+        try:
+            from modules.database.session_repo import get_session_repo
+            repo = get_session_repo()
+            repo.save_message(self.pet_session_id, "user", text)
+            repo.save_message(self.pet_session_id, "assistant", reply)
+        except Exception:
+            pass
+
     async def chat(self, text: str) -> str:
         """主会话对话：历史 + 桌宠人设 + LLM → 回复，并保存主会话历史"""
         try:
-            from infra.model.large_model_client import LargeModelClient
-            from infra.model.base_model import ChatMessage
-            if self._client is None:
-                self._client = LargeModelClient()
-
-            # 主会话历史（桌宠记忆延续）
-            history = []
-            try:
-                from modules.database.session_repo import get_session_repo
-                msgs = get_session_repo().get_recent_messages(self.pet_session_id, limit=20)
-                for m in msgs:
-                    role = m.get("role")
-                    content = m.get("content")
-                    if role in ("user", "assistant") and content:
-                        history.append(ChatMessage(role=role, content=content))
-            except Exception:
-                pass
-
-            # 桌宠人设
-            system = (
-                "你是桌面上的 AI 桌宠助手，像 Siri 一样用语音和用户交流。"
-                "性格友善、简洁、贴心。回答要简短自然（通常一两句话），适合语音朗读。"
-                "用中文回答。"
-            )
-            messages = [ChatMessage(role="system", content=system)] + history
-            messages.append(ChatMessage(role="user", content=text))
-
+            messages = self._build_messages(text)
             response = await self._client.chat(messages=messages)
             reply = (response.message.content or "").strip() if response and response.message else ""
             if not reply:
                 return ""
-
-            # 保存主会话历史
-            try:
-                from modules.database.session_repo import get_session_repo
-                repo = get_session_repo()
-                repo.save_message(self.pet_session_id, "user", text)
-                repo.save_message(self.pet_session_id, "assistant", reply)
-            except Exception:
-                pass
+            self._save_pair(text, reply)
             logger.info(f"[Pet] 对话: {text[:40]} → {reply[:40]}")
             return reply
         except Exception as e:
             logger.error(f"[Pet] 对话失败: {e}")
             return ""
+
+    async def stream_chat(self, text: str, extra_system: str = ""):
+        """流式对话：主会话历史 + 流式 LLM，逐 token 产出，结束后保存会话历史"""
+        queue: "asyncio.Queue" = asyncio.Queue()
+        collected: list = []
+
+        async def on_token(t: str):
+            await queue.put(t)
+
+        task = asyncio.create_task(self._chat_stream_task(text, on_token, collected, extra_system))
+        try:
+            while True:
+                if task.done() and queue.empty():
+                    break
+                try:
+                    token = await asyncio.wait_for(queue.get(), timeout=0.25)
+                    yield token
+                except asyncio.TimeoutError:
+                    continue
+            await task
+        except Exception as e:
+            logger.error(f"[Pet] 流式对话失败: {e}")
+            if collected:
+                yield "".join(collected)
+
+    async def _chat_stream_task(self, text: str, on_token, collected: list, extra_system: str = "") -> None:
+        try:
+            messages = self._build_messages(text, extra_system)
+            response = await self._client.chat_stream(messages=messages, on_token=on_token)
+            reply = (response.message.content or "").strip() if response and response.message else ""
+            collected.append(reply or "")
+            if reply:
+                self._save_pair(text, reply)
+                self.last_reply = {"time": time.time(), "text": reply}
+                logger.info(f"[Pet] 流式对话完成: {text[:30]} → {reply[:40]}")
+        except Exception as e:
+            logger.error(f"[Pet] 流式任务失败: {e}")
 
     async def _after_reply(self, reply: str) -> None:
         """回复后：TTS 语音播放 + 广播 pet_reply（桌宠窗口/前端气泡）"""
