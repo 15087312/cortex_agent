@@ -372,10 +372,31 @@ def main():
     try:
         from pet_widget import create_pet_widget
         _pet = create_pet_widget()
+        # 检测桌宠渲染进程崩溃（macOS 透明 WebEngine 偶发）
+        try:
+            _pet.view.page().renderProcessTerminated.connect(
+                lambda status, code, desc: print(
+                    f"[DBG] 桌宠渲染进程终止: status={status} code={code} {desc}", flush=True
+                )
+            )
+        except Exception:
+            pass
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         print(f"[..] 桌宠启动失败: {e}")
 
+    try:
+        window.browser.page().renderProcessTerminated.connect(
+            lambda status, code, desc: print(
+                f"[DBG] 主窗口渲染进程终止: status={status} code={code} {desc}", flush=True
+            )
+        )
+    except Exception:
+        pass
+
     exit_code = app.exec()
+    print(f"[DBG] app.exec 返回: {exit_code}", flush=True)
     _stop_server()
     sys.exit(exit_code)
 
