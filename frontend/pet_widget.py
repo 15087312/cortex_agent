@@ -79,9 +79,19 @@ class PetWidget(QWidget):
         self._channel.registerObject("petBridge", _PetBridge(self))
         self.view.page().setWebChannel(self._channel)
 
-        self.view.load(_pet_url(self.backend_url))
+        # 页面加载失败自动重试（cortex --qt 后端启动慢，桌宠早拉起时后端未就绪）
+        self.view.page().loadFinished.connect(self._on_load_finished)
+        self._load_page()
 
         self._cfg_timer = QTimer(self)
+
+    def _load_page(self):
+        self.view.load(_pet_url(self.backend_url))
+
+    def _on_load_finished(self, ok: bool):
+        if not ok:
+            print("[Pet] 页面加载失败，2s 后重试（等待后端就绪）", flush=True)
+            QTimer.singleShot(2000, self._load_page)
         self._cfg_timer.timeout.connect(self._check_pet_enabled)
         self._cfg_timer.start(5000)
 
@@ -105,6 +115,9 @@ class PetWidget(QWidget):
 
     def _place_default(self):
         screen = self.screen()
+        if screen is None:
+            from PyQt6.QtWidgets import QApplication
+            screen = QApplication.primaryScreen()
         if screen is not None:
             geo = screen.availableGeometry()
             self.move(geo.center().x() - PET_W // 2, geo.bottom() - PET_H - 8)
@@ -113,4 +126,5 @@ class PetWidget(QWidget):
 def create_pet_widget(backend_url: str = BACKEND_URL) -> PetWidget:
     w = PetWidget(backend_url)
     w.show()
+    w._place_default()  # show 后再定位（确保 screen 可用，避免窗口落到屏幕外）
     return w

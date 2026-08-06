@@ -151,7 +151,11 @@
           try { m.internalModel.coreModel.startRandomMotionGroup('Idle'); } catch (e) {}
         }
       })
-      .catch(function (err) { console.error('Live2D 模型加载失败:', err); });
+      .catch(function (err) {
+        console.error('Live2D 模型加载失败:', err);
+        // 后端可能尚未就绪（cortex --qt 后端启动慢），3 秒后重试
+        setTimeout(function () { loadModel(idx); }, 3000);
+      });
   }
 
   /* ═══════════ 气泡 ═══════════ */

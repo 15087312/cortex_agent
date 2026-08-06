@@ -17,16 +17,17 @@ from pet_widget import create_pet_widget
 
 
 def _start_watchdog():
+    if os.environ.get("CORTEX_PET_NO_WATCHDOG", "0") == "1":
+        return  # 测试用：禁用 watchdog
     parent = os.getppid()
 
     def _loop():
         while True:
             time.sleep(3)
             try:
-                if os.getppid() != parent or os.getppid() == 1:
-                    os._exit(0)
-            except Exception:
-                os._exit(0)
+                os.kill(parent, 0)  # 父进程仍存活？
+            except OSError:
+                os._exit(0)  # 父进程已退出，桌宠随之退出，避免残留
 
     t = threading.Thread(target=_loop, daemon=True)
     t.start()
@@ -38,7 +39,21 @@ def main():
     app.setQuitOnLastWindowClosed(False)
 
     _start_watchdog()
-    create_pet_widget()
+    pet = create_pet_widget()
+
+    # 诊断：窗口可见性 / 页面加载 / 渲染进程
+    def _log(*args):
+        print("[PET]", *args, flush=True)
+    try:
+        _log("窗口 visible =", pet.isVisible(), "size =", pet.width(), "x", pet.height())
+        pet.view.page().loadFinished.connect(
+            lambda ok: _log("页面加载完成 ok =", ok)
+        )
+        pet.view.page().renderProcessTerminated.connect(
+            lambda status, code, desc: _log(f"渲染进程终止 status={status} code={code} {desc}")
+        )
+    except Exception as e:
+        _log("诊断设置失败:", e)
 
     signal.signal(signal.SIGTERM, lambda *a: app.quit())
     signal.signal(signal.SIGINT, lambda *a: app.quit())
