@@ -223,6 +223,7 @@
   function openMenu(x, y) {
     if (!CATS.length) loadActions();
     closeMenu();
+    suppressClick = true;
     backdropEl.style.display = 'block';
     CATS.forEach(function (c, i) {
       var a = -90 + (360 / CATS.length) * i;
@@ -268,7 +269,11 @@
 
   function clearMenu() { menuEl.innerHTML = ''; }
   function closeMenu() { clearMenu(); backdropEl.style.display = 'none'; }
-  backdropEl.addEventListener('click', closeMenu);
+  var suppressClick = false;
+  backdropEl.addEventListener('click', function (e) {
+    if (suppressClick) { suppressClick = false; return; }  // 忽略打开菜单的同一次点击
+    closeMenu();
+  });
 
   /* ═══════════ 发送互动（SSE 流式） ═══════════ */
   function sendAction(action) {
@@ -331,10 +336,18 @@
     if (pressPos && model) {
       var dist = Math.hypot(e.clientX - pressPos.x, e.clientY - pressPos.y);
       if (dist < 8) {
+        var hit = false;
         try {
           var b = model.getBounds();
-          if (b.contains(e.clientX, e.clientY)) openMenu(e.clientX, e.clientY);
+          if (b && b.contains(e.clientX, e.clientY)) hit = true;
         } catch (err) {}
+        if (!hit) {
+          // fallback：角色显示区域（缩放后尺寸 ± 边距）
+          var mw = (model.width || 200) * 0.5 + 24;
+          var mh = (model.height || 400) + 16;
+          if (Math.abs(e.clientX - model.position.x) <= mw && e.clientY >= model.position.y - mh) hit = true;
+        }
+        if (hit) openMenu(e.clientX, e.clientY);
       }
     }
     dragging = false;

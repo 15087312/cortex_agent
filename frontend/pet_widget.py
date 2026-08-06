@@ -1,8 +1,7 @@
-"""桌宠窗口 — 全屏透明覆盖层（借鉴 airi desktop-overlay）
+"""桌宠窗口 — 透明置顶小窗 + Live2D 角色（借鉴 airi）
 
-全屏置顶透明，Live2D 角色 + 气泡（QWebEngineView）。
-鼠标默认穿透（不影响桌面操作），仅在角色区域可交互。
-语音触发走后端（F8 / 唤醒词"科特"→ 主会话对话 → TTS + 气泡）。
+窗口只占角色区域（不挡桌面，无需鼠标穿透），角色区域内可交互
+（单击开圆环互动菜单 / 拖动角色）。语音触发走后端（F8 / 唤醒词"科特"）。
 """
 import json
 import os
@@ -10,8 +9,8 @@ import sys
 import time
 import urllib.request
 
-from PyQt6.QtCore import QTimer, Qt, QUrl, QRect
-from PyQt6.QtGui import QColor, QCursor
+from PyQt6.QtCore import QTimer, Qt, QUrl
+from PyQt6.QtGui import QColor
 from PyQt6.QtWebEngineCore import QWebEngineProfile, QWebEngineSettings
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWidgets import QWidget
@@ -20,10 +19,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 BACKEND_URL = os.environ.get("CORTEX_BACKEND_URL", "http://localhost:8080")
 _PET_DIR = os.path.dirname(os.path.abspath(__file__))
-_PET_HTML = os.path.join(_PET_DIR, "pet", "index.html")
 
-# 角色可交互区域（紧贴角色默认大小：底部中间；拖动判定在页面内仅角色身上）
-PET_ZONE_W, PET_ZONE_H = 190, 420
+PET_W, PET_H = 420, 680
 
 
 def _pet_url(backend_url: str) -> QUrl:
@@ -33,7 +30,7 @@ def _pet_url(backend_url: str) -> QUrl:
 
 
 class PetWidget(QWidget):
-    """桌宠：全屏透明置顶覆盖层 + Live2D 角色 + 气泡 + 鼠标穿透"""
+    """桌宠：透明置顶小窗 + Live2D 角色 + 圆环互动 + 状态栏"""
 
     def __init__(self, backend_url: str = BACKEND_URL):
         super().__init__(
@@ -44,13 +41,11 @@ class PetWidget(QWidget):
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
+        self.setFixedSize(PET_W, PET_H)
         self.backend_url = backend_url.rstrip("/")
-        # 平台级输入穿透（WA_TransparentForMouseEvents 对 WebEngine 窗口无效，
-        # 需用 WindowTransparentForInput——NSWindow ignoresMouseEvents，仅角色区域接收输入）
-        self._receiving = False
-        self.setWindowFlag(Qt.WindowType.WindowTransparentForInput, True)
 
         self.view = QWebEngineView(self)
+        self.view.setGeometry(0, 0, PET_W, PET_H)
         self.view.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.view.setStyleSheet("background: transparent;")
         _profile = QWebEngineProfile.defaultProfile()
@@ -64,15 +59,11 @@ class PetWidget(QWidget):
         self.view.page().setBackgroundColor(QColor(0, 0, 0, 0))
         self.view.load(_pet_url(self.backend_url))
 
-        self._pt_timer = QTimer(self)
-        self._pt_timer.timeout.connect(self._update_passthrough)
-        self._pt_timer.start(120)
-
         self._cfg_timer = QTimer(self)
         self._cfg_timer.timeout.connect(self._check_pet_enabled)
         self._cfg_timer.start(5000)
 
-        self._place_fullscreen()
+        self._place_default()
 
     # ── 桌宠开关（DESKTOP_PET_ENABLED）实时控制窗口显示 ──
 
@@ -90,38 +81,11 @@ class PetWidget(QWidget):
         if want != self.isVisible():
             self.setVisible(want)
 
-    # ── 鼠标穿透：仅角色区域可交互 ──
-
-    def _pet_zone(self) -> QRect:
-        return QRect(
-            int(self.width() / 2) - int(PET_ZONE_W / 2),
-            self.height() - PET_ZONE_H,
-            PET_ZONE_W,
-            PET_ZONE_H,
-        )
-
-    def _update_passthrough(self):
-        if not self.isVisible():
-            return
-        local = self.mapFromGlobal(QCursor.pos())
-        want_receive = self._pet_zone().contains(local)
-        if want_receive != self._receiving:
-            self._receiving = want_receive
-            self.setWindowFlag(Qt.WindowType.WindowTransparentForInput, not want_receive)
-            self.show()
-
-    def _place_fullscreen(self):
+    def _place_default(self):
         screen = self.screen()
         if screen is not None:
-            self.setGeometry(screen.geometry())
-            self.view.setGeometry(0, 0, self.width(), self.height())
-        else:
-            self.showMaximized()
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        if hasattr(self, "view"):
-            self.view.setGeometry(0, 0, self.width(), self.height())
+            geo = screen.availableGeometry()
+            self.move(geo.center().x() - PET_W // 2, geo.bottom() - PET_H - 8)
 
 
 def create_pet_widget(backend_url: str = BACKEND_URL) -> PetWidget:
