@@ -297,6 +297,25 @@ def _stop_server():
             pass
 
 
+def _stop_pet():
+    """终止独立桌宠进程（Qt 退出时关闭宠物）"""
+    global _pet_proc
+    if _pet_proc is not None:
+        try:
+            if _pet_proc.poll() is None:
+                _pet_proc.terminate()
+                try:
+                    _pet_proc.wait(timeout=3)
+                except Exception:
+                    _pet_proc.kill()
+        except Exception:
+            pass
+        _pet_proc = None
+
+
+atexit.register(_stop_pet)
+
+
 def _port_in_use(port=8765):
     import socket
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -325,6 +344,7 @@ def main():
 
     def _signal_handler(signum, frame):
         print("\n[OK] 收到终止信号，正在关闭...")
+        _stop_pet()
         _stop_server()
         sys.exit(0)
 
@@ -353,43 +373,25 @@ def main():
     print("[OK] Cortex Agent 已启动")
     print("[..] 如果窗口未自动加载，请手动打开 http://localhost:8765")
 
-    # 桌宠窗口（无边框置顶透明小窗）——延迟创建，等主窗口 WebEngine 稳定后再建，
-    # 避免两个 WebEngine 同时初始化透明窗口导致 macOS 崩溃（could not create image from display）
+    # 桌宠独立进程：先启动 Qt，再延迟拉起桌宠；Qt 退出时终止（_stop_pet / atexit / 信号）
     def _create_pet_later():
-        global _pet
+        global _pet_proc
         if os.environ.get("CORTEX_DISABLE_PET", "0") == "1":
-            print("[DBG] 桌宠已禁用 (CORTEX_DISABLE_PET=1)", flush=True)
+            print("[..] 桌宠已禁用 (CORTEX_DISABLE_PET=1)")
             return
         try:
-            from pet_widget import create_pet_widget
-            _pet = create_pet_widget()
-            try:
-                _pet.view.page().renderProcessTerminated.connect(
-                    lambda status, code, desc: print(
-                        f"[DBG] 桌宠渲染进程终止: status={status} code={code} {desc}", flush=True
-                    )
-                )
-            except Exception:
-                pass
+            import subprocess as _sp
+            script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pet_launch.py")
+            _pet_proc = _sp.Popen([sys.executable, script])
+            print("[OK] 桌宠已启动（独立进程）", flush=True)
         except Exception as e:
-            import traceback
-            traceback.print_exc()
             print(f"[..] 桌宠启动失败: {e}")
 
     from PyQt6.QtCore import QTimer
     QTimer.singleShot(2500, _create_pet_later)
 
-    try:
-        window.browser.page().renderProcessTerminated.connect(
-            lambda status, code, desc: print(
-                f"[DBG] 主窗口渲染进程终止: status={status} code={code} {desc}", flush=True
-            )
-        )
-    except Exception:
-        pass
-
     exit_code = app.exec()
-    print(f"[DBG] app.exec 返回: {exit_code}", flush=True)
+    _stop_pet()
     _stop_server()
     sys.exit(exit_code)
 
