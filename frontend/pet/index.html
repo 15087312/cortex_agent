@@ -86,6 +86,43 @@
     position: fixed; inset: 0; background: rgba(0,0,0,0);
     pointer-events: auto; z-index: 7;
   }
+
+  /* ── 模型选择器（换装） ── */
+  #picker {
+    position: fixed; inset: 0; z-index: 20;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(0,0,0,.35);
+  }
+  .picker-card {
+    background: linear-gradient(135deg, rgba(255,255,255,.96), rgba(245,240,250,.96));
+    border-radius: 18px; padding: 16px 18px;
+    box-shadow: 0 16px 48px rgba(0,0,0,.3);
+    min-width: 260px; text-align: center;
+  }
+  .picker-title { font-size: 15px; font-weight: 600; color: #444; margin-bottom: 12px; }
+  .picker-grid { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-bottom: 12px; }
+  .picker-item {
+    width: 74px; padding: 8px 4px; border-radius: 12px; cursor: pointer;
+    background: rgba(255,255,255,.8); border: 2px solid transparent;
+    transition: all .18s ease;
+  }
+  .picker-item:hover { transform: translateY(-2px); box-shadow: 0 4px 14px rgba(0,0,0,.14); }
+  .picker-item.active { border-color: #ff5f8f; background: rgba(255,95,143,.1); }
+  .picker-thumb {
+    width: 46px; height: 52px; margin: 0 auto 6px; border-radius: 8px;
+    background: radial-gradient(circle at 30% 30%, #ffb3c6, #ff5f8f);
+    display: flex; align-items: center; justify-content: center; color: #fff;
+  }
+  .picker-thumb .lucide { width: 22px; height: 22px; }
+  .picker-name { font-size: 12px; color: #555; }
+  .picker-nav { display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 10px; }
+  .picker-nav button, .picker-close {
+    border: none; cursor: pointer; border-radius: 8px; padding: 5px 14px;
+    font-size: 12px; color: #fff; background: linear-gradient(135deg, #ff7eb3, #ff5f8f);
+  }
+  .picker-nav button:disabled { opacity: .4; cursor: default; }
+  .picker-page { font-size: 12px; color: #777; min-width: 34px; }
+  .picker-close { background: linear-gradient(135deg, #a0a0b0, #7a7a88); }
 </style>
 </head>
 <body>
@@ -93,6 +130,7 @@
 <div id="menu"></div>
 <div id="bubble"></div>
 <div id="state-bar"></div>
+<div id="picker" style="display:none"></div>
 <canvas id="stage"></canvas>
 
 <script src="lib/pixi.min.js"></script>
@@ -109,8 +147,8 @@
   var MODELS = [
     { dir: 'hiyori', file: 'Hiyori.model3.json', name: 'Hiyori' },
     { dir: 'mao', file: 'Mao.model3.json', name: 'Mao' },
-    { dir: 'wanko', file: 'Wanko.model3.json', name: 'Wanko' },
     { dir: 'natori', file: 'Natori.model3.json', name: 'Natori' },
+    { dir: 'haru', file: 'Haru.model3.json', name: 'Haru' },
   ];
   var curModelIdx = 0;
   var bubbleEl = document.getElementById('bubble');
@@ -268,7 +306,7 @@
       btn.onclick = function () { showActions(c, cx, cy); };
       menuEl.appendChild(btn);
     });
-    // 中心换装按钮：循环切换 Live2D 模型
+    // 中心换装按钮：打开形象选择器
     var swap = document.createElement('div');
     swap.className = 'pet-btn';
     swap.innerHTML = '<i data-lucide="repeat"></i><span class="lbl">换装</span>';
@@ -276,9 +314,7 @@
     swap.style.top = cy + 'px';
     swap.onclick = function () {
       closeMenu();
-      var next = MODELS[(curModelIdx + 1) % MODELS.length];
-      loadModel(curModelIdx + 1);
-      showBubble('换上新造型啦，我是 ' + next.name + '！');
+      openModelPicker();
     };
     menuEl.appendChild(swap);
     if (window.lucide) lucide.createIcons();
@@ -346,6 +382,54 @@
     }).catch(function (e) {
       showBubble('哎呀，桌宠没回应…');
     });
+  }
+
+  /* ═══════════ 模型选择器（换装：点击选择，上一页/下一页） ═══════════ */
+  var pickerEl = document.getElementById('picker');
+  var PICKER_PAGE_SIZE = 4;
+  var pickerPage = 0;
+
+  function openModelPicker() {
+    pickerPage = 0;
+    renderPicker();
+    pickerEl.style.display = 'flex';
+  }
+  function closePicker() { pickerEl.style.display = 'none'; }
+  function renderPicker() {
+    var total = MODELS.length;
+    var pages = Math.max(1, Math.ceil(total / PICKER_PAGE_SIZE));
+    pickerPage = Math.min(pickerPage, pages - 1);
+    var start = pickerPage * PICKER_PAGE_SIZE;
+    var cur = MODELS[curModelIdx] ? MODELS[curModelIdx].dir : '';
+    var html = '<div class="picker-card"><div class="picker-title">选择形象</div><div class="picker-grid">';
+    for (var i = start; i < Math.min(start + PICKER_PAGE_SIZE, total); i++) {
+      var m = MODELS[i];
+      html += '<div class="picker-item' + (m.dir === cur ? ' active' : '') + '" data-idx="' + i + '">' +
+        '<div class="picker-thumb"><i data-lucide="smile"></i></div>' +
+        '<div class="picker-name">' + m.name + '</div></div>';
+    }
+    html += '</div><div class="picker-nav">' +
+      '<button id="pk-prev"' + (pickerPage <= 0 ? ' disabled' : '') + '>上一页</button>' +
+      '<span class="picker-page">' + (pickerPage + 1) + '/' + pages + '</span>' +
+      '<button id="pk-next"' + (pickerPage >= pages - 1 ? ' disabled' : '') + '>下一页</button>' +
+      '</div><button class="picker-close">关闭</button></div>';
+    pickerEl.innerHTML = html;
+    if (window.lucide) lucide.createIcons();
+    pickerEl.querySelectorAll('.picker-item').forEach(function (el) {
+      el.onclick = function () {
+        var idx = parseInt(el.getAttribute('data-idx'), 10);
+        loadModel(idx);
+        closePicker();
+        showBubble('换上新造型啦，我是 ' + MODELS[idx].name + '！');
+      };
+    });
+    var prev = document.getElementById('pk-prev');
+    var next = document.getElementById('pk-next');
+    if (prev) prev.onclick = function () { if (pickerPage > 0) { pickerPage--; renderPicker(); } };
+    if (next) next.onclick = function () { if (pickerPage < pages - 1) { pickerPage++; renderPicker(); } };
+    var close = pickerEl.querySelector('.picker-close');
+    if (close) close.onclick = closePicker;
+    pickerEl.onclick = function (e) { if (e.target === pickerEl) closePicker(); };
   }
 
   /* ═══════════ 交互：拖动移动窗口（fetch 后端桥 → Qt 轮询）/ 单击开菜单 ═══════════ */
