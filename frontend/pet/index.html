@@ -359,12 +359,15 @@
   document.addEventListener('mouseup', function (e) {
     if (dragging && pressPos) {
       var dist = Math.hypot(e.clientX - pressPos.x, e.clientY - pressPos.y);
-      if (dist < 8) openMenuAt(e.clientX, e.clientY);
+      // 菜单已打开时不重开（避免点击菜单按钮时重建菜单导致 click 丢失）
+      if (dist < 8 && backdropEl.style.display !== 'block') {
+        openMenuAt(e.clientX, e.clientY);
+      }
     }
     dragging = false;
     pressPos = null;
     lastScreen = null;
-    postMove({ active: false });  // 通知 Qt 拖动结束（放慢轮询）
+    postMove({ active: false });
   });
 
   /* ═══════════ 回复轮询（语音/互动 done 后显示） ═══════════ */
