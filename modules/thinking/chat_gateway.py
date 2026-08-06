@@ -28,6 +28,14 @@ class PetChatRequest(BaseModel):
     action_id: str = ""
     text: str = ""
 
+
+class PetMoveRequest(BaseModel):
+    dx: float = 0
+    dy: float = 0
+
+
+_pet_move = {"dx": 0.0, "dy": 0.0}
+
 from config.settings import settings
 from utils.logger import setup_logger
 
@@ -641,6 +649,23 @@ async def pet_actions():
     """桌宠互动动作模板（圆环菜单 + Chat 图标检测统一数据源）"""
     from modules.desktop_pet.actions import CATEGORIES, public_actions
     return {"success": True, "data": {"categories": CATEGORIES, "actions": public_actions()}}
+
+
+@router.post("/pet/move")
+async def pet_move(body: PetMoveRequest):
+    """桌宠拖动位移累积（页面 fetch → Qt 轮询移动窗口，规避 QWebChannel 段错误）"""
+    _pet_move["dx"] += float(body.dx or 0)
+    _pet_move["dy"] += float(body.dy or 0)
+    return {"success": True}
+
+
+@router.get("/pet/move")
+async def pet_move_get():
+    """取走累积位移并清空（Qt 侧每帧轮询）"""
+    m = {"dx": _pet_move["dx"], "dy": _pet_move["dy"]}
+    _pet_move["dx"] = 0.0
+    _pet_move["dy"] = 0.0
+    return {"success": True, "data": m}
 
 
 @router.post("/pet/chat")

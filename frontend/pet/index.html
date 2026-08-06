@@ -326,7 +326,7 @@
     });
   }
 
-  /* ═══════════ 交互：页面内拖动角色 / 单击开菜单 ═══════════ */
+  /* ═══════════ 交互：拖动移动窗口（fetch 后端桥 → Qt 轮询）/ 单击开菜单 ═══════════ */
   function openMenuAt(x, y) {
     if (!model) return;
     var mw = (model.width || 200) * 0.5 + 24;
@@ -336,29 +336,32 @@
     }
   }
 
-  var dragging = false, dragOff = null, pressPos = null;
+  var dragging = false, pressPos = null, lastScreen = null;
   document.addEventListener('mousedown', function (e) {
     pressPos = { x: e.clientX, y: e.clientY };
-    if (!model) return;
-    try {
-      var b = model.getBounds();
-      if (b && b.contains(e.clientX, e.clientY)) {
-        dragging = true;
-        dragOff = { x: e.clientX - model.position.x, y: e.clientY - model.position.y };
-      }
-    } catch (err) { dragging = false; }
+    lastScreen = { x: e.screenX, y: e.screenY };
+    dragging = true;
   });
   document.addEventListener('mousemove', function (e) {
-    if (!dragging || !model) return;
-    model.position.set(e.clientX - dragOff.x, e.clientY - dragOff.y);
+    if (!dragging || !lastScreen) return;
+    var dx = e.screenX - lastScreen.x, dy = e.screenY - lastScreen.y;
+    lastScreen = { x: e.screenX, y: e.screenY };
+    if (dx || dy) {
+      fetch('/stream/pet/move', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dx: dx, dy: dy }),
+      }).catch(function () {});
+    }
   });
   document.addEventListener('mouseup', function (e) {
-    if (pressPos && model && !dragging) {
+    if (dragging && pressPos) {
       var dist = Math.hypot(e.clientX - pressPos.x, e.clientY - pressPos.y);
       if (dist < 8) openMenuAt(e.clientX, e.clientY);
     }
     dragging = false;
     pressPos = null;
+    lastScreen = null;
   });
 
   /* ═══════════ 回复轮询（语音/互动 done 后显示） ═══════════ */

@@ -84,6 +84,15 @@ class PetWidget(QWidget):
         self._load_page()
 
         self._cfg_timer = QTimer(self)
+        self._cfg_timer.timeout.connect(self._check_pet_enabled)
+        self._cfg_timer.start(5000)
+
+        # 拖动：页面 fetch 后端累积位移 → Qt 轮询移动窗口（规避 QWebChannel 段错误）
+        self._move_timer = QTimer(self)
+        self._move_timer.timeout.connect(self._poll_move)
+        self._move_timer.start(50)
+
+        self._place_default()
 
     def _load_page(self):
         self.view.load(_pet_url(self.backend_url))
@@ -92,10 +101,23 @@ class PetWidget(QWidget):
         if not ok:
             print("[Pet] 页面加载失败，2s 后重试（等待后端就绪）", flush=True)
             QTimer.singleShot(2000, self._load_page)
-        self._cfg_timer.timeout.connect(self._check_pet_enabled)
-        self._cfg_timer.start(5000)
 
-        self._place_default()
+    # ── 拖动：轮询后端累积位移，移动窗口 ──
+
+    def _poll_move(self):
+        try:
+            req = urllib.request.Request(
+                f"{self.backend_url}/stream/pet/move",
+                headers={"Accept": "application/json"},
+            )
+            with urllib.request.urlopen(req, timeout=1) as resp:
+                data = json.loads(resp.read().decode("utf-8")).get("data", {})
+            dx = float(data.get("dx", 0))
+            dy = float(data.get("dy", 0))
+            if dx or dy:
+                self.move(self.pos() + QPoint(int(dx), int(dy)))
+        except Exception:
+            pass
 
     # ── 桌宠开关（DESKTOP_PET_ENABLED）实时控制窗口显示 ──
 
