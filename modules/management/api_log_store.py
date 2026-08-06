@@ -105,7 +105,7 @@ class ApiLogStore:
         if path:
             where.append("path LIKE ?"); params.append(f"%{path}%")
         if status:
-            where.append("status=?"); params.append(int(status))
+            where.append("CAST(status AS TEXT) LIKE ?"); params.append(f"{int(status)}%")
         if since_hours > 0:
             where.append("ts>=?"); params.append(time.time() - since_hours * 3600)
         sql = "SELECT ts, time, method, path, status, ms FROM api_requests"
@@ -130,7 +130,7 @@ class ApiLogStore:
         if path:
             where.append("path LIKE ?"); params.append(f"%{path}%")
         if status:
-            where.append("status=?"); params.append(int(status))
+            where.append("CAST(status AS TEXT) LIKE ?"); params.append(f"{int(status)}%")
         if since_hours > 0:
             where.append("ts>=?"); params.append(time.time() - since_hours * 3600)
         sql = "SELECT COUNT(*) FROM api_requests"
