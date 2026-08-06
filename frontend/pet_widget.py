@@ -88,9 +88,10 @@ class PetWidget(QWidget):
         self._cfg_timer.start(5000)
 
         # 拖动：页面 fetch 后端累积位移 → Qt 轮询移动窗口（规避 QWebChannel 段错误）
+        # 拖动中 50ms 快轮询，空闲 2s 慢轮询（避免无意义请求）
         self._move_timer = QTimer(self)
         self._move_timer.timeout.connect(self._poll_move)
-        self._move_timer.start(150)
+        self._move_timer.start(2000)
 
         self._place_default()
 
@@ -114,8 +115,13 @@ class PetWidget(QWidget):
                 data = json.loads(resp.read().decode("utf-8")).get("data", {})
             dx = float(data.get("dx", 0))
             dy = float(data.get("dy", 0))
+            active = bool(data.get("active", False))
             if dx or dy:
                 self.move(self.pos() + QPoint(int(dx), int(dy)))
+            # 拖动中快轮询（50ms），空闲慢轮询（2s）
+            want = 50 if active else 2000
+            if self._move_timer.interval() != want:
+                self._move_timer.setInterval(want)
         except Exception:
             pass
 

@@ -337,22 +337,24 @@
   }
 
   var dragging = false, pressPos = null, lastScreen = null;
+  function postMove(body) {
+    fetch('/stream/pet/move', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }).catch(function () {});
+  }
   document.addEventListener('mousedown', function (e) {
     pressPos = { x: e.clientX, y: e.clientY };
     lastScreen = { x: e.screenX, y: e.screenY };
     dragging = true;
+    postMove({ active: true });  // 通知 Qt 开始拖动（加快轮询）
   });
   document.addEventListener('mousemove', function (e) {
     if (!dragging || !lastScreen) return;
     var dx = e.screenX - lastScreen.x, dy = e.screenY - lastScreen.y;
     lastScreen = { x: e.screenX, y: e.screenY };
-    if (dx || dy) {
-      fetch('/stream/pet/move', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dx: dx, dy: dy }),
-      }).catch(function () {});
-    }
+    if (dx || dy) postMove({ dx: dx, dy: dy });
   });
   document.addEventListener('mouseup', function (e) {
     if (dragging && pressPos) {
@@ -362,6 +364,7 @@
     dragging = false;
     pressPos = null;
     lastScreen = null;
+    postMove({ active: false });  // 通知 Qt 拖动结束（放慢轮询）
   });
 
   /* ═══════════ 回复轮询（语音/互动 done 后显示） ═══════════ */
