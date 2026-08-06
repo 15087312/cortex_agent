@@ -315,22 +315,10 @@
     });
   }
 
-  /* ═══════════ 单击 / 拖动 ═══════════ */
-  var dragging = false, dragOff = null, pressPos = null;
+  /* ═══════════ 单击开互动菜单（角色固定，拖动由全屏穿透层保证不误触） ═══════════ */
+  var pressPos = null;
   document.addEventListener('mousedown', function (e) {
     pressPos = { x: e.clientX, y: e.clientY };
-    if (!model) return;
-    try {
-      var b = model.getBounds();
-      if (b.contains(e.clientX, e.clientY)) {
-        dragging = true;
-        dragOff = { x: e.clientX - model.position.x, y: e.clientY - model.position.y };
-      }
-    } catch (err) { dragging = false; }
-  });
-  document.addEventListener('mousemove', function (e) {
-    if (!dragging || !model) return;
-    model.position.set(e.clientX - dragOff.x, e.clientY - dragOff.y);
   });
   document.addEventListener('mouseup', function (e) {
     if (pressPos && model) {
@@ -350,7 +338,6 @@
         if (hit) openMenu(e.clientX, e.clientY);
       }
     }
-    dragging = false;
     pressPos = null;
   });
 
