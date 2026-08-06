@@ -36,6 +36,7 @@ class PetMoveRequest(BaseModel):
 
 
 _pet_move = {"dx": 0.0, "dy": 0.0, "active": False}
+_pet_move_queues: set = set()  # SSE 推送连接（Qt 长连接收位移，替代轮询）
 
 from config.settings import settings
 from utils.logger import setup_logger
@@ -654,21 +655,41 @@ async def pet_actions():
 
 @router.post("/pet/move")
 async def pet_move(body: PetMoveRequest):
-    """桌宠拖动位移累积（页面 fetch → Qt 轮询移动窗口，规避 QWebChannel 段错误）"""
+    """桌宠拖动位移累积，并实时推送 SSE 给 Qt（规避 QWebChannel 段错误，无需轮询）"""
     _pet_move["dx"] += float(body.dx or 0)
     _pet_move["dy"] += float(body.dy or 0)
     if body.active is not None:
         _pet_move["active"] = bool(body.active)
+    if _pet_move["dx"] or _pet_move["dy"]:
+        m = {"dx": _pet_move["dx"], "dy": _pet_move["dy"], "active": _pet_move["active"]}
+        _pet_move["dx"] = 0.0
+        _pet_move["dy"] = 0.0
+        for q in list(_pet_move_queues):
+            try:
+                q.put_nowait(m)
+            except Exception:
+                pass
     return {"success": True}
 
 
-@router.get("/pet/move")
-async def pet_move_get():
-    """取走累积位移并清空（Qt 侧轮询），返回拖动状态 active 供 Qt 调节轮询频率"""
-    m = {"dx": _pet_move["dx"], "dy": _pet_move["dy"], "active": _pet_move["active"]}
-    _pet_move["dx"] = 0.0
-    _pet_move["dy"] = 0.0
-    return {"success": True, "data": m}
+@router.get("/pet/move/stream")
+async def pet_move_stream():
+    """SSE 长连接：Qt 收桌宠拖动位移推送（替代 GET /pet/move 轮询）"""
+    from sse_starlette.sse import EventSourceResponse
+    queue: "asyncio.Queue" = asyncio.Queue()
+    _pet_move_queues.add(queue)
+
+    async def gen():
+        try:
+            while True:
+                m = await queue.get()
+                yield {"event": "move", "data": json.dumps(m, ensure_ascii=False)}
+        except asyncio.CancelledError:
+            pass
+        finally:
+            _pet_move_queues.discard(queue)
+
+    return EventSourceResponse(gen())
 
 
 @router.post("/pet/chat")

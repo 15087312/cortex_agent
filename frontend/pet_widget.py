@@ -10,7 +10,7 @@ import sys
 import time
 import urllib.request
 
-from PyQt6.QtCore import QObject, QPoint, QTimer, Qt, QUrl, pyqtSlot
+from PyQt6.QtCore import QObject, QPoint, QTimer, Qt, QUrl, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QColor
 from PyQt6.QtWebChannel import QWebChannel
 from PyQt6.QtWebEngineCore import QWebEngineProfile, QWebEngineSettings
@@ -45,6 +45,8 @@ class _PetBridge(QObject):
 
 class PetWidget(QWidget):
     """桌宠：透明置顶小窗 + Live2D 角色 + 圆环互动 + 状态栏"""
+
+    _apply_move_signal = pyqtSignal(int, int)
 
     def __init__(self, backend_url: str = BACKEND_URL):
         super().__init__(
@@ -87,11 +89,9 @@ class PetWidget(QWidget):
         self._cfg_timer.timeout.connect(self._check_pet_enabled)
         self._cfg_timer.start(5000)
 
-        # 拖动：页面 fetch 后端累积位移 → Qt 轮询移动窗口（规避 QWebChannel 段错误）
-        # 拖动中 50ms 快轮询，空闲 2s 慢轮询（避免无意义请求）
-        self._move_timer = QTimer(self)
-        self._move_timer.timeout.connect(self._poll_move)
-        self._move_timer.start(2000)
+        # 拖动：页面 fetch 后端 → 后端 SSE 推送 Qt（无轮询）
+        self._apply_move_signal.connect(self._apply_move)
+        self._start_move_sse()
 
         self._place_default()
 
@@ -103,25 +103,40 @@ class PetWidget(QWidget):
             print("[Pet] 页面加载失败，2s 后重试（等待后端就绪）", flush=True)
             QTimer.singleShot(2000, self._load_page)
 
-    # ── 拖动：轮询后端累积位移，移动窗口 ──
+    # ── 拖动：SSE 长连接收位移（后台线程 + 信号），无轮询 ──
 
-    def _poll_move(self):
+    def _start_move_sse(self):
+        import threading
+        t = threading.Thread(target=self._move_sse_loop, daemon=True, name="pet-move-sse")
+        t.start()
+
+    def _move_sse_loop(self):
+        import re as _re
         try:
             req = urllib.request.Request(
-                f"{self.backend_url}/stream/pet/move",
-                headers={"Accept": "application/json"},
+                f"{self.backend_url}/stream/pet/move/stream",
+                headers={"Accept": "text/event-stream"},
             )
-            with urllib.request.urlopen(req, timeout=1) as resp:
-                data = json.loads(resp.read().decode("utf-8")).get("data", {})
-            dx = float(data.get("dx", 0))
-            dy = float(data.get("dy", 0))
-            active = bool(data.get("active", False))
-            if dx or dy:
-                self.move(self.pos() + QPoint(int(dx), int(dy)))
-            # 拖动中快轮询（50ms），空闲慢轮询（2s）
-            want = 50 if active else 2000
-            if self._move_timer.interval() != want:
-                self._move_timer.setInterval(want)
+            resp = urllib.request.urlopen(req, timeout=30)
+            while True:
+                line = resp.readline()
+                if not line:
+                    break
+                if line.startswith(b"data:"):
+                    try:
+                        m = json.loads(line[5:].strip())
+                        dx = int(float(m.get("dx", 0)))
+                        dy = int(float(m.get("dy", 0)))
+                        if dx or dy:
+                            self._apply_move_signal.emit(dx, dy)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+    def _apply_move(self, dx: int, dy: int):
+        try:
+            self.move(self.pos() + QPoint(dx, dy))
         except Exception:
             pass
 
