@@ -45,8 +45,10 @@ class PetWidget(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
         self.backend_url = backend_url.rstrip("/")
-        self._passthrough = True
-        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        # 平台级输入穿透（WA_TransparentForMouseEvents 对 WebEngine 窗口无效，
+        # 需用 WindowTransparentForInput——NSWindow ignoresMouseEvents，仅角色区域接收输入）
+        self._receiving = False
+        self.setWindowFlag(Qt.WindowType.WindowTransparentForInput, True)
 
         self.view = QWebEngineView(self)
         self.view.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
@@ -102,10 +104,11 @@ class PetWidget(QWidget):
         if not self.isVisible():
             return
         local = self.mapFromGlobal(QCursor.pos())
-        want = not self._pet_zone().contains(local)
-        if want != self._passthrough:
-            self._passthrough = want
-            self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, want)
+        want_receive = self._pet_zone().contains(local)
+        if want_receive != self._receiving:
+            self._receiving = want_receive
+            self.setWindowFlag(Qt.WindowType.WindowTransparentForInput, not want_receive)
+            self.show()
 
     def _place_fullscreen(self):
         screen = self.screen()

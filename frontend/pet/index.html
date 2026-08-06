@@ -192,8 +192,12 @@
       model.position.set(e.clientX - dragOff.x, e.clientY - dragOff.y);
     });
     document.addEventListener('mouseup', function () { dragging = false; });
-    document.addEventListener('dblclick', function () {
+    document.addEventListener('dblclick', function (e) {
       if (!model) return;
+      try {
+        var b = model.getBounds();
+        if (!b.contains(e.clientX, e.clientY)) return;
+      } catch (err) { return; }
       model.position.set(window.innerWidth / 2, window.innerHeight - 2);
     });
   })();
