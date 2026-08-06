@@ -68,13 +68,13 @@ class PetWidget(QWidget):
             | Qt.WindowType.Tool,
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setFixedSize(320, 540)
+        self.setFixedSize(400, 680)
         self.backend_url = backend_url.rstrip("/")
         self._last_time = 0.0
         self._bubble_timer = None
 
         self.view = _DragView(self)
-        self.view.setGeometry(0, 0, 320, 540)
+        self.view.setGeometry(0, 0, 400, 680)
         self.view.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.view.setStyleSheet("background: transparent;")
         _profile = QWebEngineProfile.defaultProfile()

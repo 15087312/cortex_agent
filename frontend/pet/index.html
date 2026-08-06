@@ -80,6 +80,7 @@
 
   try {
     var live2d = (window.PIXI && window.PIXI.live2d) || window.live2d;
+    var dpr = window.devicePixelRatio || 1;
     app = new PIXI.Application({
       view: document.getElementById('stage'),
       width: window.innerWidth,
@@ -89,15 +90,16 @@
       resizeTo: window,
       antialias: true,
       autoDensity: true,
+      resolution: dpr,
     });
 
     live2d.Live2DModel.from(MODEL_URL, { autoInteract: false }).then(function (m) {
       model = m;
       window.__m = { loaded: true };
       model.anchor.set(0.5, 1);
-      model.position.set(window.innerWidth / 2, window.innerHeight - 4);
+      model.position.set(window.innerWidth / 2, window.innerHeight - 2);
       var fit = Math.min(window.innerWidth / model.width, window.innerHeight / model.height);
-      model.scale.set(Math.min(fit, 1));
+      model.scale.set(fit);
       app.stage.addChild(model);
       if (typeof m.internalModel !== 'undefined' && m.internalModel.coreModel) {
         try { m.internalModel.coreModel.startRandomMotionGroup('Idle'); } catch (e) {}
@@ -139,7 +141,7 @@
         clearInterval(model._speakTimer);
         model._speakTimer = null;
       }
-      model.position.y = window.innerHeight - 4;
+      model.position.y = window.innerHeight - 2;
     }
   }
 
