@@ -98,6 +98,7 @@
 <script src="lib/pixi.min.js"></script>
 <script src="lib/live2dcubismcore.min.js"></script>
 <script src="lib/pixi-live2d-display.min.js"></script>
+<script src="lib/cubism4.min.js"></script>
 <script src="lib/lucide.min.js"></script>
 <script>
 (function () {
@@ -136,9 +137,10 @@
   function loadModel(idx) {
     curModelIdx = idx % MODELS.length;
     var cfg = MODELS[curModelIdx];
-    if (model) { try { model.destroy(); } catch (e) {} model = null; }
+    // 先加载新模型，成功后再销毁旧的（避免 destroy 后立即加载导致渲染资源冲突）
     live2d.Live2DModel.from('models/' + cfg.dir + '/' + cfg.file, { autoInteract: false })
       .then(function (m) {
+        if (model) { try { model.destroy(); } catch (e) {} model = null; }
         console.log('[PET] Live2D 模型加载成功:', cfg.name);
         model = m;
         model.anchor.set(0.5, 1);
