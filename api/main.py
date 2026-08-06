@@ -429,6 +429,32 @@ def _get_client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
+# 高频轮询 GET（桌宠状态/健康检查等）不记录到仪表盘请求日志
+_API_GET_IGNORE = {
+    "/stream/pet/move", "/stream/pet/state", "/stream/pet/last-reply",
+    "/stream/pet/actions", "/stream/status", "/stream/sessions",
+    "/config", "/health", "/metrics", "/dashboard", "/dashboard/",
+}
+
+
+@app.middleware("http")
+async def api_request_log_middleware(request: Request, call_next):
+    """记录 API 请求（供仪表盘展示最近发送的 API POST/GET + 耗时）"""
+    t0 = time.monotonic()
+    response = await call_next(request)
+    try:
+        if request.method == "GET" and request.url.path in _API_GET_IGNORE:
+            return response
+        from modules.management.request_log import log_request
+        log_request(
+            request.method, request.url.path, response.status_code,
+            (time.monotonic() - t0) * 1000,
+        )
+    except Exception:
+        pass
+    return response
+
+
 @app.middleware("http")
 async def rate_limit_middleware(request: Request, call_next):
     if request.url.path in _RATE_LIMIT_WHITELIST_PATHS:

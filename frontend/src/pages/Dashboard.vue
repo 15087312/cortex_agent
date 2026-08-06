@@ -171,6 +171,24 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
         </div>
         <div v-else style="text-align:center;padding:24px;color:var(--text-muted)">暂无会话</div>
       </div>
+
+      <!-- 最近 API 请求 -->
+      <div class="card" style="margin-top:12px">
+        <div class="card-header">最近 API 请求 ({{ dash?.api_requests?.length || 0 }})</div>
+        <table class="data-table" v-if="dash?.api_requests?.length">
+          <thead><tr><th>时间</th><th>方法</th><th>路径</th><th>状态</th><th>耗时</th></tr></thead>
+          <tbody>
+            <tr v-for="(r, i) in dash.api_requests" :key="i">
+              <td style="color:var(--text-muted);white-space:nowrap">{{ r.time }}</td>
+              <td><span class="badge" :class="r.method === 'POST' ? 'badge-blue' : 'badge-gray'">{{ r.method }}</span></td>
+              <td style="word-break:break-all;font-size:12px">{{ r.path }}</td>
+              <td><span class="badge" :class="r.status < 400 ? 'badge-green' : 'badge-red'">{{ r.status }}</span></td>
+              <td style="color:var(--text-muted);white-space:nowrap">{{ r.ms != null ? r.ms + 'ms' : '-' }}</td>
+            </tr>
+          </tbody>
+        </table>
+        <div v-else style="text-align:center;padding:24px;color:var(--text-muted)">暂无请求记录（发送 API 请求后会显示在这里）</div>
+      </div>
     </div>
     <div class="page-body" v-else style="text-align:center;padding:60px;color:var(--text-muted)">加载中...</div>
   </div>

@@ -62,9 +62,18 @@ async def get_dashboard():
             "modules": {
                 name: info.get("status", "unknown")
                 for name, info in module_statuses.items()
-            }
+            },
+            "api_requests": _recent_api_requests(),
         }
     }
+
+
+def _recent_api_requests(limit: int = 50) -> list:
+    try:
+        from modules.management.request_log import recent_requests
+        return recent_requests(limit)
+    except Exception:
+        return []
 
 
 # ==============================================================================
