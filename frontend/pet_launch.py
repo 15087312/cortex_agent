@@ -12,11 +12,10 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # macOS 透明 QWebEngineView 需要共享 OpenGL 上下文（could not create image from display 的常见修复）。
-# 必须在 QApplication 创建前设置。注意：不能禁用 GPU——Live2D 渲染依赖 WebGL。
+# 必须在 QApplication 实例创建前设置。注意：不能禁用 GPU——Live2D 渲染依赖 WebGL。
 from PyQt6.QtCore import Qt
-Qt.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
-
 from PyQt6.QtWidgets import QApplication
+QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
 
 from pet_widget import create_pet_widget
 
