@@ -70,10 +70,37 @@ async def get_dashboard():
 
 def _recent_api_requests(limit: int = 50) -> list:
     try:
-        from modules.management.request_log import recent_requests
-        return recent_requests(limit)
+        from modules.management.api_log_store import ApiLogStore
+        store = ApiLogStore.get_instance()
+        store.flush()
+        return store.query(limit=limit)
     except Exception:
         return []
+
+
+@router.get("/api-requests")
+async def get_api_requests(method: str = "", path: str = "", status: int = 0,
+                           limit: int = 50, offset: int = 0, since_hours: float = 0):
+    """API 请求日志：按方法/路径/状态/时间筛选 + 分页（可追溯）"""
+    from modules.management.api_log_store import ApiLogStore
+    store = ApiLogStore.get_instance()
+    store.flush()
+    return {
+        "success": True,
+        "data": {
+            "items": store.query(method, path, status, limit, offset, since_hours),
+            "total": store.count(method, path, status, since_hours),
+        }
+    }
+
+
+@router.get("/api-requests/stats")
+async def get_api_requests_stats(since_hours: float = 0):
+    """API 请求统计：总量/平均耗时/按方法/按状态"""
+    from modules.management.api_log_store import ApiLogStore
+    store = ApiLogStore.get_instance()
+    store.flush()
+    return {"success": True, "data": store.stats(since_hours)}
 
 
 # ==============================================================================

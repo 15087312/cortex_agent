@@ -47,11 +47,46 @@ async function loadData() {
     proactiveLogs.value = plog?.data?.logs || []
     enabledOutreach.value = (sess?.data || []).filter((s) => (s.metadata || {}).outreach?.enabled).length
   } catch {} finally { loading.value = false }
+  loadApiRequests(); loadApiStats()
 }
 
 let timer = null
 onMounted(async () => { await loadData(); timer = setInterval(loadData, 30000) })
 onBeforeUnmount(() => { if (timer) clearInterval(timer) })
+
+// ── API 请求日志（持久化，可筛选/分页/统计）──
+const apiReq = ref({ items: [], total: 0 })
+const apiReqStats = ref(null)
+const apiReqFilter = ref({ method: '', status: '', path: '', since_hours: 0 })
+const apiReqPage = ref(0)
+const API_PAGE = 50
+async function loadApiRequests() {
+  try {
+    const f = apiReqFilter.value
+    const q = new URLSearchParams()
+    if (f.method) q.set('method', f.method)
+    if (f.status) q.set('status', f.status)
+    if (f.path) q.set('path', f.path)
+    if (f.since_hours) q.set('since_hours', f.since_hours)
+    q.set('limit', API_PAGE)
+    q.set('offset', apiReqPage.value * API_PAGE)
+    const r = await fetch('/management/api-requests?' + q.toString(), { headers: { Accept: 'application/json' } })
+    const d = await r.json()
+    apiReq.value = d?.data || { items: [], total: 0 }
+  } catch (e) {}
+}
+async function loadApiStats() {
+  try {
+    const f = apiReqFilter.value
+    const q = f.since_hours ? '?since_hours=' + f.since_hours : ''
+    const r = await fetch('/management/api-requests/stats' + q, { headers: { Accept: 'application/json' } })
+    const d = await r.json()
+    apiReqStats.value = d?.data || null
+  } catch (e) {}
+}
+function applyApiFilter() { apiReqPage.value = 0; loadApiRequests(); loadApiStats() }
+function apiReqNext() { apiReqPage.value += 1; loadApiRequests() }
+function apiReqPrev() { if (apiReqPage.value > 0) { apiReqPage.value -= 1; loadApiRequests() } }
 </script>
 
 <template>
@@ -172,13 +207,37 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
         <div v-else style="text-align:center;padding:24px;color:var(--text-muted)">暂无会话</div>
       </div>
 
-      <!-- 最近 API 请求 -->
+      <!-- API 请求日志（持久化 + 筛选 + 分页 + 统计） -->
       <div class="card" style="margin-top:12px">
-        <div class="card-header">最近 API 请求 ({{ dash?.api_requests?.length || 0 }})</div>
-        <table class="data-table" v-if="dash?.api_requests?.length">
+        <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+          <span>API 请求日志 ({{ apiReq.total }})</span>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <select v-model="apiReqFilter.method" @change="applyApiFilter" class="input" style="width:90px">
+              <option value="">全部方法</option><option value="POST">POST</option><option value="GET">GET</option>
+            </select>
+            <select v-model="apiReqFilter.status" @change="applyApiFilter" class="input" style="width:100px">
+              <option value="">全部状态</option><option value="2">2xx</option><option value="3">3xx</option><option value="4">4xx</option><option value="5">5xx</option>
+            </select>
+            <select v-model="apiReqFilter.since_hours" @change="applyApiFilter" class="input" style="width:100px">
+              <option :value="0">全部时间</option><option :value="1">最近1小时</option><option :value="24">最近24小时</option><option :value="168">最近7天</option>
+            </select>
+            <input v-model="apiReqFilter.path" @keydown.enter="applyApiFilter" placeholder="路径筛选" class="input" style="width:140px" />
+            <button class="btn btn-sm" @click="applyApiFilter"><Icon name="search" :size="13" /> 筛选</button>
+            <button class="btn btn-sm" @click="applyApiFilter"><Icon name="refresh" :size="13" /> 刷新</button>
+          </div>
+        </div>
+
+        <div v-if="apiReqStats" style="display:flex;gap:12px;flex-wrap:wrap;padding:8px 0;font-size:12px;color:var(--text-secondary)">
+          <span>总计 <b>{{ apiReqStats.total }}</b></span>
+          <span>平均耗时 <b>{{ apiReqStats.avg_ms }}ms</b></span>
+          <span v-for="(v, k) in apiReqStats.by_method" :key="'m' + k">{{ k }}: <b>{{ v }}</b></span>
+          <span v-for="(v, k) in apiReqStats.by_status" :key="'s' + k">{{ k }}xx: <b>{{ v }}</b></span>
+        </div>
+
+        <table class="data-table" v-if="apiReq.items.length">
           <thead><tr><th>时间</th><th>方法</th><th>路径</th><th>状态</th><th>耗时</th></tr></thead>
           <tbody>
-            <tr v-for="(r, i) in dash.api_requests" :key="i">
+            <tr v-for="(r, i) in apiReq.items" :key="apiReqPage * API_PAGE + i">
               <td style="color:var(--text-muted);white-space:nowrap">{{ r.time }}</td>
               <td><span class="badge" :class="r.method === 'POST' ? 'badge-blue' : 'badge-gray'">{{ r.method }}</span></td>
               <td style="word-break:break-all;font-size:12px">{{ r.path }}</td>
@@ -188,6 +247,12 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
           </tbody>
         </table>
         <div v-else style="text-align:center;padding:24px;color:var(--text-muted)">暂无请求记录（发送 API 请求后会显示在这里）</div>
+
+        <div style="display:flex;justify-content:flex-end;gap:8px;padding-top:8px;align-items:center">
+          <span style="font-size:12px;color:var(--text-muted)">共 {{ apiReq.total }} 条</span>
+          <button class="btn btn-sm" :disabled="apiReqPage <= 0" @click="apiReqPrev">上一页</button>
+          <button class="btn btn-sm" :disabled="(apiReqPage + 1) * API_PAGE >= apiReq.total" @click="apiReqNext">下一页</button>
+        </div>
       </div>
     </div>
     <div class="page-body" v-else style="text-align:center;padding:60px;color:var(--text-muted)">加载中...</div>

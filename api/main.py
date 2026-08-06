@@ -346,6 +346,7 @@ _AUTH_WHITELIST_PREFIXES = ("/management/causal-graph", "/management/memory",
                              "/stream/proactive-log",
                               "/stream/pet/",
                               "/management/sessions/", "/config/",
+                              "/management/api-requests",
                               "/tools/info/",
                               "/audio", "/pet/")  # TTS 音频供前端 <audio> 无鉴权播放；/pet/ 桌宠 Live2D 资源
 
@@ -439,14 +440,14 @@ _API_GET_IGNORE = {
 
 @app.middleware("http")
 async def api_request_log_middleware(request: Request, call_next):
-    """记录 API 请求（供仪表盘展示最近发送的 API POST/GET + 耗时）"""
+    """记录 API 请求（持久化 SQLite，供仪表盘筛选/分析/追溯）"""
     t0 = time.monotonic()
     response = await call_next(request)
     try:
         if request.method == "GET" and request.url.path in _API_GET_IGNORE:
             return response
-        from modules.management.request_log import log_request
-        log_request(
+        from modules.management.api_log_store import ApiLogStore
+        ApiLogStore.get_instance().add(
             request.method, request.url.path, response.status_code,
             (time.monotonic() - t0) * 1000,
         )
