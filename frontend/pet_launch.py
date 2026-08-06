@@ -11,9 +11,12 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# macOS 透明 WebEngine 窗口 GPU 合成问题（could not create image from display）——
-# 改用软件渲染，避免渲染进程崩溃导致模型加载失败
-os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--disable-gpu --disable-software-rasterizer")
+# macOS 透明 WebEngine：保留 WebGL（Live2D 必需），仅禁用 GPU 合成
+# （could not create image from display 来自 GPU 合成；--disable-gpu 会连 WebGL 一起禁用）
+os.environ.setdefault(
+    "QTWEBENGINE_CHROMIUM_FLAGS",
+    "--disable-gpu-compositing --disable-accelerated-2d-canvas",
+)
 
 from PyQt6.QtWidgets import QApplication
 
