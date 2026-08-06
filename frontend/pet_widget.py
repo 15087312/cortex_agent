@@ -9,7 +9,7 @@ import sys
 import time
 import urllib.request
 
-from PyQt6.QtCore import QTimer, Qt, QUrl
+from PyQt6.QtCore import QPoint, QTimer, Qt, QUrl
 from PyQt6.QtGui import QColor
 from PyQt6.QtWebEngineCore import QWebEngineProfile, QWebEngineSettings
 from PyQt6.QtWebEngineWidgets import QWebEngineView
@@ -29,6 +29,48 @@ def _pet_url(backend_url: str) -> QUrl:
     return QUrl(f"{backend_url.rstrip('/')}/pet/index.html?v={int(time.time())}")
 
 
+class _DragView(QWebEngineView):
+    """Qt 层交互：单击开互动菜单 / 拖动移动整个窗口（角色固定在窗口内）"""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self._press_pos = None
+        self._dragging = False
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._press_pos = event.globalPosition().toPoint()
+            self._dragging = False
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._press_pos is not None and event.buttons() & Qt.MouseButton.LeftButton:
+            cur = event.globalPosition().toPoint()
+            if self._dragging:
+                self.parentWidget().move(self.parentWidget().pos() + (cur - self._press_pos))
+                self._press_pos = cur
+            elif (cur - self._press_pos).manhattanLength() > 10:
+                self._dragging = True  # 移动超过阈值 = 拖动窗口
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self._press_pos is not None:
+            cur = event.globalPosition().toPoint()
+            if not self._dragging and (cur - self._press_pos).manhattanLength() <= 10:
+                # 单击 → 开互动菜单（窗口内坐标，页面判定是否命中角色）
+                local = self.parentWidget().mapFromGlobal(cur)
+                self.page().runJavaScript(f"openMenuAt({local.x()}, {local.y()})")
+            self._press_pos = None
+            self._dragging = False
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+
 class PetWidget(QWidget):
     """桌宠：透明置顶小窗 + Live2D 角色 + 圆环互动 + 状态栏"""
 
@@ -44,7 +86,7 @@ class PetWidget(QWidget):
         self.setFixedSize(PET_W, PET_H)
         self.backend_url = backend_url.rstrip("/")
 
-        self.view = QWebEngineView(self)
+        self.view = _DragView(self)
         self.view.setGeometry(0, 0, PET_W, PET_H)
         self.view.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.view.setStyleSheet("background: transparent;")
