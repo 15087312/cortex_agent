@@ -143,7 +143,7 @@ function nodeBadgeClass(type) { return type === 'root' ? 'badge-green' : type ==
         <div class="card-header">因果节点</div>
         <table class="data-table" v-if="nodes.length > 0">
           <thead><tr><th>标签</th><th>类型</th><th>置信度</th><th>事件数</th><th>操作</th></tr></thead>
-          <tbody><tr v-for="node in nodes" :key="node.id"><td><strong>{{ node.label }}</strong></td><td><span class="badge" :class="nodeBadgeClass(node.type)">{{ n.type }}</span></td><td>{{ (node.confidence||0).toFixed(2) }}</td><td>{{ node.event_count||0 }}</td><td><button class="btn btn-sm" @click="handleShowTree(node.id)" :disabled="treeLoading">因果链</button></td></tr></tbody>
+          <tbody><tr v-for="node in nodes" :key="node.id"><td><strong>{{ node.label }}</strong></td><td><span class="badge" :class="nodeBadgeClass(node.type)">{{ node.type }}</span></td><td>{{ (node.confidence||0).toFixed(2) }}</td><td>{{ node.event_count||0 }}</td><td><button class="btn btn-sm" @click="handleShowTree(node.id)" :disabled="treeLoading">因果链</button></td></tr></tbody>
         </table>
         <div v-else class="empty-state" style="padding:40px"><span class="empty-icon"><Icon name="network" :size="20" /></span><p class="empty-text">因果数据将在此显示</p></div>
       </div>

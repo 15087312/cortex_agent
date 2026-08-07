@@ -63,21 +63,51 @@ def init_screen_permission():
 def capture_screen_bytes(max_width: int = 1280, region: tuple = None) -> Optional[bytes]:
     """截取屏幕返回 PNG bytes（支持 region=(x,y,w,h) 裁剪）
 
-    macOS 上 PIL ImageGrab 会抛 "could not create image from display"（无 X11），
-    自动回退 screencapture 命令——统一入口，供 input_controller/ui_interactor 使用。
+    macOS 上 PIL ImageGrab 走 X11 会主动打印 "could not create image from display"（except 拦不住），
+    因此 macOS 直接用 screencapture 命令，不再调 ImageGrab。
     """
     if not SCREENSHOT_ENABLED:
         return None
 
-    try:
-        img = _try_imagegrab()
-    except Exception:
-        img = None
-    if img is None and sys.platform == "darwin":
+    img = _grab_image(max_width, region)
+    if img is None:
+        return None
+
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def capture_screen(max_width: int = 1280) -> Optional[str]:
+    """截取屏幕，返回 base64 编码的 PNG
+
+    mss 已移除：其 CGDisplayStream 在本机会挂起 ~30s。
+    macOS 用 screencapture；其他平台优先 PIL ImageGrab。
+    """
+    raw = capture_screen_bytes(max_width=max_width)
+    if raw is None:
+        return None
+    return base64.b64encode(raw).decode()
+
+
+def _grab_image(max_width: int, region: tuple = None):
+    """抓取并处理图像（缩放/裁剪）。macOS 跳过 ImageGrab。"""
+    if sys.platform == "darwin":
+        # ImageGrab 在 macOS 无 X11，会打印 could not create image from display
         try:
             img = _try_screencapture()
         except Exception:
             img = None
+    else:
+        try:
+            img = _try_imagegrab()
+        except Exception:
+            img = None
+        if img is None:
+            try:
+                img = _try_screencapture()
+            except Exception:
+                img = None
     if img is None:
         return None
 
@@ -89,22 +119,7 @@ def capture_screen_bytes(max_width: int = 1280, region: tuple = None) -> Optiona
     if w > max_width:
         ratio = max_width / w
         img = img.resize((max_width, int(h * ratio)))
-
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    return buf.getvalue()
-
-
-def capture_screen(max_width: int = 1280) -> Optional[str]:
-    """截取屏幕，返回 base64 编码的 PNG
-
-    mss 已移除：其 CGDisplayStream 在本机会挂起 ~30s。
-    优先 PIL ImageGrab（进程内、快），darwin 上回退 screencapture 命令。
-    """
-    raw = capture_screen_bytes(max_width=max_width)
-    if raw is None:
-        return None
-    return base64.b64encode(raw).decode()
+    return img
 
 
 capture_screen_base64 = capture_screen
@@ -124,10 +139,20 @@ def _try_screencapture():
         import tempfile
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
             tmp_path = f.name
-        subprocess.run(["screencapture", "-x", tmp_path], timeout=5, check=True)
-        from PIL import Image
-        img = Image.open(tmp_path)
-        os.unlink(tmp_path)
-        return img
+        try:
+            subprocess.run(
+                ["screencapture", "-x", tmp_path],
+                timeout=5, check=True,
+                capture_output=True,  # 捕获子进程输出，避免 "could not create image from display" 泄漏到终端
+            )
+            from PIL import Image
+            img = Image.open(tmp_path)
+            img.load()
+            return img
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
     except Exception:
         return None
