@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { endpoints } from '@/api.js'
 import { useToastStore } from '@/stores/toast.js'
 import Icon from '@/components/Icon.vue'
@@ -10,6 +10,44 @@ const selected = ref('')
 const tasks = ref([])
 const loading = ref(true)
 const saving = ref(false)
+
+const TASK_TYPES = [
+  { value: 'daily', label: '每天定点' },
+  { value: 'interval', label: '每 N 分钟' },
+  { value: 'once', label: '单次触发' },
+  { value: 'cron', label: 'Cron 表达式' },
+]
+
+function taskType(task) {
+  const s = task.schedule
+  if (typeof s === 'string' && s.includes(':')) return 'daily'
+  if (s && typeof s === 'object') return s.kind === 'interval' ? 'interval' : s.kind === 'once' ? 'once' : s.kind === 'cron' ? 'cron' : 'daily'
+  if (task.time) return 'daily'
+  return 'daily'
+}
+function scheduleLabel(task) {
+  const s = task.schedule
+  const t = taskType(task)
+  if (t === 'daily') return typeof s === 'string' ? s : (task.time || 'HH:MM')
+  if (t === 'interval') return '每 ' + (s?.every_minutes ?? task.every_minutes ?? 30) + ' 分钟'
+  if (t === 'once') return s?.at || task.at || '未设'
+  if (t === 'cron') return s?.expr || task.expr || '未设'
+  return ''
+}
+function statusBadge(st) {
+  if (!st) return null
+  const map = { success: ['#3fb950', '成功'], error: ['#f85149', '错误'] }
+  const [color, label] = map[st] || ['#8b949e', st]
+  return { color, label }
+}
+function scheduleOf(task) {
+  const t = taskType(task)
+  if (t === 'daily') return task.time || '09:00'
+  if (t === 'interval') return { kind: 'interval', every_minutes: Number(task.every_minutes || 30) }
+  if (t === 'once') return { kind: 'once', at: task.at || '09:00' }
+  if (t === 'cron') return { kind: 'cron', expr: task.expr || '* * * * *' }
+  return task.time || '09:00'
+}
 
 async function loadSessions() {
   try {
@@ -30,18 +68,29 @@ async function loadTasks() {
 }
 
 function addTask() {
-  tasks.value.push({ id: 't' + Date.now(), time: '09:00', enabled: true, action: 'chat', prompt: '' })
+  tasks.value.push({ id: 't' + Date.now(), time: '09:00', schedule: '09:00', every_minutes: 30, at: '09:00', expr: '* * * * *', enabled: true, action: 'chat', prompt: '', type: 'daily' })
 }
 
 function removeTask(i) { tasks.value.splice(i, 1) }
 
+function onTypeChange(task) {
+  if (task.type === 'daily') task.schedule = task.time || '09:00'
+  else if (task.type === 'interval') task.schedule = { kind: 'interval', every_minutes: Number(task.every_minutes || 30) }
+  else if (task.type === 'once') task.schedule = { kind: 'once', at: task.at || '09:00' }
+  else task.schedule = { kind: 'cron', expr: task.expr || '* * * * *' }
+}
+
 async function saveTasks() {
   saving.value = true
   try {
+    const normalized = tasks.value.map(t => {
+      const out = { id: t.id, enabled: !!t.enabled, action: t.action || 'chat', prompt: t.prompt || '', schedule: scheduleOf(t) }
+      return out
+    })
     const r = await fetch('/stream/session/' + encodeURIComponent(selected.value) + '/tasks', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tasks: { tasks: tasks.value } }),
+      body: JSON.stringify({ tasks: { tasks: normalized } }),
     })
     const d = await r.json()
     if (d.success) toast.show('定时任务已保存', 'success')
@@ -69,23 +118,42 @@ onMounted(loadSessions)
 
       <div class="card" style="margin-top:12px" v-if="selected">
         <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
-          <span>定时任务（到点调用逻辑 → 消息推送）</span>
+          <span>定时任务（到点调用与主动搭话相同的大模型逻辑 → 消息推送）</span>
           <button class="btn btn-sm btn-primary" @click="addTask"><Icon name="plus" :size="13" /> 添加任务</button>
         </div>
 
         <div v-if="tasks.length">
           <div v-for="(task, i) in tasks" :key="task.id" style="padding:12px 0;border-bottom:1px solid var(--border)">
             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-              <input v-model="task.time" class="input" style="width:90px" placeholder="HH:MM" title="触发时间" />
+              <select v-model="task.type" class="input" style="width:110px" @change="onTypeChange(task)">
+                <option v-for="t in TASK_TYPES" :key="t.value" :value="t.value">{{ t.label }}</option>
+              </select>
+
+              <template v-if="task.type === 'daily'">
+                <input v-model="task.time" class="input" style="width:90px" placeholder="HH:MM" @change="task.schedule = task.time" />
+              </template>
+              <template v-else-if="task.type === 'interval'">
+                <input v-model.number="task.every_minutes" type="number" min="1" class="input" style="width:80px" @change="task.schedule = { kind: 'interval', every_minutes: task.every_minutes }" />
+                <span style="font-size:12px;color:var(--text-muted)">分钟</span>
+              </template>
+              <template v-else-if="task.type === 'once'">
+                <input v-model="task.at" class="input" style="width:90px" placeholder="HH:MM" @change="task.schedule = { kind: 'once', at: task.at }" />
+              </template>
+              <template v-else>
+                <input v-model="task.expr" class="input" style="width:130px" placeholder="分 时 日 月 周" @change="task.schedule = { kind: 'cron', expr: task.expr }" />
+              </template>
+
               <label class="toggle-switch" title="启用">
                 <input type="checkbox" v-model="task.enabled" /><span class="toggle-slider"></span>
               </label>
               <span style="font-size:12px;color:var(--text-muted)">启用</span>
               <select v-model="task.action" class="input" style="width:120px" title="触发的逻辑">
-                <option value="chat">chat（LLM 消息）</option>
-                <option value="pet">pet（桌宠）</option>
+                <option value="chat">chat（大模型）</option>
               </select>
               <button class="btn btn-sm danger" @click="removeTask(i)"><Icon name="trash" :size="13" /></button>
+              <span v-if="statusBadge(task.last_status)" :style="{ fontSize: '11px', padding: '2px 8px', borderRadius: '10px', background: statusBadge(task.last_status).color + '22', color: statusBadge(task.last_status).color }">
+                {{ statusBadge(task.last_status).label }}{{ task.last_run ? ' · ' + task.last_run : '' }}
+              </span>
             </div>
             <textarea v-model="task.prompt" rows="2" class="input" style="margin-top:8px;font-size:13px" placeholder="可选提示词（留空用默认提醒语）"></textarea>
           </div>

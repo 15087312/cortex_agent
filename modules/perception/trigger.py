@@ -456,63 +456,8 @@ class ProactiveTrigger:
         return "\n".join(parts)
 
     async def _call_llm(self, prompt: str, session_id: str = "") -> str:
-        """调用大模型（复用总指挥人格，单次调用，注入感知/内心独白/时间感知上下文）"""
-        try:
-            from modules.thinking.model_factory import get_model_factory
-            from infra.model.base_model import ChatMessage
-            factory = get_model_factory()
-            factory.ensure_ready()
-            client = factory.get_client("large")
-            system_prompt = _build_outreach_system_prompt()
-
-            # 注入与主流程一致的上下文（调用原有函数，不重复实现）
-            extras = []
-            # 时间感知 + 用户身份
-            try:
-                extras.append(self._build_time_text())
-            except Exception:
-                pass
-            # 内心独白（良知引导）
-            try:
-                from modules.thinking.probes.probe_tools import _session_guidance
-                g = _session_guidance.get(("large_primary", session_id), {})
-                inner = g.get("inner_thoughts", "")
-                if inner:
-                    extras.append(f"【你回忆起的过往经验】\n{inner}")
-            except Exception:
-                pass
-            # 感知上下文
-            try:
-                from modules.thinking.context.sources.perception_source import PerceptionSource
-                frag = await PerceptionSource().collect()
-                if frag and frag.content:
-                    extras.append(frag.content)
-            except Exception:
-                pass
-            # 事件记忆（统一 modules 记忆系统）
-            try:
-                from modules.memory.event_retrieval import get_event_retrieval
-                events = await get_event_retrieval().retrieve(query=prompt, max_results=3, threshold=0.10)
-                if events:
-                    lines = ["【曾经发生的事】", "（以下为过去的事件记忆，仅供参考，不要把过去任务当作当前任务执行）"]
-                    for i, ev in enumerate(events, 1):
-                        date = str(ev.time or "")[:10] or "未知日期"
-                        lines.append(f"  [{i}] (日期={date}) {str(ev.fact)[:150]}")
-                    extras.append("\n".join(lines))
-            except Exception:
-                pass
-            if extras:
-                system_prompt = f"{system_prompt}\n\n" + "\n\n".join(extras)
-
-            messages = [
-                ChatMessage(role="system", content=system_prompt),
-                ChatMessage(role="user", content=prompt),
-            ]
-            response = await client.chat(messages=messages)
-            return response.message.content if response and response.message else ""
-        except Exception as e:
-            logger.error(f"LLM 调用失败: {e}")
-            raise
+        """调用大模型（统一走 call_outreach_llm —— 与定时任务等共用同一段 LLM 调用代码）"""
+        return await call_outreach_llm(prompt, session_id)
 
     def _build_time_text(self) -> str:
         """时间感知 + 用户身份（与主流程 _build_time_context 一致的格式）"""
@@ -596,3 +541,64 @@ def _run_async(coro):
         # 内部 aiohttp 的 asyncio.timeout 会报 'Timeout context manager should be used inside a task'
         return await asyncio.create_task(coro)
     return asyncio.run(_run_task_wrapped())
+
+
+async def call_outreach_llm(prompt: str, session_id: str = "") -> str:
+    """调用大模型（与主动搭话同一逻辑：总指挥人格 + 时间/感知/记忆/内心独白上下文）
+
+    供主动搭话、定时任务等复用——保证"调用同一个大模型 API 代码部分"。
+    """
+    try:
+        from datetime import datetime
+        from modules.thinking.model_factory import get_model_factory
+        from infra.model.base_model import ChatMessage
+        from config.settings import settings as _cfg
+        factory = get_model_factory()
+        factory.ensure_ready()
+        client = factory.get_client("large")
+        system_prompt = _build_outreach_system_prompt()
+
+        extras = []
+        try:
+            extras.append(f"【当前时间】{datetime.now().strftime('%Y-%m-%d %H:%M')}")
+            extras.append(f"【对话对象】{getattr(_cfg, 'USER_NAME', '用户') or '用户'}")
+        except Exception:
+            pass
+        try:
+            from modules.thinking.probes.probe_tools import _session_guidance
+            g = _session_guidance.get(("large_primary", session_id), {})
+            inner = g.get("inner_thoughts", "")
+            if inner:
+                extras.append(f"【你回忆起的过往经验】\n{inner}")
+        except Exception:
+            pass
+        try:
+            from modules.thinking.context.sources.perception_source import PerceptionSource
+            frag = await PerceptionSource().collect()
+            if frag and getattr(frag, "content", ""):
+                extras.append(frag.content)
+        except Exception:
+            pass
+        try:
+            from modules.memory.event_retrieval import get_event_retrieval
+            events = await get_event_retrieval().retrieve(query=prompt, max_results=3, threshold=0.10)
+            if events:
+                lines = ["【曾经发生的事】", "（以下为过去的事件记忆，仅供参考，不要把过去任务当作当前任务执行）"]
+                for i, ev in enumerate(events, 1):
+                    date = str(getattr(ev, "time", "") or "")[:10] or "未知日期"
+                    lines.append(f"  [{i}] (日期={date}) {str(getattr(ev, 'fact', ''))[:150]}")
+                extras.append("\n".join(lines))
+        except Exception:
+            pass
+        if extras:
+            system_prompt = f"{system_prompt}\n\n" + "\n\n".join(extras)
+
+        messages = [
+            ChatMessage(role="system", content=system_prompt),
+            ChatMessage(role="user", content=prompt),
+        ]
+        response = await client.chat(messages=messages)
+        return (response.message.content or "").strip() if response and response.message else ""
+    except Exception as e:
+        logger.error(f"大模型调用失败: {e}")
+        return ""

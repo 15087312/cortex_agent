@@ -1,9 +1,10 @@
-"""会话定时任务 — 每会话独立配置，到点调用逻辑（action 可注册扩展）
+"""会话定时任务 — 每会话独立，到点调用逻辑（action 可注册扩展）
 
-- 配置存会话 metadata_json.scheduled_tasks: {"tasks": [{"id","time","enabled","action","prompt"}]}
-- 后台线程定时扫描（每 30s）→ 到点（HH:MM ± 5min）→ 执行 action 处理器
-- 默认 action "chat"：LLM 生成消息 → 注入会话 → 推送到前端（类似主动搭话）
-- 可 register_handler(action, fn) 注册自定义逻辑
+借鉴 DeterminFlow cron：
+- 调度类型：HH:MM(每天) / interval(每N分钟) / once(单次) / cron(简化"分 时")
+- 配置存会话 metadata_json.scheduled_tasks: {"tasks": [{"id","schedule","enabled","action","prompt"}]}
+- 触发时调用 action 处理器（默认 chat：复用主动搭话 call_outreach_llm 生成消息 → 注入会话 → 推送）
+- 执行状态记录到任务配置（last_run / last_status）
 """
 import asyncio
 import threading
@@ -59,6 +60,7 @@ class ScheduledTaskManager:
         except Exception as e:
             logger.debug(f"会话列表获取失败: {e}")
             return
+        now = datetime.now()
         for s in sessions:
             sid = s.get("session_id") if isinstance(s, dict) else getattr(s, "session_id", "")
             if not sid:
@@ -68,21 +70,35 @@ class ScheduledTaskManager:
                 for task in (cfg.get("tasks") or []):
                     if not task.get("enabled"):
                         continue
-                    if self._due(sid, task):
+                    if self._due(sid, task, now):
                         await self._fire(sid, task)
             except Exception as e:
                 logger.debug(f"会话 {sid[:8]} 定时任务失败: {e}")
 
-    def _due(self, session_id: str, task: dict) -> bool:
-        now = datetime.now()
-        target = task.get("time", "")
+    # ── 调度判定（DeterminFlow 式）──
+
+    def _due(self, session_id: str, task: dict, now: datetime) -> bool:
+        sched = task.get("schedule", task.get("time"))
+        if isinstance(sched, str) and ":" in str(sched):
+            return self._due_daily(session_id, task, sched, now)
+        if isinstance(sched, dict):
+            kind = sched.get("kind")
+            if kind == "interval":
+                return self._due_interval(session_id, task, sched.get("every_minutes", 30), now)
+            if kind == "once":
+                return self._due_once(session_id, task, sched.get("at", ""), now)
+            if kind == "cron":
+                return self._due_cron(session_id, task, sched.get("expr", ""), now)
+        return False
+
+    def _due_daily(self, session_id: str, task: dict, hhmm: str, now: datetime) -> bool:
         try:
-            h, m = map(int, str(target).split(":"))
+            h, m = map(int, str(hhmm).split(":"))
         except (ValueError, TypeError):
             return False
         now_min = now.hour * 60 + now.minute
         target_min = h * 60 + m
-        key = (session_id, task.get("id") or task.get("time"))
+        key = (session_id, task.get("id") or str(hhmm))
         today = now.date().isoformat()
         with self._lock:
             if self._last_fired.get(key) == today:
@@ -92,52 +108,99 @@ class ScheduledTaskManager:
                 return True
         return False
 
+    def _due_interval(self, session_id: str, task: dict, every_minutes: int, now: datetime) -> bool:
+        key = (session_id, task.get("id") or "interval")
+        interval_sec = max(1, int(every_minutes or 30)) * 60
+        with self._lock:
+            last = self._last_fired.get(key)
+            if last is None or (now.timestamp() - last) >= interval_sec:
+                self._last_fired[key] = now.timestamp()
+                return True
+        return False
+
+    def _due_once(self, session_id: str, task: dict, at: str, now: datetime) -> bool:
+        key = (session_id, task.get("id") or "once")
+        with self._lock:
+            if self._last_fired.get(key):
+                return False
+            if not at:
+                return False
+            # "HH:MM"（今天）± jitter
+            if ":" in at and "-" not in at:
+                try:
+                    h, m = map(int, at.split(":"))
+                except (ValueError, TypeError):
+                    return False
+                now_min = now.hour * 60 + now.minute
+                target_min = h * 60 + m
+                if abs(now_min - target_min) <= JITTER_MINUTES:
+                    self._last_fired[key] = now.timestamp()
+                    return True
+                return False
+            # ISO 日期时间：单次执行
+            try:
+                target = datetime.fromisoformat(at)
+                if now >= target:
+                    self._last_fired[key] = now.timestamp()
+                    return True
+            except (ValueError, TypeError):
+                return False
+        return False
+
+    def _due_cron(self, session_id: str, task: dict, expr: str, now: datetime) -> bool:
+        key = (session_id, task.get("id") or "cron")
+        minute_mark = now.strftime("%Y%m%d%H%M")
+        try:
+            parts = str(expr or "").strip().split()
+            if len(parts) == 2:
+                min_pat, hour_pat = parts[0], parts[1]
+                min_ok = min_pat == "*" or str(now.minute) == min_pat
+                hour_ok = hour_pat == "*" or str(now.hour) == hour_pat
+                with self._lock:
+                    if min_ok and hour_ok and self._last_fired.get(key) != minute_mark:
+                        self._last_fired[key] = minute_mark
+                        return True
+        except Exception:
+            pass
+        return False
+
+    # ── 执行 ──
+
     async def _fire(self, session_id: str, task: dict) -> None:
         action = task.get("action", "chat")
         handler = self._handlers.get(action)
         if not handler:
             logger.warning(f"定时任务未知 action: {action} (session={session_id[:8]})")
+            self._mark_run(session_id, task, "error")
             return
         try:
             await handler(session_id, task)
+            self._mark_run(session_id, task, "success")
             logger.info(f"[定时任务] session={session_id[:8]} action={action} 已执行")
         except Exception as e:
+            self._mark_run(session_id, task, "error")
             logger.error(f"[定时任务] action={action} 失败: {e}")
 
-    # ── 默认 action: chat —— LLM 生成消息 → 注入会话 → 推送 ──
-
-    async def _handle_chat(self, session_id: str, task: dict) -> None:
-        prompt = task.get("prompt") or "现在是定时任务时间，请自然地向用户说一句话（简短自然，1-2 句）。"
-        from infra.model.large_model_client import LargeModelClient
-        from infra.model.base_model import ChatMessage
-        from modules.database.session_repo import get_session_repo
-
-        repo = get_session_repo()
-        history = []
+    def _mark_run(self, session_id: str, task: dict, status: str) -> None:
         try:
-            msgs = repo.get_recent_messages(session_id, limit=10)
-            for m in msgs:
-                role = m.get("role")
-                content = m.get("content")
-                if role in ("user", "assistant") and content:
-                    history.append(ChatMessage(role=role, content=content))
+            from modules.database.session_repo import get_session_repo
+            repo = get_session_repo()
+            cfg = repo.get_scheduled_tasks(session_id)
+            for t in (cfg.get("tasks") or []):
+                if t.get("id") == task.get("id"):
+                    t["last_run"] = datetime.now().strftime("%m-%d %H:%M")
+                    t["last_status"] = status
+                    break
+            repo.set_scheduled_tasks(session_id, cfg)
         except Exception:
             pass
 
-        system = (
-            "你是这个会话的助手，定时任务触发了。"
-            "请基于会话历史自然地说一句话（简短，1-2 句），不要提'定时任务'除非合适。"
-            "用中文。"
-        )
-        messages = [ChatMessage(role="system", content=system)] + history + [
-            ChatMessage(role="user", content=prompt)
-        ]
-        try:
-            resp = await LargeModelClient().chat(messages=messages)
-            text = (resp.message.content or "").strip() if resp and resp.message else ""
-        except Exception as e:
-            logger.error(f"[定时任务] LLM 生成失败: {e}")
-            return
+    # ── 默认 action: chat —— 复用主动搭话 LLM 逻辑 → 注入会话 → 推送 ──
+
+    async def _handle_chat(self, session_id: str, task: dict) -> None:
+        prompt = task.get("prompt") or "现在是定时任务时间，请自然地向用户说一句话（简短自然，1-2 句）。"
+        from modules.perception.trigger import call_outreach_llm
+        text = await call_outreach_llm(prompt, session_id)
         if not text:
             return
         await self._push(session_id, text)
