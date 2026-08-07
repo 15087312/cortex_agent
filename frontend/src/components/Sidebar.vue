@@ -30,6 +30,7 @@ const devSections = [
       { route: '/modules', label: '模块', icon: 'puzzle' },
       { route: '/causal', label: '因果图', icon: 'network' },
       { route: '/graph', label: '编排图', icon: 'bot' },
+      { route: '/orchestration', label: '编排', icon: 'settings' },
       { route: '/tools', label: '工具', icon: 'wrench' },
       { route: '/gallery', label: '图库', icon: 'image' },
       { route: '/security', label: '安全', icon: 'shield' },

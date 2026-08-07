@@ -165,6 +165,29 @@ async def get_module_detail(
     }
 
 
+@router.get("/orchestration")
+async def get_orchestration():
+    """编排界面数据：Agent 定义（人设/模型/工具/覆盖）——借鉴 DeterminFlow Agent 编排"""
+    from config.prompts.loader import get_loader
+    from config.settings import settings
+    roles = (get_loader().load("roles") or {}).get("roles") or {}
+    agents = []
+    for key, data in roles.items():
+        agents.append({
+            "role": key,
+            "name": data.get("name", key),
+            "tier": data.get("tier", ""),
+            "personality": data.get("personality", ""),
+            "speaking_style": data.get("speaking_style", ""),
+            "expertise": data.get("expertise", ""),
+            "model_id": data.get("model_id", ""),
+            "custom_persona": settings.get_persona(key),
+            "system_override": settings.get_system_override(key),
+        })
+    agents.sort(key=lambda a: {"large": 0, "supervisor": 1, "expert": 2}.get(a["tier"], 9))
+    return {"success": True, "data": {"agents": agents}}
+
+
 @router.post("/open-folder")
 async def open_folder(body: dict = None):
     """打开模型/数据文件夹（Finder）——桌宠模型 / 语音模型 等（与设置项一一对应）"""

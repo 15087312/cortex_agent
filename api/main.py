@@ -348,6 +348,7 @@ _AUTH_WHITELIST_PREFIXES = ("/management/causal-graph", "/management/memory",
                                "/management/sessions/", "/config/",
                                "/management/api-requests",
                                "/management/open-folder",
+                               "/management/orchestration",
                               "/tools/info/",
                               "/audio", "/pet/")  # TTS 音频供前端 <audio> 无鉴权播放；/pet/ 桌宠 Live2D 资源
 

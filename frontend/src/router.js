@@ -23,6 +23,7 @@ const routes = [
   { path: '/outreach', name: 'Outreach', component: () => import('@/pages/Outreach.vue') },
   { path: '/causal', name: 'Causal', component: () => import('@/pages/Causal.vue') },
   { path: '/graph', name: 'Graph', component: () => import('@/pages/Graph.vue') },
+  { path: '/orchestration', name: 'Orchestration', component: () => import('@/pages/Orchestration.vue') },
   { path: '/tools', name: 'Tools', component: () => import('@/pages/Tools.vue') },
   { path: '/security', name: 'Security', component: () => import('@/pages/Security.vue') },
   { path: '/perception', name: 'Perception', component: () => import('@/pages/Perception.vue') },
