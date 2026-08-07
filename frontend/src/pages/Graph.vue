@@ -14,17 +14,21 @@ const tierNodes = [
   { tier: 'expert', role: 'code_writer', label: '实现专家', icon: 'wrench', color: '#f59e0b', desc: '执行具体实现' },
 ]
 const totalTools = computed(() => tools.value.length || 0)
-const commonTools = computed(() => tools.value.slice(0, 6))
+const commonTools = computed(() => (Array.isArray(tools.value) ? tools.value.slice(0, 6) : []))
 const activeRunners = computed(() => models.value?.runners?.length || 0)
 
 async function loadData() {
   try {
-    const [m, t] = await Promise.all([
+    const [modelsResp, toolsResp] = await Promise.all([
       endpoints.models().catch(() => null),
       endpoints.tools().catch(() => null),
     ])
-    models.value = m?.data || null
-    tools.value = t?.data?.tools || t?.data || []
+    models.value = modelsResp?.data || null
+    // /tools 返回结构可能是 { tools: [...] } 或直接数组——统一取数组
+    const toolsData = toolsResp?.data
+    tools.value = Array.isArray(toolsData)
+      ? toolsData
+      : (Array.isArray(toolsData?.tools) ? toolsData.tools : [])
   } catch {} finally { loading.value = false }
 }
 
@@ -63,13 +67,13 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
             <div class="g-sub">语音 / 文本 / 感知</div>
           </div>
           <!-- 层级节点 -->
-          <div v-for="(n, i) in tierNodes" :key="n.tier" class="g-node" :style="{ left: 215 + i * 195 + 'px', top: '70px', borderColor: n.color }">
+          <div v-for="(node, index) in tierNodes" :key="node.tier" class="g-node" :style="{ left: 215 + index * 195 + 'px', top: '70px', borderColor: node.color }">
             <div class="g-icon" :style="{ background: n.color }"><Icon :name="n.icon" :size="18" /></div>
             <div class="g-name">{{ n.label }}</div>
             <div class="g-sub">{{ n.role }}</div>
-            <div class="g-active" :style="{ color: n.color }">
-              <span class="g-dot" :style="{ background: (summary[n.tier]?.active || 0) > 0 ? '#22c55e' : '#94a3b8' }"></span>
-              活跃 {{ summary[n.tier]?.active || 0 }} / {{ summary[n.tier]?.max || 1 }}
+            <div class="g-active" :style="{ color: node.color }">
+              <span class="g-dot" :style="{ background: (summary[node.tier]?.active || 0) > 0 ? '#22c55e' : '#94a3b8' }"></span>
+              活跃 {{ summary[node.tier]?.active || 0 }} / {{ summary[node.tier]?.max || 1 }}
             </div>
           </div>
           <!-- 工具节点 -->
@@ -81,7 +85,7 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
 
           <!-- 工具徽标 -->
           <div class="g-tools">
-            <span v-for="t in commonTools" :key="t.name" class="badge" style="font-family:monospace;background:rgba(6,182,212,.1);color:#06b6d4;font-size:10px">{{ t.name }}</span>
+            <span v-for="tool in commonTools" :key="tool.name" class="badge" style="font-family:monospace;background:rgba(6,182,212,.1);color:#06b6d4;font-size:10px">{{ tool.name }}</span>
             <span v-if="totalTools > 6" class="badge badge-gray" style="font-size:10px">+{{ totalTools - 6 }}</span>
           </div>
         </div>
@@ -90,11 +94,11 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
 
       <!-- 层级明细 -->
       <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:12px">
-        <div v-for="n in tierNodes" :key="n.tier" class="card">
-          <div class="card-header" style="color:var(--text-secondary)">{{ n.label }}（{{ n.tier }}）</div>
-          <p style="font-size:13px;color:var(--text-muted);margin:0 0 10px">{{ n.desc }}</p>
+        <div v-for="node in tierNodes" :key="node.tier" class="card">
+          <div class="card-header" style="color:var(--text-secondary)">{{ node.label }}（{{ node.tier }}）</div>
+          <p style="font-size:13px;color:var(--text-muted);margin:0 0 10px">{{ node.desc }}</p>
           <div style="font-size:13px">
-            活跃实例 <b :style="{ color: n.color }">{{ summary[n.tier]?.active || 0 }}</b> / {{ summary[n.tier]?.max || 1 }}
+            活跃实例 <b :style="{ color: node.color }">{{ summary[node.tier]?.active || 0 }}</b> / {{ summary[node.tier]?.max || 1 }}
           </div>
         </div>
       </div>
