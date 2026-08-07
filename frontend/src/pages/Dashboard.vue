@@ -26,6 +26,19 @@ const activeApp = computed(() => perception.value?.world_state?.active_app || '-
 const activeWindow = computed(() => perception.value?.world_state?.active_window || '-')
 const perceptionRunning = computed(() => perception.value?.status === 'running')
 
+// 借鉴 DeterminFlow 看板：活跃会话 / 高频调用路径统计
+const recentSessions = computed(() =>
+  [...sessions.value].sort((a, b) => (b.last_active || '').localeCompare(a.last_active || '')).slice(0, 8)
+)
+const totalApi = computed(() => apiReqStats.value?.total || 0)
+const topPaths = computed(() => {
+  const counts = {}
+  ;(apiReq.value.items || []).forEach((r) => { counts[r.path] = (counts[r.path] || 0) + 1 })
+  const arr = Object.entries(counts).map(([path, n]) => ({ path, n })).sort((a, b) => b.n - a.n).slice(0, 8)
+  const max = Math.max(1, ...arr.map((x) => x.n))
+  return { arr, max }
+})
+
 function statusLabel(s) { return s === 'healthy' ? '正常' : s === 'degraded' ? '降级' : s }
 function statusBadge(s) { return s === 'healthy' ? 'badge-green' : s === 'degraded' ? 'badge-yellow' : 'badge-red' }
 
@@ -126,37 +139,23 @@ function apiReqPrev() { if (apiReqPage.value > 0) { apiReqPage.value -= 1; loadA
           </div>
           <div class="health-name">会话</div>
         </div>
-      </div>
-
-      <!-- 主动搭话状态 -->
-      <div class="card" style="margin-top:12px">
-        <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
-          <span>主动搭话</span>
-          <button class="btn btn-sm" @click="router.push('/outreach')">管理规则</button>
+        <div class="health-card" title="API 请求总数">
+          <div class="health-ring">
+            <svg viewBox="0 0 72 72"><circle class="ring-bg" cx="36" cy="36" r="30"/><circle class="ring-fill" cx="36" cy="36" r="30" :style="{ strokeDasharray: 188.5, strokeDashoffset: totalApi ? 0 : 188.5, stroke: '#8b5cf6' }"/></svg>
+            <div class="ring-label">{{ totalApi }}</div>
+          </div>
+          <div class="health-name">API 请求</div>
         </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-          <div>
-            <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px">已开启会话</div>
-            <div style="display:flex;gap:6px;flex-wrap:wrap">
-              <span v-for="s in sessions.filter(x => (x.metadata||{}).outreach?.enabled).slice(0,5)" :key="s.session_id" class="badge badge-green" style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ s.title || s.session_id.slice(0,8) }}</span>
-              <span v-if="!enabledOutreach" style="color:var(--text-muted);font-size:13px">未开启任何会话</span>
-            </div>
+        <div class="health-card" title="已开启主动搭话的会话数">
+          <div class="health-ring">
+            <svg viewBox="0 0 72 72"><circle class="ring-bg" cx="36" cy="36" r="30"/><circle class="ring-fill" cx="36" cy="36" r="30" :style="{ strokeDasharray: 188.5, strokeDashoffset: enabledOutreach ? 0 : 188.5, stroke: '#22C55E' }"/></svg>
+            <div class="ring-label">{{ enabledOutreach }}</div>
           </div>
-          <div>
-            <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px">最近触发</div>
-            <div v-if="proactiveLogs.length">
-              <div v-for="l in proactiveLogs.slice(0,3)" :key="l.created_at" style="display:flex;gap:6px;align-items:baseline;font-size:13px;margin-bottom:4px">
-                <span class="badge badge-blue" style="font-size:10px">{{ ({schedule:'定点',screen:'屏幕',idle:'空闲',time_window:'时段'})[l.reason] || l.reason }}</span>
-                <span style="color:var(--text-muted);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ l.content }}</span>
-                <span style="color:var(--text-muted);font-size:11px">{{ (l.created_at||'').slice(5,16) }}</span>
-              </div>
-            </div>
-            <div v-else style="color:var(--text-muted);font-size:13px">暂无触发记录</div>
-          </div>
+          <div class="health-name">主动搭话</div>
         </div>
       </div>
 
-      <!-- 当前环境 + 记忆库 + 最近会话 -->
+      <!-- 当前环境 + 记忆库 -->
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
         <div class="card">
           <div class="card-header">当前环境</div>
@@ -195,16 +194,71 @@ function apiReqPrev() { if (apiReqPage.value > 0) { apiReqPage.value -= 1; loadA
         <div v-else style="text-align:center;padding:40px;color:var(--text-muted)">暂无模块数据</div>
       </div>
 
-      <!-- 最近会话 -->
+      <!-- 最近会话（借鉴 DeterminFlow 会话表格） -->
       <div class="card" style="margin-top:12px">
-        <div class="card-header">最近会话</div>
-        <div v-if="sessions.length">
-          <div v-for="s in sessions.slice(0, 6)" :key="s.session_id" class="setting-row" @click="router.push('/chat?session=' + s.session_id)" style="cursor:pointer">
-            <div class="lbl"><div class="t">{{ s.title || s.session_id.slice(0, 12) }}</div></div>
-            <div class="setting-ctl"><span style="color:var(--text-muted)">{{ s.message_count ?? 0 }} 条 · {{ (s.last_active || '').slice(5, 16) }}</span></div>
-          </div>
+        <div class="card-header">最近会话 ({{ sessions.length }})</div>
+        <div class="overflow-x-auto" v-if="recentSessions.length">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th class="text-left">ID</th>
+                <th class="text-left">类型</th>
+                <th class="text-left">标题</th>
+                <th class="text-right">消息数</th>
+                <th class="text-right">更新时间</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="s in recentSessions" :key="s.session_id" @click="router.push('/chat?session=' + s.session_id)" style="cursor:pointer">
+                <td style="font-family:monospace;font-size:12px;color:var(--accent)">{{ s.session_id.slice(0, 18) }}</td>
+                <td><span class="badge" :class="s.session_id === 'pet_main' ? 'badge-blue' : 'badge-gray'">{{ s.session_id === 'pet_main' ? 'PET' : s.session_id === 'chat' ? 'MAIN' : 'SUB' }}</span></td>
+                <td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px">{{ s.title || s.session_id.slice(0, 12) }}</td>
+                <td class="text-right" style="color:var(--text-muted);font-size:12px">{{ s.message_count ?? 0 }}</td>
+                <td class="text-right" style="color:var(--text-muted);font-size:12px;white-space:nowrap">{{ (s.last_active || '').slice(5, 16) }}</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
         <div v-else style="text-align:center;padding:24px;color:var(--text-muted)">暂无会话</div>
+      </div>
+
+      <!-- 调用频率 + 主动搭话时间线（借鉴 DeterminFlow 双栏） -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
+        <div class="card">
+          <div class="card-header">API 调用频率（当前页）</div>
+          <div v-if="topPaths.arr.length">
+            <div v-for="t in topPaths.arr" :key="t.path" style="margin-bottom:8px">
+              <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text-muted);margin-bottom:3px">
+                <span style="font-family:monospace;max-width:70%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ t.path }}</span>
+                <span>{{ t.n }}</span>
+              </div>
+              <div style="height:6px;border-radius:3px;background:var(--bg-secondary);overflow:hidden">
+                <div style="height:100%;border-radius:3px;background:linear-gradient(90deg,#8b5cf6,#ff5f8f);width:{{ (t.n / topPaths.max) * 100 }}%"></div>
+              </div>
+            </div>
+          </div>
+          <div v-else style="text-align:center;padding:20px;color:var(--text-muted)">暂无调用记录</div>
+        </div>
+        <div class="card">
+          <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+            <span>主动搭话时间线</span>
+            <button class="btn btn-sm" @click="router.push('/outreach')">管理规则</button>
+          </div>
+          <div v-if="proactiveLogs.length">
+            <div v-for="(l, i) in proactiveLogs.slice(0, 8)" :key="l.created_at" style="display:flex;gap:10px;position:relative;padding-left:18px;margin-bottom:12px">
+              <span style="position:absolute;left:0;top:5px;width:8px;height:8px;border-radius:50%;background:#22C55E;box-shadow:0 0 0 3px rgba(34,197,94,.15)"></span>
+              <span v-if="i < proactiveLogs.slice(0, 8).length - 1" style="position:absolute;left:3.5px;top:14px;bottom:-6px;width:1px;background:var(--border)"></span>
+              <div style="flex:1;min-width:0">
+                <div style="display:flex;gap:6px;align-items:center;margin-bottom:2px">
+                  <span class="badge badge-blue" style="font-size:10px">{{ ({schedule:'定点',screen:'屏幕',idle:'空闲',time_window:'时段'})[l.reason] || l.reason }}</span>
+                  <span style="color:var(--text-muted);font-size:11px">{{ (l.created_at||'').slice(5, 16) }}</span>
+                </div>
+                <div style="font-size:13px;color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ l.content }}</div>
+              </div>
+            </div>
+          </div>
+          <div v-else style="text-align:center;padding:20px;color:var(--text-muted)">暂无触发记录</div>
+        </div>
       </div>
 
       <!-- API 请求日志（持久化 + 筛选 + 分页 + 统计） -->
