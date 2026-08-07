@@ -198,20 +198,11 @@ class PyAutoGUIController(HardwareInputController):
     def screenshot(self, region: Tuple[int, int, int, int] = None) -> Optional[bytes]:
         if not self._initialized:
             return None
-        from utils.screen_capture import SCREENSHOT_ENABLED
+        from utils.screen_capture import SCREENSHOT_ENABLED, capture_screen_bytes
         if not SCREENSHOT_ENABLED:
             return None
         try:
-            import io
-            
-            if region:
-                img = self._controller.screenshot(region=region)
-            else:
-                img = self._controller.screenshot()
-            
-            buf = io.BytesIO()
-            img.save(buf, format='PNG')
-            return buf.getvalue()
+            return capture_screen_bytes(max_width=1280, region=region)
         except Exception as e:
             logger.error(f"截图失败: {e}")
             return None

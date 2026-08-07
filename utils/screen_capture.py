@@ -60,20 +60,30 @@ def init_screen_permission():
         logger.warning("[屏幕权限] 请在 系统设置 → 隐私与安全性 → 屏幕录制 中授权")
 
 
-def capture_screen(max_width: int = 1280) -> Optional[str]:
-    """截取屏幕，返回 base64 编码的 PNG
+def capture_screen_bytes(max_width: int = 1280, region: tuple = None) -> Optional[bytes]:
+    """截取屏幕返回 PNG bytes（支持 region=(x,y,w,h) 裁剪）
 
-    mss 已移除：其 CGDisplayStream 在本机会挂起 ~30s。
-    优先 PIL ImageGrab（进程内、快），darwin 上回退 screencapture 命令。
+    macOS 上 PIL ImageGrab 会抛 "could not create image from display"（无 X11），
+    自动回退 screencapture 命令——统一入口，供 input_controller/ui_interactor 使用。
     """
     if not SCREENSHOT_ENABLED:
         return None
 
-    img = _try_imagegrab()
+    try:
+        img = _try_imagegrab()
+    except Exception:
+        img = None
     if img is None and sys.platform == "darwin":
-        img = _try_screencapture()
+        try:
+            img = _try_screencapture()
+        except Exception:
+            img = None
     if img is None:
         return None
+
+    if region and len(region) == 4:
+        x, y, w, h = region
+        img = img.crop((int(x), int(y), int(x) + int(w), int(y) + int(h)))
 
     w, h = img.size
     if w > max_width:
@@ -81,8 +91,20 @@ def capture_screen(max_width: int = 1280) -> Optional[str]:
         img = img.resize((max_width, int(h * ratio)))
 
     buf = io.BytesIO()
-    img.save(buf, format="PNG", optimize=True)
-    return base64.b64encode(buf.getvalue()).decode()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def capture_screen(max_width: int = 1280) -> Optional[str]:
+    """截取屏幕，返回 base64 编码的 PNG
+
+    mss 已移除：其 CGDisplayStream 在本机会挂起 ~30s。
+    优先 PIL ImageGrab（进程内、快），darwin 上回退 screencapture 命令。
+    """
+    raw = capture_screen_bytes(max_width=max_width)
+    if raw is None:
+        return None
+    return base64.b64encode(raw).decode()
 
 
 capture_screen_base64 = capture_screen

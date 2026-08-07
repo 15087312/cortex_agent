@@ -86,29 +86,11 @@ class UIInteractor:
                 logger.warning(f"无法初始化图像分析器: {e}")
     
     def capture_screen(self, region: Tuple[int, int, int, int] = None) -> Optional[bytes]:
-        """截图"""
-        if self.controller:
-            return self.controller.screenshot(region)
-
-        from utils.screen_capture import SCREENSHOT_ENABLED
+        """截图（统一走 screen_capture：macOS 上避免 PyAutoGUI 的 ImageGrab X11 错误）"""
+        from utils.screen_capture import SCREENSHOT_ENABLED, capture_screen_bytes
         if not SCREENSHOT_ENABLED:
             return None
-
-        try:
-            import pyautogui
-            import io
-            
-            if region:
-                img = pyautogui.screenshot(region=region)
-            else:
-                img = pyautogui.screenshot()
-            
-            buf = io.BytesIO()
-            img.save(buf, format='PNG')
-            return buf.getvalue()
-        except Exception as e:
-            logger.error(f"截图失败: {e}")
-        return None
+        return capture_screen_bytes(max_width=1280, region=region)
     
     def find_element_by_image(
         self,
@@ -116,6 +98,9 @@ class UIInteractor:
         confidence: float = 0.8
     ) -> Optional[Tuple[int, int]]:
         """通过模板图像查找元素"""
+        from utils.screen_capture import SCREENSHOT_ENABLED
+        if not SCREENSHOT_ENABLED:
+            return None
         try:
             import pyautogui
             
@@ -134,6 +119,9 @@ class UIInteractor:
         confidence: float = 0.8
     ) -> List[Tuple[int, int]]:
         """查找所有匹配的图像"""
+        from utils.screen_capture import SCREENSHOT_ENABLED
+        if not SCREENSHOT_ENABLED:
+            return []
         results = []
         try:
             import pyautogui
