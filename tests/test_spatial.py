@@ -48,7 +48,9 @@ def test_spatial_prompt_not_injected_when_disabled(monkeypatch, fake_causal):
     monkeypatch.setattr(settings, "SPATIAL_ENHANCEMENT_ENABLED", False)
     captured = {}
     cons = Conscience(model_client=_make_client(captured))
-    _run(cons.think("测试输入", owner_id="spatial_test"))
+    result = _run(cons.think("测试输入", owner_id="spatial_test"))
+    # 关闭时心理活动仍正常生成（普通内心独白），只是不附加空间增强
+    assert result == "（内心独白测试内容）"
     prompt = captured["prompt"]
     assert "空间增强" not in prompt
     assert "三维环境" not in prompt
