@@ -93,13 +93,17 @@ class TestIdleAndTimeWindow(unittest.TestCase):
 
     def test_time_windows(self):
         """当前在某时段内按概率触发"""
-        from datetime import datetime
-        cur = datetime.now().strftime("%H:%M")
-        hh = int(cur.split(":")[0])
-        start = f"{max(0, hh - 1):02d}:00"
-        end = f"{min(23, hh + 1):02d}:00"
+        from datetime import datetime, timedelta
+        now = datetime.now()
+        start = (now - timedelta(minutes=5)).strftime("%H:%M")
+        end = (now + timedelta(minutes=5)).strftime("%H:%M")
         cfg = {"time_windows": [{"start": start, "end": end, "probability": 1.0}]}
         self.assertTrue(self.trigger._check_time_windows(cfg))
+        # 跨午夜窗口（start>end 时视为跨天）：用相对时间构造含当前时刻的跨天窗口
+        s = (now - timedelta(minutes=30)).strftime("%H:%M")
+        e = (now - timedelta(minutes=60)).strftime("%H:%M")
+        cfg_night = {"time_windows": [{"start": s, "end": e, "probability": 1.0}]}
+        self.assertTrue(self.trigger._check_time_windows(cfg_night))
         # 概率 0 → 不触发
         cfg0 = {"time_windows": [{"start": start, "end": end, "probability": 0.0}]}
         self.assertFalse(self.trigger._check_time_windows(cfg0))

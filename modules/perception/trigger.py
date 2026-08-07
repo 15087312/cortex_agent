@@ -386,17 +386,32 @@ class ProactiveTrigger:
         return random.random() < (1.0 if prob is None else float(prob))
 
     def _check_time_windows(self, cfg: dict) -> bool:
-        """时段触发：time_windows_enabled 且当前在某 time_window 内，按该窗口概率触发"""
+        """时段触发：time_windows_enabled 且当前在某 time_window 内，按该窗口概率触发
+
+        用分钟数精确比较（字符串比较在跨午夜/整点边界有误）：end < start 视为跨午夜窗口。
+        """
         if not cfg.get("time_windows_enabled", True):
             return False
         windows = cfg.get("time_windows")
         if not isinstance(windows, list) or not windows:
             return False
         from datetime import datetime
-        cur = datetime.now().strftime("%H:%M")
+        now = datetime.now()
+        cur = now.hour * 60 + now.minute
         for w in windows:
             start, end = w.get("start", ""), w.get("end", "")
-            if start and end and start <= cur <= end:
+            try:
+                sh, sm = map(int, str(start).split(":"))
+                eh, em = map(int, str(end).split(":"))
+            except (ValueError, TypeError):
+                continue
+            s = sh * 60 + sm
+            e = eh * 60 + em
+            if s <= e:
+                inside = s <= cur <= e
+            else:
+                inside = cur >= s or cur <= e  # 跨午夜（如 22:00-02:00）
+            if inside:
                 prob = w.get("probability")
                 return random.random() < (1.0 if prob is None else float(prob))
         return False
