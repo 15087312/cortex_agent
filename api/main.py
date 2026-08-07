@@ -401,8 +401,12 @@ _request_counter_ref: list = [0]
 _rate_limit_lock = asyncio.Lock()
 _TRUSTED_PROXIES = {"127.0.0.1", "::1"}  # Q-7: Whitelist of trusted reverse proxies (IPv4 + IPv6)
 _MAX_RATE_LIMIT_KEYS = 10000  # 防止内存泄漏：最多跟踪的 IP:minute 组合数
-# 高频本地轮询端点跳过限流（桌宠拖动轮询 50-150ms 一次）
-_RATE_LIMIT_WHITELIST_PATHS = ("/stream/pet/move",)
+# 高频本地轮询端点跳过限流（桌宠轮询/健康检查/前端初始化等只读查询，与 _API_GET_IGNORE 对齐）
+_RATE_LIMIT_WHITELIST_PATHS = (
+    "/stream/pet/move", "/stream/pet/state", "/stream/pet/last-reply",
+    "/stream/pet/actions", "/stream/status", "/stream/sessions",
+    "/config", "/health", "/metrics", "/dashboard", "/dashboard/",
+)
 
 
 # 每处理 500 次请求清理一次过期的分钟 key（key 格式: ip|minute）
@@ -468,10 +472,12 @@ async def rate_limit_middleware(request: Request, call_next):
     current_minute = int(time.time() / 60)
 
     key = f"{client_ip}|{current_minute}"
+    # 本地回环（127.0.0.1/::1）放宽上限，公网保持 100/分钟防滥用
+    limit = 1000 if client_ip in ("127.0.0.1", "::1", "localhost") else 100
     # Q-7: Use async lock to prevent race condition between check and increment
     async with _rate_limit_lock:
         current_count = request_counts.get(key, 0)
-        if current_count >= 100:
+        if current_count >= limit:
             logger.warning(f"限流触发: {client_ip} ({request.method} {request.url.path})")
             return JSONResponse(
                 status_code=429,
