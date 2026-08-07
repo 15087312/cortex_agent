@@ -370,7 +370,7 @@ class MultiModelOrchestrator:
         """根据用户输入自动匹配技能，返回 skill_id 或空字符串"""
         try:
             from modules.thinking.skills import skill_manager
-            skill = skill_manager.match_skill(user_input)
+            skill = skill_manager.match_skill(user_input, role="orchestrator")
             if skill:
                 logger.info(f"[编排器] 技能匹配: {skill.id} ({skill.name})")
                 return skill.id

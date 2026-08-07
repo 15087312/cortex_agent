@@ -190,6 +190,113 @@ async def get_orchestration():
     return {"success": True, "data": {"agents": agents}}
 
 
+@router.get("/skills")
+async def list_skills():
+    """技能管理列表（含 enabled/source/metadata）"""
+    from modules.thinking.skills import skill_manager
+    return {"success": True, "data": {"skills": skill_manager.to_listing()}}
+
+
+@router.get("/skills/{skill_id}")
+async def get_skill_detail(skill_id: str):
+    """技能详情（含原文 raw_content 供编辑回填）"""
+    from modules.thinking.skills import skill_manager
+    skill = skill_manager.get_skill(skill_id)
+    if not skill:
+        return {"success": False, "error": {"code": "SKILL_NOT_FOUND", "message": f"技能不存在: {skill_id}"}}
+    return {"success": True, "data": {
+        "id": skill.id, "name": skill.name, "description": skill.description,
+        "keywords": list(skill.keywords), "source": skill.source,
+        "enabled": skill.enabled, "metadata": skill.metadata,
+        "tool_rules": skill.tool_rules, "trigger": skill.trigger,
+        "raw_content": skill.raw_content, "path": skill.path,
+    }}
+
+
+@router.post("/skills")
+async def create_skill(body: dict = None):
+    """创建新技能（写 skills/<id>/SKILL.md）"""
+    body = body or {}
+    from modules.thinking.skills import skill_manager
+    ok, msg = skill_manager.create_skill(
+        skill_id=str(body.get("id") or ""),
+        name=str(body.get("name") or ""),
+        description=str(body.get("description") or ""),
+        keywords=body.get("keywords") or [],
+        trigger=body.get("trigger"),
+        tool_rules=body.get("tool_rules"),
+    )
+    if not ok:
+        return {"success": False, "error": {"code": "SKILL_CREATE_ERROR", "message": msg}}
+    return {"success": True, "data": {"message": msg}}
+
+
+@router.put("/skills/{skill_id}")
+async def update_skill(skill_id: str, body: dict = None):
+    """更新技能（改 frontmatter/正文并重载）"""
+    body = body or {}
+    from modules.thinking.skills import skill_manager
+    ok, msg = skill_manager.update_skill(
+        skill_id,
+        name=body.get("name") if "name" in body else None,
+        description=body.get("description") if "description" in body else None,
+        keywords=body.get("keywords") if "keywords" in body else None,
+        trigger=body.get("trigger") if "trigger" in body else None,
+        tool_rules=body.get("tool_rules") if "tool_rules" in body else None,
+    )
+    if not ok:
+        return {"success": False, "error": {"code": "SKILL_UPDATE_ERROR", "message": msg}}
+    return {"success": True, "data": {"message": msg}}
+
+
+@router.put("/skills/{skill_id}/enabled")
+async def set_skill_enabled(skill_id: str, body: dict = None):
+    """启用/禁用技能"""
+    body = body or {}
+    from modules.thinking.skills import skill_manager
+    ok, msg = skill_manager.set_enabled(skill_id, bool(body.get("enabled", True)))
+    if not ok:
+        return {"success": False, "error": {"code": "SKILL_STATE_ERROR", "message": msg}}
+    return {"success": True, "data": {"id": skill_id, "enabled": bool(body.get("enabled", True))}}
+
+
+@router.delete("/skills/{skill_id}")
+async def delete_skill(skill_id: str):
+    """删除技能（内置技能受保护）"""
+    from modules.thinking.skills import skill_manager
+    ok, msg = skill_manager.delete_skill(skill_id)
+    if not ok:
+        return {"success": False, "error": {"code": "SKILL_DELETE_ERROR", "message": msg}}
+    return {"success": True, "data": {"message": msg}}
+
+
+@router.post("/skills/reload")
+async def reload_skills():
+    """重载全部技能"""
+    from modules.thinking.skills import skill_manager
+    n = skill_manager.reload()
+    return {"success": True, "data": {"count": n}}
+
+
+@router.get("/config/role-skills/{role}")
+async def get_role_skills(role: str):
+    """读取角色可见技能白名单"""
+    from config.settings import settings
+    return {"success": True, "data": {"role": role, "skills": settings.get_role_skills(role)}}
+
+
+@router.put("/config/role-skills/{role}")
+async def update_role_skills(role: str, body: dict = None):
+    """写入角色可见技能白名单（[] 或含 * 表示全部）"""
+    body = body or {}
+    from config.settings import settings
+    ids = body.get("skills") or []
+    if not isinstance(ids, list):
+        return {"success": False, "error": {"code": "VALIDATION_ERROR", "message": "skills 需为数组"}}
+    settings.set_role_skills(role, ids)
+    return {"success": True, "data": {"role": role, "skills": settings.get_role_skills(role)}}
+
+
 @router.post("/orchestration/preview")
 async def orchestration_preview(body: dict = None):
     """预览指定角色的实际 system prompt（应用人设/system_override 覆盖）"""

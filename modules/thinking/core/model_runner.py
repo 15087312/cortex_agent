@@ -1729,14 +1729,18 @@ class ModelRunner:
                                 if skill_id:
                                     from modules.thinking.skills import skill_manager
                                     skill = skill_manager.get_skill(skill_id)
-                                    if skill:
+                                    role = getattr(self.identity, "role", "")
+                                    allowed = skill and skill.enabled and (
+                                        skill in skill_manager.list_skills_for_role(role)
+                                    )
+                                    if allowed:
                                         self._active_skill = skill
                                         self._active_skill_tool_rules = skill.tool_rules
                                         logger.info(f"[ModelRunner] 技能已切换: {skill_id}")
                                         preview = skill.description[:120].replace("\n", " ")
                                         result = f"【技能已激活】{skill.name}\n{preview}"
                                     else:
-                                        result = f"【技能未找到】skill_id={skill_id} 不存在。使用 list_skills 查看可用技能。"
+                                        result = f"【技能不可用】skill_id={skill_id} 不存在、已禁用或当前角色不可用。使用 list_skills 查看可用技能。"
                             elif tc.name == "stop_skill":
                                 if self._active_skill:
                                     skill_name = self._active_skill.name
@@ -1749,7 +1753,7 @@ class ModelRunner:
                                     result = "【无活跃技能】当前没有激活的技能。"
                             elif tc.name == "list_skills":
                                 from modules.thinking.skills import skill_manager
-                                skills = skill_manager.list_skills()
+                                skills = skill_manager.list_skills_for_role(getattr(self.identity, "role", ""))
                                 logger.info(f"[ModelRunner] 列出技能: {len(skills)} 个")
                                 result = "【可用技能】" + (
                                     "\n" + "\n".join(f"- {s.id}: {s.name} — {s.description[:80]}" for s in skills)

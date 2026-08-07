@@ -4,7 +4,7 @@
 from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import field_validator
-from typing import Optional
+from typing import Optional, List
 import os
 
 # 记忆库切换互斥锁（模块级，避免作为类属性参与 pydantic pickle）
@@ -305,6 +305,26 @@ class Settings(BaseSettings):
             mp.pop(role, None)
         self._save_personas_yaml(data)
         return mp.get(role, {})
+
+    def get_role_skills(self, role: str) -> List[str]:
+        """获取角色可见技能白名单（[]=全部；["*"]=全部；其他=仅列出的技能 id）"""
+        data = self._load_personas_yaml()
+        rs = data.get("role_skills", {}).get(role)
+        if rs is None:
+            return []
+        return list(rs) if isinstance(rs, list) else []
+
+    def set_role_skills(self, role: str, skill_ids: List[str]) -> List[str]:
+        """设置角色可见技能白名单（空/含 * 表示全部）"""
+        data = self._load_personas_yaml()
+        rs = data.setdefault("role_skills", {})
+        ids = list(skill_ids or [])
+        if ids:
+            rs[role] = ids
+        else:
+            rs.pop(role, None)
+        self._save_personas_yaml(data)
+        return list(rs.get(role, []))
 
     @property
     def _personas_yaml_path(self):

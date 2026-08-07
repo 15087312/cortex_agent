@@ -22,6 +22,7 @@ const routes = [
   { path: '/memory', name: 'Memory', component: () => import('@/pages/Memory.vue') },
   { path: '/outreach', name: 'Outreach', component: () => import('@/pages/Outreach.vue') },
   { path: '/tasks', name: 'ScheduledTasks', component: () => import('@/pages/ScheduledTasks.vue') },
+  { path: '/skills', name: 'Skills', component: () => import('@/pages/Skills.vue') },
   { path: '/causal', name: 'Causal', component: () => import('@/pages/Causal.vue') },
   { path: '/graph', name: 'Graph', component: () => import('@/pages/Graph.vue') },
   { path: '/orchestration', name: 'Orchestration', component: () => import('@/pages/Orchestration.vue') },

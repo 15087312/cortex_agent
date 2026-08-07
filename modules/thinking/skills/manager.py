@@ -77,6 +77,12 @@ class SkillManager:
         logger.debug(f"[技能] 共加载 {count} 个技能")
         return count
 
+    def reload(self) -> int:
+        """重新加载全部技能（增删改后调用）"""
+        self._skills = {}
+        self._loaded = False
+        return self.load_skills()
+
     def get_skill(self, skill_id: str) -> Optional[Skill]:
         if not self._loaded:
             self.load_skills()
@@ -87,7 +93,7 @@ class SkillManager:
             self.load_skills()
         return list(self._skills.values())
 
-    def match_skill(self, user_input: str) -> Optional[Skill]:
+    def match_skill(self, user_input: str, role: str = "") -> Optional[Skill]:
         """根据用户输入自动匹配最合适的技能（不区分大小写）
 
         匹配策略：
@@ -104,7 +110,9 @@ class SkillManager:
         best_skill = None
         best_score = 0
 
-        for skill in self._skills.values():
+        for skill in self.list_skills_for_role(role):
+            if not skill.enabled:
+                continue
             # 负向匹配：命中 trigger.exclude 则跳过
             trig = skill.trigger or {}
             exclude = trig.get("exclude") or []
@@ -161,6 +169,147 @@ class SkillManager:
                 results.append(skill)
         return results
 
+    # ── 管理支持：CRUD / 启用 / per-role 可见性 ──────────────────────────
+
+    def to_listing(self) -> List[dict]:
+        """全部技能的管理列表（含 enabled/path/source）"""
+        if not self._loaded:
+            self.load_skills()
+        return [
+            {
+                "id": s.id,
+                "name": s.name,
+                "description": s.description,
+                "keywords": list(s.keywords),
+                "source": s.source,
+                "enabled": s.enabled,
+                "metadata": s.metadata,
+                "tool_rules": s.tool_rules,
+                "trigger": s.trigger,
+            }
+            for s in self._skills.values()
+        ]
+
+    def list_skills_for_role(self, role: str = "") -> List[Skill]:
+        """返回某角色可见的已启用技能（per-agent 白名单过滤）
+
+        role 无配置或配置含 "*" → 全部 enabled；否则只返回白名单内的。
+        """
+        skills = [s for s in self.list_skills() if s.enabled]
+        if not role:
+            return skills
+        try:
+            from config.settings import settings
+            visible = settings.get_role_skills(role)
+        except Exception:
+            return skills
+        if not visible or "*" in visible:
+            return skills
+        return [s for s in skills if s.id in visible]
+
+    def create_skill(self, skill_id: str, name: str, description: str = "",
+                     keywords=None, trigger=None, tool_rules=None) -> "tuple[bool, str]":
+        """创建新技能（写 skills/<id>/SKILL.md 并重载）"""
+        import re
+        import yaml
+        skill_id = (skill_id or "").strip()
+        if not re.match(r"^[a-z0-9_\-]+$", skill_id):
+            return False, "id 仅允许小写字母/数字/下划线/连字符"
+        if not name or not name.strip():
+            return False, "名称不能为空"
+        if skill_id in self._skills:
+            return False, f"技能已存在: {skill_id}"
+        path = _get_skills_dir() / skill_id / "SKILL.md"
+        if path.exists():
+            return False, f"技能目录已存在: {skill_id}"
+        front = {
+            "name": name.strip(),
+            "keywords": list(keywords or []),
+            "trigger": trigger or {},
+            "metadata": {"version": 1, "type": "custom"},
+            "enabled": True,
+        }
+        if tool_rules:
+            front["tool_rules"] = tool_rules
+        text = "---\n" + yaml.safe_dump(front, allow_unicode=True, sort_keys=False).rstrip() + "\n---\n\n" + (description or "").strip()
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+        except Exception as e:
+            return False, f"写入失败: {e}"
+        self.reload()
+        return True, ""
+
+    def update_skill(self, skill_id: str, name=None, description=None, keywords=None,
+                     trigger=None, tool_rules=None, enabled=None) -> "tuple[bool, str]":
+        """更新技能（改 frontmatter/正文并重载）。None 表示不修改，"" 表示清空。"""
+        import yaml
+        skill = self._skills.get(skill_id)
+        if not skill:
+            return False, f"技能不存在: {skill_id}"
+        path = Path(skill.path)
+        if not path.exists():
+            return False, "技能源文件不存在"
+        raw = path.read_text(encoding="utf-8")
+        front = {}
+        body = raw
+        if raw.startswith("---"):
+            parts = raw.split("---", 2)
+            if len(parts) >= 3:
+                try:
+                    front = yaml.safe_load(parts[1].strip()) or {}
+                except Exception:
+                    front = {}
+                body = parts[2].strip() if len(parts) == 3 else ""
+        if name is not None:
+            front["name"] = str(name)
+        if keywords is not None:
+            front["keywords"] = list(keywords)
+        if trigger is not None:
+            front["trigger"] = trigger
+        if tool_rules is not None:
+            if tool_rules:
+                front["tool_rules"] = tool_rules
+            else:
+                front.pop("tool_rules", None)
+        if enabled is not None:
+            front["enabled"] = bool(enabled)
+        if description is not None:
+            body = str(description).strip()
+        text = "---\n" + yaml.safe_dump(front, allow_unicode=True, sort_keys=False).rstrip() + "\n---\n\n" + body
+        try:
+            path.write_text(text, encoding="utf-8")
+        except Exception as e:
+            return False, f"写入失败: {e}"
+        self.reload()
+        return True, ""
+
+    def set_enabled(self, skill_id: str, enabled: bool) -> "tuple[bool, str]":
+        return self.update_skill(skill_id, enabled=enabled)
+
+    def delete_skill(self, skill_id: str) -> "tuple[bool, str]":
+        """删除技能（保护 builtin 与 learned 技能文件）"""
+        skill = self._skills.get(skill_id)
+        if not skill:
+            return False, f"技能不存在: {skill_id}"
+        if skill.source != "skill_md":
+            return False, "仅支持删除 SKILL.md 格式的技能（learned/yaml 受保护）"
+        if (skill.metadata or {}).get("type") == "builtin":
+            return False, "内置技能不可删除，可先禁用"
+        try:
+            path = Path(skill.path)
+            if path.exists():
+                path.unlink()
+            parent = path.parent
+            try:
+                parent.rmdir()
+            except OSError:
+                pass
+        except Exception as e:
+            return False, f"删除失败: {e}"
+        self.reload()
+        return True, ""
+
     def _load_yaml(self, file_path: Path) -> Optional[Skill]:
         try:
             import yaml
@@ -180,6 +329,9 @@ class SkillManager:
             tool_rules=data.get("tool_rules"),
             trigger=data.get("trigger"),
             metadata=data.get("metadata", {}),
+            enabled=bool(data.get("enabled", True)),
+            path=str(file_path),
+            raw_content=file_path.read_text(encoding="utf-8"),
         )
 
     def _load_skill_md(self, file_path: Path) -> Optional[Skill]:
@@ -199,6 +351,8 @@ class SkillManager:
                 name=skill_id,
                 description=content.strip(),
                 source="skill_md",
+                path=str(file_path),
+                raw_content=content,
             )
 
         # 分离 front matter 和正文
@@ -225,6 +379,9 @@ class SkillManager:
             tool_rules=data.get("tool_rules"),
             trigger=data.get("trigger"),
             metadata=data.get("metadata", {}),
+            enabled=bool(data.get("enabled", True)),
+            path=str(file_path),
+            raw_content=content,
         )
 
 

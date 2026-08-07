@@ -148,6 +148,15 @@ class ToolPermissionController:
 
     def _apply_skill_rules(self, tools: List[str], rules, registry) -> List[str]:
         """应用技能工具规则（重排 + 排除 + 限制模式）"""
+        # 兼容 dict 与 dataclass：Skill.tool_rules 当前是 raw dict
+        if isinstance(rules, dict):
+            rules = type("_SkillRules", (), {
+                "restrict_to": bool(rules.get("restrict_to")),
+                "allow_tools": rules.get("allow_tools") or [],
+                "block_tools": rules.get("block_tools") or [],
+                "block_tags": rules.get("block_tags") or [],
+                "block_categories": rules.get("block_categories") or [],
+            })
         prioritized = list(tools)
 
         # restrict_to: 限制到 allow_tools + 核心系统工具

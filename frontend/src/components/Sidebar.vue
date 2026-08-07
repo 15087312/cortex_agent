@@ -17,7 +17,8 @@ const navSections = [
       { route: '/chat', label: '对话', icon: 'message' },
       { route: '/memory', label: '记忆', icon: 'file' },
       { route: '/outreach', label: '主动搭话', icon: 'heart' },
-      { route: '/tasks', label: '定时任务', icon: 'clock' },
+      { route: '/tasks', label: '定时任务', icon: 'circle' },
+      { route: '/skills', label: '技能', icon: 'puzzle' },
       { route: '/settings', label: '设置', icon: 'settings' },
     ]
   },

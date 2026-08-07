@@ -29,6 +29,9 @@ class Skill:
     tool_rules: Optional[Dict] = None  # 可选工具权限（learned skill 使用）
     trigger: Optional[Dict] = None     # 可选触发规则 {include, exclude, min_score}
     metadata: Dict = field(default_factory=dict)
+    enabled: bool = True      # 是否启用（管理端可开关）
+    path: str = ""            # 源文件绝对路径（编辑/删除用）
+    raw_content: str = ""     # 源文件原始文本（编辑回填）
 
     def to_prompt_block(self) -> str:
         """生成技能说明书 prompt 块"""
