@@ -69,6 +69,7 @@ async function loadTasks() {
     const r = await fetch('/stream/session/' + encodeURIComponent(selected.value) + '/tasks', { headers: { Accept: 'application/json' } })
     const d = await r.json()
     tasks.value = (d?.data?.tasks?.tasks) || []
+    tasks.value.forEach((t) => { t.type = taskType(t) })
   } catch { tasks.value = [] }
 }
 

@@ -168,13 +168,25 @@ async def set_tool_enabled(tool_name: str, body: dict = None):
 
 @router.get("/ai")
 async def list_ai_tools():
-    """列出所有 AI 自创工具（dynamic + ai_tool 标签）"""
+    """列出所有 AI 自创工具（dynamic + ai_tool 标签），含源码 code 供编辑回填"""
     all_tools = ToolRegistry.list_tools()
     ai_tools = {
         name: info
         for name, info in all_tools.items()
         if info.get("source") == "dynamic" and "ai_tool" in info.get("tags", [])
     }
+    try:
+        from pathlib import Path
+        import json
+        p = Path(__file__).resolve().parents[2] / "data" / "ai_tools.json"
+        if p.exists():
+            persisted = json.loads(p.read_text(encoding="utf-8")) or {}
+            for name in ai_tools:
+                rec = persisted.get(name)
+                if rec and isinstance(rec, dict):
+                    ai_tools[name]["code"] = rec.get("code", "")
+    except Exception:
+        pass
     return {"success": True, "data": {"tools": ai_tools, "count": len(ai_tools)}}
 
 

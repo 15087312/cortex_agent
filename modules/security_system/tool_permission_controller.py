@@ -77,7 +77,15 @@ class ToolPermissionController:
             if rt:
                 wl = rt.get("whitelist")
                 if wl and isinstance(wl, list) and len(wl) > 0:
-                    base = list(wl)
+                    if "*" in wl:
+                        # "*" 全部：展开为实际工具名，保证黑名单可剔除
+                        from infra.tool_manager.tool_registry import ToolRegistry
+                        base = [
+                            n for n, info in ToolRegistry._tools.items()
+                            if info.source != "security"
+                        ]
+                    else:
+                        base = list(wl)
                 else:
                     base = self._identity_whitelist(tier, role, DEFAULT_TOOL_WHITELISTS)
                 bl = rt.get("blacklist") or []

@@ -194,7 +194,7 @@ function toggleAll(agent, key) {
 function openAiForm(tool) {
   if (tool) {
     editingAi.value = tool
-    aiForm.value = { tool_name: tool, description: aiTools.value[tool]?.description || '', code: '', params: '' }
+    aiForm.value = { tool_name: tool, description: aiTools.value[tool]?.description || '', code: aiTools.value[tool]?.code || '', params: '' }
   } else {
     editingAi.value = null
     aiForm.value = { tool_name: '', description: '', code: '', params: '' }
