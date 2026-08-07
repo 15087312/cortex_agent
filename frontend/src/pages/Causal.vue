@@ -12,10 +12,75 @@ const detail = ref(null)
 const tree = ref(null)
 const treeLoading = ref(false)
 
+// ── SVG 关系图（力导向布局）──
+const GRAPH_W = 900
+const GRAPH_H = 500
+const positions = ref({})
+const displayNodes = ref([])
+const displayEdges = ref([])
+
+function nodeColor(type) {
+  return { root: '#22C55E', cause: '#F59E0B', effect: '#3B82F6' }[type] || '#94A3B8'
+}
+function nodeRadius(n) {
+  const base = 10 + Math.min(12, (n.event_count || 0) * 0.4)
+  return Math.min(30, base)
+}
+function computeLayout(limit = 80) {
+  const sorted = [...nodes.value]
+    .sort((a, b) => (b.event_count || 0) - (a.event_count || 0))
+    .slice(0, limit)
+  const ids = new Set(sorted.map((n) => n.id))
+  const relEdges = edges.value.filter((e) => ids.has(e.from) && ids.has(e.to))
+  const pos = {}
+  const n = sorted.length
+  sorted.forEach((node, i) => {
+    const a = (2 * Math.PI * i) / Math.max(1, n)
+    const r = Math.min(GRAPH_W, GRAPH_H) * 0.4
+    pos[node.id] = { x: GRAPH_W / 2 + r * Math.cos(a), y: GRAPH_H / 2 + r * Math.sin(a) }
+  })
+  for (let iter = 0; iter < 120; iter++) {
+    const keys = Object.keys(pos)
+    for (let i = 0; i < keys.length; i++) {
+      for (let j = i + 1; j < keys.length; j++) {
+        const a = pos[keys[i]], b = pos[keys[j]]
+        const dx = a.x - b.x, dy = a.y - b.y
+        const dist = Math.max(0.1, Math.hypot(dx, dy))
+        const force = 800 / (dist * dist)
+        const fx = (dx / dist) * force, fy = (dy / dist) * force
+        a.x += fx * 0.5; a.y += fy * 0.5
+        b.x -= fx * 0.5; b.y -= fy * 0.5
+      }
+    }
+    relEdges.forEach((e) => {
+      const a = pos[e.from], b = pos[e.to]
+      if (!a || !b) return
+      const dx = b.x - a.x, dy = b.y - a.y
+      const dist = Math.max(0.1, Math.hypot(dx, dy))
+      const force = dist * 0.01
+      a.x += (dx / dist) * force; a.y += (dy / dist) * force
+      b.x -= (dx / dist) * force; b.y -= (dy / dist) * force
+    })
+    keys.forEach((k) => {
+      pos[k].x += (GRAPH_W / 2 - pos[k].x) * 0.002
+      pos[k].y += (GRAPH_H / 2 - pos[k].y) * 0.002
+    })
+  }
+  positions.value = pos
+  displayNodes.value = sorted
+  displayEdges.value = relEdges
+}
+
 onMounted(loadData)
 
 async function loadData() {
-  try { const r = await endpoints.causalGraph(); nodes.value = r.data.nodes || []; edges.value = r.data.edges || []; stats.value = r.data.stats || {} } catch {}
+  try {
+    const r = await endpoints.causalGraph()
+    nodes.value = r.data.nodes || []
+    edges.value = r.data.edges || []
+    stats.value = r.data.stats || {}
+    computeLayout()
+  } catch {}
 }
 async function handleShowTree(id) {
   treeLoading.value = true
@@ -45,7 +110,36 @@ function nodeBadgeClass(type) { return type === 'root' ? 'badge-green' : type ==
         <div class="stat-card"><div class="stat-value">{{ stats.total_events || 0 }}</div><div class="stat-label">关联事件</div></div>
         <div class="stat-card"><div class="stat-value">{{ stats.linked_events || 0 }}</div><div class="stat-label">已链接</div></div>
       </div>
-      <div class="card">
+
+      <!-- 因果关系图（SVG 力导向） -->
+      <div class="card" style="margin-top:12px">
+        <div class="card-header">因果图谱（前 {{ displayNodes.length }} 节点 · 点击节点查看因果链）</div>
+        <svg class="graph-svg" :viewBox="`0 0 ${GRAPH_W} ${GRAPH_H}`" xmlns="http://www.w3.org/2000/svg" v-if="displayNodes.length">
+          <line
+            v-for="e in displayEdges" :key="e.id"
+            :x1="positions[e.from]?.x" :y1="positions[e.from]?.y"
+            :x2="positions[e.to]?.x" :y2="positions[e.to]?.y"
+            class="graph-line" stroke-width="1.5"
+          />
+          <g v-for="n in displayNodes" :key="n.id" @click="handleShowTree(n.id)" style="cursor:pointer">
+            <circle
+              :cx="positions[n.id]?.x" :cy="positions[n.id]?.y"
+              :r="nodeRadius(n)" :fill="nodeColor(n.type)" fill-opacity="0.85"
+            >
+              <title>{{ n.label }}（{{ n.type }} · 置信度 {{ (n.confidence||0).toFixed(2) }} · {{ n.event_count||0 }} 事件）</title>
+            </circle>
+            <text :x="positions[n.id]?.x" :y="positions[n.id]?.y" text-anchor="middle" :dy="3" class="graph-label">{{ n.label.slice(0, 8) }}</text>
+          </g>
+        </svg>
+        <div v-else style="text-align:center;padding:40px;color:var(--text-muted)">因果数据将在此显示</div>
+        <div style="display:flex;gap:16px;font-size:12px;color:var(--text-muted);padding-top:8px;flex-wrap:wrap">
+          <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#22C55E;margin-right:4px"></span>root</span>
+          <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#F59E0B;margin-right:4px"></span>cause</span>
+          <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#3B82F6;margin-right:4px"></span>effect</span>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:12px">
         <div class="card-header">因果节点</div>
         <table class="data-table" v-if="nodes.length > 0">
           <thead><tr><th>标签</th><th>类型</th><th>置信度</th><th>事件数</th><th>操作</th></tr></thead>
@@ -65,3 +159,12 @@ function nodeBadgeClass(type) { return type === 'root' ? 'badge-green' : type ==
     </div>
   </div>
 </template>
+
+<style scoped>
+.graph-svg {
+  width: 100%; height: 500px; background: var(--bg-secondary);
+  border-radius: 8px; border: 1px solid var(--border);
+}
+.graph-line { stroke: #8b5cf6; stroke-opacity: .35; }
+.graph-label { fill: #cbd5e1; font-size: 11px; pointer-events: none; }
+</style>
