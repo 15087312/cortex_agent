@@ -743,6 +743,25 @@ async def pet_chat_stream(body: PetChatRequest):
     return EventSourceResponse(gen())
 
 
+@router.get("/session/{session_id}/tasks")
+async def get_tasks(session_id: str):
+    """读取会话的定时任务配置（每会话独立）"""
+    cfg = _get_chat_session_repo().get_scheduled_tasks(session_id)
+    return {"success": True, "data": {"session_id": session_id, "tasks": cfg}}
+
+
+@router.put("/session/{session_id}/tasks")
+async def set_tasks(session_id: str, body: dict = None):
+    """写入会话的定时任务配置 {"tasks": [{"id","time","enabled","action","prompt"}]}"""
+    cfg = (body or {}).get("tasks")
+    if not isinstance(cfg, dict) or "tasks" not in cfg:
+        return JSONResponse(status_code=422, content={"success": False,
+                            "error": {"code": "VALIDATION_ERROR",
+                                      "message": "tasks 需为对象 {tasks: [...]}"}})
+    _get_chat_session_repo().set_scheduled_tasks(session_id, cfg)
+    return {"success": True, "data": {"session_id": session_id, "tasks": cfg}}
+
+
 @router.get("/session/{session_id}/outreach-config")
 async def get_outreach_config(session_id: str):
     """读取会话的主动搭话配置（agent/chatonly 同一套，存 chat_sessions.metadata_json）"""

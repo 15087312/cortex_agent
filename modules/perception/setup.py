@@ -201,6 +201,12 @@ class PerceptionSystem:
             return
         self._started = True
         logger.info("感知系统已启动")
+        # 会话定时任务（每会话独立，到点调用逻辑）
+        try:
+            from modules.thinking.scheduled_tasks import get_task_manager
+            get_task_manager().start()
+        except Exception as e:
+            logger.warning(f"会话定时任务启动失败: {e}")
 
     def stop(self) -> None:
         if not self._started:

@@ -108,6 +108,19 @@ class SessionRepository:
         """写入会话的主动搭话配置 {enabled, cooldown_range:[min,max], time_windows:[{start,end}]}"""
         return self.set_session_metadata(session_id, {"outreach": config or {}})
 
+    def get_scheduled_tasks(self, session_id: str) -> dict:
+        """读取会话的定时任务配置（未配置返回 {"tasks": []}）"""
+        meta = self.get_session_metadata(session_id)
+        cfg = meta.get("scheduled_tasks") or {}
+        return cfg if isinstance(cfg, dict) else {"tasks": []}
+
+    def set_scheduled_tasks(self, session_id: str, config: dict) -> bool:
+        """写入会话的定时任务配置 {"tasks": [{"id","time","enabled","action","prompt"}]}"""
+        if not isinstance(config, dict):
+            config = {"tasks": []}
+        config.setdefault("tasks", [])
+        return self.set_session_metadata(session_id, {"scheduled_tasks": config})
+
     @staticmethod
     def _parse_metadata(metadata_json) -> dict:
         import json as _json
