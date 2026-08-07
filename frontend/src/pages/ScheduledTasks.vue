@@ -6,6 +6,7 @@ import Icon from '@/components/Icon.vue'
 
 const toast = useToastStore()
 const sessions = ref([])
+const agents = ref([])
 const selected = ref('')
 const tasks = ref([])
 const loading = ref(true)
@@ -51,6 +52,10 @@ function scheduleOf(task) {
 
 async function loadSessions() {
   try {
+    const r = await fetch('/management/orchestration', { headers: { Accept: 'application/json' } }).then(x => x.json())
+    agents.value = r?.data?.agents || []
+  } catch {}
+  try {
     const r = await endpoints.sessions()
     sessions.value = (r.data || []).sort((a, b) => (b.last_active || '').localeCompare(a.last_active || ''))
     if (!selected.value && sessions.value.length) selected.value = sessions.value[0].session_id
@@ -85,6 +90,7 @@ async function saveTasks() {
   try {
     const normalized = tasks.value.map(t => {
       const out = { id: t.id, enabled: !!t.enabled, action: t.action || 'chat', prompt: t.prompt || '', schedule: scheduleOf(t) }
+      if (t.agent_type) out.agent_type = t.agent_type
       return out
     })
     const r = await fetch('/stream/session/' + encodeURIComponent(selected.value) + '/tasks', {
@@ -149,6 +155,10 @@ onMounted(loadSessions)
               <span style="font-size:12px;color:var(--text-muted)">启用</span>
               <select v-model="task.action" class="input" style="width:120px" title="触发的逻辑">
                 <option value="chat">chat（大模型）</option>
+              </select>
+              <select v-model="task.agent_type" class="input" style="width:140px" title="使用的角色人格">
+                <option value="">总指挥（默认）</option>
+                <option v-for="a in agents" :key="a.role" :value="a.role">{{ a.name }}（{{ a.role }}）</option>
               </select>
               <button class="btn btn-sm danger" @click="removeTask(i)"><Icon name="trash" :size="13" /></button>
               <span v-if="statusBadge(task.last_status)" :style="{ fontSize: '11px', padding: '2px 8px', borderRadius: '10px', background: statusBadge(task.last_status).color + '22', color: statusBadge(task.last_status).color }">

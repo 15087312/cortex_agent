@@ -20,14 +20,14 @@ from utils.logger import setup_logger
 logger = setup_logger("perception_proactive_trigger")
 
 
-def _build_outreach_system_prompt() -> str:
-    """构建主动搭话的 system prompt — 复用总指挥人格，跳过工具规则"""
+def _build_outreach_system_prompt(role: str = "orchestrator", tier: str = "large") -> str:
+    """构建主动搭话的 system prompt — 默认复用总指挥人格，可指定角色（roles.yaml），跳过工具规则"""
     from config.prompts.composer import PromptComposer, PromptRequest
     from config.settings import settings
 
     composer = PromptRequest(
-        tier="large",
-        role="orchestrator",
+        tier=tier,
+        role=role,
         mode=settings.effective_execution_mode,
     )
     # 构建完整 system prompt
@@ -543,9 +543,11 @@ def _run_async(coro):
     return asyncio.run(_run_task_wrapped())
 
 
-async def call_outreach_llm(prompt: str, session_id: str = "") -> str:
-    """调用大模型（与主动搭话同一逻辑：总指挥人格 + 时间/感知/记忆/内心独白上下文）
+async def call_outreach_llm(prompt: str, session_id: str = "", role: str = None, tier: str = "large") -> str:
+    """调用大模型（与主动搭话同一逻辑：人格 + 时间/感知/记忆/内心独白上下文）
 
+    - role=None → 默认总指挥人格（orchestrator）
+    - role 指定 → 使用 roles.yaml 对应角色人格（如 code_writer/tester/ui_designer...）
     供主动搭话、定时任务等复用——保证"调用同一个大模型 API 代码部分"。
     """
     try:
@@ -556,7 +558,7 @@ async def call_outreach_llm(prompt: str, session_id: str = "") -> str:
         factory = get_model_factory()
         factory.ensure_ready()
         client = factory.get_client("large")
-        system_prompt = _build_outreach_system_prompt()
+        system_prompt = _build_outreach_system_prompt(role=role or "orchestrator", tier=tier)
 
         extras = []
         try:
