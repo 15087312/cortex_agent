@@ -22,6 +22,7 @@ const routes = [
   { path: '/memory', name: 'Memory', component: () => import('@/pages/Memory.vue') },
   { path: '/outreach', name: 'Outreach', component: () => import('@/pages/Outreach.vue') },
   { path: '/causal', name: 'Causal', component: () => import('@/pages/Causal.vue') },
+  { path: '/graph', name: 'Graph', component: () => import('@/pages/Graph.vue') },
   { path: '/tools', name: 'Tools', component: () => import('@/pages/Tools.vue') },
   { path: '/security', name: 'Security', component: () => import('@/pages/Security.vue') },
   { path: '/perception', name: 'Perception', component: () => import('@/pages/Perception.vue') },
