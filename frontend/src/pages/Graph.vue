@@ -69,9 +69,9 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
           </div>
           <!-- 层级节点 -->
           <div v-for="(node, index) in tierNodes" :key="node.tier" class="g-node" :style="{ left: 215 + index * 195 + 'px', top: '70px', borderColor: node.color }">
-            <div class="g-icon" :style="{ background: n.color }"><Icon :name="n.icon" :size="18" /></div>
-            <div class="g-name">{{ n.label }}</div>
-            <div class="g-sub">{{ n.role }}</div>
+            <div class="g-icon" :style="{ background: node.color }"><Icon :name="node.icon" :size="18" /></div>
+            <div class="g-name">{{ node.label }}</div>
+            <div class="g-sub">{{ node.role }}</div>
             <div class="g-active" :style="{ color: node.color }">
               <span class="g-dot" :style="{ background: (summary[node.tier]?.active || 0) > 0 ? '#22c55e' : '#94a3b8' }"></span>
               活跃 {{ summary[node.tier]?.active || 0 }} / {{ summary[node.tier]?.max || 1 }}
