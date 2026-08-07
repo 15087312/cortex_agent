@@ -14,6 +14,7 @@ import SessionList from '@/components/SessionList.vue'
 import ModelSelector from '@/components/ModelSelector.vue'
 import ThinkingIndicator from '@/components/ThinkingIndicator.vue'
 import ThinkingStatusPanel from '@/components/ThinkingStatusPanel.vue'
+import SessionSettings from '@/components/SessionSettings.vue'
 import Icon from '@/components/Icon.vue'
 
 const route = useRoute()
@@ -24,6 +25,7 @@ const toast = useToastStore()
 const confirm = useConfirm()
 const prompt = usePrompt()
 const sessionListCollapsed = ref(false)
+const showSettings = ref(false)
 const messagesWrap = ref(null)
 let watchTimer = null
 
@@ -398,6 +400,7 @@ function handleAnswerIntent(requestId, answer) {
           <ModelSelector v-model="chat.currentModel" />
         </div>
         <div class="chat-header-right">
+          <button class="chat-btn-icon" @click="showSettings = true" v-if="session.sessionId" title="会话设置（主动搭话/定时任务）"><Icon name="settings" :size="15" /></button>
           <button class="chat-btn-icon" @click="chat.stop()" v-if="chat.processing" title="停止"><Icon name="square" :size="15" /></button>
           <button class="chat-btn-icon" @click="handleClearChat" title="清空对话"><Icon name="trash" :size="15" /></button>
         </div>
@@ -451,5 +454,13 @@ function handleAnswerIntent(requestId, answer) {
         </template>
       </ChatInput>
     </div>
+
+    <!-- 会话设置弹窗 -->
+    <SessionSettings
+      v-if="showSettings && session.sessionId"
+      :session-id="session.sessionId"
+      :title="session.currentTitle"
+      @close="showSettings = false"
+    />
   </div>
 </template>
