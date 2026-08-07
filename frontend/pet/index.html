@@ -135,14 +135,15 @@
 
 <script src="lib/pixi.min.js"></script>
 <script src="lib/live2dcubismcore.min.js"></script>
-<script src="lib/live2d.min.js"></script>
 <script src="lib/pixi-live2d-display.min.js"></script>
 <script src="lib/cubism4.min.js"></script>
+<script src="lib/live2d.min.js"></script>
 <script src="lib/cubism2.min.js"></script>
 <script src="lib/lucide.min.js"></script>
 <script>
 (function () {
   console.log('[PET] cubismcore =', typeof Live2DCubismCore,
+    '| live2d(c2) =', typeof Live2D,
     '| pixi =', typeof PIXI,
     '| live2dNS =', typeof (window.PIXI && window.PIXI.live2d));
   var MODEL_URL = 'models/hiyori/Hiyori.model3.json';
