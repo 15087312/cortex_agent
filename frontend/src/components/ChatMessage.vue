@@ -29,6 +29,7 @@ const petAction = computed(() => {
 const messageClass = computed(() => {
   if (kind.value === 'approval') return 'approval-banner'
   if (kind.value === 'intent') return 'intent-banner'
+  if (kind.value === 'mental') return 'ai mental-step'
   if (kind.value === 'thinking') return 'ai thinking-step'
   return isUser.value ? 'user' : 'ai'
 })
@@ -144,6 +145,15 @@ function submitIntent() {
       <div class="message-body">
         <div class="message-name">{{ message.name }}</div>
         <div class="message-bubble">{{ message.content }}</div>
+      </div>
+    </template>
+
+    <!-- 心理活动 -->
+    <template v-else-if="kind === 'mental'">
+      <div class="message-avatar" :class="message.avatarCls"></div>
+      <div class="message-body">
+        <div class="message-name"><span class="mental-badge">心理活动</span></div>
+        <div class="message-bubble mental-bubble">{{ message.content }}</div>
       </div>
     </template>
 

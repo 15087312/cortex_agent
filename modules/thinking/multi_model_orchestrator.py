@@ -560,6 +560,21 @@ class MultiModelOrchestrator:
                     set_session_guidance(session_id or "", {"inner_thoughts": inner_thoughts}, model_id=model_id)
                 except Exception as e:
                     logger.debug(f"[编排器] 会话引导注入失败 (非致命): {e}")
+                # 推送心理活动到前端（标注为"心理活动"）
+                try:
+                    from modules.thinking.api_stream import connection_manager, _build_event
+                    event = _build_event(
+                        session_id=session_id or "",
+                        msg_type="mental",
+                        event="mental",
+                        content=inner_thoughts,
+                        role="system",
+                        data={"label": "心理活动"},
+                    )
+                    for sid in list(connection_manager.active_connections.keys()):
+                        connection_manager.send_json_from_thread(sid, event)
+                except Exception as e:
+                    logger.debug(f"[编排器] 心理活动推送失败 (非致命): {e}")
 
             # ---- 直接激活大模型（替代 SessionMonitor）----
             # 用户输入后立即发送 probe_start，通知 ModelRunnerManager 启动大模型

@@ -44,6 +44,7 @@ class Settings(BaseSettings):
         "PERCEPTION_INTERNAL_ENABLED", "SCREEN_DIFF_ENABLED",
         "PERCEPTION_TRIGGER_THINK",
         "PERCEPTION_TRIGGER_COOLDOWN", "PERCEPTION_TRIGGER_MIN_INTENSITY",
+        "SPATIAL_ENHANCEMENT_ENABLED",
 
         # ── 语音识别（Whisper）──
         "PERCEPTION_VOICE_ENABLED",
@@ -438,6 +439,7 @@ class Settings(BaseSettings):
     # 负责分析被动感知数据，检测变化并触发思考/搭话等响应
     DIFFERENCE_DETECTOR_ENABLED: bool = True           # 差异检测器（1Hz 心跳扫描）
     PERCEPTION_INTERNAL_ENABLED: bool = True           # 内部状态源（未完成任务、失败任务等）
+    SPATIAL_ENHANCEMENT_ENABLED: bool = False          # 空间增强：心理活动输出当前空间位置/动作序列
 
     # 差异 → 思考触发
     PERCEPTION_TRIGGER_THINK: bool = True              # 差异是否触发单次思考

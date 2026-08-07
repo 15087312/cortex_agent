@@ -160,6 +160,7 @@ const screenDiff = boolCfg('SCREEN_DIFF_ENABLED', true)
 const triggerThink = boolCfg('PERCEPTION_TRIGGER_THINK', true)
 const triggerCooldown = numCfg('PERCEPTION_TRIGGER_COOLDOWN', 60)
 const triggerMinIntensity = numCfg('PERCEPTION_TRIGGER_MIN_INTENSITY', 50)
+const spatialEnhancement = boolCfg('SPATIAL_ENHANCEMENT_ENABLED', false)
 
 /* ── 语音识别（Whisper） ── */
 const voiceEnabled = boolCfg('PERCEPTION_VOICE_ENABLED', true)
@@ -516,6 +517,10 @@ onMounted(async () => {
           <div class="setting-row">
             <div class="lbl"><div class="t">变化触发思考</div><div class="d">感知到变化后自动触发 AI 思考</div></div>
             <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="triggerThink" @change="triggerThink = !triggerThink" /><span class="toggle-slider"></span></label></div>
+          </div>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">空间增强</div><div class="d">心理活动额外输出当前空间位置/动作序列</div></div>
+            <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="spatialEnhancement" @change="spatialEnhancement = !spatialEnhancement" /><span class="toggle-slider"></span></label></div>
           </div>
           <div class="setting-row">
             <div class="lbl"><div class="t">触发冷却(秒)</div></div>

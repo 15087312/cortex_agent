@@ -28,7 +28,7 @@ CONSCIENCE_PROMPT = """你是总指挥，正在回忆过去的经验。
 
 【最近对话】
 {recent_dialog}
-
+{spatial_enhancement}
 【当前用户输入】
 {user_input}
 
@@ -320,11 +320,26 @@ class Conscience:
             if not self._model_client:
                 logger.debug("[Conscience] 无模型客户端，跳过内心独白生成")
                 return ""
-            
+
+            # 空间增强：心理活动额外输出当前空间位置/动作序列
+            spatial_enhancement = ""
+            try:
+                from config.settings import settings
+                if getattr(settings, "SPATIAL_ENHANCEMENT_ENABLED", False):
+                    spatial_enhancement = (
+                        "\n【空间增强】\n"
+                        "先在脑中建立三维环境，规划完整动作序列，"
+                        "每一步写明身体朝向、四肢姿势、移动距离、障碍物；\n"
+                        "只输出文本，不需要图片，步骤清晰，遵守现实人体物理约束。\n"
+                    )
+            except Exception:
+                pass
+
             prompt = CONSCIENCE_PROMPT.format(
                 causal_knowledge=causal_knowledge,
                 values=values_text,
                 recent_dialog=recent_dialog,
+                spatial_enhancement=spatial_enhancement,
                 user_input=user_input,
             )
             

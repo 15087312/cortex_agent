@@ -106,6 +106,18 @@ const _onThinking = (d) => {
 
 const _onMessage = (d) => {
   if (!_isCurrent(d)) return
+  // 心理活动：独立标注显示（不受停止状态影响）
+  if (d.msg_type === 'mental' || d.event === 'mental') {
+    if (!d.content) return
+    chat.addMessage({
+      role: 'system',
+      content: d.content,
+      kind: 'mental',
+      id: '',
+    })
+    scrollBottom()
+    return
+  }
   // 用户已主动停止：忽略后端补发的 message，避免"按了停止又冒出回复"
   if (chat.stopped) return
   const content = d.content || ''
