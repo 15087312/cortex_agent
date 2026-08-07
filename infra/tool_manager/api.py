@@ -155,6 +155,69 @@ async def clear_tool_events():
     }
 
 
+@router.put("/enabled/{tool_name}")
+async def set_tool_enabled(tool_name: str, body: dict = None):
+    """运行时启用/禁用工具（持久化）。安全工具不可禁用。"""
+    body = body or {}
+    enabled = bool(body.get("enabled", True))
+    ok, msg = ToolRegistry.set_tool_enabled(tool_name, enabled)
+    if not ok:
+        return {"success": False, "error": {"code": "TOOL_STATE_ERROR", "message": msg}}
+    return {"success": True, "data": {"name": tool_name, "enabled": enabled}}
+
+
+@router.get("/ai")
+async def list_ai_tools():
+    """列出所有 AI 自创工具（dynamic + ai_tool 标签）"""
+    all_tools = ToolRegistry.list_tools()
+    ai_tools = {
+        name: info
+        for name, info in all_tools.items()
+        if info.get("source") == "dynamic" and "ai_tool" in info.get("tags", [])
+    }
+    return {"success": True, "data": {"tools": ai_tools, "count": len(ai_tools)}}
+
+
+@router.post("/ai")
+async def create_ai_tool(body: dict):
+    """创建 AI 自定义工具（提交 Python 函数代码动态注册）"""
+    from infra.tool_manager.tools.ai_tools import create_tool
+    result = create_tool(
+        tool_name=str(body.get("tool_name") or ""),
+        description=str(body.get("description") or ""),
+        code=str(body.get("code") or ""),
+        params=body.get("params") or "",
+    )
+    if str(result).startswith("❌"):
+        return {"success": False, "error": {"code": "TOOL_CREATE_ERROR", "message": result}}
+    return {"success": True, "data": {"message": result}}
+
+
+@router.put("/ai/{tool_name}")
+async def edit_ai_tool(tool_name: str, body: dict):
+    """编辑 AI 自定义工具"""
+    from infra.tool_manager.tools.ai_tools import edit_tool
+    result = edit_tool(
+        tool_name=tool_name,
+        description=body.get("description"),
+        code=body.get("code"),
+        params=body.get("params"),
+    )
+    if str(result).startswith("❌"):
+        return {"success": False, "error": {"code": "TOOL_EDIT_ERROR", "message": result}}
+    return {"success": True, "data": {"message": result}}
+
+
+@router.delete("/ai/{tool_name}")
+async def delete_ai_tool(tool_name: str):
+    """删除 AI 自定义工具"""
+    from infra.tool_manager.tools.ai_tools import delete_tool
+    result = delete_tool(tool_name=tool_name)
+    if str(result).startswith("❌"):
+        return {"success": False, "error": {"code": "TOOL_DELETE_ERROR", "message": result}}
+    return {"success": True, "data": {"message": result}}
+
+
 @router.post("/register", dependencies=[Depends(require_tool_auth)])
 async def register_tool(
     name: str = Body(...),

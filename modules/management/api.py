@@ -183,9 +183,31 @@ async def get_orchestration():
             "model_id": data.get("model_id", ""),
             "custom_persona": settings.get_persona(key),
             "system_override": settings.get_system_override(key),
+            "role_tools": settings.get_role_tools(key),
+            "model_params": settings.get_model_params(key),
         })
     agents.sort(key=lambda a: {"large": 0, "supervisor": 1, "expert": 2}.get(a["tier"], 9))
     return {"success": True, "data": {"agents": agents}}
+
+
+@router.post("/orchestration/preview")
+async def orchestration_preview(body: dict = None):
+    """预览指定角色的实际 system prompt（应用人设/system_override 覆盖）"""
+    from config.prompts.composer import PromptComposer, PromptRequest
+    from config.settings import settings as _cfg
+    body = body or {}
+    role = str(body.get("role") or "orchestrator")
+    tier = str(body.get("tier") or "large")
+    try:
+        composer = PromptRequest(
+            tier=tier,
+            role=role,
+            mode=_cfg.effective_execution_mode,
+        )
+        prompt = PromptComposer().build_system(composer)
+        return {"success": True, "data": {"role": role, "tier": tier, "prompt": prompt}}
+    except Exception as e:
+        return {"success": False, "error": {"code": "PREVIEW_ERROR", "message": str(e)}}
 
 
 @router.post("/open-folder")

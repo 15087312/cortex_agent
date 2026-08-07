@@ -312,6 +312,14 @@ class ModelIdentity:
         if "api_url" in template:
             data["api_url"] = template["api_url"]
         data.update(overrides)
+        # 持久化模型参数覆盖（编排页可改）：temperature/max_tokens 等
+        try:
+            from config.settings import settings as _cfg
+            mp = _cfg.get_model_params(template_key)
+            if mp:
+                data.update({k: v for k, v in mp.items() if v is not None})
+        except Exception:
+            pass
         return cls(**data)
 
     def _tier_label(self) -> str:

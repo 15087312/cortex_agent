@@ -265,6 +265,47 @@ class Settings(BaseSettings):
         self._save_personas_yaml(data)
         return overrides.get(role, "")
 
+    def get_role_tools(self, role: str) -> dict:
+        """获取角色工具权限覆盖 {whitelist: [], blacklist: []}（未配置返回 {}）"""
+        data = self._load_personas_yaml()
+        rt = data.get("role_tools", {}).get(role)
+        return rt if isinstance(rt, dict) else {}
+
+    def set_role_tools(self, role: str, cfg: dict) -> dict:
+        """设置角色工具权限覆盖 {whitelist: [], blacklist: []}（空则清除），写入 yaml"""
+        data = self._load_personas_yaml()
+        rt = data.setdefault("role_tools", {})
+        if cfg and isinstance(cfg, dict) and (cfg.get("whitelist") or cfg.get("blacklist")):
+            rt[role] = {
+                "whitelist": list(cfg.get("whitelist") or []),
+                "blacklist": list(cfg.get("blacklist") or []),
+            }
+        else:
+            rt.pop(role, None)
+        self._save_personas_yaml(data)
+        return rt.get(role, {})
+
+    def get_model_params(self, role: str) -> dict:
+        """获取角色模型参数覆盖 {temperature, max_tokens}（未配置返回 {}）"""
+        data = self._load_personas_yaml()
+        mp = data.get("model_params", {}).get(role)
+        return mp if isinstance(mp, dict) else {}
+
+    def set_model_params(self, role: str, cfg: dict) -> dict:
+        """设置角色模型参数覆盖（空则清除），写入 yaml"""
+        data = self._load_personas_yaml()
+        mp = data.setdefault("model_params", {})
+        if cfg and isinstance(cfg, dict):
+            cleaned = {k: v for k, v in cfg.items() if v is not None and v != ""}
+            if cleaned:
+                mp[role] = cleaned
+            else:
+                mp.pop(role, None)
+        else:
+            mp.pop(role, None)
+        self._save_personas_yaml(data)
+        return mp.get(role, {})
+
     @property
     def _personas_yaml_path(self):
         return Path.home() / ".cortex" / "personas.yaml"

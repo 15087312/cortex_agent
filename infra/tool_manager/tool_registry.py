@@ -40,6 +40,7 @@ class ToolInfo:
     tags: List[str] = field(default_factory=list)  # 工具分组标签，如 ["file_rw", "git_dev"]
     priority: int = 0  # 优先级: 负数=低频（可简化描述），0=正常，正数=常用（详细描述）
     core: bool = False  # 核心工具：在模型 tools 数组中展示完整 schema；非核心仅按名称列出，需通过 query_tool_details 查询
+    enabled: bool = True  # 是否启用（管理端可运行时开关，持久化到 data/tool_settings.json）
 
     def __post_init__(self):
         if not self.registered_at:
@@ -192,6 +193,65 @@ class ToolRegistry:
     _tools: Dict[str, ToolInfo] = {}  # 类级单例：所有实例共享
     _tools_lock = threading.RLock()  # CONC-5: Protect concurrent access to _tools
     _logger = setup_logger("tool_registry")
+
+    # 运行时启停持久化（data/tool_settings.json）
+    _disabled_tools: set = set()
+    _disabled_loaded: bool = False
+    _settings_lock = threading.RLock()
+
+    @classmethod
+    def _settings_path(cls):
+        from pathlib import Path
+        return Path(__file__).resolve().parents[2] / "data" / "tool_settings.json"
+
+    @classmethod
+    def _load_disabled(cls) -> None:
+        if cls._disabled_loaded:
+            return
+        with cls._settings_lock:
+            if cls._disabled_loaded:
+                return
+            try:
+                import json
+                path = cls._settings_path()
+                if path.exists():
+                    data = json.loads(path.read_text(encoding="utf-8"))
+                    cls._disabled_tools = set(data.get("disabled", []))
+            except Exception as e:
+                cls._logger.debug(f"工具禁用状态加载失败: {e}")
+            cls._disabled_loaded = True
+
+    @classmethod
+    def set_tool_enabled(cls, name: str, enabled: bool) -> "Tuple[bool, str]":
+        """运行时启用/禁用工具（持久化）。安全工具不可禁用。"""
+        info = cls._tools.get(name)
+        if info is None:
+            return False, f"工具不存在: {name}"
+        if info.source == "security":
+            return False, "安全工具不可禁用"
+        with cls._settings_lock:
+            cls._load_disabled()
+            if enabled:
+                cls._disabled_tools.discard(name)
+            else:
+                cls._disabled_tools.add(name)
+            info.enabled = enabled
+            try:
+                import json
+                path = cls._settings_path()
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(
+                    json.dumps({"disabled": sorted(cls._disabled_tools)}, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+            except Exception as e:
+                return False, f"持久化失败: {e}"
+        return True, ""
+
+    @classmethod
+    def is_tool_enabled(cls, name: str) -> bool:
+        cls._load_disabled()
+        return name not in cls._disabled_tools
     
     @classmethod
     def register(
@@ -372,7 +432,9 @@ class ToolRegistry:
                     "risk_level": tool.risk_level,
                     "category": tool.category,
                     "tags": list(tool.tags),
-                    "registered_at": tool.registered_at
+                    "registered_at": tool.registered_at,
+                    "enabled": tool.enabled and cls.is_tool_enabled(name),
+                    "core": tool.core,
                 }
 
         return result
@@ -409,7 +471,11 @@ class ToolRegistry:
             ["read_file", "tag:git_dev"] → read_file + 所有 git_dev 标签的工具
         """
         if tool_whitelist is None or "*" in (tool_whitelist or []):
-            return list(cls._tools.values())
+            cls._load_disabled()
+            return [
+                t for t in cls._tools.values()
+                if t.source == "security" or (t.enabled and t.name not in cls._disabled_tools)
+            ]
 
         result = []
         tag_filters = set()
@@ -431,6 +497,12 @@ class ToolRegistry:
                 if any(tag in info.tags for tag in tag_filters):
                     result.append(info)
 
+        # 运行时禁用（管理端启停）过滤——安全工具除外
+        cls._load_disabled()
+        result = [
+            t for t in result
+            if t.source == "security" or (t.enabled and t.name not in cls._disabled_tools)
+        ]
         return result
 
     @classmethod

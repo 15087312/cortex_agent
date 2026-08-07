@@ -349,7 +349,7 @@ _AUTH_WHITELIST_PREFIXES = ("/management/causal-graph", "/management/memory",
                                "/management/api-requests",
                                "/management/open-folder",
                                "/management/orchestration",
-                              "/tools/info/",
+                              "/tools/info/", "/tools/enabled/", "/tools/ai",
                               "/audio", "/pet/")  # TTS 音频供前端 <audio> 无鉴权播放；/pet/ 桌宠 Live2D 资源
 
 
@@ -740,6 +740,44 @@ async def update_persona(role: str, body: PutConfigRequest):
             "system_override": settings.get_system_override(role),
         },
     }
+
+
+@app.get("/config/tools/{role}")
+async def get_role_tools(role: str):
+    """读取指定角色的工具权限覆盖 {whitelist, blacklist}"""
+    return {"success": True, "data": {"role": role, "tools": settings.get_role_tools(role)}}
+
+
+@app.put("/config/tools/{role}")
+async def update_role_tools(role: str, body: dict = None):
+    """写入指定角色的工具权限覆盖 {whitelist: [], blacklist: []}（空则清除）"""
+    body = body or {}
+    cfg = body.get("tools") or {}
+    if not isinstance(cfg, dict):
+        return JSONResponse(status_code=422, content={"success": False,
+                            "error": {"code": "VALIDATION_ERROR", "message": "tools 需为对象 {whitelist, blacklist}"}})
+    settings.set_role_tools(role, cfg)
+    logger.info(f"工具权限已更新: {role}")
+    return {"success": True, "data": {"role": role, "tools": settings.get_role_tools(role)}}
+
+
+@app.get("/config/model-params/{role}")
+async def get_model_params(role: str):
+    """读取指定角色的模型参数覆盖 {temperature, max_tokens}"""
+    return {"success": True, "data": {"role": role, "params": settings.get_model_params(role)}}
+
+
+@app.put("/config/model-params/{role}")
+async def update_model_params(role: str, body: dict = None):
+    """写入指定角色的模型参数覆盖（空则清除）"""
+    body = body or {}
+    params = body.get("params") or {}
+    if not isinstance(params, dict):
+        return JSONResponse(status_code=422, content={"success": False,
+                            "error": {"code": "VALIDATION_ERROR", "message": "params 需为对象"}})
+    settings.set_model_params(role, params)
+    logger.info(f"模型参数已更新: {role}")
+    return {"success": True, "data": {"role": role, "params": settings.get_model_params(role)}}
 
 
 @app.get("/config/api-key")

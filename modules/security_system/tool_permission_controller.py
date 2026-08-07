@@ -66,14 +66,35 @@ class ToolPermissionController:
     def _get_base_whitelist(self, tier: str, role: str = "") -> List[str]:
         """获取基础白名单
 
-        优先从 YAML 配置的 identity.tool_whitelist 读取，
-        再回退到 DEFAULT_TOOL_WHITELISTS。
+        优先级：持久化角色工具覆盖（personas.yaml role_tools）> YAML identity > DEFAULT_TOOL_WHITELISTS
         """
         from modules.thinking.identity import DEFAULT_TOOL_WHITELISTS
 
-        # 尝试从外部 YAML 配置获取
+        # 0. 持久化角色工具权限覆盖（编排页可改）：whitelist 非空则整体替换，blacklist 剔除
         try:
-            from modules.thinking.identity import get_identities
+            from config.settings import settings
+            rt = settings.get_role_tools(role)
+            if rt:
+                wl = rt.get("whitelist")
+                if wl and isinstance(wl, list) and len(wl) > 0:
+                    base = list(wl)
+                else:
+                    base = self._identity_whitelist(tier, role, DEFAULT_TOOL_WHITELISTS)
+                bl = rt.get("blacklist") or []
+                if bl and isinstance(bl, list):
+                    base = [t for t in base if t not in bl]
+                return base
+        except Exception:
+            pass
+
+        return self._identity_whitelist(tier, role, DEFAULT_TOOL_WHITELISTS)
+
+    @staticmethod
+    def _identity_whitelist(tier: str, role: str, default_whitelists) -> List[str]:
+        """从 YAML identity 获取白名单，回退 DEFAULT_TOOL_WHITELISTS"""
+        from modules.thinking.identity import get_identities
+
+        try:
             all_ids = get_identities()
             for key, idata in all_ids.items():
                 wt = idata.get("tool_whitelist")
@@ -83,17 +104,15 @@ class ToolPermissionController:
         except Exception:
             pass
 
-        # 回退：硬编码默认
         if tier == "large":
-            return list(DEFAULT_TOOL_WHITELISTS.get("large", []))
+            return list(default_whitelists.get("large", []))
         elif tier == "supervisor":
-            return list(DEFAULT_TOOL_WHITELISTS.get("supervisor", []))
-        # expert: 根据 role 查找（兼容 expert_<role> 与 <role> 两种命名）
+            return list(default_whitelists.get("supervisor", []))
         expert_key = f"expert_{role}" if role else ""
-        if expert_key in DEFAULT_TOOL_WHITELISTS:
-            return list(DEFAULT_TOOL_WHITELISTS[expert_key])
-        if role in DEFAULT_TOOL_WHITELISTS:
-            return list(DEFAULT_TOOL_WHITELISTS[role])
+        if expert_key in default_whitelists:
+            return list(default_whitelists[expert_key])
+        if role in default_whitelists:
+            return list(default_whitelists[role])
         return []
 
     def _expand_tags(self, whitelist: List[str]) -> List[str]:
