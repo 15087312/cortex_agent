@@ -22,6 +22,7 @@ async function loadAll() {
       endpoints.proactiveLogs(50).catch(() => null),
     ])
     sessions.value = (sr?.data || []).map((s) => {
+      const prev = sessions.value.find((x) => x.session_id === s.session_id)
       const oc = (s.metadata && s.metadata.outreach) || {}
       const scr = oc.screen || {}
       const idle = oc.idle || {}
@@ -46,7 +47,7 @@ async function loadAll() {
         windowsOn: !!oc.time_windows_enabled,
         timeWindowsText: (oc.time_windows || []).map((w) =>
           `${w.start}-${w.end}` + (w.probability != null ? `@${w.probability}` : '')).join(','),
-        _open: false,
+        _open: prev ? prev._open : false,
       }
     })
     logs.value = lr?.data?.logs || []
