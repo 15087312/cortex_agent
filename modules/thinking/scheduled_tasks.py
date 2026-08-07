@@ -200,8 +200,16 @@ class ScheduledTaskManager:
     async def _handle_chat(self, session_id: str, task: dict) -> None:
         prompt = task.get("prompt") or "现在是定时任务时间，请自然地向用户说一句话（简短自然，1-2 句）。"
         agent_type = task.get("agent_type") or ""
+        tier = "large"
+        if agent_type:
+            try:
+                from config.prompts.loader import get_loader
+                roles = (get_loader().load("roles") or {}).get("roles") or {}
+                tier = (roles.get(agent_type) or {}).get("tier", "large")
+            except Exception:
+                pass
         from modules.perception.trigger import call_outreach_llm
-        text = await call_outreach_llm(prompt, session_id, role=agent_type or None)
+        text = await call_outreach_llm(prompt, session_id, role=agent_type or None, tier=tier)
         if not text:
             return
         await self._push(session_id, text)

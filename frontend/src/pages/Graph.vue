@@ -24,11 +24,12 @@ async function loadData() {
       endpoints.tools().catch(() => null),
     ])
     models.value = modelsResp?.data || null
-    // /tools 返回结构可能是 { tools: [...] } 或直接数组——统一取数组
+    // /tools 返回结构是 { tools: {name: {...}} } dict——统一取数组
     const toolsData = toolsResp?.data
-    tools.value = Array.isArray(toolsData)
-      ? toolsData
-      : (Array.isArray(toolsData?.tools) ? toolsData.tools : [])
+    const toolsObj = toolsData?.tools || {}
+    tools.value = Array.isArray(toolsObj)
+      ? toolsObj
+      : Object.keys(toolsObj).map((n) => ({ name: n, ...(typeof toolsObj[n] === 'object' ? toolsObj[n] : {}) }))
   } catch {} finally { loading.value = false }
 }
 

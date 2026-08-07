@@ -54,7 +54,10 @@ async function loadData() {
     ])
     agents.value = o?.data?.agents || []
     const toolsData = t?.data
-    tools.value = Array.isArray(toolsData) ? toolsData : (Array.isArray(toolsData?.tools) ? toolsData.tools : [])
+    const toolsObj = toolsData?.tools || {}
+    tools.value = Array.isArray(toolsObj)
+      ? toolsObj
+      : Object.keys(toolsObj).map((n) => ({ name: n, ...(typeof toolsObj[n] === 'object' ? toolsObj[n] : {}) }))
     aiTools.value = ai?.data?.tools || {}
     agents.value.forEach((a) => {
       drafts.value[a.role] = a.custom_persona || ''
@@ -130,6 +133,7 @@ async function saveModelParams(agent) {
 }
 
 async function previewPrompt(agent) {
+  expanded.value[agent.role] = true
   preview.value = { role: agent.role, text: '', loading: true }
   try {
     const r = await fetch('/management/orchestration/preview', {
