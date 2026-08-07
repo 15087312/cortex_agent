@@ -258,7 +258,12 @@ class HotkeyVoiceDetector(PerceptionDetector):
     # ── 转写与事件发布 ──────────────────────────────────────
 
     def _transcribe_raw(self, audio_bytes: bytes) -> str:
-        """Whisper 转写原始 PCM 音频，返回文本（失败返回空串）"""
+        """转写原始 PCM 音频（云端 API 或本地 Whisper），返回文本（失败返回空串）"""
+        from config.settings import settings
+        if getattr(settings, "PERCEPTION_VOICE_BACKEND", "local") == "api":
+            from infra.data_process.core.speech_recognizer import transcribe_with_api
+            return transcribe_with_api(audio_bytes, self._language, SAMPLE_RATE)
+
         import speech_recognition as sr
 
         if self._recognizer is None:

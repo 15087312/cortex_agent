@@ -189,3 +189,45 @@ async def get_default_recognizer() -> SpeechRecognizer:
         _default_recognizer = SpeechRecognizer()
         await _default_recognizer.initialize()
     return _default_recognizer
+
+
+def transcribe_with_api(audio_bytes: bytes, language: str = "zh",
+                        sample_rate: int = 16000) -> str:
+    """云端 STT（OpenAI 兼容 /audio/transcriptions）——PCM→WAV→POST
+
+    配置：PERCEPTION_VOICE_BACKEND=api 时使用；key/url/model 从 settings 读取。
+    返回识别文本；失败返回空串（调用方回退本地或忽略）。
+    """
+    try:
+        import io
+        import wave
+        import requests
+        from config.settings import settings
+        url = getattr(settings, "PERCEPTION_VOICE_API_URL", "") \
+            or "https://api.openai.com/v1/audio/transcriptions"
+        key = getattr(settings, "PERCEPTION_VOICE_API_KEY", "") \
+            or getattr(settings, "OPENAI_API_KEY", "")
+        model = getattr(settings, "PERCEPTION_VOICE_API_MODEL", "") or "whisper-1"
+        if not key:
+            logger.warning("STT 云端 API 未配置 Key，请设置 PERCEPTION_VOICE_API_KEY")
+            return ""
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(sample_rate)
+            w.writeframes(audio_bytes)
+        files = {"file": ("audio.wav", buf.getvalue(), "audio/wav")}
+        data = {"model": model}
+        if language and language != "auto":
+            data["language"] = language
+        resp = requests.post(
+            url,
+            headers={"Authorization": f"Bearer {key}"},
+            files=files, data=data, timeout=30,
+        )
+        resp.raise_for_status()
+        return (resp.json().get("text") or "").strip()
+    except Exception as e:
+        logger.warning(f"云端 STT 识别失败: {e}")
+        return ""

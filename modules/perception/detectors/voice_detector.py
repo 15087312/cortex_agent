@@ -223,10 +223,19 @@ class VoiceDetector(PerceptionDetector):
                 time.sleep(1)
 
     def _recognize(self, audio) -> Optional[str]:
-        """语音识别：优先 Whisper（本地），不降级到云端服务
+        """语音识别：云端 API（配置后）或本地 Whisper"""
+        from config.settings import settings
+        if getattr(settings, "PERCEPTION_VOICE_BACKEND", "local") == "api":
+            from infra.data_process.core.speech_recognizer import transcribe_with_api
+            try:
+                text = transcribe_with_api(
+                    audio.get_raw_data(), self._language, getattr(audio, "sample_rate", 16000)
+                )
+                return text or None
+            except Exception as e:
+                logger.debug(f"云端 STT 失败: {e}")
+                return None
 
-        UnknownValueError 表示未识别到有效语音内容，属于正常情况。
-        """
         import speech_recognition as sr
 
         try:

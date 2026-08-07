@@ -173,6 +173,25 @@ const voiceEnergy = numCfg('PERCEPTION_VOICE_ENERGY_THRESHOLD', 300)
 const voiceTimeout = numCfg('PERCEPTION_VOICE_TIMEOUT', 10)
 const voiceMaxDuration = numCfg('PERCEPTION_VOICE_MAX_DURATION', 60)
 const voiceEndStop = boolCfg('PERCEPTION_VOICE_END_STOP', true)
+const voiceBackend = segCfg('PERCEPTION_VOICE_BACKEND', 'local')
+const voiceApiKey = txtCfg('PERCEPTION_VOICE_API_KEY', '')
+const voiceApiUrl = txtCfg('PERCEPTION_VOICE_API_URL', '')
+const voiceApiModel = txtCfg('PERCEPTION_VOICE_API_MODEL', '')
+const ttsBackend = segCfg('OUTPUT_TTS_BACKEND', 'local')
+const ttsApiKey = txtCfg('OUTPUT_TTS_API_KEY', '')
+const ttsApiUrl = txtCfg('OUTPUT_TTS_API_URL', '')
+const ttsApiModel = txtCfg('OUTPUT_TTS_API_MODEL', '')
+const ttsApiVoice = txtCfg('OUTPUT_TTS_API_VOICE', '')
+async function openFolder(folder) {
+  try {
+    const r = await fetch('/management/open-folder', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ folder }),
+    })
+    const d = await r.json()
+    if (!d.success) toast.show('打开失败: ' + (d.error?.message || ''), 'error')
+  } catch (e) { toast.show('打开失败', 'error') }
+}
 
 /* ── 视觉模型 ── */
 const visionBackend = segCfg('VISION_BACKEND', 'auto')
@@ -565,6 +584,33 @@ onMounted(async () => {
             <div class="lbl"><div class="t">检测到结束词停止</div></div>
             <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="voiceEndStop" @change="voiceEndStop = !voiceEndStop" /><span class="toggle-slider"></span></label></div>
           </div>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">识别后端</div><div class="d">本地 Whisper 或云端 API</div></div>
+            <div class="setting-ctl">
+              <div class="seg">
+                <button :class="{ on: voiceBackend === 'local' }" @click="voiceBackend = 'local'">本地</button>
+                <button :class="{ on: voiceBackend === 'api' }" @click="voiceBackend = 'api'">云端</button>
+              </div>
+            </div>
+          </div>
+          <template v-if="voiceBackend === 'api'">
+            <div class="setting-row">
+              <div class="lbl"><div class="t">API Key</div></div>
+              <div class="setting-ctl"><input class="input" v-model="voiceApiKey" type="password" style="width:240px" placeholder="OpenAI 兼容 /audio/transcriptions" /></div>
+            </div>
+            <div class="setting-row">
+              <div class="lbl"><div class="t">API URL</div><div class="d">留空用 OpenAI</div></div>
+              <div class="setting-ctl"><input class="input" v-model="voiceApiUrl" style="width:240px" placeholder="https://api.openai.com/v1/audio/transcriptions" /></div>
+            </div>
+            <div class="setting-row">
+              <div class="lbl"><div class="t">模型名</div><div class="d">留空用 whisper-1</div></div>
+              <div class="setting-ctl"><input class="input" v-model="voiceApiModel" style="width:200px" /></div>
+            </div>
+          </template>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">语音模型文件夹</div></div>
+            <div class="setting-ctl"><button class="btn btn-sm" @click="openFolder('voice')">打开文件夹</button></div>
+          </div>
         </div>
 
         <div class="settings-divider"></div>
@@ -637,6 +683,7 @@ onMounted(async () => {
             <div class="lbl"></div>
             <div class="setting-ctl">
               <button class="btn btn-sm" @click="resetPetState">重置状态</button>
+              <button class="btn btn-sm" @click="openFolder('pet')" style="margin-left:8px">打开桌宠模型文件夹</button>
             </div>
           </div>
           <p class="settings-hint">语音触发：按 <b>{{ voiceHotkey }}</b> 或说"<b>{{ voiceWakePrefix }}</b>…"后开始说话，桌宠回复会语音播报并显示气泡。关闭开关后桌宠窗口自动隐藏。</p>
@@ -677,6 +724,33 @@ onMounted(async () => {
             <div class="lbl"><div class="t">TTS 语音输出</div><div class="d">回复时自动合成语音</div></div>
             <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="ttsEnabled" @change="ttsEnabled = !ttsEnabled" /><span class="toggle-slider"></span></label></div>
           </div>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">合成后端</div><div class="d">本地 gTTS（内置）或云端 API</div></div>
+            <div class="setting-ctl">
+              <div class="seg">
+                <button :class="{ on: ttsBackend === 'local' }" @click="ttsBackend = 'local'">本地</button>
+                <button :class="{ on: ttsBackend === 'api' }" @click="ttsBackend = 'api'">云端</button>
+              </div>
+            </div>
+          </div>
+          <template v-if="ttsBackend === 'api'">
+            <div class="setting-row">
+              <div class="lbl"><div class="t">API Key</div></div>
+              <div class="setting-ctl"><input class="input" v-model="ttsApiKey" type="password" style="width:240px" placeholder="OpenAI 兼容 /audio/speech" /></div>
+            </div>
+            <div class="setting-row">
+              <div class="lbl"><div class="t">API URL</div><div class="d">留空用 OpenAI</div></div>
+              <div class="setting-ctl"><input class="input" v-model="ttsApiUrl" style="width:240px" placeholder="https://api.openai.com/v1/audio/speech" /></div>
+            </div>
+            <div class="setting-row">
+              <div class="lbl"><div class="t">模型名</div><div class="d">留空用 tts-1</div></div>
+              <div class="setting-ctl"><input class="input" v-model="ttsApiModel" style="width:200px" /></div>
+            </div>
+            <div class="setting-row">
+              <div class="lbl"><div class="t">音色</div><div class="d">alloy/echo/fable/onyx/nova/shimmer</div></div>
+              <div class="setting-ctl"><input class="input" v-model="ttsApiVoice" style="width:200px" /></div>
+            </div>
+          </template>
         </div>
         <div class="settings-divider"></div>
         <div class="settings-group">

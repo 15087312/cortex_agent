@@ -51,6 +51,10 @@ class Settings(BaseSettings):
         "PERCEPTION_VOICE_LANGUAGE", "PERCEPTION_VOICE_WAKE_PREFIX", "PERCEPTION_VOICE_WAKE_SUFFIX",
         "PERCEPTION_VOICE_ENERGY_THRESHOLD", "PERCEPTION_VOICE_TIMEOUT",
         "PERCEPTION_VOICE_MAX_DURATION", "PERCEPTION_VOICE_END_STOP",
+        "PERCEPTION_VOICE_BACKEND", "PERCEPTION_VOICE_API_KEY", "PERCEPTION_VOICE_API_URL",
+        "PERCEPTION_VOICE_API_MODEL",
+        "OUTPUT_TTS_BACKEND", "OUTPUT_TTS_API_KEY", "OUTPUT_TTS_API_URL",
+        "OUTPUT_TTS_API_MODEL", "OUTPUT_TTS_API_VOICE",
 
         # ── 视觉模型 ──
         "VISION_BACKEND", "VISION_API_FORMAT", "VISION_API_URL", "VISION_API_KEY",
@@ -414,10 +418,21 @@ class Settings(BaseSettings):
     PERCEPTION_VOICE_MAX_DURATION: float = 60.0        # 单次录音最大时长（秒）
     PERCEPTION_VOICE_END_CHECK_INTERVAL: float = 3.0   # 录音中检测结束词的间隔（秒）
 
+    # ── 语音识别（STT）本地/云端 ──────────────────────────
+    PERCEPTION_VOICE_BACKEND: str = "local"            # local=本地 Whisper / api=云端 API（OpenAI 兼容）
+    PERCEPTION_VOICE_API_KEY: str = ""                 # 云端 STT API Key
+    PERCEPTION_VOICE_API_URL: str = ""                 # 云端 STT 地址（留空用 https://api.openai.com/v1/audio/transcriptions）
+    PERCEPTION_VOICE_API_MODEL: str = ""               # 云端 STT 模型名（留空用 whisper-1）
+
     # ── 语音输出（TTS） ──────────────────────────────────────
     OUTPUT_TTS_ENABLED: bool = True                      # TTS 输出总开关（文本转语音）
     OUTPUT_TTS_LANGUAGE: str = "zh"                      # TTS 合成语言
     OUTPUT_TTS_OUTPUT_DIR: str = "data/output"           # TTS 音频输出目录
+    OUTPUT_TTS_BACKEND: str = "local"                    # local=gTTS(内置) / api=云端 API（OpenAI 兼容 /audio/speech）
+    OUTPUT_TTS_API_KEY: str = ""                         # 云端 TTS API Key
+    OUTPUT_TTS_API_URL: str = ""                         # 云端 TTS 地址（留空用 https://api.openai.com/v1/audio/speech）
+    OUTPUT_TTS_API_MODEL: str = ""                       # 云端 TTS 模型名（留空用 tts-1）
+    OUTPUT_TTS_API_VOICE: str = ""                       # 云端 TTS 音色（留空用 alloy）
 
     # ── 主动感知（差异检测 → 触发响应） ────────────────────
     # 负责分析被动感知数据，检测变化并触发思考/搭话等响应

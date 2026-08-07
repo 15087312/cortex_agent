@@ -165,6 +165,29 @@ async def get_module_detail(
     }
 
 
+@router.post("/open-folder")
+async def open_folder(body: dict = None):
+    """打开模型/数据文件夹（Finder）——桌宠模型 / 语音模型 等（与设置项一一对应）"""
+    import subprocess
+    from pathlib import Path
+    folder = (body or {}).get("folder", "") if isinstance(body, dict) else ""
+    root = Path(__file__).resolve().parents[2]
+    paths = {
+        "pet": root / "frontend" / "pet" / "models",
+        "voice": Path.home() / ".cache" / "whisper",
+        "data": root / "data",
+    }
+    target = paths.get(folder)
+    if not target:
+        return {"success": False, "error": {"code": "BAD_FOLDER", "message": f"未知目录: {folder}"}}
+    try:
+        target.mkdir(parents=True, exist_ok=True)
+        subprocess.Popen(["open", str(target)])
+        return {"success": True, "data": {"folder": str(target)}}
+    except Exception as e:
+        return {"success": False, "error": {"code": "OPEN_FAILED", "message": str(e)}}
+
+
 @router.post("/modules/{module_name}/refresh")
 async def refresh_module(
     module_name: str = Path(..., description="模块名称")
