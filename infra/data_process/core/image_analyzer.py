@@ -500,8 +500,12 @@ class ImageAnalyzer:
         )
 
         try:
-            # 检测 API 类型：DeepSeek 不支持 image_url，需要使用 base64 内联格式
-            is_deepseek = "deepseek" in api_url.lower()
+            # 检测 API 类型：DeepSeek/DashScope 走 base64 内联，OpenAI 走 image_url。
+            # 优先用 VISION_API_FORMAT 配置，未配置时按 URL 推断。
+            api_format = str(getattr(settings, "VISION_API_FORMAT", "") or "").lower()
+            is_deepseek = api_format in ("deepseek", "dashscope") or (
+                not api_format and "deepseek" in api_url.lower()
+            )
 
             if is_deepseek:
                 # DeepSeek: 使用 base64 图片内联在 content 中

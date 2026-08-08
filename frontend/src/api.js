@@ -120,11 +120,6 @@ export function setApiKey(k) {
 // Cortex 会话 API → chat_gateway /stream/* 端点（统一后端 :8080）
 // ═══════════════════════════════════════════
 
-export function createSession() { return request('POST', '/stream/session') }
-export function listSessions() { return request('GET', '/stream/sessions') }
-export function getMessages(sessionId, limit = 100) { return request('GET', `/stream/sessions/${encodeURIComponent(sessionId)}/messages?limit=${limit}`) }
-export function deleteSession(sessionId) { return request('DELETE', `/stream/session/${encodeURIComponent(sessionId)}`) }
-
 // ═══════════════════════════════════════════
 // 端点
 // ═══════════════════════════════════════════

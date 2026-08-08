@@ -597,7 +597,8 @@ async def root():
     return {"success": True, "data": {
         "name": "Humanoid AGI",
         "version": _CORTEX_VERSION,
-        "status": "running"
+        "status": "running",
+        "storage_path": getattr(settings, "storage_path", "") or "",
     }}
 
 
@@ -606,6 +607,7 @@ async def health_check():
     """健康检查 — 验证关键依赖"""
     checks = {}
     all_healthy = True
+    checks["version"] = _CORTEX_VERSION
 
     # 检查模型管理器
     try:
@@ -634,7 +636,7 @@ async def health_check():
     status = "healthy" if all_healthy else "degraded"
     return {
         "success": True,
-        "data": {"status": status, "checks": checks},
+        "data": {"status": status, "checks": checks, "version": _CORTEX_VERSION},
     }
 
 
@@ -655,12 +657,15 @@ class MemoryLibRequest(BaseModel):
 
 @app.get("/config")
 async def get_config():
-    """读取当前运行时配置（仅返回可修改的配置项）"""
+    """读取当前运行时配置（仅返回可修改的配置项；大小写字段名保持一致）"""
     config_data = {}
     for key in _MODIFIABLE_CONFIG_KEYS:
         val = getattr(settings, key, None)
+        if val is None:
+            val = getattr(settings, key.lower(), None)
         if val is not None:
-            config_data[key] = val
+            actual = key if key in type(settings).model_fields else key.lower()
+            config_data[actual] = val
     return {"data": config_data}
 
 
@@ -825,8 +830,8 @@ async def update_config(key: str, body: PutConfigRequest):
             content=error_response(ErrorCode.FORBIDDEN, f"配置项 '{key}' 不允许通过 API 修改").model_dump()
         )
 
-    # 检查字段是否存在
-    field_info = type(settings).model_fields.get(key_upper)
+    # 检查字段是否存在（兼容大小写字段名：大写如 CORTEX_MODE，小写如 launch_at_startup）
+    field_info = type(settings).model_fields.get(key_upper) or type(settings).model_fields.get(key)
     if field_info is None:
         return JSONResponse(
             status_code=404,
@@ -844,18 +849,19 @@ async def update_config(key: str, body: PutConfigRequest):
         )
 
     try:
-        old_value = getattr(settings, key_upper, None)
-        object.__setattr__(settings, key_upper, validated)
+        actual = key_upper if key_upper in type(settings).model_fields else key
+        old_value = getattr(settings, actual, None)
+        object.__setattr__(settings, actual, validated)
         # CORTEX_MODE 需要同步写回环境变量，保证 chat_gateway._resolve_mode 生效
         if key_upper == "CORTEX_MODE":
             os.environ["CORTEX_MODE"] = str(validated)
         # 实时持久化到 ~/.cortex/settings.json（原子写），重启后仍生效
-        if not settings.save_user_config([key_upper]):
-            logger.warning(f"配置 {key_upper} 已更新但持久化失败（重启后将丢失）")
-        logger.info(f"配置已更新: {key_upper} = {validated} (旧值: {old_value})")
+        if not settings.save_user_config([actual]):
+            logger.warning(f"配置 {actual} 已更新但持久化失败（重启后将丢失）")
+        logger.info(f"配置已更新: {actual} = {validated} (旧值: {old_value})")
         return {
             "success": True,
-            "data": {"key": key_upper, "old_value": old_value, "new_value": validated},
+            "data": {"key": actual, "old_value": old_value, "new_value": validated},
         }
     except Exception as e:
         logger.error(f"更新配置失败: {key} -> {e}")

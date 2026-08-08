@@ -373,8 +373,14 @@ async function handleEditMessage(idx) {
 
 async function handleClearChat() {
   if (chat.messages.length === 0) return
-  if (!(await confirm('确定清空当前对话？'))) return
+  if (!(await confirm('确定清空当前对话？此操作会删除后端保存的消息记录，不可撤销'))) return
   chat.clearMessages()
+  try {
+    if (session.sessionId) {
+      await fetch('/api/stream/session/' + encodeURIComponent(session.sessionId) + '/messages', { method: 'DELETE' })
+      await session.loadSessions()
+    }
+  } catch { toast.show('本地已清空，后端清空失败', 'error') }
 }
 
 function handleApprove(requestId, approved) {
@@ -412,7 +418,7 @@ function handleAnswerIntent(requestId, answer) {
             @keydown.enter="commitTitle"
             @keydown.esc="editingTitle = false"
           />
-          <ModelSelector v-model="chat.currentModel" />
+          <ModelSelector :session-id="session.sessionId" />
         </div>
         <div class="chat-header-right">
           <button class="chat-btn-icon" @click="showTodos = !showTodos" title="待办列表"><Icon name="list" :size="15" /></button>

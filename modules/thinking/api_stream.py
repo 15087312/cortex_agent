@@ -1215,7 +1215,17 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
 
             if msg_type == "input":
                 user_content = msg_data.get("content", "")
-                if user_content:
+                attachments = msg_data.get("attachments") or []
+                if user_content or attachments:
+                    # 附件（图片→视觉描述 / 文件→内容）注入上下文
+                    if attachments:
+                        try:
+                            from modules.thinking.attachment_handler import parse_attachments
+                            att_text = await parse_attachments(attachments)
+                            if att_text:
+                                user_content = (user_content + "\n\n" + att_text) if user_content else att_text
+                        except Exception as e:
+                            logger.warning(f"附件解析失败: {e}")
                     # 如果消息中带了执行模式，同步设置
                     exec_mode = msg_data.get("execution_mode", "")
                     if exec_mode in ("plan", "edit", "yolo", "control"):

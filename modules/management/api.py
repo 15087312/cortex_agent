@@ -619,6 +619,20 @@ async def get_causal_graph(
     }
 
 
+@router.get("/causal-graph/metrics")
+async def get_causal_graph_metrics():
+    """获取因果图监控指标（Prometheus 格式）"""
+    from modules.memory.causal_graph import CausalGraph
+    graph = CausalGraph.get_instance()
+    return {
+        "success": True,
+        "data": {
+            "metrics": graph.get_metrics(),
+            "prometheus": graph.get_metrics_prometheus(),
+        }
+    }
+
+
 @router.get("/causal-graph/{node_id}")
 async def get_causal_node_detail(node_id: str = Path(..., description="节点 ID")):
     """获取单个因果节点的详情（包括关联事件和因果链）"""
@@ -758,20 +772,6 @@ async def get_causal_what_if(
                 "confidence": confidence,
             },
             "chains": [chain_to_dict(c) for c in chains],
-        }
-    }
-
-
-@router.get("/causal-graph/metrics")
-async def get_causal_graph_metrics():
-    """获取因果图监控指标（Prometheus 格式）"""
-    from modules.memory.causal_graph import CausalGraph
-    graph = CausalGraph.get_instance()
-    return {
-        "success": True,
-        "data": {
-            "metrics": graph.get_metrics(),
-            "prometheus": graph.get_metrics_prometheus(),
         }
     }
 

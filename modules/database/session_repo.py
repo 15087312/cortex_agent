@@ -204,6 +204,16 @@ class SessionRepository:
                 session_row.last_active = datetime.utcnow()
             return True
 
+    def clear_messages(self, session_id: str) -> int:
+        """清空会话全部消息（保留会话本身），返回删除条数"""
+        with self._session() as s:
+            count = s.query(ChatMessage).filter_by(session_id=session_id).delete()
+            session_row = s.query(ChatSession).filter_by(session_id=session_id).first()
+            if session_row:
+                session_row.message_count = 0
+                session_row.last_active = datetime.utcnow()
+            return count
+
     def update_message(self, session_id: str, message_id: str, content: str) -> bool:
         """修改单条消息内容"""
         if not content or not content.strip():

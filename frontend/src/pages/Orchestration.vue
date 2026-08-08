@@ -27,9 +27,6 @@ const aiTools = ref([])
 const showAiForm = ref(false)
 const editingAi = ref(null)
 const aiForm = ref({ tool_name: '', description: '', code: '', params: '' })
-const toolFilter = ref('')
-const toolGroupsOpen = ref({ builtin: true, plugin: true, dynamic: true })
-
 // per-role 工具权限集中配置（工具管理 tab）
 const roleToolSel = ref('')
 const roleToolCfg = ref({ whitelist: [], blacklist: [] })
@@ -38,17 +35,6 @@ const srcModal = ref({ open: false, name: '', source: '', editable: false })
 const grouped = computed(() => {
   const g = { large: [], supervisor: [], expert: [] }
   agents.value.forEach((a) => { (g[a.tier] || (g[a.tier] = [])).push(a) })
-  return g
-})
-
-const toolGroups = computed(() => {
-  const g = { builtin: [], plugin: [], dynamic: [], mcp: [] }
-  const f = (toolFilter.value || '').toLowerCase()
-  tools.value.forEach((t) => {
-    if (f && !(t.name + ' ' + (t.description || '')).toLowerCase().includes(f)) return
-    const k = g[t.source] !== undefined ? t.source : 'dynamic'
-    ;(g[k] || (g[k] = [])).push(t)
-  })
   return g
 })
 

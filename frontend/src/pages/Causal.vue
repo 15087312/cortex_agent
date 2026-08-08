@@ -54,7 +54,7 @@ function computeLayout(limit = 80) {
     }
     relEdges.forEach((edge) => {
       const pointA = pos[edge.from], pointB = pos[edge.to]
-      if (!a || !b) return
+      if (!pointA || !pointB) return
       const dx = pointB.x - pointA.x, dy = pointB.y - pointA.y
       const dist = Math.max(0.1, Math.hypot(dx, dy))
       const force = dist * 0.01
@@ -116,7 +116,7 @@ function nodeBadgeClass(type) { return type === 'root' ? 'badge-green' : type ==
         <div class="card-header">因果图谱（前 {{ displayNodes.length }} 节点 · 点击节点查看因果链）</div>
         <svg class="graph-svg" :viewBox="`0 0 ${GRAPH_W} ${GRAPH_H}`" xmlns="http://www.w3.org/2000/svg" v-if="displayNodes.length">
           <line
-            v-for="edge in displayEdges" :key="e.id"
+            v-for="edge in displayEdges" :key="edge.id"
             :x1="positions[edge.from]?.x" :y1="positions[edge.from]?.y"
             :x2="positions[edge.to]?.x" :y2="positions[edge.to]?.y"
             class="graph-line" stroke-width="1.5"

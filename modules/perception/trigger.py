@@ -358,7 +358,10 @@ class ProactiveTrigger:
     def _cooldown_ok(self, session_id: str, cfg: dict) -> bool:
         """综合冷却：距上次该会话任意主动搭话 >= cooldown_minutes 才允许触发"""
         cooldown = cfg.get("cooldown_minutes")
-        cooldown = 30 if cooldown is None else int(cooldown)
+        if cooldown is None:
+            from config.settings import settings as _s
+            cooldown = getattr(_s, "PROACTIVE_OUTREACH_COOLDOWN_MINUTES", 15)
+        cooldown = 15 if cooldown is None else int(cooldown)
         with self._lock:
             last = self._session_last_trigger.get(session_id, 0.0)
             return time.time() - last >= cooldown * 60

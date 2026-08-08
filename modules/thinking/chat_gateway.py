@@ -202,11 +202,12 @@ async def _consume_turn(
 
     独立任务运行，保证外层 receive_text() 不被阻塞 —— stop/新消息可随时打断。
     """
-    repo.save_message(session_id, "user", content)
+    user_msg_id = repo.save_message(session_id, "user", content)
 
-    # 与 api_stream 一致：先发 received ack，避免 TUI 等待超时
+    # 与 api_stream 一致：先发 received ack（带 message_id 供前端删除/编辑），避免 TUI 等待超时
     if not await _safe_ws_send(websocket, _envelope(
         session_id, "ack", "received", "已接收请求，开始处理", "system",
+        data={"message_id": user_msg_id} if user_msg_id else None,
     )): return
 
     queue: asyncio.Queue = asyncio.Queue()
@@ -370,6 +371,17 @@ async def _chatonly_ws(websocket: WebSocket, session_id: str) -> None:
 
             if msg_type == "input":
                 content = msg.get("content", "")
+                attachments = msg.get("attachments") or []
+                if not content and not attachments:
+                    continue
+                if attachments:
+                    try:
+                        from modules.thinking.attachment_handler import parse_attachments
+                        att_text = await parse_attachments(attachments)
+                        if att_text:
+                            content = (content + "\n\n" + att_text) if content else att_text
+                    except Exception:
+                        pass
                 if not content:
                     continue
                 # 新消息打断上一轮（简单路线同一时刻只处理一条）：
@@ -757,6 +769,13 @@ async def pet_chat_stream(body: PetChatRequest):
             yield {"event": "error", "data": json.dumps({"error": str(e)}, ensure_ascii=False)}
 
     return EventSourceResponse(gen())
+
+
+@router.delete("/session/{session_id}/messages")
+async def clear_session_messages(session_id: str):
+    """清空会话全部消息（保留会话本身），前端「清空对话」真实生效"""
+    _get_chat_session_repo().clear_messages(session_id)
+    return {"success": True, "data": {"session_id": session_id}}
 
 
 @router.get("/session/{session_id}/graph")

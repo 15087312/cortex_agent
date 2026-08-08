@@ -38,7 +38,6 @@ function onKeydown(e) {
   }
   if (e.key === 'Escape') {
     if (dialogState().visible) { resolveDialog(null); return }
-    window.dispatchEvent(new CustomEvent('cortex-escape'))
     return
   }
   if (e.key === '/' && !_isTyping(e.target)) {

@@ -87,7 +87,6 @@ async function deleteLib(lib) {
 const CK = {
   launchAtStartup: 'launch_at_startup',
   preventSleep: 'prevent_sleep',
-  showFilename: 'show_filename_in_gallery',
   allowLocation: 'allow_geolocation',
   shortcutKeys: 'shortcut_keys',
   storagePath: 'storage_path',
@@ -185,12 +184,11 @@ const debugEnabled = boolCfg('DEBUG', false)
 const loggingEnabled = boolCfg('LOGGING_ENABLED', true)
 const logLevel = segCfg('LOG_LEVEL', 'INFO')
 const maxWorkers = numCfg('MAX_WORKERS', 4)
-const memTtlShort = numCfg('MEMORY_TTL_SHORT', 3600)
-const memTtlLong = numCfg('MEMORY_TTL_LONG', 86400)
 
 /* ── 感知系统模块开关 ── */
 const perceptionEnabled = boolCfg('PERCEPTION_ENABLED', true)
 const perceptionScreen = boolCfg('PERCEPTION_SCREEN_ENABLED', true)
+const screenDiff = boolCfg('SCREEN_DIFF_ENABLED', true)
 const perceptionFile = boolCfg('PERCEPTION_FILE_ENABLED', true)
 const perceptionMcp = boolCfg('PERCEPTION_MCP_ENABLED', true)
 const perceptionInternal = boolCfg('PERCEPTION_INTERNAL_ENABLED', true)
@@ -248,10 +246,6 @@ const launchAtStartup = computed({
 const preventSleep = computed({
   get: () => _bool(configStore.config[CK.preventSleep], false),
   set: (v) => saveCfg(CK.preventSleep, v),
-})
-const showFilename = computed({
-  get: () => _bool(configStore.config[CK.showFilename], false),
-  set: (v) => saveCfg(CK.showFilename, v),
 })
 const allowLocation = computed({
   get: () => _bool(configStore.config[CK.allowLocation], false),
@@ -316,68 +310,11 @@ async function editConfig(k, v) {
 }
 
 /* ── 人设 ── */
-const personas = ref([])
-const personaDrafts = ref({})
-const systemOverrideDrafts = ref({})
-const sysOverrideOpen = ref({})
-const tierLabel = { large: '大模型', supervisor: '主管', expert: '专家' }
-// 按层级分组：总指挥 / 主管 / 专家（人设管理分类展示）
-const personasByTier = computed(() => ({
-  large: personas.value.filter(p => p.tier === 'large'),
-  supervisor: personas.value.filter(p => p.tier === 'supervisor'),
-  expert: personas.value.filter(p => p.tier === 'expert'),
-}))
-async function loadPersonas() {
-  // 失败重试 + 报错（同类加固：不再静默置空导致人设列表空白）
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    try {
-      const r = await endpoints.personas()
-      personas.value = (r.data && r.data.personas) || []
-      personaDrafts.value = {}
-      systemOverrideDrafts.value = {}
-      for (const p of personas.value) {
-        personaDrafts.value[p.role] = p.custom || ''
-        systemOverrideDrafts.value[p.role] = p.system_override || ''
-      }
-      return
-    } catch (e) {
-      if (attempt < 3) {
-        await new Promise(r => setTimeout(r, 400 * attempt))
-      } else {
-        personas.value = []
-        toast.show('人设列表加载失败: ' + (e.body?.error?.message || e.status || '网络错误'), 'error')
-      }
-    }
-  }
-}
-async function savePersona(role) {
-  const val = (personaDrafts.value[role] || '').trim()
-  const ovr = (systemOverrideDrafts.value[role] || '').trim()
-  try {
-    await endpoints.updatePersona(role, val, ovr)
-    toast.show(role + ' 人设已保存', 'success')
-    await loadPersonas()
-  } catch (e) { toast.show('保存失败: ' + (e.body?.error?.message || e.status), 'error') }
-}
-async function resetPersona(role) {
-  if (!(await confirm('确定恢复该角色的默认人设？自定义人设与高级系统提示词覆盖将被清除。'))) return
-  personaDrafts.value[role] = ''
-  systemOverrideDrafts.value[role] = ''
-  try {
-    await endpoints.updatePersona(role, '', '')
-    toast.show(role + ' 已恢复默认人设', 'success')
-    await loadPersonas()
-  } catch (e) { toast.show('恢复失败: ' + (e.body?.error?.message || e.status), 'error') }
-}
-
 /* ── Init ── */
 onMounted(async () => {
-  // 记忆库优先并行加载（不阻塞在 loadConfig/loadPersonas 之后，
-  // 避免切到"记忆库" tab 时列表还是空的）
   loadMemoryLibs()
   await configStore.loadConfig()
   await configStore.loadModelStatus()
-  await loadPersonas()
   const cfgPath = _str(configStore.config[CK.storagePath], '')
   if (cfgPath) { storagePath.value = cfgPath; return }
   try { const info = await endpoints.systemInfo(); storagePath.value = info?.data?.storage_path || info?.storage_path || '' } catch {}
@@ -791,7 +728,7 @@ onMounted(async () => {
         <div class="settings-group">
           <div class="settings-group-title">调试与日志</div>
           <div class="setting-row">
-            <div class="lbl"><div class="t">调试模式</div><div class="d">开启 DEBUG 日志</div></div>
+            <div class="lbl"><div class="t">调试模式</div><div class="d">开启 DEBUG 日志（重启后生效）</div></div>
             <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="debugEnabled" @change="debugEnabled = !debugEnabled" /><span class="toggle-slider"></span></label></div>
           </div>
           <div class="setting-row">
@@ -799,7 +736,7 @@ onMounted(async () => {
             <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="loggingEnabled" @change="loggingEnabled = !loggingEnabled" /><span class="toggle-slider"></span></label></div>
           </div>
           <div class="setting-row">
-            <div class="lbl"><div class="t">日志级别</div></div>
+            <div class="lbl"><div class="t">日志级别</div><div class="d">重启后生效</div></div>
             <div class="setting-ctl">
               <div class="seg">
                 <button v-for="lv in ['DEBUG', 'INFO', 'WARNING', 'ERROR']" :key="lv" :class="{ on: logLevel === lv }" @click="logLevel = lv">{{ lv }}</button>
@@ -807,21 +744,8 @@ onMounted(async () => {
             </div>
           </div>
           <div class="setting-row">
-            <div class="lbl"><div class="t">最大工作线程</div></div>
+            <div class="lbl"><div class="t">最大工作线程</div><div class="d">重启后生效</div></div>
             <div class="setting-ctl"><input class="input" type="number" v-model.number="maxWorkers" style="width:110px;text-align:right" /></div>
-          </div>
-        </div>
-        <div class="settings-divider"></div>
-        <div class="settings-group">
-          <div class="settings-group-title">记忆</div>
-          <p class="settings-hint">记忆事件有效期（秒）</p>
-          <div class="setting-row">
-            <div class="lbl"><div class="t">短期记忆 TTL</div></div>
-            <div class="setting-ctl"><input class="input" type="number" v-model.number="memTtlShort" style="width:110px;text-align:right" /></div>
-          </div>
-          <div class="setting-row">
-            <div class="lbl"><div class="t">长期记忆 TTL</div></div>
-            <div class="setting-ctl"><input class="input" type="number" v-model.number="memTtlLong" style="width:110px;text-align:right" /></div>
           </div>
         </div>
       </div>
@@ -855,10 +779,6 @@ onMounted(async () => {
           <label class="settings-row" @click.prevent="preventSleep = !preventSleep">
             <span class="settings-row-label">防休眠</span>
             <span class="toggle-switch"><input type="checkbox" :checked="preventSleep" /><span class="toggle-slider"></span></span>
-          </label>
-          <label class="settings-row" @click.prevent="showFilename = !showFilename">
-            <span class="settings-row-label">图库内展示文件名称</span>
-            <span class="toggle-switch"><input type="checkbox" :checked="showFilename" /><span class="toggle-slider"></span></span>
           </label>
           <label class="settings-row" @click.prevent="allowLocation = !allowLocation">
             <span class="settings-row-label">授权访问地理位置</span>

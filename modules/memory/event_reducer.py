@@ -156,9 +156,11 @@ class EventReducer:
         if saved:
             try:
                 from modules.memory.causal_graph import CausalGraph
+                from config.settings import settings
                 graph = CausalGraph.get_instance()
                 saved_ids = [ev.id for ev in saved]
-                graph.update_cooccurrence(event_ids=saved_ids, min_cooccur=2)
+                min_cooccur = int(getattr(settings, "CAUSAL_MIN_COOCCUR", 2) or 2)
+                graph.update_cooccurrence(event_ids=saved_ids, min_cooccur=min_cooccur)
             except Exception as e:
                 logger.debug(f"[EventReducer] 共现统计失败 (非致命): {e}")
 

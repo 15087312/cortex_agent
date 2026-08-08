@@ -30,7 +30,6 @@ const routes = [
   { path: '/security', name: 'Security', component: () => import('@/pages/Security.vue') },
   { path: '/perception', name: 'Perception', component: () => import('@/pages/Perception.vue') },
   { path: '/system', name: 'System', component: () => import('@/pages/System.vue') },
-  { path: '/gallery', name: 'Gallery', component: () => import('@/pages/Gallery.vue') },
   { path: '/settings', name: 'Settings', component: () => import('@/pages/Settings.vue') },
 ]
 

@@ -26,15 +26,6 @@ function taskType(task) {
   if (task.time) return 'daily'
   return 'daily'
 }
-function scheduleLabel(task) {
-  const s = task.schedule
-  const t = taskType(task)
-  if (t === 'daily') return typeof s === 'string' ? s : (task.time || 'HH:MM')
-  if (t === 'interval') return '每 ' + (s?.every_minutes ?? task.every_minutes ?? 30) + ' 分钟'
-  if (t === 'once') return s?.at || task.at || '未设'
-  if (t === 'cron') return s?.expr || task.expr || '未设'
-  return ''
-}
 function statusBadge(st) {
   if (!st) return null
   const map = { success: ['#3fb950', '成功'], error: ['#f85149', '错误'] }

@@ -20,7 +20,6 @@ const modules = computed(() =>
 const healthyCount = computed(() => modules.value.filter((m) => m.status === 'healthy').length)
 const moduleOk = computed(() => modules.value.length ? `${healthyCount.value}/${modules.value.length}` : '-')
 const totalEvents = computed(() => libs.value.reduce((s, l) => s + (l.event_count || 0), 0))
-const currentLib = computed(() => libs.value.find((l) => l.current))
 const totalSessions = computed(() => sessions.value.length)
 const activeApp = computed(() => perception.value?.world_state?.active_app || '-')
 const activeWindow = computed(() => perception.value?.world_state?.active_window || '-')
