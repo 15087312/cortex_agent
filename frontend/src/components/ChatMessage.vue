@@ -15,6 +15,14 @@ const emit = defineEmits(['copy', 'delete', 'edit', 'approve', 'answer-intent'])
 const isUser = computed(() => props.message.role === 'user')
 const kind = computed(() => props.message.kind || '')
 
+// 思考过程：淡化文本 + 展开/收起
+function shortOf(msg) {
+  const c = msg.content || ''
+  return c.length > 120 ? c.slice(0, 120) + '…' : c
+}
+function isThinkingLong(msg) { return (msg.content || '').length > 120 }
+function toggleThinking(msg) { msg._expanded = !msg._expanded }
+
 // ── 桌宠互动消息：content 匹配动作提示词 → 显示图标（提示词不展示） ──
 const petActions = ref([])
 fetch('/api/stream/pet/actions', { headers: { Accept: 'application/json' } })
@@ -139,12 +147,15 @@ function submitIntent() {
       <div v-else style="opacity:.7">已回答：{{ message.answer }}</div>
     </div>
 
-    <!-- 思考步骤小气泡（supervisor/expert） -->
+    <!-- 思考步骤：淡化文本 + 点击展开/收起 -->
     <template v-else-if="kind === 'thinking'">
       <div class="message-avatar" :class="message.avatarCls"></div>
       <div class="message-body">
-        <div class="message-name">{{ message.name }}</div>
-        <div class="message-bubble">{{ message.content }}</div>
+        <div class="message-name"><span class="thinking-badge">思考</span></div>
+        <div class="thinking-box" @click="toggleThinking(message)">
+          <div class="thinking-text">{{ message._expanded ? message.content : shortOf(message) }}</div>
+          <div v-if="isThinkingLong(message)" class="thinking-toggle">{{ message._expanded ? '收起 ▲' : '展开 ▼' }}</div>
+        </div>
       </div>
     </template>
 
@@ -220,3 +231,33 @@ function submitIntent() {
     </template>
   </div>
 </template>
+
+<style scoped>
+.thinking-box {
+  background: var(--bg-secondary, rgba(255,255,255,0.03));
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+  max-width: 520px;
+}
+.thinking-text {
+  font-size: 12px;
+  color: var(--text-muted, #8b949e);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.thinking-toggle {
+  font-size: 11px;
+  color: var(--accent, #58a6ff);
+  margin-top: 4px;
+}
+.thinking-badge {
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--bg-tertiary, rgba(139,148,158,0.15));
+  padding: 1px 7px;
+  border-radius: 8px;
+}
+</style>
