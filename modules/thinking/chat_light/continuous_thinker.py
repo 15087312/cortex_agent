@@ -68,7 +68,7 @@ class ContinuousThinker:
                 # 3. Compose system prompt
                 system_prompt = self._composer.build_system(memory_context)
 
-                # 3.5 生成并推送心理活动（conscience 内心独白，与 agent 模式一致）
+                # 3.5 生成心理活动（conscience 内心独白）：注入 system prompt + 推送前端
                 try:
                     from modules.thinking.conscience import get_conscience
                     from infra.model.small_model_client import SmallModelClient
@@ -81,6 +81,8 @@ class ContinuousThinker:
                     _cons.add_to_dialog("user", user_message)
                     _mental = await _cons.think(user_message, owner_id=session_id or "large_primary")
                     if _mental:
+                        # 注入模型上下文（与 agent 模式同款：system prompt 追加过往经验段）
+                        system_prompt += f"\n\n【你回忆起的过往经验】\n{_mental}"
                         try:
                             message_queue.put_nowait({
                                 "type": "mental",
