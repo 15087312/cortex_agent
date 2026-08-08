@@ -191,10 +191,29 @@ async def get_orchestration():
 
 
 @router.get("/todos")
-async def get_todos():
-    """读取全局任务列表（todo 工具数据，供前端展示）"""
+async def get_todos(session_id: str = ""):
+    """读取指定会话的任务列表（todo 工具数据，按会话隔离）"""
     from infra.tool_manager.tools.todo import _load_todos
-    return {"success": True, "data": {"todos": _load_todos()}}
+    return {"success": True, "data": {"todos": _load_todos(session_id)}}
+
+
+@router.put("/todos/{task_id}/status")
+async def set_todo_status(task_id: str, body: dict = None, session_id: str = ""):
+    """更新任务状态（前端勾选/取消完成）"""
+    import time
+    body = body or {}
+    status = str(body.get("status", "pending"))
+    if status not in ("pending", "in_progress", "completed"):
+        return {"success": False, "error": {"code": "VALIDATION_ERROR", "message": f"无效状态: {status}"}}
+    from infra.tool_manager.tools.todo import _load_todos, _save_todos
+    todos = _load_todos(session_id)
+    for t in todos:
+        if t.get("id") == task_id:
+            t["status"] = status
+            t["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+            _save_todos(todos, session_id)
+            return {"success": True, "data": {"id": task_id, "status": status, "todos": todos}}
+    return {"success": False, "error": {"code": "NOT_FOUND", "message": f"任务不存在: {task_id}"}}
 
 
 @router.get("/skills")

@@ -2097,6 +2097,9 @@ class ModelRunner:
                                             f"tool={tc.name} reason={reason}"
                                         )
                                     else:
+                                        # todo 工具：注入当前会话，任务列表按会话隔离（对齐主流 AI 的 per-task todo）
+                                        if tc.name == "todo":
+                                            args.setdefault("session_id", self.session_id)
                                         request = ToolCallRequest(
                                             tool_name=tc.name,
                                             params=args,

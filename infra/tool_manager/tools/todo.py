@@ -15,34 +15,40 @@ from utils.logger import setup_logger
 
 logger = setup_logger("todo")
 
-TODOS_FILE = str(Path.home() / ".cortex" / "todos" / "todos.json")
+def _todos_path(session_id: str = "") -> str:
+    """每个会话独立的任务文件（对齐主流 AI 的 per-task todo）"""
+    sid = (session_id or "default").strip().replace("/", "_")
+    return str(Path.home() / ".cortex" / "todos" / f"{sid}.json")
 
 
-def _load_todos() -> list:
-    """加载任务列表"""
+def _load_todos(session_id: str = "") -> list:
+    """加载指定会话的任务列表"""
+    path = _todos_path(session_id)
     try:
-        if os.path.exists(TODOS_FILE):
-            with open(TODOS_FILE, "r", encoding="utf-8") as f:
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
                 return json.load(f)
     except Exception as e:
         logger.debug(f"任务文件加载失败，返回空列表: {e}")
     return []
 
 
-def _save_todos(todos: list):
-    """保存任务列表"""
-    os.makedirs(os.path.dirname(TODOS_FILE), exist_ok=True)
-    with open(TODOS_FILE, "w", encoding="utf-8") as f:
+def _save_todos(todos: list, session_id: str = ""):
+    """保存指定会话的任务列表"""
+    path = _todos_path(session_id)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
         json.dump(todos, f, ensure_ascii=False, indent=2)
 
 
 @ToolRegistry.register(
     "todo",
     description=(
-        "任务管理工具。用于创建、查看、更新和标记完成任务。"
-        "支持待办事项的生命周期管理。"
-        "用法：action='list' 查看所有任务，action='create' 创建新任务，"
-        "action='update' 更新任务状态/内容，action='delete' 删除任务。"
+        "任务管理工具。用于规划当前任务并创建、查看、更新、标记完成的待办列表"
+        "（类似 Claude Code 的 TodoWrite）。开始执行任务时先创建步骤清单，"
+        "每完成一步用 update 标记为 completed，让用户实时看到进度。"
+        "用法：action='list' 查看任务，action='create' 创建，"
+        "action='update' 更新状态/内容，action='delete' 删除。"
     ),
     params={
         "action": "操作类型: list（列出）、create（创建）、update（更新状态）、delete（删除）",
@@ -51,17 +57,18 @@ def _save_todos(todos: list):
             "content（任务描述）、status（pending/in_progress/completed）。"
             "创建时传 [{'content': '...'}]；更新时传 [{'id': '...', 'status': 'completed'}]"
         ),
+        "session_id": "可选，会话 ID（系统自动注入，无需填写）",
     },
     risk_level="LOW",
     category="query",
     core=True,
 )
-def todo(action: str = "list", items: Optional[str] = None) -> Dict[str, Any]:
+def todo(action: str = "list", items: Optional[str] = None, session_id: str = "") -> Dict[str, Any]:
     """任务管理"""
     action = action.lower().strip()
 
     if action == "list":
-        todos = _load_todos()
+        todos = _load_todos(session_id)
         return {
             "action": "list",
             "total": len(todos),
@@ -76,7 +83,7 @@ def todo(action: str = "list", items: Optional[str] = None) -> Dict[str, Any]:
         except json.JSONDecodeError:
             return {"error": "items 必须是有效的 JSON 字符串"}
 
-        todos = _load_todos()
+        todos = _load_todos(session_id)
         created = []
         for item in parsed:
             task = {
@@ -87,7 +94,7 @@ def todo(action: str = "list", items: Optional[str] = None) -> Dict[str, Any]:
             }
             todos.append(task)
             created.append(task)
-        _save_todos(todos)
+        _save_todos(todos, session_id)
 
         return {
             "action": "create",
@@ -103,7 +110,7 @@ def todo(action: str = "list", items: Optional[str] = None) -> Dict[str, Any]:
         except json.JSONDecodeError:
             return {"error": "items 必须是有效的 JSON 字符串"}
 
-        todos = _load_todos()
+        todos = _load_todos(session_id)
         updated = []
         not_found = []
         for update in parsed:
@@ -122,7 +129,7 @@ def todo(action: str = "list", items: Optional[str] = None) -> Dict[str, Any]:
             if not found:
                 not_found.append(task_id)
 
-        _save_todos(todos)
+        _save_todos(todos, session_id)
         result = {"action": "update", "updated": len(updated)}
         if updated:
             result["items"] = updated
@@ -144,10 +151,10 @@ def todo(action: str = "list", items: Optional[str] = None) -> Dict[str, Any]:
             if tid:
                 ids_to_delete.add(tid)
 
-        todos = _load_todos()
+        todos = _load_todos(session_id)
         remaining = [t for t in todos if t["id"] not in ids_to_delete]
         deleted = len(todos) - len(remaining)
-        _save_todos(remaining)
+        _save_todos(remaining, session_id)
 
         return {"action": "delete", "deleted": deleted}
 

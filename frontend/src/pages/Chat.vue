@@ -29,12 +29,28 @@ const showSettings = ref(false)
 const todos = ref([])
 const showTodos = ref(false)
 let todoTimer = null
+const todoDone = computed(() => todos.value.filter((t) => t.status === 'completed').length)
 async function loadTodos() {
   try {
-    const r = await fetch('/api/management/todos', { headers: { Accept: 'application/json' } })
+    const sid = session.sessionId || ''
+    const r = await fetch('/api/management/todos?session_id=' + encodeURIComponent(sid), { headers: { Accept: 'application/json' } })
     const d = await r.json()
     todos.value = d?.data?.todos || []
   } catch {}
+}
+async function toggleTodo(t) {
+  const next = t.status === 'completed' ? 'pending' : 'completed'
+  try {
+    const sid = session.sessionId || ''
+    const r = await fetch('/api/management/todos/' + encodeURIComponent(t.id) + '/status?session_id=' + encodeURIComponent(sid), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: next }),
+    })
+    const d = await r.json()
+    if (d.success) t.status = next
+    else toast.show('更新失败: ' + (d.error?.message || ''), 'error')
+  } catch { toast.show('更新失败', 'error') }
 }
 const messagesWrap = ref(null)
 let watchTimer = null
@@ -477,20 +493,28 @@ function handleAnswerIntent(requestId, answer) {
       </ChatInput>
     </div>
 
-    <!-- todo 待办面板（模型通过 todo 工具维护） -->
+    <!-- todo 待办面板（模型通过 todo 工具维护，按当前会话隔离） -->
     <div v-if="showTodos" style="width:240px;flex-shrink:0;border-left:1px solid var(--border);display:flex;flex-direction:column;background:var(--bg-secondary)">
       <div style="padding:10px 12px;font-size:13px;font-weight:600;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border)">
-        <span>待办列表 ({{ todos.length }})</span>
+        <span>待办 ({{ todoDone }}/{{ todos.length }})</span>
         <button class="chat-btn-icon" @click="showTodos = false" title="收起"><Icon name="right" :size="14" /></button>
       </div>
+      <div style="height:3px;background:rgba(139,148,158,0.15)">
+        <div :style="{ height: '100%', width: (todos.length ? (todoDone / todos.length) * 100 : 0) + '%', background: '#3fb950', transition: 'width .3s' }"></div>
+      </div>
       <div style="flex:1;overflow-y:auto;padding:4px 12px">
-        <div v-for="(t, i) in todos" :key="t.id || i" style="display:flex;gap:8px;align-items:flex-start;padding:7px 0;border-bottom:1px solid var(--border)">
+        <div
+          v-for="(t, i) in todos" :key="t.id || i"
+          style="display:flex;gap:8px;align-items:flex-start;padding:7px 0;border-bottom:1px solid var(--border);cursor:pointer"
+          :title="t.status === 'completed' ? '点击恢复为待办' : '点击标记完成'"
+          @click="toggleTodo(t)"
+        >
           <span :style="{ fontSize: '14px', lineHeight: '1.2', color: t.status === 'completed' ? '#3fb950' : t.status === 'in_progress' ? '#d29922' : '#8b949e' }">
             {{ t.status === 'completed' ? '☑' : t.status === 'in_progress' ? '◐' : '☐' }}
           </span>
           <span :style="{ fontSize: '12px', textDecoration: t.status === 'completed' ? 'line-through' : 'none', color: 'var(--text-primary)' }">{{ t.content }}</span>
         </div>
-        <div v-if="!todos.length" style="text-align:center;padding:24px;color:var(--text-muted);font-size:12px">暂无待办任务<br/><span style="font-size:11px">（模型可用 todo 工具创建任务）</span></div>
+        <div v-if="!todos.length" style="text-align:center;padding:24px;color:var(--text-muted);font-size:12px">暂无待办任务<br/><span style="font-size:11px">（模型会先用 todo 工具规划任务步骤，你也可点击完成）</span></div>
       </div>
     </div>
 
