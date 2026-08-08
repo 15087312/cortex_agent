@@ -48,9 +48,9 @@ async function loadData() {
   loading.value = true
   try {
     const [o, t, ai] = await Promise.all([
-      fetch('/management/orchestration', { headers: { Accept: 'application/json' } }).then((r) => r.json()).catch(() => null),
+      fetch('/api/management/orchestration', { headers: { Accept: 'application/json' } }).then((r) => r.json()).catch(() => null),
       endpoints.tools().catch(() => null),
-      fetch('/tools/ai', { headers: { Accept: 'application/json' } }).then((r) => r.json()).catch(() => null),
+      fetch('/api/tools/ai', { headers: { Accept: 'application/json' } }).then((r) => r.json()).catch(() => null),
     ])
     agents.value = o?.data?.agents || []
     const toolsData = t?.data
@@ -71,7 +71,7 @@ async function loadData() {
 async function savePersona(agent) {
   saving.value = agent.role
   try {
-    const r = await fetch('/config/persona/' + encodeURIComponent(agent.role), {
+    const r = await fetch('/api/config/persona/' + encodeURIComponent(agent.role), {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ value: drafts.value[agent.role] || '' }),
@@ -86,7 +86,7 @@ async function savePersona(agent) {
 async function saveOverride(agent) {
   saving.value = 'ov_' + agent.role
   try {
-    const r = await fetch('/config/persona/' + encodeURIComponent(agent.role), {
+    const r = await fetch('/api/config/persona/' + encodeURIComponent(agent.role), {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ value: drafts.value[agent.role] || '', system_override: overrides.value[agent.role] || '' }),
@@ -101,7 +101,7 @@ async function saveOverride(agent) {
 async function saveRoleTools(agent) {
   saving.value = 'tools_' + agent.role
   try {
-    const r = await fetch('/config/tools/' + encodeURIComponent(agent.role), {
+    const r = await fetch('/api/config/tools/' + encodeURIComponent(agent.role), {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ tools: toolsCfg.value[agent.role] }),
@@ -120,7 +120,7 @@ async function saveModelParams(agent) {
   if (p.temperature !== '') body.temperature = Number(p.temperature)
   if (p.max_tokens !== '') body.max_tokens = Number(p.max_tokens)
   try {
-    const r = await fetch('/config/model-params/' + encodeURIComponent(agent.role), {
+    const r = await fetch('/api/config/model-params/' + encodeURIComponent(agent.role), {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ params: body }),
@@ -136,7 +136,7 @@ async function previewPrompt(agent) {
   expanded.value[agent.role] = true
   preview.value = { role: agent.role, text: '', loading: true }
   try {
-    const r = await fetch('/management/orchestration/preview', {
+    const r = await fetch('/api/management/orchestration/preview', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ role: agent.role, tier: agent.tier }),
@@ -149,7 +149,7 @@ async function previewPrompt(agent) {
 async function toggleTool(tool) {
   const next = !tool.enabled
   try {
-    const r = await fetch('/tools/enabled/' + encodeURIComponent(tool.name), {
+    const r = await fetch('/api/tools/enabled/' + encodeURIComponent(tool.name), {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ enabled: next }),
@@ -205,7 +205,7 @@ function openAiForm(tool) {
 async function submitAiForm() {
   const body = { tool_name: aiForm.value.tool_name, description: aiForm.value.description, code: aiForm.value.code, params: aiForm.value.params }
   try {
-    const r = await fetch('/tools/ai' + (editingAi.value ? '/' + encodeURIComponent(editingAi.value) : ''), {
+    const r = await fetch('/api/tools/ai' + (editingAi.value ? '/' + encodeURIComponent(editingAi.value) : ''), {
       method: editingAi.value ? 'PUT' : 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -222,7 +222,7 @@ async function submitAiForm() {
 async function deleteAiTool(name) {
   if (!confirm('确定删除 AI 工具 ' + name + '？')) return
   try {
-    const r = await fetch('/tools/ai/' + encodeURIComponent(name), { method: 'DELETE' })
+    const r = await fetch('/api/tools/ai/' + encodeURIComponent(name), { method: 'DELETE' })
     const d = await r.json()
     if (d.success) { toast.show('工具已删除', 'success'); await loadData() }
     else toast.show('失败: ' + (d.error?.message || ''), 'error')

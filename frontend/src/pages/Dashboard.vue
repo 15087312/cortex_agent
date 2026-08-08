@@ -83,7 +83,7 @@ async function loadApiRequests() {
     if (f.since_hours) q.set('since_hours', f.since_hours)
     q.set('limit', API_PAGE)
     q.set('offset', apiReqPage.value * API_PAGE)
-    const r = await fetch('/management/api-requests?' + q.toString(), { headers: { Accept: 'application/json' } })
+    const r = await fetch('/api/management/api-requests?' + q.toString(), { headers: { Accept: 'application/json' } })
     const d = await r.json()
     apiReq.value = d?.data || { items: [], total: 0 }
   } catch (e) {}
@@ -92,7 +92,7 @@ async function loadApiStats() {
   try {
     const f = apiReqFilter.value
     const q = f.since_hours ? '?since_hours=' + f.since_hours : ''
-    const r = await fetch('/management/api-requests/stats' + q, { headers: { Accept: 'application/json' } })
+    const r = await fetch('/api/management/api-requests/stats' + q, { headers: { Accept: 'application/json' } })
     const d = await r.json()
     apiReqStats.value = d?.data || null
   } catch (e) {}

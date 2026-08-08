@@ -70,9 +70,9 @@ async function loadAll() {
   loading.value = true
   try {
     const [o, t, a] = await Promise.all([
-      fetch('/stream/session/' + encodeURIComponent(props.sessionId) + '/outreach-config', { headers: { Accept: 'application/json' } }).then(r => r.json()).catch(() => null),
-      fetch('/stream/session/' + encodeURIComponent(props.sessionId) + '/tasks', { headers: { Accept: 'application/json' } }).then(r => r.json()).catch(() => null),
-      fetch('/management/orchestration', { headers: { Accept: 'application/json' } }).then(r => r.json()).catch(() => null),
+      fetch('/api/stream/session/' + encodeURIComponent(props.sessionId) + '/outreach-config', { headers: { Accept: 'application/json' } }).then(r => r.json()).catch(() => null),
+      fetch('/api/stream/session/' + encodeURIComponent(props.sessionId) + '/tasks', { headers: { Accept: 'application/json' } }).then(r => r.json()).catch(() => null),
+      fetch('/api/management/orchestration', { headers: { Accept: 'application/json' } }).then(r => r.json()).catch(() => null),
     ])
     const cfg = o?.data?.outreach || {}
     const scr = cfg.screen || {}
@@ -135,7 +135,7 @@ async function saveOutreach() {
     time_windows: timeWindows,
   }
   try {
-    const r = await fetch('/stream/session/' + encodeURIComponent(props.sessionId) + '/outreach-config', {
+    const r = await fetch('/api/stream/session/' + encodeURIComponent(props.sessionId) + '/outreach-config', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ outreach: cfg }),
@@ -155,7 +155,7 @@ async function saveTasks() {
     return out
   })
   try {
-    const r = await fetch('/stream/session/' + encodeURIComponent(props.sessionId) + '/tasks', {
+    const r = await fetch('/api/stream/session/' + encodeURIComponent(props.sessionId) + '/tasks', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ tasks: { tasks: normalized } }),

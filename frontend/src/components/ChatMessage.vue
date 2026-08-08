@@ -17,7 +17,7 @@ const kind = computed(() => props.message.kind || '')
 
 // ── 桌宠互动消息：content 匹配动作提示词 → 显示图标（提示词不展示） ──
 const petActions = ref([])
-fetch('/stream/pet/actions', { headers: { Accept: 'application/json' } })
+fetch('/api/stream/pet/actions', { headers: { Accept: 'application/json' } })
   .then((r) => r.json())
   .then((d) => { petActions.value = (d?.data?.actions) || [] })
   .catch(() => {})

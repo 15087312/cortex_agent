@@ -129,7 +129,7 @@ const petStateText = ref('')
 const petStateLabels = { mood: '心情', satiety: '饱食', energy: '精力', cleanliness: '清洁' }
 async function loadPetState() {
   try {
-    const r = await fetch('/stream/pet/state', { headers: { Accept: 'application/json' } })
+    const r = await fetch('/api/stream/pet/state', { headers: { Accept: 'application/json' } })
     const d = await r.json()
     if (d?.data?.values) petState.value = d.data.values
     if (d?.data?.text) petStateText.value = d.data.text
@@ -137,7 +137,7 @@ async function loadPetState() {
 }
 async function resetPetState() {
   try {
-    const r = await fetch('/stream/pet/state/reset', { method: 'POST' })
+    const r = await fetch('/api/stream/pet/state/reset', { method: 'POST' })
     const d = await r.json()
     if (d?.data?.values) { petState.value = d.data.values; toast.show('桌宠状态已重置', 'success') }
   } catch (e) { toast.show('重置失败', 'error') }
@@ -185,7 +185,7 @@ const ttsApiModel = txtCfg('OUTPUT_TTS_API_MODEL', '')
 const ttsApiVoice = txtCfg('OUTPUT_TTS_API_VOICE', '')
 async function openFolder(folder) {
   try {
-    const r = await fetch('/management/open-folder', {
+    const r = await fetch('/api/management/open-folder', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ folder }),
     })

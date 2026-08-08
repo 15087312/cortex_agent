@@ -31,8 +31,8 @@ async function loadData() {
   loading.value = true
   try {
     const [sr, ar] = await Promise.all([
-      fetch('/management/skills', { headers: { Accept: 'application/json' } }).then((r) => r.json()).catch(() => null),
-      fetch('/management/orchestration', { headers: { Accept: 'application/json' } }).then((r) => r.json()).catch(() => null),
+      fetch('/api/management/skills', { headers: { Accept: 'application/json' } }).then((r) => r.json()).catch(() => null),
+      fetch('/api/management/orchestration', { headers: { Accept: 'application/json' } }).then((r) => r.json()).catch(() => null),
     ])
     skills.value = sr?.data?.skills || []
     agents.value = ar?.data?.agents || []
@@ -43,7 +43,7 @@ async function loadData() {
 async function loadRoleSkills() {
   if (!roleSel.value) { roleSkills.value = []; return }
   try {
-    const r = await fetch('/management/config/role-skills/' + encodeURIComponent(roleSel.value), { headers: { Accept: 'application/json' } })
+    const r = await fetch('/api/management/config/role-skills/' + encodeURIComponent(roleSel.value), { headers: { Accept: 'application/json' } })
     const d = await r.json()
     roleSkills.value = d?.data?.skills || []
   } catch { roleSkills.value = [] }
@@ -52,7 +52,7 @@ async function loadRoleSkills() {
 async function saveRoleSkills() {
   if (!roleSel.value) return
   try {
-    const r = await fetch('/management/config/role-skills/' + encodeURIComponent(roleSel.value), {
+    const r = await fetch('/api/management/config/role-skills/' + encodeURIComponent(roleSel.value), {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ skills: roleSkills.value }),
@@ -100,7 +100,7 @@ async function submit() {
   body.tool_rules = tr
   saving.value = editing.value || 'new'
   try {
-    const r = await fetch('/management/skills' + (editing.value ? '/' + encodeURIComponent(editing.value) : ''), {
+    const r = await fetch('/api/management/skills' + (editing.value ? '/' + encodeURIComponent(editing.value) : ''), {
       method: editing.value ? 'PUT' : 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(editing.value ? body : { id: form.value.id, ...body }),
@@ -115,7 +115,7 @@ async function submit() {
 async function toggleEnabled(s) {
   const next = !s.enabled
   try {
-    const r = await fetch('/management/skills/' + encodeURIComponent(s.id) + '/enabled', {
+    const r = await fetch('/api/management/skills/' + encodeURIComponent(s.id) + '/enabled', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ enabled: next }),
@@ -129,7 +129,7 @@ async function toggleEnabled(s) {
 async function removeSkill(s) {
   if (!confirm('确定删除技能「' + s.name + '」？')) return
   try {
-    const r = await fetch('/management/skills/' + encodeURIComponent(s.id), { method: 'DELETE' })
+    const r = await fetch('/api/management/skills/' + encodeURIComponent(s.id), { method: 'DELETE' })
     const d = await r.json()
     if (d.success) { toast.show('技能已删除', 'success'); await loadData() }
     else toast.show('删除失败: ' + (d.error?.message || ''), 'error')
@@ -138,7 +138,7 @@ async function removeSkill(s) {
 
 async function reloadSkills() {
   try {
-    const r = await fetch('/management/skills/reload', { method: 'POST' })
+    const r = await fetch('/api/management/skills/reload', { method: 'POST' })
     const d = await r.json()
     if (d.success) { toast.show('已重载 ' + d.data.count + ' 个技能', 'success'); await loadData() }
   } catch (e) { toast.show('重载失败', 'error') }

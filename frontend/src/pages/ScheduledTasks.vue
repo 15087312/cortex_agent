@@ -52,7 +52,7 @@ function scheduleOf(task) {
 
 async function loadSessions() {
   try {
-    const r = await fetch('/management/orchestration', { headers: { Accept: 'application/json' } }).then(x => x.json())
+    const r = await fetch('/api/management/orchestration', { headers: { Accept: 'application/json' } }).then(x => x.json())
     agents.value = r?.data?.agents || []
   } catch {}
   try {
@@ -66,7 +66,7 @@ async function loadSessions() {
 async function loadTasks() {
   if (!selected.value) return
   try {
-    const r = await fetch('/stream/session/' + encodeURIComponent(selected.value) + '/tasks', { headers: { Accept: 'application/json' } })
+    const r = await fetch('/api/stream/session/' + encodeURIComponent(selected.value) + '/tasks', { headers: { Accept: 'application/json' } })
     const d = await r.json()
     tasks.value = (d?.data?.tasks?.tasks) || []
     tasks.value.forEach((t) => { t.type = taskType(t) })
@@ -94,7 +94,7 @@ async function saveTasks() {
       if (t.agent_type) out.agent_type = t.agent_type
       return out
     })
-    const r = await fetch('/stream/session/' + encodeURIComponent(selected.value) + '/tasks', {
+    const r = await fetch('/api/stream/session/' + encodeURIComponent(selected.value) + '/tasks', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ tasks: { tasks: normalized } }),

@@ -110,7 +110,7 @@ async function showPreview(node) {
   previewOpen.value = true
   preview.value = { role: node.role, name: node.label, text: '', loading: true }
   try {
-    const r = await fetch('/management/orchestration/preview', {
+    const r = await fetch('/api/management/orchestration/preview', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ role: node.role, tier: node.tier || 'large' }),
@@ -125,7 +125,7 @@ async function loadData() {
     const [modelsResp, toolsResp, orchResp] = await Promise.all([
       endpoints.models().catch(() => null),
       endpoints.tools().catch(() => null),
-      fetch('/management/orchestration', { headers: { Accept: 'application/json' } }).then((r) => r.json()).catch(() => null),
+      fetch('/api/management/orchestration', { headers: { Accept: 'application/json' } }).then((r) => r.json()).catch(() => null),
     ])
     models.value = modelsResp?.data || null
     agents.value = orchResp?.data?.agents || []
