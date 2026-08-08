@@ -101,6 +101,25 @@ const edges = computed(() => {
 function tierActive(tier) { return summary[tier]?.active || 0 }
 function tierMax(tier) { return summary[tier]?.max || 1 }
 
+// ── 节点点击 → 预览该 Agent 的实际 system prompt 文本（对齐 DeterminFlow SystemPromptPage）──
+const preview = ref({ role: '', name: '', text: '', loading: false })
+const previewOpen = ref(false)
+
+async function showPreview(node) {
+  if (!node.role || node.role === 'input' || node.role === 'tools') return
+  previewOpen.value = true
+  preview.value = { role: node.role, name: node.label, text: '', loading: true }
+  try {
+    const r = await fetch('/management/orchestration/preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ role: node.role, tier: node.tier || 'large' }),
+    })
+    const d = await r.json()
+    preview.value.text = d?.data?.prompt || '(预览失败)'
+  } catch {} finally { preview.value.loading = false }
+}
+
 async function loadData() {
   try {
     const [modelsResp, toolsResp, orchResp] = await Promise.all([
@@ -149,8 +168,10 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
               v-for="(node, ni) in colNodes(col)"
               :key="node.id"
               class="g-node"
+              :class="{ clickable: node.role && node.role !== 'input' && node.role !== 'tools' }"
               :style="{ left: colX(ci) + 'px', top: nodeY(ci, ni, colNodes(col).length) + 'px', borderColor: node.color }"
               :title="node.personality ? node.personality : ''"
+              @click="showPreview(node)"
             >
               <div class="g-icon" :style="{ background: node.color }"><Icon :name="node.icon" :size="18" /></div>
               <div class="g-name">{{ node.label }}</div>
@@ -187,6 +208,18 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
         </div>
       </div>
     </div>
+
+    <!-- system prompt 文本预览弹窗（对齐 DeterminFlow SystemPromptPage） -->
+    <div v-if="previewOpen" class="pv-overlay" @click.self="previewOpen = false">
+      <div class="pv-panel">
+        <div class="pv-head">
+          <span style="font-weight:600">System Prompt 预览：{{ preview.name }}（{{ preview.role }}）</span>
+          <button class="btn btn-sm" @click="previewOpen = false"><Icon name="x" :size="14" /> 关闭</button>
+        </div>
+        <pre v-if="!preview.loading" class="pv-text">{{ preview.text || '加载中...' }}</pre>
+        <div v-else style="text-align:center;padding:30px;color:var(--text-muted)">加载中...</div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -211,5 +244,23 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
 .g-tools {
   position: absolute; display: flex; gap: 6px;
   flex-wrap: wrap; max-width: 180px; z-index: 2;
+}
+.g-node.clickable { cursor: pointer; }
+.g-node.clickable:hover { filter: brightness(1.15); }
+.pv-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 1000;
+  display: flex; align-items: center; justify-content: center;
+}
+.pv-panel {
+  width: 640px; max-width: 92vw; max-height: 88vh; overflow: hidden;
+  background: var(--bg, #161b22); border: 1px solid var(--border); border-radius: 12px;
+  padding: 14px 18px; display: flex; flex-direction: column;
+}
+.pv-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+.pv-text {
+  white-space: pre-wrap; word-break: break-word; font-size: 12px; line-height: 1.6;
+  overflow-y: auto; max-height: calc(88vh - 80px); margin: 0; padding: 12px;
+  background: var(--bg-secondary, rgba(255,255,255,0.02)); border: 1px solid var(--border);
+  border-radius: 8px;
 }
 </style>
