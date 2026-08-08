@@ -2,7 +2,7 @@
 
 记录每次主动搭话（时间/会话/触发原因/内容），供前端主动搭话页展示历史。
 """
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Dict, Any
 
 from modules.database.connection import get_db_manager
@@ -19,7 +19,7 @@ def save_proactive_log(session_id: str, reason: str, content: str) -> bool:
             session_id=session_id,
             reason=reason or "",
             content=(content or "")[:2000],
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc).replace(tzinfo=None),
         )
         db = get_db_manager()
         with db.get_session() as s:

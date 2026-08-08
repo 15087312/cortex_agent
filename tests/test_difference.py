@@ -630,8 +630,10 @@ class TestDifferenceDetector:
 
     def test_notify_activity_calls_time_source(self):
         mock_source = MagicMock()
+        mock_source.source_type = "time"
         self.detector.registry.register(mock_source)
         self.detector.notify_activity()
+        mock_source.notify_activity.assert_called_once()
 
     def test_ingest_creates_difference(self):
         diff = self.detector.ingest("file", "created", target="/tmp/test")

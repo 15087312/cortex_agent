@@ -419,8 +419,9 @@ class TestContextController:
         assert "分钟前说过话" in text
 
     def test_clear_resets_hashes(self, ctrl):
-        # 验证 clear 不会抛异常
+        ctrl._injected_hashes.add("abc")
         ctrl.clear()
+        assert len(ctrl._injected_hashes) == 0
 
     def test_singleton(self):
         from modules.thinking.context.controller import get_context_controller

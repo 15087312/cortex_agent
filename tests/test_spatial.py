@@ -13,7 +13,7 @@ def fake_causal(monkeypatch):
     """mock 因果知识提取（避免 LLM/数据库慢）"""
     from modules.thinking.conscience import Conscience
 
-    async def _fake(self, user_input, owner_id=""):
+    def _fake(self, user_input, owner_id=""):
         return "（因果知识）"
     monkeypatch.setattr(Conscience, "_get_causal_knowledge", _fake)
 

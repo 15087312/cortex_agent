@@ -81,7 +81,7 @@ async def test_list_recipients(bus):
 
 @pytest.mark.asyncio
 async def test_cleanup_removes_done_futures(bus):
-    future = asyncio.get_event_loop().create_future()
+    future = asyncio.get_running_loop().create_future()
     future.set_result("done")
     bus._pending_responses["done-cid"] = future
     removed = await bus.cleanup()

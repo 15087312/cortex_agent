@@ -88,6 +88,12 @@ def setup_logger(
 
     if not LOGGING_ENABLED:
         logger = logging.getLogger(name)
+        for _h in list(logger.handlers):
+            try:
+                if hasattr(_h, "close"):
+                    _h.close()
+            except Exception:
+                pass
         logger.handlers.clear()
         logger.addHandler(logging.NullHandler())
         logger.propagate = False
@@ -98,6 +104,12 @@ def setup_logger(
 
     logger = logging.getLogger(name)
     logger.setLevel(getattr(logging, log_level.upper()))
+    for _h in list(logger.handlers):
+        try:
+            if hasattr(_h, "close"):
+                _h.close()
+        except Exception:
+            pass
     logger.handlers.clear()
 
     use_json = os.environ.get("LOG_FORMAT", "").lower() == "json"

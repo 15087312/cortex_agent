@@ -41,7 +41,7 @@ class SessionRepository:
         with self._session() as s:
             existing = s.query(ChatSession).filter_by(session_id=session_id).first()
             if existing:
-                existing.last_active = datetime.utcnow()
+                existing.last_active = _utcnow()
                 existing.is_active = True
             else:
                 s.add(ChatSession(
@@ -54,7 +54,7 @@ class SessionRepository:
         with self._session() as s:
             row = s.query(ChatSession).filter_by(session_id=session_id).first()
             if row:
-                row.last_active = datetime.utcnow()
+                row.last_active = _utcnow()
 
     def close_session(self, session_id: str) -> None:
         """标记会话为非活跃"""
@@ -184,7 +184,7 @@ class SessionRepository:
             session_row = s.query(ChatSession).filter_by(session_id=session_id).first()
             if session_row:
                 session_row.message_count += 1
-                session_row.last_active = datetime.utcnow()
+                session_row.last_active = _utcnow()
                 if role == "user" and not session_row.title:
                     session_row.title = content[:200]
             return msg.id
@@ -201,7 +201,7 @@ class SessionRepository:
             session_row = s.query(ChatSession).filter_by(session_id=session_id).first()
             if session_row:
                 session_row.message_count = max(0, session_row.message_count - 1)
-                session_row.last_active = datetime.utcnow()
+                session_row.last_active = _utcnow()
             return True
 
     def clear_messages(self, session_id: str) -> int:
@@ -211,7 +211,7 @@ class SessionRepository:
             session_row = s.query(ChatSession).filter_by(session_id=session_id).first()
             if session_row:
                 session_row.message_count = 0
-                session_row.last_active = datetime.utcnow()
+                session_row.last_active = _utcnow()
             return count
 
     def update_message(self, session_id: str, message_id: str, content: str) -> bool:
@@ -227,7 +227,7 @@ class SessionRepository:
             msg.content = content[:50000]
             session_row = s.query(ChatSession).filter_by(session_id=session_id).first()
             if session_row:
-                session_row.last_active = datetime.utcnow()
+                session_row.last_active = _utcnow()
             return True
 
     def get_messages(self, session_id: str, limit: int = 100) -> List[Dict[str, Any]]:
@@ -301,7 +301,7 @@ class SessionRepository:
         """
         from datetime import timedelta
         exclude = set(exclude_ids or [])
-        cutoff = datetime.utcnow() - timedelta(minutes=max(0, min_idle_minutes))
+        cutoff = _utcnow() - timedelta(minutes=max(0, min_idle_minutes))
         with self._session() as s:
             rows = s.query(ChatSession).filter(ChatSession.message_count == 0).all()
             deleted = 0

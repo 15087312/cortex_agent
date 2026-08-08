@@ -4,7 +4,7 @@ agent 的 CognitiveBlackboard 内存仅保留 MAX_OBSERVATIONS(200) 条（优先
 溢出清理的旧观察通过本模块写入 blackboard_observations 表，供追溯与历史查询。
 """
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 
 from modules.database.connection import get_db_manager
@@ -21,7 +21,7 @@ def save_observation(session_id: str, obs) -> bool:
         if isinstance(created, (int, float)) and created:
             created_dt = datetime.fromtimestamp(created)
         else:
-            created_dt = datetime.utcnow()
+            created_dt = datetime.now(timezone.utc).replace(tzinfo=None)
         row = BlackboardObservation(
             session_id=session_id,
             observation_id=getattr(obs, "observation_id", "") or "",
