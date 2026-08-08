@@ -205,9 +205,11 @@ function toggleRoleAll(key) {
 
 // ── 工具源码查看/编辑 ──
 async function viewSource(tool) {
-  srcModal.value = { open: true, name: tool.name, source: '加载中...', editable: false }
+  const name = typeof tool === 'string' ? tool : tool?.name
+  if (!name) return
+  srcModal.value = { open: true, name, source: '加载中...', editable: false }
   try {
-    const r = await fetch('/api/tools/source/' + encodeURIComponent(tool.name), { headers: { Accept: 'application/json' } })
+    const r = await fetch('/api/tools/source/' + encodeURIComponent(name), { headers: { Accept: 'application/json' } })
     const d = await r.json()
     srcModal.value.source = d?.data?.source || '无法获取源码'
     srcModal.value.editable = !!d?.data?.editable
