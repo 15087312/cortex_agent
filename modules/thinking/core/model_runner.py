@@ -1178,6 +1178,26 @@ class ModelRunner:
 
     MAX_CHAT_TOOL_TURNS = 25  # 原生工具调用最大轮次
 
+    def _push_reasoning(self, reasoning: str) -> None:
+        """推送模型思考过程（deepseek reasoning_content）到前端 thinking 气泡"""
+        reasoning = (reasoning or "").strip()
+        if not reasoning:
+            return
+        try:
+            from modules.thinking.api_stream import connection_manager, _build_event
+            event = _build_event(
+                session_id=self.session_id,
+                msg_type="thinking",
+                event="thinking_step",
+                content=f"【思考】{reasoning[:300]}",
+                role="thinking",
+                data={"source": "reasoning"},
+            )
+            for sid in list(connection_manager.active_connections.keys()):
+                connection_manager.send_json_from_thread(sid, event)
+        except Exception:
+            pass
+
     async def _generate(self, prompt: str) -> str:
         """调用底层模型 client 生成文本（含重试、超时保护，支持原生工具调用）
 
@@ -1573,6 +1593,8 @@ class ModelRunner:
                         response = await client.chat(**kwargs)
                     content = response.message.content or ""
                     tool_calls = response.message.tool_calls
+                    # 推送 deepseek 思考过程（reasoning_content）到前端
+                    self._push_reasoning(getattr(response.message, "reasoning_content", ""))
 
                     logger.info(
                         f"[ModelRunner] {self.model_id} 第 {turn} 轮响应: "

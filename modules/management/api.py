@@ -190,6 +190,13 @@ async def get_orchestration():
     return {"success": True, "data": {"agents": agents}}
 
 
+@router.get("/todos")
+async def get_todos():
+    """读取全局任务列表（todo 工具数据，供前端展示）"""
+    from infra.tool_manager.tools.todo import _load_todos
+    return {"success": True, "data": {"todos": _load_todos()}}
+
+
 @router.get("/skills")
 async def list_skills():
     """技能管理列表（含 enabled/source/metadata）"""

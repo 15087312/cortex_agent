@@ -26,6 +26,16 @@ const confirm = useConfirm()
 const prompt = usePrompt()
 const sessionListCollapsed = ref(false)
 const showSettings = ref(false)
+const todos = ref([])
+const showTodos = ref(false)
+let todoTimer = null
+async function loadTodos() {
+  try {
+    const r = await fetch('/api/management/todos', { headers: { Accept: 'application/json' } })
+    const d = await r.json()
+    todos.value = d?.data?.todos || []
+  } catch {}
+}
 const messagesWrap = ref(null)
 let watchTimer = null
 
@@ -240,6 +250,8 @@ onMounted(async () => {
       toast.show('连接已断开，本轮回复可能丢失', 'error')
     }
   }, 2000)
+  loadTodos()
+  todoTimer = setInterval(loadTodos, 3000)
 })
 
 // KeepAlive 缓存下 onMounted 只首次执行——切页回来刷新会话列表
@@ -256,6 +268,7 @@ onUnmounted(() => {
   ws.wsClient.off('status', _onStatus)
   ws.wsClient.off('proactive', _onProactive)
   if (watchTimer) clearInterval(watchTimer)
+  if (todoTimer) clearInterval(todoTimer)
 })
 
 function handleSend({ text, attachments }) {
@@ -400,6 +413,7 @@ function handleAnswerIntent(requestId, answer) {
           <ModelSelector v-model="chat.currentModel" />
         </div>
         <div class="chat-header-right">
+          <button class="chat-btn-icon" @click="showTodos = !showTodos" title="待办列表"><Icon name="list" :size="15" /></button>
           <button class="chat-btn-icon" @click="showSettings = true" v-if="session.sessionId" title="会话设置（主动搭话/定时任务）"><Icon name="settings" :size="15" /></button>
           <button class="chat-btn-icon" @click="chat.stop()" v-if="chat.processing" title="停止"><Icon name="square" :size="15" /></button>
           <button class="chat-btn-icon" @click="handleClearChat" title="清空对话"><Icon name="trash" :size="15" /></button>
@@ -453,6 +467,23 @@ function handleAnswerIntent(requestId, answer) {
           <button v-if="chat.processing" class="btn btn-sm" style="background:var(--danger);color:white;border-color:var(--danger)" @click="chat.stop()"><Icon name="stop" :size="14" /> 停止</button>
         </template>
       </ChatInput>
+    </div>
+
+    <!-- todo 待办面板（模型通过 todo 工具维护） -->
+    <div v-if="showTodos" style="width:240px;flex-shrink:0;border-left:1px solid var(--border);display:flex;flex-direction:column;background:var(--bg-secondary)">
+      <div style="padding:10px 12px;font-size:13px;font-weight:600;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border)">
+        <span>待办列表 ({{ todos.length }})</span>
+        <button class="chat-btn-icon" @click="showTodos = false" title="收起"><Icon name="right" :size="14" /></button>
+      </div>
+      <div style="flex:1;overflow-y:auto;padding:4px 12px">
+        <div v-for="(t, i) in todos" :key="t.id || i" style="display:flex;gap:8px;align-items:flex-start;padding:7px 0;border-bottom:1px solid var(--border)">
+          <span :style="{ fontSize: '14px', lineHeight: '1.2', color: t.status === 'completed' ? '#3fb950' : t.status === 'in_progress' ? '#d29922' : '#8b949e' }">
+            {{ t.status === 'completed' ? '☑' : t.status === 'in_progress' ? '◐' : '☐' }}
+          </span>
+          <span :style="{ fontSize: '12px', textDecoration: t.status === 'completed' ? 'line-through' : 'none', color: 'var(--text-primary)' }">{{ t.content }}</span>
+        </div>
+        <div v-if="!todos.length" style="text-align:center;padding:24px;color:var(--text-muted);font-size:12px">暂无待办任务<br/><span style="font-size:11px">（模型可用 todo 工具创建任务）</span></div>
+      </div>
     </div>
 
     <!-- 会话设置弹窗 -->
