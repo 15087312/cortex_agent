@@ -145,7 +145,8 @@ const _onMessage = (d) => {
       .join('\n')
     // 错误回复检测 → 渲染为报错横幅（红色）
     const isError = ERROR_PREFIXES.some(p => content.startsWith(p))
-    // 非流式：直接渲染最终答案（思考步骤独立展示）+ 打字机
+    // 非流式：直接渲染最终答案 + 打字机；本轮的思考过程合并到消息 thinking（框内折叠）
+    const thinkText = chat.consumeThinking()
     chat.addMessage({
       role: 'assistant',
       content,
@@ -153,6 +154,7 @@ const _onMessage = (d) => {
       identity_name: d.data?.identity_name || '',
       typing: true,
       error: isError,
+      thinking: thinkText,
       meta: {
         innerMonologue: m.inner_monologue || '',
         eventMemory: m.event_memory || '',

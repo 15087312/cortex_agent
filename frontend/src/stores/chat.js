@@ -142,21 +142,19 @@ export const useChatStore = defineStore('chat', () => {
     messages.value.push({ _id: uid(), ...msg })
   }
 
-  // ── 思考步骤气泡（各身份独立小气泡；含 large 模型"边回答边调工具"时的文字） ──
+  // ── 思考步骤：累积到当前轮回复的思考区（折叠在回复框内，不独立成消息） ──
+  const pendingThinking = ref('')
   function addThinkingStep(d) {
-    const role = String(d.role || d.data?.dialog_tier || '').toLowerCase()
     const text = _cleanThinking(d.content)
     if (!text) return
     // 去重：流式增量可能重复推送相同片段
-    if (messages.value.some(m => m.kind === 'thinking' && m.content === text)) return
-    messages.value.push({
-      _id: uid(),
-      kind: 'thinking',
-      role,
-      name: d.data?.identity_name || _nameFor(role),
-      avatarCls: _avatarCls(role),
-      content: text,
-    })
+    if (pendingThinking.value.includes(text)) return
+    pendingThinking.value += (pendingThinking.value ? '\n' : '') + text
+  }
+  function consumeThinking() {
+    const t = pendingThinking.value
+    pendingThinking.value = ''
+    return t
   }
 
   function finalizeStream(content) {
@@ -170,6 +168,7 @@ export const useChatStore = defineStore('chat', () => {
     hint.value = ''
     _processingSid.value = null
     runners.value = []
+    pendingThinking.value = ''  // 清理残留思考（未合并到回复时丢弃）
   }
 
   async function _ensureConnected() {
@@ -318,7 +317,7 @@ export const useChatStore = defineStore('chat', () => {
   return {
     messages, processing, currentModel, streamingIdx, hint, elapsed,
     stopped: _stopped, processingSid: _processingSid, runners,
-    init, switchToSession, addMessage, addThinkingStep,
+    init, switchToSession, addMessage, addThinkingStep, consumeThinking,
     finalizeStream, sendMessage, retryLastInput, stop, clearMessages,
     deleteMessageAt, editMessageAt,
     addApproval, approve, addIntent, answerIntent,

@@ -173,6 +173,11 @@ function submitIntent() {
       <div class="message-avatar" :class="isUser ? 'avatar-user' : 'avatar-large'"></div>
       <div class="message-body">
         <div class="message-name">{{ isUser ? '我' : (message.identity_name || '总指挥') }}</div>
+        <!-- 思考折叠区（与回复同一框，顶部可折叠） -->
+        <div v-if="!isUser && message.thinking" class="think-collapse" @click="toggleThinking(message)">
+          <div class="think-collapse-title">{{ message._expanded ? '收起思考过程 ▲' : '展开思考过程 ▼' }}</div>
+          <div v-if="message._expanded" class="think-collapse-text">{{ message.thinking }}</div>
+        </div>
         <div class="message-bubble" :class="{ 'bubble-error': message.error, 'bubble-proactive': !isUser && message.proactive }">
           <!-- 用户消息：桌宠互动 → 图标；否则纯文本 -->
           <div v-if="isUser && petAction" class="pet-interaction" :title="petAction.label">
@@ -259,5 +264,28 @@ function submitIntent() {
   background: var(--bg-tertiary, rgba(139,148,158,0.15));
   padding: 1px 7px;
   border-radius: 8px;
+}
+.think-collapse {
+  margin-bottom: 8px;
+  padding: 5px 10px;
+  background: var(--bg-secondary, rgba(255,255,255,0.03));
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  max-width: 520px;
+}
+.think-collapse-title {
+  font-size: 11px;
+  color: var(--text-muted, #8b949e);
+}
+.think-collapse-text {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-muted, #8b949e);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 240px;
+  overflow-y: auto;
 }
 </style>
