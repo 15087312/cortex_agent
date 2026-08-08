@@ -213,8 +213,6 @@ class Settings(BaseSettings):
         return self.EXECUTION_MODE
 
     @property
-
-    @property
     def is_delegation_available(self) -> bool:
         """委托是否可用（始终可用，由 Skill ToolRules 控制可见性）"""
         return True

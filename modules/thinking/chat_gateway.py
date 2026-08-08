@@ -743,6 +743,24 @@ async def pet_chat_stream(body: PetChatRequest):
     return EventSourceResponse(gen())
 
 
+@router.get("/session/{session_id}/graph")
+async def get_session_graph(session_id: str):
+    """会话执行图谱：谁呼唤谁 / 谁回复谁（节点按 tier 标注总指挥/主管/专家，边标注呼唤/回复）"""
+    from modules.thinking.session_graph import get_session_graph_store
+    store = get_session_graph_store()
+    g = store.get_graph(session_id)
+    if not g.get("nodes"):
+        try:
+            meta = _get_chat_session_repo().get_session_metadata(session_id)
+            snap = (meta or {}).get("session_graph") or {}
+            if snap.get("nodes"):
+                store.restore(session_id, snap)
+                g = store.get_graph(session_id)
+        except Exception:
+            pass
+    return {"success": True, "data": {"session_id": session_id, "graph": g}}
+
+
 @router.get("/session/{session_id}/tasks")
 async def get_tasks(session_id: str):
     """读取会话的定时任务配置（每会话独立）"""

@@ -676,6 +676,27 @@ class StreamThinkingSystem:
                     formatted = self._format_scheduler_event(stage_event)
                     if formatted is None:
                         continue  # 空内容轮次，跳过展示
+                    # 会话执行图谱：记录"谁呼唤谁 / 谁回复谁"（model_comm 发言，用户输入不记录）
+                    try:
+                        _d = formatted.get("data") or {}
+                        if _d.get("event_type") == "model_comm" and _d.get("dialog_tier") != "user":
+                            import time as _time
+                            _payload = _d.get("payload") or {}
+                            _raw = _payload.get("content")
+                            _meta = _raw.get("metadata", {}) if isinstance(_raw, dict) else {}
+                            from modules.thinking.session_graph import get_session_graph_store
+                            get_session_graph_store().record(
+                                session_id,
+                                model_id=_d.get("model_id", ""),
+                                identity_name=_d.get("identity_name", ""),
+                                tier=_d.get("dialog_tier", ""),
+                                return_to_model_id=_meta.get("return_to_model_id", ""),
+                                entry_type=_raw.get("entry_type", "") if isinstance(_raw, dict) else "",
+                                content=formatted.get("content", ""),
+                                ts=_time.time(),
+                            )
+                    except Exception:
+                        pass
                     event_role = formatted["data"].get("dialog_tier", "thinking")
                     # 持久化思考/对话步骤（role=thought），切换会话后仍能恢复展示
                     # 只写 DB、不进内存 messages，避免污染 AI 上下文（见 _persist_thought）
@@ -951,6 +972,14 @@ class StreamThinkingSystem:
                 get_message_bus().set_event_emitter(None)
             except Exception as e:
                 logger.debug(f"[消息总线] 清理事件发射器失败 (非致命): {e}")
+            # 会话执行图谱持久化到会话 metadata（重启后可恢复）
+            try:
+                from modules.thinking.session_graph import get_session_graph_store
+                from modules.database.session_repo import get_session_repo
+                snap = get_session_graph_store().snapshot(session_id)
+                get_session_repo().set_session_metadata(session_id, {"session_graph": snap})
+            except Exception:
+                pass
             await self._set_processing(session_id, False)
 
     async def _post_task_extraction(

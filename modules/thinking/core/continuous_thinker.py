@@ -878,7 +878,8 @@ class ContinuousThinker:
                 )
                 continue
             except Exception as e:
-                self.logger.warning(f"单次思考发生异常: {e}")
+                import traceback as _tb
+                self.logger.warning(f"单次思考发生异常: {e}\n{_tb.format_exc()}")
                 error_bus.report_error(
                     e,
                     ErrorContext(
