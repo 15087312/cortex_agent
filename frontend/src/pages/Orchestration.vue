@@ -5,6 +5,7 @@ import { useToastStore } from '@/stores/toast.js'
 import Icon from '@/components/Icon.vue'
 import SkillsView from '@/pages/Skills.vue'
 import GraphView from '@/pages/Graph.vue'
+import ToolsView from '@/pages/Tools.vue'
 
 const toast = useToastStore()
 const agents = ref([])
@@ -306,6 +307,7 @@ onMounted(loadData)
         <button :class="{ on: activeTab === 'agents' }" @click="activeTab = 'agents'">Agent 定义</button>
         <button :class="{ on: activeTab === 'skills' }" @click="activeTab = 'skills'">技能</button>
         <button :class="{ on: activeTab === 'graph' }" @click="activeTab = 'graph'">编排图</button>
+        <button :class="{ on: activeTab === 'permission' }" @click="activeTab = 'permission'">权限管理</button>
         <button :class="{ on: activeTab === 'tools' }" @click="activeTab = 'tools'">工具管理 ({{ tools.length }})</button>
       </div>
 
@@ -433,10 +435,9 @@ onMounted(loadData)
         </div>
       </div>
 
-      <!-- 工具管理：per-role 工具权限 + 工具列表脚本 + AI 工具 -->
-      <div v-if="activeTab === 'tools'" v-show="!loading">
-        <!-- 角色工具权限（每角色分别配置） -->
-        <div class="card" style="margin-bottom:12px">
+      <!-- 权限管理：每角色工具权限（替换原工具管理 tab） -->
+      <div v-if="activeTab === 'permission'" v-show="!loading">
+        <div class="card">
           <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
             <span>角色工具权限（每角色分别配置可用工具）</span>
             <div style="display:flex;gap:6px">
@@ -472,43 +473,11 @@ onMounted(loadData)
           </div>
           <div v-else style="text-align:center;padding:14px;color:var(--text-muted);font-size:12px">选择角色后配置其可用工具（白名单替换默认 / 黑名单剔除）</div>
         </div>
+      </div>
 
-        <!-- 工具列表 + 脚本查看 -->
-        <div class="card">
-          <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
-            <span>已注册工具 ({{ tools.length }}) —— 点击工具查看/编辑脚本</span>
-            <div style="display:flex;gap:6px">
-              <button class="btn btn-sm btn-primary" @click="openAiForm(null)"><Icon name="plus" :size="13" /> 新建 AI 工具</button>
-              <input v-model="toolFilter" class="input" style="width:220px;font-size:12px" placeholder="搜索工具..." />
-            </div>
-          </div>
-          <div v-for="source in ['builtin', 'plugin', 'dynamic', 'mcp']" :key="source">
-            <div v-if="toolGroups[source]?.length">
-              <div style="display:flex;align-items:center;gap:6px;margin:10px 0 6px;cursor:pointer;font-size:13px;font-weight:600" @click="toolGroupsOpen[source] = !toolGroupsOpen[source]">
-                <Icon :name="toolGroupsOpen[source] ? 'down' : 'right'" :size="12" />
-                {{ source }} ({{ toolGroups[source].length }})
-              </div>
-              <div v-if="toolGroupsOpen[source]" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:8px">
-                <div v-for="tool in toolGroups[source]" :key="tool.name" class="tool-card" @click="viewSource(tool)">
-                  <div style="display:flex;justify-content:space-between;align-items:center;gap:6px">
-                    <span style="font-family:monospace;color:var(--accent);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ tool.name }}</span>
-                    <label class="toggle-switch" @click.stop title="启用/禁用">
-                      <input type="checkbox" :checked="tool.enabled" @change="toggleTool(tool)" />
-                      <span class="toggle-slider"></span>
-                    </label>
-                  </div>
-                  <div style="color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ tool.description || '' }}</div>
-                  <div style="margin-top:4px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
-                    <span class="badge" :style="{ fontSize: '10px', background: (tool.risk_level === 'HIGH' || tool.risk_level === 'CRITICAL') ? 'rgba(248,81,73,0.15)' : 'rgba(139,148,158,0.15)', color: (tool.risk_level === 'HIGH' || tool.risk_level === 'CRITICAL') ? '#f85149' : '#8b949e' }">{{ tool.risk_level }}</span>
-                    <span v-if="tool.core" class="badge badge-blue" style="font-size:10px">core</span>
-                    <span style="font-size:10px;color:var(--text-muted)">查看脚本</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-          <div v-if="!tools.length" style="text-align:center;padding:24px;color:var(--text-muted)">暂无工具</div>
-        </div>
+      <!-- 工具管理（合并独立工具管理页 + AI 工具 + 脚本） -->
+      <div v-if="activeTab === 'tools'" v-show="!loading">
+        <ToolsView :compact="true" />
 
         <!-- AI 工具管理 -->
         <div class="card" style="margin-top:12px">

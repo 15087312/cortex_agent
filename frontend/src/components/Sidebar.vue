@@ -31,7 +31,6 @@ const devSections = [
       { route: '/modules', label: '模块', icon: 'puzzle' },
       { route: '/causal', label: '因果图', icon: 'network' },
       { route: '/orchestration', label: '编排', icon: 'settings' },
-      { route: '/tools', label: '工具', icon: 'wrench' },
       { route: '/gallery', label: '图库', icon: 'image' },
       { route: '/security', label: '安全', icon: 'shield' },
       { route: '/perception', label: '感知', icon: 'eye' },
