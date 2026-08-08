@@ -6,6 +6,7 @@ import { formatTime } from '@/utils/format.js'
 import Icon from '@/components/Icon.vue'
 
 const toast = useToastStore()
+const props = defineProps({ compact: { type: Boolean, default: false } })
 const sessions = ref([])
 const logs = ref([])
 const totalLogs = ref(0)
@@ -101,7 +102,7 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
 
 <template>
   <div>
-    <div class="page-header">
+    <div class="page-header" v-if="!compact">
       <h2>主动搭话</h2>
       <button class="btn btn-sm" @click="loadAll"><Icon name="refresh" :size="14" /> 刷新</button>
     </div>

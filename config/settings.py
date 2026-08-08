@@ -24,7 +24,7 @@ class Settings(BaseSettings):
         "ATTENTION_THRESHOLD_MAX", "ATTENTION_MAX_RECALL_LOW",
         "ATTENTION_MAX_RECALL_MEDIUM", "ATTENTION_MAX_RECALL_HIGH",
         "PROACTIVE_OUTREACH_ENABLED", "PROACTIVE_OUTREACH_COOLDOWN_MINUTES",
-        "PROACTIVE_OUTREACH_IDLE_MINUTES",
+        "PROACTIVE_OUTREACH_IDLE_MINUTES", "PROACTIVE_OUTREACH_DEFAULT",
         "MEMORY_TTL_SHORT", "MEMORY_TTL_LONG",
         "CAUSAL_MAX_NODES", "CAUSAL_MAX_ANCHORS", "CAUSAL_MAX_NEIGHBORS_PER_HOP",
         "CAUSAL_MAX_TREE_DEPTH", "CAUSAL_MAX_EVENTS_RECALL", "CAUSAL_MIN_CONFIDENCE",
@@ -515,6 +515,7 @@ class Settings(BaseSettings):
     PROACTIVE_OUTREACH_COOLDOWN_MINUTES: int = 15      # 搭话冷却时间（分钟）
     PROACTIVE_OUTREACH_IDLE_MINUTES: int = 15          # 触发搭话的空闲阈值（分钟）
     PROACTIVE_OUTREACH_WORK_PROMPT: str = ""           # 工作模式自定义提示词（为空则用默认）
+    PROACTIVE_OUTREACH_DEFAULT: str = "{}"             # 全局默认主动搭话规则（JSON：{enabled,schedule,screen,idle,time_windows}），会话未配置时生效
 
     # 记忆配置
     MEMORY_TTL_SHORT: int = 3600  # 1 小时

@@ -5,6 +5,7 @@ import { useConfigStore } from '@/stores/config.js'
 import { useToastStore } from '@/stores/toast.js'
 import { useConfirm, usePrompt } from '@/composables/useDialog.js'
 import Icon from '@/components/Icon.vue'
+import OutreachView from '@/pages/Outreach.vue'
 
 const toast = useToastStore()
 const prompt = usePrompt()
@@ -119,6 +120,43 @@ const cortexMode = segCfg('CORTEX_MODE', 'agent')
 const execMode = segCfg('EXECUTION_MODE', 'edit')
 const userName = txtCfg('USER_NAME', '用户')
 const proactiveEnabled = boolCfg('PROACTIVE_OUTREACH_ENABLED', false)
+// 全局默认主动搭话规则（会话未单独配置时生效）
+const globalDefault = ref({ enabled: false, scheduleOn: false, scheduleTime: '', scheduleJitter: 10, screenOn: false, screenRatio: 0.5, screenProb: 0.5, screenInterval: 30, screenCooldown: 30, idleOn: false, idleMinutes: 30, idleProb: 0.5, idleInterval: 60, windowsOn: false, timeWindowsText: '' })
+async function loadGlobalDefault() {
+  try {
+    const raw = configStore.config?.PROACTIVE_OUTREACH_DEFAULT || '{}'
+    const cfg = (typeof raw === 'string' ? (JSON.parse(raw || '{}')) : (raw || {}))
+    const scr = cfg.screen || {}; const idle = cfg.idle || {}; const sched = cfg.schedule || {}
+    globalDefault.value = {
+      enabled: !!cfg.enabled,
+      scheduleOn: !!sched.enabled, scheduleTime: sched.time || '', scheduleJitter: sched.jitter_minutes ?? 10,
+      screenOn: !!scr.enabled, screenRatio: scr.change_ratio ?? 0.5, screenProb: scr.probability ?? 0.5,
+      screenInterval: scr.check_interval_seconds ?? 30, screenCooldown: scr.cooldown_minutes ?? 30,
+      idleOn: !!idle.enabled, idleMinutes: idle.idle_minutes ?? 30, idleProb: idle.probability ?? 0.5,
+      idleInterval: idle.check_interval_seconds ?? 60, windowsOn: !!cfg.time_windows_enabled,
+      timeWindowsText: (cfg.time_windows || []).map((w) => `${w.start}-${w.end}` + (w.probability != null ? `@${w.probability}` : '')).join(','),
+    }
+  } catch {}
+}
+async function saveGlobalDefault() {
+  const g = globalDefault.value
+  const timeWindows = g.timeWindowsText.split(',').map((x) => x.trim()).filter(Boolean)
+    .map((x) => { const m = x.split('@'); const [s, e] = m[0].split('-'); const w = { start: (s || '').trim(), end: (e || '').trim() }; if (m[1] != null) w.probability = parseFloat(m[1]); return w })
+    .filter((w) => w.start && w.end)
+  const cfg = {
+    enabled: !!g.enabled,
+    schedule: g.scheduleOn ? { enabled: true, time: g.scheduleTime, jitter_minutes: Math.max(0, g.scheduleJitter || 0) } : {},
+    screen: { enabled: !!g.screenOn, change_ratio: Math.max(0, Math.min(1, g.screenRatio ?? 0.5)), probability: Math.max(0, Math.min(1, g.screenProb ?? 0.5)), check_interval_seconds: Math.max(1, g.screenInterval || 30), cooldown_minutes: Math.max(0, g.screenCooldown || 30) },
+    idle: { enabled: !!g.idleOn, idle_minutes: Math.max(0, g.idleMinutes || 30), probability: Math.max(0, Math.min(1, g.idleProb ?? 0.5)), check_interval_seconds: Math.max(1, g.idleInterval || 60) },
+    time_windows_enabled: !!g.windowsOn, time_windows: timeWindows,
+  }
+  try {
+    const r = await fetch('/api/config/PROACTIVE_OUTREACH_DEFAULT', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ value: JSON.stringify(cfg) }) })
+    const d = await r.json()
+    if (d.success) toast.show('全局默认规则已保存', 'success')
+    else toast.show('保存失败', 'error')
+  } catch { toast.show('保存失败', 'error') }
+}
 const ttsEnabled = boolCfg('OUTPUT_TTS_ENABLED', false)
 const petEnabled = boolCfg('DESKTOP_PET_ENABLED', true)
 const petSessionId = txtCfg('DESKTOP_PET_SESSION_ID', 'pet_main')
@@ -142,7 +180,7 @@ async function resetPetState() {
     if (d?.data?.values) { petState.value = d.data.values; toast.show('桌宠状态已重置', 'success') }
   } catch (e) { toast.show('重置失败', 'error') }
 }
-onMounted(() => { loadPetState(); setInterval(loadPetState, 5000) })
+onMounted(() => { loadPetState(); setInterval(loadPetState, 5000); loadGlobalDefault() })
 const debugEnabled = boolCfg('DEBUG', false)
 const loggingEnabled = boolCfg('LOGGING_ENABLED', true)
 const logLevel = segCfg('LOG_LEVEL', 'INFO')
@@ -413,15 +451,69 @@ onMounted(async () => {
       <div v-if="activeTab === '主动搭话'" class="settings-section">
         <div class="settings-group">
           <div class="settings-group-title">主动搭话</div>
-          <p class="settings-hint">空闲/屏幕变化/指定时段时系统会主动关心你，按会话配置规则触发</p>
+          <p class="settings-hint">空闲/屏幕变化/指定时段时系统会主动关心你。全局总开关 &gt; 会话规则（单会话覆盖全局默认）</p>
           <div class="setting-row">
-            <div class="lbl"><div class="t">启用主动搭话</div><div class="d">全局总开关（关闭后所有会话不触发）</div></div>
+            <div class="lbl"><div class="t">全局总开关</div><div class="d">关闭后所有会话（含全局默认）不触发</div></div>
             <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="proactiveEnabled" @change="proactiveEnabled = !proactiveEnabled" /><span class="toggle-slider"></span></label></div>
           </div>
-          <div style="display:flex;align-items:center;gap:8px;margin-top:12px">
-            <button class="btn btn-primary btn-sm" @click="router.push('/outreach')"><Icon name="heart" :size="14" /> 管理会话规则与触发记录</button>
-            <span style="font-size:12px;color:var(--text-muted)">在「主动搭话」页按会话配置规则（定点/屏幕/空闲/时段 + 概率）</span>
+        </div>
+
+        <div class="settings-divider"></div>
+        <!-- 全局默认规则（会话未单独配置时生效） -->
+        <div class="settings-group">
+          <div class="settings-group-title">全局默认规则<span style="font-weight:400;color:var(--text-muted);font-size:12px"> —— 会话未单独配置时生效</span></div>
+          <div style="display:flex;flex-direction:column;gap:8px;margin-top:4px">
+            <div class="setting-row">
+              <div class="lbl"><div class="t">启用全局默认规则</div></div>
+              <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" v-model="globalDefault.enabled" /><span class="toggle-slider"></span></label></div>
+            </div>
+            <div class="setting-row">
+              <div class="lbl"><div class="t">定点发送</div></div>
+              <div class="setting-ctl" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                <label class="toggle-switch"><input type="checkbox" v-model="globalDefault.scheduleOn" /><span class="toggle-slider"></span></label>
+                <input class="input" v-model="globalDefault.scheduleTime" style="width:80px" placeholder="14:00" :disabled="!globalDefault.scheduleOn" />
+                <span style="font-size:12px;color:var(--text-muted)">±</span>
+                <input class="input" type="number" v-model.number="globalDefault.scheduleJitter" style="width:60px" :disabled="!globalDefault.scheduleOn" />
+                <span style="font-size:12px;color:var(--text-muted)">min</span>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="lbl"><div class="t">屏幕触发</div></div>
+              <div class="setting-ctl" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                <label class="toggle-switch"><input type="checkbox" v-model="globalDefault.screenOn" /><span class="toggle-slider"></span></label>
+                <input class="input" type="number" v-model.number="globalDefault.screenRatio" style="width:50px" :disabled="!globalDefault.screenOn" title="变化幅度" />
+                <input class="input" type="number" v-model.number="globalDefault.screenProb" style="width:50px" :disabled="!globalDefault.screenOn" title="概率" />
+                <input class="input" type="number" v-model.number="globalDefault.screenInterval" style="width:50px" :disabled="!globalDefault.screenOn" title="间隔(s)" />
+                <input class="input" type="number" v-model.number="globalDefault.screenCooldown" style="width:50px" :disabled="!globalDefault.screenOn" title="冷却(min)" />
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="lbl"><div class="t">空闲触发</div></div>
+              <div class="setting-ctl" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                <label class="toggle-switch"><input type="checkbox" v-model="globalDefault.idleOn" /><span class="toggle-slider"></span></label>
+                <input class="input" type="number" v-model.number="globalDefault.idleMinutes" style="width:50px" :disabled="!globalDefault.idleOn" title="空闲(min)" />
+                <input class="input" type="number" v-model.number="globalDefault.idleProb" style="width:50px" :disabled="!globalDefault.idleOn" title="概率" />
+                <input class="input" type="number" v-model.number="globalDefault.idleInterval" style="width:50px" :disabled="!globalDefault.idleOn" title="间隔(s)" />
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="lbl"><div class="t">时段触发</div></div>
+              <div class="setting-ctl" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                <label class="toggle-switch"><input type="checkbox" v-model="globalDefault.windowsOn" /><span class="toggle-slider"></span></label>
+                <input class="input" v-model="globalDefault.timeWindowsText" style="flex:1;min-width:180px" placeholder="09:00-12:00@0.5,14:00-18:00@0.8" :disabled="!globalDefault.windowsOn" />
+              </div>
+            </div>
+            <div style="text-align:right;margin-top:4px">
+              <button class="btn btn-sm btn-primary" @click="saveGlobalDefault">保存全局默认规则</button>
+            </div>
           </div>
+        </div>
+
+        <div class="settings-divider"></div>
+        <!-- 会话规则管理（Outreach 并入，每会话可覆盖全局默认） -->
+        <div class="settings-group">
+          <div class="settings-group-title">会话规则<span style="font-weight:400;color:var(--text-muted);font-size:12px"> —— 单会话配置，覆盖全局默认</span></div>
+          <OutreachView :compact="true" />
         </div>
       </div>
 

@@ -309,7 +309,14 @@ class ProactiveTrigger:
             return False
 
     def _get_enabled_outreach_sessions(self) -> Dict[str, dict]:
-        """获取所有 enabled 的会话及其 outreach 配置"""
+        """获取本次应触发的会话及配置
+
+        优先级：全局总开关（关闭全停）> 会话级配置 > 全局默认规则（会话未配置时）
+        """
+        from config.settings import settings
+        if not getattr(settings, "PROACTIVE_OUTREACH_ENABLED", True):
+            return {}
+        default = self._get_global_default_rules()
         try:
             from modules.database.session_repo import get_session_repo
             result: Dict[str, dict] = {}
@@ -317,7 +324,22 @@ class ProactiveTrigger:
                 cfg = (s.get("metadata") or {}).get("outreach") or {}
                 if cfg.get("enabled"):
                     result[s["session_id"]] = cfg
+                elif default.get("enabled") and not cfg:
+                    # 会话未配置 → 用全局默认规则
+                    result[s["session_id"]] = default
             return result
+        except Exception:
+            return {}
+
+    @staticmethod
+    def _get_global_default_rules() -> dict:
+        """读取全局默认主动搭话规则（PROACTIVE_OUTREACH_DEFAULT，JSON）"""
+        try:
+            import json
+            from config.settings import settings
+            raw = getattr(settings, "PROACTIVE_OUTREACH_DEFAULT", "{}") or "{}"
+            d = json.loads(raw) if isinstance(raw, str) else (raw or {})
+            return d if isinstance(d, dict) else {}
         except Exception:
             return {}
 
