@@ -102,4 +102,17 @@ router.beforeEach(async (to, from, next) => {
   next('/chat')
 })
 
+// 前端构建更新后，旧页面内存中的懒加载 chunk 已删除（hash 变化）
+// 动态 import 失败 → 自动刷新拉取最新 index.html + chunk，避免白屏
+router.onError((error) => {
+  const msg = error?.message || ''
+  if (
+    msg.includes('Failed to fetch dynamically imported module') ||
+    msg.includes('Unable to preload CSS') ||
+    msg.includes('Importing a module script failed')
+  ) {
+    try { window.location.reload() } catch {}
+  }
+})
+
 export default router

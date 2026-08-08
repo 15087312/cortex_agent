@@ -90,6 +90,12 @@ class ProxyHandler(http.server.SimpleHTTPRequestHandler):
             return
         super().do_GET()
 
+    def end_headers(self):
+        # Vite 产物带内容 hash，文件名不变则内容不变 → 强缓存；index.html 由 _serve_index 设为 no-cache
+        if getattr(self, "command", "") == "GET" and getattr(self, "path", "").startswith("/assets/"):
+            self.send_header("Cache-Control", "public, max-age=31536000, immutable")
+        super().end_headers()
+
     def _serve_index(self):
         """Serve the built Vue index.html (dist/index.html)."""
         if not os.path.isfile(os.path.join(DIST_DIR, "index.html")):
