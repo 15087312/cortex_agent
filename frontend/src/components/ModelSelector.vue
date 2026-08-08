@@ -14,7 +14,9 @@ async function load() {
     models.value = nodes
       .filter((n) => n.tier && n.tier !== 'user')
       .map((n) => ({ label: n.label || n.tier, tier: n.tier }))
-  } catch { models.value = [] }
+    // 图谱无记录（如纯对话模式）→ 回退显示当前对话模型
+    if (!models.value.length) models.value = [{ label: '总指挥', tier: 'large' }]
+  } catch { models.value = [{ label: '总指挥', tier: 'large' }] }
 }
 
 onMounted(load)
