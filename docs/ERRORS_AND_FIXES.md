@@ -371,5 +371,53 @@ def is_delegation_available(self) -> bool:
 **经验：** Vue 模板未定义变量在构建期不报错、运行期才崩——新增/重构页面后**务必打开每个页面实测**，或跑模板变量静态检查。
 
 
+## 16. 黑板共享记忆：角色别名不匹配（后端）
+
+> 归档自 `docs/MEMORY_INJECTION.md` 第十节
+
+**现象：** 多模型协作中总指挥看不到 `【协作上下文】`、`【当前委托状态】`、`【当前任务进度记事本】`、`【历史输出】` 等黑板共享片段——专家产出没完整回到总指挥，潜在协作断裂。
+
+**根因：** `TurnContext.view(role)` 按 `role in target_roles` 过滤，而 `continuous_thinker._build_prompt` 里 `role = getattr(self, '_role', 'orchestrator')` 恒为 `'orchestrator'`；但这些片段的 `target_roles=("large",)` → 大模型（总指挥）匹配不上。
+
+**修复**（`modules/thinking/context/pool.py` `view()`）：把 `"large"` 与 `"orchestrator"` 视为**同一角色（总指挥）的两种写法**——查看角色是二者之一时可见含任一别名的片段；supervisor/expert 仍精确匹配。
+
+**验证：** `view('orchestrator')` 返回全部片段；`view('supervisor')` 只返回系统指令+历史记忆；`view('expert')` 只返回历史记忆。
+
+**同类排查：** 全局检索角色字符串常量（`"large"`/`"orchestrator"`/`"supervisor"` 等）是否被硬编码成两种写法且未归一——配置项里同一角色多种叫法极易导致匹配失败。
+
+
+## 17. 前端重构期已修复 Bug 汇总（旧 JS 版 → Vue 迁移经验）
+
+> 归档自 `docs/frontend-refactor-plan.md` 第五节
+
+### 17.1 `ws.js` 重复函数定义 → 连接失败无人知晓（复制粘贴）
+`_scheduleRetry` 定义两次，第二个覆盖第一个（丢失 `_connectReject` 通知）——连接失败调用者永远不知道。
+**修复：** 删除第二个定义，保留带通知的版本。
+
+### 17.2 `components.js` 字符串模板 XSS
+`UI.e()` 只转义 HTML 实体，onclick 属性是 JS 上下文（需转义 `'` `"` `\` 换行）。修复用 `this.jsStr()` 替代 `this.e()`。
+
+### 17.3 `chat.js` 重复 `_renderMsgShell` → 流式光标丢失（复制粘贴）
+第二个定义覆盖第一个（丢 `<div class="streaming-cursor">▊</div>`）。
+**修复：** 删除第二个定义。
+
+### 17.4 `ws.js` WebSocket URL 硬编码
+`ws://localhost:8080` 硬编码 → 非 localhost 环境连不上。修复从 `window.location.hostname` 动态取。
+
+### 17.5 `app.js` localStorage 无 try/catch
+隐私模式下 `localStorage.getItem/setItem` 抛 `SecurityError` 未捕获。修复全站 try/catch 包裹。
+
+### 17.6 CSS 变量缺失
+`theme.css`/`layout.css` 引用未声明的 CSS 变量。修复在 `:root` 补全定义。
+
+### 17.7 已知未修复问题（旧 JS 版，Vue 重构后已解决）
+API Key 明存 localStorage → 改内存；静默 catch → 各调用处加错误处理；无错误边界 → `<ErrorBoundary>`；删除会话无 API → 补 `DELETE`；版本号硬编码 → 构建注入；重复工具函数 → 统一 `utils/`。
+
+### 17.8 Bug 三大共因（最值得记住的经验）
+1. **复制粘贴错误**（3 个 bug）：重复函数/模板互相覆盖。手写 JS 无类型检查、无编译期检测——**Vue SFC + ESLint 可防**。
+2. **全局可变状态**（2 个 bug）：散落 `this.xxx` 竞态覆盖——**Vue 响应式 ref + Pinia store 可追踪**。
+3. **字符串作为代码**（2 个 bug）：onclick 字符串注入 XSS、字节替换脆弱——**Vue 模板编译 + Vite 构建根治**。
+
+
 
 

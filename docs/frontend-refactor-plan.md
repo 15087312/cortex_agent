@@ -306,6 +306,8 @@ Vue 构建产物（`dist/`）可以直接被 `server.py` 或 Qt WebEngine 加载
 
 ## 5. 已修复 Bug 分析
 
+> 已归档至 `docs/ERRORS_AND_FIXES.md` 第 17 节，本文档保留原始上下文。
+
 ### 5.1 `ws.js:21-30` — 重复函数定义
 
 **症状**：WebSocket 重试达到 maxRetry 后静默失败，无错误反馈。
