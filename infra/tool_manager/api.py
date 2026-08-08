@@ -166,6 +166,21 @@ async def set_tool_enabled(tool_name: str, body: dict = None):
     return {"success": True, "data": {"name": tool_name, "enabled": enabled}}
 
 
+@router.get("/source/{tool_name}")
+async def get_tool_source(tool_name: str):
+    """返回工具源码（内置只读；AI 自创工具 editable 可改）"""
+    import inspect
+    tool = ToolRegistry.get_tool(tool_name)
+    if not tool:
+        return {"success": False, "error": {"code": "TOOL_NOT_FOUND", "message": f"工具不存在: {tool_name}"}}
+    try:
+        src = inspect.getsource(tool.func)
+    except (OSError, TypeError):
+        src = "# 该工具源码不可用（可能是内置/插件闭包）"
+    editable = tool.source == "dynamic" and "ai_tool" in tool.tags
+    return {"success": True, "data": {"name": tool_name, "source": src, "editable": editable}}
+
+
 @router.get("/ai")
 async def list_ai_tools():
     """列出所有 AI 自创工具（dynamic + ai_tool 标签），含源码 code 供编辑回填"""

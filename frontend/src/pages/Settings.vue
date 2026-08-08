@@ -14,7 +14,7 @@ const appVersion = __APP_VERSION__
 
 /* ── Tabs ── */
 const tabGroups = [
-  { label: '用户', tabs: ['对话', '人设管理', '感知', '记忆库', '主动搭话'] },
+  { label: '用户', tabs: ['对话', '感知', '记忆库', '主动搭话'] },
   { label: '高级', tabs: ['系统', '高级', '通用设置', '授权设置', '关于'] },
 ]
 const activeTab = ref('对话')
@@ -371,6 +371,14 @@ onMounted(async () => {
       <!-- ═══════════════ 对话 ═══════════════ -->
       <div v-if="activeTab === '对话'" class="settings-section">
         <div class="settings-group">
+          <div class="settings-group-title">用户称呼</div>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">用户称呼</div><div class="d">例如你的名字或昵称</div></div>
+            <div class="setting-ctl"><input class="input" v-model="userName" style="width:200px" /></div>
+          </div>
+        </div>
+        <div class="settings-divider"></div>
+        <div class="settings-group">
           <div class="settings-group-title">对话模式</div>
           <p class="settings-hint">选择后端处理对话的方式，切换后新消息立即生效</p>
           <div class="setting-row">
@@ -398,75 +406,6 @@ onMounted(async () => {
               </div>
             </div>
           </div>
-        </div>
-      </div>
-
-      <!-- ═══════════════ 人设管理 ═══════════════ -->
-      <div v-if="activeTab === '人设管理'" class="settings-section">
-        <div class="settings-group">
-          <div class="settings-group-title">用户称呼</div>
-          <div class="setting-row">
-            <div class="lbl"><div class="t">用户称呼</div><div class="d">例如你的名字或昵称</div></div>
-            <div class="setting-ctl"><input class="input" v-model="userName" style="width:200px" /></div>
-          </div>
-        </div>
-        <div class="settings-divider"></div>
-        <div class="settings-group">
-          <div class="settings-group-title">模型状态</div>
-          <table class="data-table">
-            <thead><tr><th>模型</th><th>角色</th><th>状态</th></tr></thead>
-            <tbody>
-              <tr v-for="(bk, lbl) in { big: '总指挥', medium: '主管', small: '专家' }" :key="lbl">
-                <td>{{ lbl }}</td>
-                <td style="color:var(--text-muted)">{{ bk === 'big' ? 'large' : bk === 'medium' ? 'supervisor' : 'expert' }}</td>
-                <td>
-                  <span class="badge" :class="configStore.modelStatus[bk] || configStore.modelStatus[bk === 'big' ? 'large' : bk === 'medium' ? 'supervisor' : 'expert'] ? 'badge-green' : 'badge-red'">
-                    {{ configStore.modelStatus[bk] || configStore.modelStatus[bk === 'big' ? 'large' : bk === 'medium' ? 'supervisor' : 'expert'] ? '可用' : '不可用' }}
-                  </span>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-        <div class="settings-divider"></div>
-        <div class="settings-group">
-          <div class="settings-group-title">角色人设</div>
-          <p class="settings-hint">按角色分类编辑各模型人设，留空使用默认</p>
-          <div v-if="personas.length === 0" class="empty-state" style="padding:24px"><p class="empty-text">暂无角色配置</p></div>
-          <template v-else>
-            <div v-for="grp in [{ key: 'large', title: '总指挥' }, { key: 'supervisor', title: '主管' }, { key: 'expert', title: '专家' }]" :key="grp.key">
-              <div class="settings-subgroup-title">{{ grp.title }} <span class="badge" :class="grp.key === 'large' ? 'badge-blue' : grp.key === 'supervisor' ? 'badge-yellow' : 'badge-gray'">{{ personasByTier[grp.key].length }} 个</span></div>
-              <div v-for="p in personasByTier[grp.key]" :key="p.role" class="card" style="margin-bottom:12px">
-                <div class="card-header" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-                  <b>{{ p.name }}</b>
-                  <span class="badge" :class="p.tier === 'large' ? 'badge-blue' : p.tier === 'supervisor' ? 'badge-yellow' : 'badge-gray'">{{ tierLabel[p.tier] || p.tier }}</span>
-                  <code style="font-size:11px;color:var(--text-muted)">{{ p.role }}</code>
-                  <span v-if="p.custom" class="badge badge-green">已自定义</span>
-                  <span v-else style="font-size:11px;color:var(--text-muted)">使用默认</span>
-                </div>
-                <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">{{ p.custom ? '当前生效人设（已自定义）' : '默认人设（当前生效）' }}：</div>
-                <div style="background:var(--bg-tertiary);border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 10px;font-size:12px;color:var(--text-secondary);white-space:pre-wrap;line-height:1.5;margin-bottom:10px">{{ p.custom || p.default }}</div>
-                <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">自定义人设（留空则恢复默认）：</div>
-                <textarea class="input" v-model="personaDrafts[p.role]" rows="3" style="width:100%;font-size:12px;line-height:1.5;white-space:pre-wrap;min-height:64px" placeholder="在此输入该角色的人设，留空使用默认"></textarea>
-                <div style="margin-top:6px;text-align:right;display:flex;gap:8px;justify-content:flex-end">
-                  <button v-if="p.custom" class="btn btn-sm" @click="resetPersona(p.role)">恢复默认人设</button>
-                  <button class="btn btn-sm btn-primary" @click="savePersona(p.role)">保存人设</button>
-                </div>
-
-                <!-- 高级：完全控制系统提示词 -->
-                <div style="margin-top:10px;border-top:1px solid var(--border);padding-top:8px">
-                  <button class="btn btn-sm" :class="{ 'btn-primary': systemOverrideDrafts[p.role] && systemOverrideDrafts[p.role].trim() }" @click="sysOverrideOpen[p.role] = !sysOverrideOpen[p.role]">
-                    高级：完整系统提示词 {{ systemOverrideDrafts[p.role] && systemOverrideDrafts[p.role].trim() ? '（已覆盖）' : '' }}
-                  </button>
-                  <div v-if="sysOverrideOpen[p.role]" style="margin-top:8px">
-                    <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">完整系统提示词（覆盖默认组装的人设/规则/价值观，完全控制；留空恢复自动组装）：</div>
-                    <textarea class="input" v-model="systemOverrideDrafts[p.role]" rows="6" style="width:100%;font-family:var(--font-mono);font-size:11px;line-height:1.5;white-space:pre-wrap" placeholder="在此输入完整系统提示词，留空使用自动组装"></textarea>
-                    <div style="margin-top:6px;text-align:right"><button class="btn btn-sm btn-primary" @click="savePersona(p.role)">保存高级设置</button></div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </template>
         </div>
       </div>
 

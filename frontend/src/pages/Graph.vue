@@ -4,6 +4,7 @@ import { endpoints } from '@/api.js'
 import Icon from '@/components/Icon.vue'
 
 const sessions = ref([])
+const props = defineProps({ compact: { type: Boolean, default: false } })
 const selected = ref('')
 const graph = ref({ nodes: [], edges: [] })
 const loading = ref(true)
@@ -99,7 +100,7 @@ onMounted(loadSessions)
 
 <template>
   <div>
-    <div class="page-header">
+    <div class="page-header" v-if="!compact">
       <h2>会话图谱</h2>
       <button class="btn btn-sm" @click="loadGraph"><Icon name="refresh" :size="14" /> 刷新</button>
     </div>

@@ -3,6 +3,8 @@ import { ref, computed, onMounted } from 'vue'
 import { endpoints } from '@/api.js'
 import { useToastStore } from '@/stores/toast.js'
 import Icon from '@/components/Icon.vue'
+import SkillsView from '@/pages/Skills.vue'
+import GraphView from '@/pages/Graph.vue'
 
 const toast = useToastStore()
 const agents = ref([])
@@ -26,6 +28,11 @@ const editingAi = ref(null)
 const aiForm = ref({ tool_name: '', description: '', code: '', params: '' })
 const toolFilter = ref('')
 const toolGroupsOpen = ref({ builtin: true, plugin: true, dynamic: true })
+
+// per-role 工具权限集中配置（工具管理 tab）
+const roleToolSel = ref('')
+const roleToolCfg = ref({ whitelist: [], blacklist: [] })
+const srcModal = ref({ open: false, name: '', source: '', editable: false })
 
 const grouped = computed(() => {
   const g = { large: [], supervisor: [], expert: [] }
@@ -160,6 +167,60 @@ async function toggleTool(tool) {
   } catch (e) { toast.show('操作失败', 'error') }
 }
 
+// ── per-role 工具权限集中配置 ──
+function onRoleSel() {
+  const agent = agents.value.find((a) => a.role === roleToolSel.value)
+  roleToolCfg.value = {
+    whitelist: [...(agent?.role_tools?.whitelist || [])],
+    blacklist: [...(agent?.role_tools?.blacklist || [])],
+  }
+}
+async function saveRoleToolsSel() {
+  if (!roleToolSel.value) return
+  saving.value = 'role_tools'
+  try {
+    const r = await fetch('/api/config/tools/' + encodeURIComponent(roleToolSel.value), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tools: roleToolCfg.value }),
+    })
+    const d = await r.json()
+    if (d.success) toast.show('角色工具权限已保存', 'success')
+    else toast.show('保存失败: ' + (d.error?.message || ''), 'error')
+  } catch (e) { toast.show('保存失败', 'error') }
+  finally { saving.value = '' }
+}
+function toggleRoleTool(key, name) {
+  const list = roleToolCfg.value[key]
+  const i = list.indexOf(name)
+  if (i >= 0) list.splice(i, 1)
+  else list.push(name)
+}
+function toggleRoleAll(key) {
+  const list = roleToolCfg.value[key]
+  const i = list.indexOf('*')
+  if (i >= 0) list.splice(i, 1)
+  else list.push('*')
+}
+
+// ── 工具源码查看/编辑 ──
+async function viewSource(tool) {
+  srcModal.value = { open: true, name: tool.name, source: '加载中...', editable: false }
+  try {
+    const r = await fetch('/api/tools/source/' + encodeURIComponent(tool.name), { headers: { Accept: 'application/json' } })
+    const d = await r.json()
+    srcModal.value.source = d?.data?.source || '无法获取源码'
+    srcModal.value.editable = !!d?.data?.editable
+  } catch { srcModal.value.source = '获取源码失败' }
+}
+function editAiFromSource() {
+  const name = srcModal.value.name
+  const info = aiTools.value[name] || {}
+  editingAi.value = name
+  aiForm.value = { tool_name: name, description: info.description || '', code: info.code || '', params: '' }
+  showAiForm.value = true
+}
+
 function clearCustom(agent) {
   drafts.value[agent.role] = ''
   savePersona(agent)
@@ -241,8 +302,19 @@ onMounted(loadData)
     <div class="page-body">
       <div class="seg" style="margin-bottom:12px">
         <button :class="{ on: activeTab === 'agents' }" @click="activeTab = 'agents'">Agent 定义</button>
+        <button :class="{ on: activeTab === 'skills' }" @click="activeTab = 'skills'">技能</button>
+        <button :class="{ on: activeTab === 'graph' }" @click="activeTab = 'graph'">编排图</button>
         <button :class="{ on: activeTab === 'tools' }" @click="activeTab = 'tools'">工具管理 ({{ tools.length }})</button>
-        <button :class="{ on: activeTab === 'ai' }" @click="activeTab = 'ai'">AI 工具 ({{ Object.keys(aiTools).length }})</button>
+      </div>
+
+      <!-- 技能管理（合并自技能页） -->
+      <div v-if="activeTab === 'skills'">
+        <SkillsView :compact="true" />
+      </div>
+
+      <!-- 编排图（合并自会话图谱页） -->
+      <div v-if="activeTab === 'graph'">
+        <GraphView :compact="true" />
       </div>
 
       <!-- Agent 定义 -->
@@ -359,35 +431,75 @@ onMounted(loadData)
         </div>
       </div>
 
-      <!-- 工具管理 -->
-      <div v-else-if="activeTab === 'tools'" v-show="!loading">
+      <!-- 工具管理：per-role 工具权限 + 工具列表脚本 + AI 工具 -->
+      <div v-if="activeTab === 'tools'" v-show="!loading">
+        <!-- 角色工具权限（每角色分别配置） -->
+        <div class="card" style="margin-bottom:12px">
+          <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+            <span>角色工具权限（每角色分别配置可用工具）</span>
+            <div style="display:flex;gap:6px">
+              <select v-model="roleToolSel" class="input" style="width:200px;font-size:12px" @change="onRoleSel">
+                <option value="">选择角色</option>
+                <option v-for="a in agents" :key="a.role" :value="a.role">{{ a.name }}（{{ a.role }}）</option>
+              </select>
+              <button class="btn btn-sm btn-primary" :disabled="saving === 'role_tools'" @click="saveRoleToolsSel">保存权限</button>
+            </div>
+          </div>
+          <div v-if="roleToolSel" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:10px">
+            <div>
+              <div style="font-size:12px;margin-bottom:4px;display:flex;justify-content:space-between;align-items:center">
+                <span>白名单（{{ roleToolCfg.whitelist.length }}）—— 非空则整体替换默认</span>
+                <button class="btn btn-sm" @click="toggleRoleAll('whitelist')">{{ roleToolCfg.whitelist.includes('*') ? '取消全部' : '全部 (*)' }}</button>
+              </div>
+              <div style="max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;padding:6px">
+                <label v-for="tool in tools" :key="'rw' + tool.name" style="display:flex;align-items:center;gap:6px;font-size:12px;padding:2px 0">
+                  <input type="checkbox" :checked="roleToolCfg.whitelist.includes(tool.name)" @change="toggleRoleTool('whitelist', tool.name)" />
+                  <span style="font-family:monospace">{{ tool.name }}</span>
+                </label>
+              </div>
+            </div>
+            <div>
+              <div style="font-size:12px;margin-bottom:4px">黑名单（{{ roleToolCfg.blacklist.length }}）—— 剔除</div>
+              <div style="max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;padding:6px">
+                <label v-for="tool in tools" :key="'rb' + tool.name" style="display:flex;align-items:center;gap:6px;font-size:12px;padding:2px 0">
+                  <input type="checkbox" :checked="roleToolCfg.blacklist.includes(tool.name)" @change="toggleRoleTool('blacklist', tool.name)" />
+                  <span style="font-family:monospace">{{ tool.name }}</span>
+                </label>
+              </div>
+            </div>
+          </div>
+          <div v-else style="text-align:center;padding:14px;color:var(--text-muted);font-size:12px">选择角色后配置其可用工具（白名单替换默认 / 黑名单剔除）</div>
+        </div>
+
+        <!-- 工具列表 + 脚本查看 -->
         <div class="card">
           <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
-            <span>已注册工具 ({{ tools.length }}) —— 开关即时生效</span>
-            <input v-model="toolFilter" class="input" style="width:220px;font-size:12px" placeholder="搜索工具..." />
+            <span>已注册工具 ({{ tools.length }}) —— 点击工具查看/编辑脚本</span>
+            <div style="display:flex;gap:6px">
+              <button class="btn btn-sm btn-primary" @click="openAiForm(null)"><Icon name="plus" :size="13" /> 新建 AI 工具</button>
+              <input v-model="toolFilter" class="input" style="width:220px;font-size:12px" placeholder="搜索工具..." />
+            </div>
           </div>
           <div v-for="source in ['builtin', 'plugin', 'dynamic', 'mcp']" :key="source">
             <div v-if="toolGroups[source]?.length">
-              <div
-                style="display:flex;align-items:center;gap:6px;margin:10px 0 6px;cursor:pointer;font-size:13px;font-weight:600"
-                @click="toolGroupsOpen[source] = !toolGroupsOpen[source]"
-              >
+              <div style="display:flex;align-items:center;gap:6px;margin:10px 0 6px;cursor:pointer;font-size:13px;font-weight:600" @click="toolGroupsOpen[source] = !toolGroupsOpen[source]">
                 <Icon :name="toolGroupsOpen[source] ? 'down' : 'right'" :size="12" />
                 {{ source }} ({{ toolGroups[source].length }})
               </div>
-              <div v-if="toolGroupsOpen[source]" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:8px">
-                <div v-for="tool in toolGroups[source]" :key="tool.name" style="padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12px">
+              <div v-if="toolGroupsOpen[source]" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:8px">
+                <div v-for="tool in toolGroups[source]" :key="tool.name" class="tool-card" @click="viewSource(tool)">
                   <div style="display:flex;justify-content:space-between;align-items:center;gap:6px">
                     <span style="font-family:monospace;color:var(--accent);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ tool.name }}</span>
-                    <label class="toggle-switch" :title="tool.enabled ? '点击禁用' : '点击启用'">
+                    <label class="toggle-switch" @click.stop title="启用/禁用">
                       <input type="checkbox" :checked="tool.enabled" @change="toggleTool(tool)" />
                       <span class="toggle-slider"></span>
                     </label>
                   </div>
                   <div style="color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ tool.description || '' }}</div>
-                  <div style="margin-top:4px;display:flex;gap:6px;flex-wrap:wrap">
+                  <div style="margin-top:4px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
                     <span class="badge" :style="{ fontSize: '10px', background: (tool.risk_level === 'HIGH' || tool.risk_level === 'CRITICAL') ? 'rgba(248,81,73,0.15)' : 'rgba(139,148,158,0.15)', color: (tool.risk_level === 'HIGH' || tool.risk_level === 'CRITICAL') ? '#f85149' : '#8b949e' }">{{ tool.risk_level }}</span>
                     <span v-if="tool.core" class="badge badge-blue" style="font-size:10px">core</span>
+                    <span style="font-size:10px;color:var(--text-muted)">查看脚本</span>
                   </div>
                 </div>
               </div>
@@ -395,11 +507,9 @@ onMounted(loadData)
           </div>
           <div v-if="!tools.length" style="text-align:center;padding:24px;color:var(--text-muted)">暂无工具</div>
         </div>
-      </div>
 
-      <!-- AI 工具管理 -->
-      <div v-else-if="activeTab === 'ai'" v-show="!loading">
-        <div class="card">
+        <!-- AI 工具管理 -->
+        <div class="card" style="margin-top:12px">
           <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
             <span>AI 自创工具（{{ Object.keys(aiTools).length }}）—— 模型可提交代码动态注册</span>
             <button class="btn btn-sm btn-primary" @click="openAiForm(null)"><Icon name="plus" :size="13" /> 新建工具</button>
@@ -419,11 +529,12 @@ onMounted(loadData)
           <div v-if="Object.keys(aiTools).length">
             <div v-for="(info, name) in aiTools" :key="name" style="padding:10px 0;border-bottom:1px solid var(--border)">
               <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
-                <div>
+                <div style="min-width:0">
                   <span style="font-family:monospace;color:var(--accent)">{{ name }}</span>
                   <span style="color:var(--text-muted);font-size:12px;margin-left:8px">{{ info.description || '' }}</span>
                 </div>
                 <div style="display:flex;gap:6px">
+                  <button class="btn btn-sm" @click="viewSource(name)"><Icon name="eye" :size="12" /> 脚本</button>
                   <button class="btn btn-sm" @click="openAiForm(name)"><Icon name="pencil" :size="12" /> 编辑</button>
                   <button class="btn btn-sm danger" @click="deleteAiTool(name)"><Icon name="trash" :size="12" /> 删除</button>
                 </div>
@@ -432,8 +543,32 @@ onMounted(loadData)
           </div>
           <div v-else style="text-align:center;padding:24px;color:var(--text-muted)">暂无 AI 自创工具</div>
         </div>
+
+        <!-- 工具源码弹窗 -->
+        <div v-if="srcModal.open" class="src-overlay" @click.self="srcModal.open = false">
+          <div class="src-panel">
+            <div class="src-head">
+              <span style="font-weight:600">工具脚本：{{ srcModal.name }}{{ srcModal.editable ? '（可编辑）' : '（只读）' }}</span>
+              <div style="display:flex;gap:6px">
+                <button v-if="srcModal.editable" class="btn btn-sm btn-primary" @click="editAiFromSource">编辑此工具</button>
+                <button class="btn btn-sm" @click="srcModal.open = false"><Icon name="x" :size="14" /> 关闭</button>
+              </div>
+            </div>
+            <pre class="src-text">{{ srcModal.source }}</pre>
+          </div>
+        </div>
       </div>
+
       <div v-else style="text-align:center;padding:40px;color:var(--text-muted)">加载中...</div>
     </div>
   </div>
 </template>
+
+<style scoped>
+.tool-card { padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 12px; cursor: pointer; }
+.tool-card:hover { border-color: var(--accent); }
+.src-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 1000; display: flex; align-items: center; justify-content: center; }
+.src-panel { width: 640px; max-width: 92vw; max-height: 88vh; overflow: hidden; background: var(--bg,#161b22); border: 1px solid var(--border); border-radius: 12px; padding: 14px 18px; display: flex; flex-direction: column; }
+.src-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+.src-text { white-space: pre-wrap; word-break: break-word; font-size: 12px; line-height: 1.6; overflow-y: auto; max-height: calc(88vh - 80px); margin: 0; padding: 12px; background: var(--bg-secondary, rgba(255,255,255,0.02)); border: 1px solid var(--border); border-radius: 8px; }
+</style>

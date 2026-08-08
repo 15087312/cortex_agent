@@ -5,6 +5,7 @@ import { useToastStore } from '@/stores/toast.js'
 import Icon from '@/components/Icon.vue'
 
 const toast = useToastStore()
+const props = defineProps({ compact: { type: Boolean, default: false } })
 const skills = ref([])
 const agents = ref([])
 const loading = ref(true)
@@ -149,7 +150,7 @@ onMounted(loadData)
 
 <template>
   <div>
-    <div class="page-header">
+    <div class="page-header" v-if="!compact">
       <h2>技能管理</h2>
       <div style="display:flex;gap:6px">
         <button class="btn btn-sm" @click="loadData"><Icon name="refresh" :size="14" /> 刷新</button>

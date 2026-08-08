@@ -18,7 +18,6 @@ const navSections = [
       { route: '/memory', label: '记忆', icon: 'file' },
       { route: '/outreach', label: '主动搭话', icon: 'heart' },
       { route: '/tasks', label: '定时任务', icon: 'circle' },
-      { route: '/skills', label: '技能', icon: 'puzzle' },
       { route: '/settings', label: '设置', icon: 'settings' },
     ]
   },
@@ -31,7 +30,6 @@ const devSections = [
     items: [
       { route: '/modules', label: '模块', icon: 'puzzle' },
       { route: '/causal', label: '因果图', icon: 'network' },
-      { route: '/graph', label: '会话图谱', icon: 'bot' },
       { route: '/orchestration', label: '编排', icon: 'settings' },
       { route: '/tools', label: '工具', icon: 'wrench' },
       { route: '/gallery', label: '图库', icon: 'image' },
