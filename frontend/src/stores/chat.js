@@ -104,7 +104,7 @@ export const useChatStore = defineStore('chat', () => {
           role: trole,
           name: _nameFor(trole),
           avatarCls: _avatarCls(trole),
-          content: _cleanThinking(d.content || ''),
+          content: _stripReplyText(_cleanThinking(d.content || '')),
           id: d.id || '',
         }
       }
@@ -144,8 +144,16 @@ export const useChatStore = defineStore('chat', () => {
 
   // ── 思考步骤：累积到当前轮回复的思考区（折叠在回复框内，不独立成消息） ──
   const pendingThinking = ref('')
+  function _stripReplyText(raw) {
+    // 后端"思考控制/思考结束：{result_summary}"段的 summary 就是最终回复本身，
+    // 那不是思考过程——从思考区剔除，避免与正式回复重复
+    return String(raw)
+      .replace(/思考结束[：:，,]?\s*[\s\S]*$/i, '')
+      .replace(/【思考控制】[；;，,\s]*$/i, '')
+      .trim()
+  }
   function addThinkingStep(d) {
-    const text = _cleanThinking(d.content)
+    const text = _stripReplyText(_cleanThinking(d.content))
     if (!text) return
     // 去重：流式增量可能重复推送相同片段
     if (pendingThinking.value.includes(text)) return
