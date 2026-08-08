@@ -52,9 +52,11 @@ class SessionGraphStore:
 
             if return_to_model_id:
                 # 有回复对象：return_to 呼唤 model_id，model_id 回复 return_to
+                # 按发言者层级推断上级层级（专家→主管→总指挥→用户）
+                parent_tier = {"expert": "supervisor", "supervisor": "large", "large": "user"}.get(tier, "")
                 parent = nodes.setdefault(return_to_model_id, {
                     "id": return_to_model_id, "label": return_to_model_id[:12],
-                    "tier": "", "count": 0, "last_content": "", "last_ts": 0,
+                    "tier": parent_tier, "count": 0, "last_content": "", "last_ts": 0,
                 })
                 parent["count"] += 1
                 self._touch_edge(edges, return_to_model_id, model_id, "呼唤", ts, content)

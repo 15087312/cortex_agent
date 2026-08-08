@@ -15,7 +15,9 @@ const TIERS = [
   { tier: 'supervisor', label: '主管', icon: 'list', color: '#3b82f6' },
   { tier: 'expert', label: '实现专家', icon: 'wrench', color: '#f59e0b' },
 ]
-function tierOf(t) { return TIERS.find((x) => x.tier === t) || TIERS[TIERS.length - 1] }
+function tierOf(t) {
+  return TIERS.find((x) => x.tier === t) || { tier: '', label: '未知', icon: 'bot', color: '#8b949e' }
+}
 
 async function loadSessions() {
   try {
@@ -42,7 +44,9 @@ async function loadGraph() {
 // ── 动态分层布局：用户 | 总指挥 | 主管 | 实现专家 ──
 const layout = computed(() => {
   const nodes = graph.value.nodes
-  const cols = TIERS.filter((c) => nodes.some((n) => (n.tier || '') === c.tier))
+  const known = TIERS.filter((c) => nodes.some((n) => (n.tier || '') === c.tier))
+  const hasUnknown = nodes.some((n) => !TIERS.some((c) => c.tier === (n.tier || '')))
+  const cols = known.concat(hasUnknown ? [{ tier: '', label: '未知', icon: 'bot', color: '#8b949e' }] : [])
   const W = 1120
   const colW = cols.length ? W / cols.length : W
   const nodeW = 168
