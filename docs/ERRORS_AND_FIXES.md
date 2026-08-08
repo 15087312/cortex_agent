@@ -444,5 +444,40 @@ API Key 明存 localStorage → 改内存；静默 catch → 各调用处加错�
 4. 设置入口与功能页合并（如主动搭话页并入设置）后，侧栏入口要同步移除，避免两处入口、一处失效。
 
 
+## 19. 自动化替换留下的运行时 NameError + 同名索引重复（后端）
+
+### 19.1 自动化替换未定义 helper → 运行时 NameError
+
+**现象：** 后端启动后 WS 建会话报 `NameError: name '_utcnow' is not defined`（`session_repo.py:44`），前端无法开始对话。
+
+**根因：** 修 `datetime.utcnow()` 弃用警告时用 python 脚本批量替换：
+- `s.replace("from datetime import datetime, timedelta", "from datetime import datetime, timedelta, timezone\ndef _utcnow():...")` —— 但文件实际是 `from datetime import datetime`（无 `timedelta`），**第一处 replace 没匹配**，helper 没插入；
+- 第二处 `s.replace("datetime.utcnow()", "_utcnow()")` **成功了**，把 7 处调用全部替换成 `_utcnow()`。
+
+结果：调用被替换、定义没加，`py_compile` 通过（语法合法），运行时才炸。
+
+**为什么测试没抓到：** ① NameError 是运行时错误，py_compile 不执行函数体；② 测试套件从未测真实 `SessionRepository`（`test_database` 用 MagicMock、`test_chat_gateway` 用内存版 mock），真实 `create_session/save_message` 路径零覆盖。
+
+**修复：** 补 `_utcnow()` 定义；新增 `tests/test_session_repo.py`（5 用例覆盖 create/save/get/clear/delete 真实实现）。
+
+### 19.2 同名索引重复 → 新建 DB 建表报 already exists
+
+**现象：** 补测试用临时 SQLite 建表时报 `OperationalError: index ix_chat_sessions_last_active already exists`。
+
+**根因：** `chat_models.py` 的 `ChatSession.last_active` 同时声明了 `index=True`（SQLAlchemy 自动生成 `ix_chat_sessions_last_active`）和 `__table_args__` 里显式 `Index("ix_chat_sessions_last_active", "last_active")`，**两个同名索引**。create_all 尝试建两个同名索引，第二次报 already exists。
+
+**为什么真实 DB 没暴露：** 真实 `data/memory.db` 建过一次（表+索引已存在），后续 create_all 幂等跳过；只有**新建数据库**（新部署/测试临时库）才触发。
+
+**修复：** 去掉 `last_active` 的 `index=True`，保留 `__table_args__` 显式 Index。
+
+**同类排查：** AST 扫描所有 Base 模型，检查 `index=True` 列与 `__table_args__` Index 是否生成同名（自动索引名 `ix_<table>_<col>`）。
+
+### 19.3 自动化脚本 replace 的教训（最重要）
+- **任何批量文本替换（sed/python replace）改代码，替换后必须运行 + 在真实入口跑一遍**，不能只 py_compile。
+- 替换目标的字符串要**精确匹配实际文件内容**（如 `from datetime import datetime` 与 `...timedelta` 不同），替换前先 grep 确认目标存在。
+- **辅助函数（helper）替换调用点后，必须确认定义也加入**（成对检查）。
+- **被 mock 掩盖的真实实现**：测 mock 路径前先确认被 mock 的核心逻辑有真实测试覆盖。
+
+
 
 

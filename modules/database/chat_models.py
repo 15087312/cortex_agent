@@ -3,11 +3,16 @@
 
 允许前端断线重连后恢复上下文，跨设备查看历史会话。
 """
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import Column, String, Text, Integer, DateTime, Boolean, Index
 import uuid
 
 from .connection import Base
+
+
+def _utcnow_default():
+    """naive UTC now（替代弃用的 datetime.utcnow）"""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class ChatSession(Base):
@@ -17,8 +22,8 @@ class ChatSession(Base):
     id = Column(String(100), primary_key=True, default=lambda: f"ses_{uuid.uuid4().hex[:12]}")
     session_id = Column(String(100), nullable=False, unique=True, index=True)
     title = Column(String(200), default="")  # 首条用户消息作为标题
-    created_at = Column(DateTime, default=datetime.utcnow)
-    last_active = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow_default)
+    last_active = Column(DateTime, default=_utcnow_default)
     message_count = Column(Integer, default=0)
     is_active = Column(Boolean, default=True, index=True)
     execution_mode = Column(String(20), default="edit")
@@ -37,7 +42,7 @@ class ChatMessage(Base):
     session_id = Column(String(100), nullable=False, index=True)
     role = Column(String(20), nullable=False)  # user / assistant / system / tool
     content = Column(Text, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    created_at = Column(DateTime, default=_utcnow_default, index=True)
     round_num = Column(Integer, default=0)
     tier = Column(String(20), default="")  # large / supervisor / expert
     metadata_json = Column(Text, default="{}")
@@ -56,7 +61,7 @@ class BlackboardObservation(Base):
     observation_id = Column(String(100), default="")       # 黑板 Observation.observation_id
     tier = Column(String(20), default="")                  # large / supervisor / expert / user
     content = Column(Text, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    created_at = Column(DateTime, default=_utcnow_default, index=True)
     metadata_json = Column(Text, default="{}")
 
     __table_args__ = (
@@ -72,4 +77,4 @@ class ProactiveLog(Base):
     session_id = Column(String(100), nullable=False, index=True)
     reason = Column(String(20), default="")   # schedule / screen / idle / time_window
     content = Column(Text, default="")
-    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    created_at = Column(DateTime, default=_utcnow_default, index=True)
