@@ -419,5 +419,30 @@ API Key 明存 localStorage → 改内存；静默 catch → 各调用处加错�
 3. **字符串作为代码**（2 个 bug）：onclick 字符串注入 XSS、字节替换脆弱——**Vue 模板编译 + Vite 构建根治**。
 
 
+## 18. 设置全局开关是摆设（后端/前端）
+
+**现象：** 设置页「主动搭话 → 启用主动搭话」全局开关开了/关了，触发行为完全不变——用户质疑"真能生效吗"。
+
+**根因：** 三层配置各管一段，但接入不完整：
+1. **全局总开关 `PROACTIVE_OUTREACH_ENABLED`**——只在 `setup.py:59` 被**读取用于前端状态显示**，`trigger._get_enabled_outreach_sessions()` 判定时**根本没检查** → 开关改不动任何行为；
+2. **会话级配置**（`metadata.outreach`）——唯一被 trigger 判定的 → 只有会话 enabled 才触发；
+3. **无全局默认规则**——会话没配置就不触发，无兜底。
+
+**修复（配置体系重构，优先级：全局总开关 > 会话配置 > 全局默认）：**
+- `trigger._get_enabled_outreach_sessions()` 入口先检查 `PROACTIVE_OUTREACH_ENABLED`（关闭全停，返回空）
+- 新增 `PROACTIVE_OUTREACH_DEFAULT`（JSON 全局默认规则）——**会话未配置（`not cfg`）时回退用全局默认**（含 `enabled` 判断）
+- 新增方法 `_get_global_default_rules()`（解析 JSON，容错返回 `{}`）
+- `PROACTIVE_OUTREACH_DEFAULT` 加入 `_MODIFIABLE_FIELDS`（否则 PUT /config 报 FORBIDDEN）
+- 前端：设置页「主动搭话」= 全局总开关 + 全局默认规则编辑（保存到 DEFAULT）+ 会话规则管理（Outreach 页合并为 compact 子组件）；侧栏移除主动搭话独立入口
+
+**验证：** 全局默认 `{enabled:true, idle:...}` 保存读回正常；14 个未配置会话全部命中全局默认；全局开关关闭时 `_get_enabled_outreach_sessions` 返回空。
+
+**经验（写前端/后端配置时务必遵守）：**
+1. **任何"开关/设置"必须真正接入消费方**——只读显示不接判定 = 摆设。加设置时先查谁消费它、判定路径是否引用。
+2. **前端可改配置项必须进 `_MODIFIABLE_FIELDS`**——否则 PUT /config/{key} 报 FORBIDDEN（403），用户点了没反应。
+3. **三层配置（全局/默认/覆盖）明确优先级**，消费方用同一套解析（`会话配置 if cfg else 全局默认`），避免"配了不生效"困惑。
+4. 设置入口与功能页合并（如主动搭话页并入设置）后，侧栏入口要同步移除，避免两处入口、一处失效。
+
+
 
 

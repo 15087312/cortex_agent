@@ -42,6 +42,14 @@ class DifferenceDetector:
         self._high_intensity_callbacks: List[Callable[[List[Difference]], None]] = []
 
         self.registry.register(TimeDifferenceSource())
+        # 文件差异源（由 PERCEPTION_FILE_ENABLED 控制）
+        try:
+            from config.settings import settings as _cfg
+            if getattr(_cfg, "PERCEPTION_FILE_ENABLED", True):
+                from modules.perception.difference.sources.file_source import FileDifferenceSource
+                self.registry.register(FileDifferenceSource())
+        except Exception as e:
+            logger.warning(f"文件差异源注册失败: {e}")
         logger.info(f"已注册 {len(self.registry.registered_types)} 个差异源: {self.registry.registered_types}")
         logger.info("差异检测器初始化完成 (Stage 1: continuous perception)")
 

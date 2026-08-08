@@ -98,10 +98,12 @@ class PerceptionSystem:
             self.pet_engine = None
 
         # 6. 窗口检测器（定时 publish SCREEN_WINDOW 到事件总线）
-        self._setup_window_detector()
+        if getattr(settings, "PERCEPTION_SCREEN_ENABLED", True):
+            self._setup_window_detector()
 
         # 7. OCR 检测器（定时截图 + 识别文字）
-        self._setup_ocr_detector()
+        if getattr(settings, "PERCEPTION_SCREEN_ENABLED", True):
+            self._setup_ocr_detector()
 
         logger.info("感知系统组装完成")
 

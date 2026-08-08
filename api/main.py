@@ -178,7 +178,7 @@ async def lifespan(app: FastAPI):
             logger.error(f"✗ 感知系统启动失败: {e}")
 
     # MCP 屏幕差异检测（独立子进程，像素级帧差）
-    if settings.SCREEN_DIFF_ENABLED and settings.DIFFERENCE_DETECTOR_ENABLED:
+    if settings.SCREEN_DIFF_ENABLED and settings.DIFFERENCE_DETECTOR_ENABLED and settings.PERCEPTION_MCP_ENABLED:
         try:
             from modules.perception.difference.sources.mcp_screen_source import get_screen_diff_source
             src = get_screen_diff_source()
@@ -198,13 +198,21 @@ async def lifespan(app: FastAPI):
             logger.warning(f"屏幕内容分析启动失败: {e}")
 
     # 启动差异检测器心跳（1Hz 扫描 TimeDifferenceSource — 空闲检测/时间差异）
-    if settings.DIFFERENCE_DETECTOR_ENABLED:
+    if settings.DIFFERENCE_DETECTOR_ENABLED and settings.PERCEPTION_INTERNAL_ENABLED:
         try:
             from modules.perception.difference import get_heartbeat
             get_heartbeat().start()
             logger.info("✓ 差异检测器心跳已启动 (1Hz)")
         except Exception as e:
             logger.warning(f"差异检测器心跳启动失败: {e}")
+
+    # 差异检测器心跳注册后，接入"感知触发思考"（高强度变化 → AI 主动思考）
+    try:
+        from modules.perception.trigger_think import register as _register_trigger_think
+        if getattr(settings, "PERCEPTION_TRIGGER_THINK", True) and getattr(settings, "PERCEPTION_ENABLED", True):
+            _register_trigger_think()
+    except Exception as e:
+        logger.warning(f"感知触发思考注册失败: {e}")
 
     yield
     logger.info("Shutting down Humanoid AGI...")
@@ -227,7 +235,7 @@ async def lifespan(app: FastAPI):
             logger.debug(f"MCP 屏幕差异检测停止失败 (非致命): {e}")
 
     # 停止差异检测器心跳
-    if settings.DIFFERENCE_DETECTOR_ENABLED:
+    if settings.DIFFERENCE_DETECTOR_ENABLED and settings.PERCEPTION_INTERNAL_ENABLED:
         try:
             from modules.perception.difference import get_heartbeat
             get_heartbeat().stop()

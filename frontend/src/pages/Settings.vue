@@ -194,7 +194,6 @@ const perceptionScreen = boolCfg('PERCEPTION_SCREEN_ENABLED', true)
 const perceptionFile = boolCfg('PERCEPTION_FILE_ENABLED', true)
 const perceptionMcp = boolCfg('PERCEPTION_MCP_ENABLED', true)
 const perceptionInternal = boolCfg('PERCEPTION_INTERNAL_ENABLED', true)
-const screenDiff = boolCfg('SCREEN_DIFF_ENABLED', true)
 const triggerThink = boolCfg('PERCEPTION_TRIGGER_THINK', true)
 const triggerCooldown = numCfg('PERCEPTION_TRIGGER_COOLDOWN', 60)
 const triggerMinIntensity = numCfg('PERCEPTION_TRIGGER_MIN_INTENSITY', 50)
@@ -534,24 +533,20 @@ onMounted(async () => {
             <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="screenDiff" @change="screenDiff = !screenDiff" /><span class="toggle-slider"></span></label></div>
           </div>
           <div class="setting-row">
-            <div class="lbl"><div class="t">文件监控</div></div>
+            <div class="lbl"><div class="t">文件监控</div><div class="d">监控工作目录文件变化</div></div>
             <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="perceptionFile" @change="perceptionFile = !perceptionFile" /><span class="toggle-slider"></span></label></div>
           </div>
           <div class="setting-row">
-            <div class="lbl"><div class="t">MCP 监控</div></div>
+            <div class="lbl"><div class="t">MCP 感知</div><div class="d">通过 MCP 服务器采集屏幕/界面</div></div>
             <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="perceptionMcp" @change="perceptionMcp = !perceptionMcp" /><span class="toggle-slider"></span></label></div>
           </div>
           <div class="setting-row">
-            <div class="lbl"><div class="t">内部状态监控</div></div>
+            <div class="lbl"><div class="t">内部状态感知</div><div class="d">空闲/时间等内部状态差异</div></div>
             <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="perceptionInternal" @change="perceptionInternal = !perceptionInternal" /><span class="toggle-slider"></span></label></div>
           </div>
           <div class="setting-row">
-            <div class="lbl"><div class="t">变化触发思考</div><div class="d">感知到变化后自动触发 AI 思考</div></div>
+            <div class="lbl"><div class="t">变化触发思考</div><div class="d">感知到高强度变化后自动触发 AI 思考</div></div>
             <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="triggerThink" @change="triggerThink = !triggerThink" /><span class="toggle-slider"></span></label></div>
-          </div>
-          <div class="setting-row">
-            <div class="lbl"><div class="t">空间增强</div><div class="d">心理活动额外输出当前空间位置/动作序列</div></div>
-            <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="spatialEnhancement" @change="spatialEnhancement = !spatialEnhancement" /><span class="toggle-slider"></span></label></div>
           </div>
           <div class="setting-row">
             <div class="lbl"><div class="t">触发冷却(秒)</div></div>
@@ -560,6 +555,10 @@ onMounted(async () => {
           <div class="setting-row">
             <div class="lbl"><div class="t">最小变化强度</div></div>
             <div class="setting-ctl"><input class="input" type="number" v-model.number="triggerMinIntensity" style="width:110px;text-align:right" /></div>
+          </div>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">空间增强</div><div class="d">心理活动额外输出当前空间位置/动作序列</div></div>
+            <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="spatialEnhancement" @change="spatialEnhancement = !spatialEnhancement" /><span class="toggle-slider"></span></label></div>
           </div>
         </div>
 
