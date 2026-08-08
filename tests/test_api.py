@@ -234,7 +234,7 @@ async def test_rate_limit_exceeded_returns_429(_mock_lifespan, _no_auth, _reset_
     # ASGI test transport reports request.client.host as "127.0.0.1"
     current_minute = int(time.time() / 60)
     key = f"127.0.0.1|{current_minute}"
-    api.main.request_counts[key] = 100  # already at the limit
+    api.main.request_counts[key] = 1000  # 本地回环放宽后阈值为 1000
 
     from api.main import app
     async with _client(app) as client:

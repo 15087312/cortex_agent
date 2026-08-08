@@ -58,7 +58,7 @@ class TestExpertToolVisibility:
         tester = ctrl.get_visible_tools(tier="expert", mode="edit", role="test_writer")
         assert "run_pytest" in tester
         customer = ctrl.get_visible_tools(tier="expert", mode="edit", role="customer")
-        assert customer == ["event_query"]
+        assert customer == ["event_query", "todo"]
 
     def test_supervisor_whitelist(self):
         ctrl = _make_controller()
