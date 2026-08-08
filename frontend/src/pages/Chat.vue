@@ -107,10 +107,10 @@ const _onThinking = (d) => {
       return
     }
   }
-  // 思考步骤：supervisor/expert 显示气泡；large/thinking/main 的文字也展示
-  // （模型经常"边回答边调工具"，若忽略则这些文字用户看不到）
+  // 思考步骤累积到回复框思考区：主管/专家的中间发言 + reasoning 推送；
+  // 总指挥(large/main)的 thinking 事件内容 = 模型 content（即最终回复），跳过避免与回复重复
   const role = String(d.role || d.data?.dialog_tier || '').toLowerCase()
-  if (role === 'supervisor' || role === 'expert' || role === 'large' || role === 'thinking' || role === 'main') {
+  if (role === 'supervisor' || role === 'expert' || role === 'thinking') {
     chat.addThinkingStep(d)
     scrollBottom()
   }

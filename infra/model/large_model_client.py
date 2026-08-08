@@ -542,6 +542,7 @@ class LargeModelClient(BaseModelClient):
     ) -> ChatResponse:
         """解析 OpenAI SSE 流"""
         text_parts: List[str] = []
+        reasoning_parts: List[str] = []  # deepseek reasoning_content（思考过程）
         # tool_calls 累积: index -> {id, name, arguments_parts}
         tc_accum: Dict[int, Dict] = {}
         finish_reason = "stop"
@@ -574,6 +575,11 @@ class LargeModelClient(BaseModelClient):
                     if on_token:
                         on_token(content)
 
+                # 思考 token（deepseek reasoning_content）
+                reasoning = delta.get("reasoning_content")
+                if reasoning:
+                    reasoning_parts.append(reasoning)
+
                 # 工具调用 delta
                 for tc_delta in delta.get("tool_calls", []):
                     idx = tc_delta.get("index", 0)
@@ -600,8 +606,14 @@ class LargeModelClient(BaseModelClient):
                 ))
 
         full_text = "".join(text_parts) if text_parts else None
+        reasoning_full = "".join(reasoning_parts) if reasoning_parts else None
         return ChatResponse(
-            message=ChatMessage(role="assistant", content=full_text, tool_calls=tool_calls),
+            message=ChatMessage(
+                role="assistant",
+                content=full_text,
+                tool_calls=tool_calls,
+                reasoning_content=reasoning_full,
+            ),
             finish_reason=finish_reason,
         )
 
