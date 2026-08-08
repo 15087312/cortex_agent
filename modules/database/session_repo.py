@@ -2,7 +2,12 @@
 会话持久化仓库 — 读写 SQLite
 提供会话和消息的 CRUD 操作，供 api_stream.py 调用。
 """
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+
+
+def _utcnow():
+    """naive UTC now（替代弃用的 datetime.utcnow）"""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 from typing import List, Optional, Dict, Any
 from sqlalchemy import desc
 import threading

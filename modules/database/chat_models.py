@@ -18,7 +18,7 @@ class ChatSession(Base):
     session_id = Column(String(100), nullable=False, unique=True, index=True)
     title = Column(String(200), default="")  # 首条用户消息作为标题
     created_at = Column(DateTime, default=datetime.utcnow)
-    last_active = Column(DateTime, default=datetime.utcnow, index=True)
+    last_active = Column(DateTime, default=datetime.utcnow)
     message_count = Column(Integer, default=0)
     is_active = Column(Boolean, default=True, index=True)
     execution_mode = Column(String(20), default="edit")
