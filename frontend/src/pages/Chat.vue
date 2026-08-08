@@ -107,10 +107,10 @@ const _onThinking = (d) => {
       return
     }
   }
-  // 思考步骤累积到回复框思考区：主管/专家的中间发言 + reasoning 推送；
-  // 总指挥(large/main)的 thinking 事件内容 = 模型 content（即最终回复），跳过避免与回复重复
+  // 思考区只累积 deepseek 推理（reasoning 推送，role=thinking，带身份标注）；
+  // 总指挥/主管/专家的 thinking_step 是模型 content（输出文字），不进思考区
   const role = String(d.role || d.data?.dialog_tier || '').toLowerCase()
-  if (role === 'supervisor' || role === 'expert' || role === 'thinking') {
+  if (role === 'thinking') {
     chat.addThinkingStep(d)
     scrollBottom()
   }

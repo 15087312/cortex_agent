@@ -1179,19 +1179,26 @@ class ModelRunner:
     MAX_CHAT_TOOL_TURNS = 25  # 原生工具调用最大轮次
 
     def _push_reasoning(self, reasoning: str) -> None:
-        """推送模型思考过程（deepseek reasoning_content）到前端 thinking 气泡"""
+        """推送模型思考过程（deepseek reasoning_content）到前端 thinking 区，带身份标注"""
         reasoning = (reasoning or "").strip()
         if not reasoning:
             return
         try:
             from modules.thinking.api_stream import connection_manager, _build_event
+            identity = ""
+            tier = ""
+            try:
+                identity = getattr(self.identity, "name", "") or getattr(self.identity, "role", "")
+                tier = getattr(self.identity, "tier", "") or self.tier
+            except Exception:
+                pass
             event = _build_event(
                 session_id=self.session_id,
                 msg_type="thinking",
                 event="thinking_step",
-                content=f"【思考】{reasoning[:300]}",
+                content=f"【思考】{reasoning}",
                 role="thinking",
-                data={"source": "reasoning"},
+                data={"source": "reasoning", "identity_name": identity, "tier": tier},
             )
             for sid in list(connection_manager.active_connections.keys()):
                 connection_manager.send_json_from_thread(sid, event)

@@ -255,6 +255,15 @@ async def _consume_turn(
                 chunk = tok.get("content", "")
                 full_text.append(chunk)
                 flush_buf.append(chunk)
+            elif tok.get("type") == "thinking":
+                # deepseek 思考过程（reasoning）单独推送，与回复区分
+                if not await _safe_ws_send(websocket, _envelope(
+                    session_id, "thinking", "thinking_step",
+                    tok.get("content", ""), "thinking",
+                    data={"source": "reasoning",
+                          "identity_name": tok.get("identity_name", "总指挥"),
+                          "tier": tok.get("tier", "large")},
+                )): pass
             elif tok.get("type") == "done":
                 # 思考过程一次性完整发送（不逐段流式，避免前端一小句一小句冒出来）
                 if flush_buf:

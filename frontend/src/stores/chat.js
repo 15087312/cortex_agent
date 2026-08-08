@@ -155,9 +155,12 @@ export const useChatStore = defineStore('chat', () => {
   function addThinkingStep(d) {
     const text = _stripReplyText(_cleanThinking(d.content))
     if (!text) return
+    // 带身份标注（deepseek 推理来自哪个模型）
+    const ident = d.data?.identity_name || d.data?.tier || ''
+    const line = (ident ? `【${ident}】` : '') + text
     // 去重：流式增量可能重复推送相同片段
-    if (pendingThinking.value.includes(text)) return
-    pendingThinking.value += (pendingThinking.value ? '\n' : '') + text
+    if (pendingThinking.value.includes(line)) return
+    pendingThinking.value += (pendingThinking.value ? '\n\n' : '') + line
   }
   function consumeThinking() {
     const t = pendingThinking.value

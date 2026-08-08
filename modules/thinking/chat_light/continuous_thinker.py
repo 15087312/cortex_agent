@@ -83,7 +83,18 @@ class ContinuousThinker:
                     system_prompt=system_prompt,
                     on_token=on_token,
                 )
-
+                # 推送 deepseek 思考过程（reasoning_content）到前端思考区（走消息队列与回复同通道）
+                try:
+                    reasoning = (getattr(response.message, "reasoning_content", "") or "").strip()
+                    if reasoning:
+                        message_queue.put_nowait({
+                            "type": "thinking",
+                            "content": f"【思考】{reasoning}",
+                            "identity_name": "总指挥",
+                            "tier": "large",
+                        })
+                except Exception:
+                    pass
                 # 5. Store assistant response
                 assistant_content = response.message.content or "".join(full_response)
                 self._blackboard.add_message(session_id, "assistant", assistant_content)
