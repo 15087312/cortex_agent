@@ -65,7 +65,7 @@ const layout = computed(() => {
 
 const viewBox = computed(() => `0 0 ${layout.value.W} ${layout.value.H}`)
 
-// 边：呼唤实线 / 回复虚线，成对错开避免重叠
+// 边：呼唤实线 / 回复虚线，成对错开避免重叠；方向 = 消息发送方向（箭头指向接收者）
 const edgeShapes = computed(() => {
   const { pos } = layout.value
   const shapes = []
@@ -74,8 +74,12 @@ const edgeShapes = computed(() => {
     const t = pos[e.to]
     if (!f || !t) continue
     const off = e.type === '呼唤' ? -16 : 16
+    const dl = (s) => (s.length > 8 ? s.slice(0, 7) + '…' : s)
     shapes.push({
       ...e,
+      fromLabel: dl(f.node.label),
+      toLabel: dl(t.node.label),
+      hint: `${f.node.label} ${e.type} ${t.node.label}`,
       x1: f.cx, y1: f.cy + off,
       x2: t.cx, y2: t.cy + off,
       midX: (f.cx + t.cx) / 2,
@@ -107,26 +111,30 @@ onMounted(loadSessions)
         <div class="graph-flow" v-if="!graphLoading">
           <svg class="graph-svg" :viewBox="viewBox" xmlns="http://www.w3.org/2000/svg">
             <defs>
-              <marker id="arrow-call" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
-                <path d="M0,0 L6,3 L0,6 z" fill="#3b82f6" />
+              <marker id="arrow-call" markerWidth="12" markerHeight="12" refX="9" refY="4" orient="auto">
+                <path d="M0,0 L9,4.5 L0,9 z" fill="#3b82f6" />
               </marker>
-              <marker id="arrow-reply" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
-                <path d="M0,0 L6,3 L0,6 z" fill="#22c55e" />
+              <marker id="arrow-reply" markerWidth="12" markerHeight="12" refX="9" refY="4" orient="auto">
+                <path d="M0,0 L9,4.5 L0,9 z" fill="#22c55e" />
               </marker>
             </defs>
-            <!-- 呼唤：实线；回复：虚线 -->
+            <!-- 呼唤：实线；回复：虚线。箭头 = 发送方向（指向接收者） -->
             <line
               v-for="e in edgeShapes" :key="e.from + e.to + e.type"
               :x1="e.x1" :y1="e.y1" :x2="e.x2" :y2="e.y2"
               :class="e.type === '呼唤' ? 'edge-call' : 'edge-reply'"
               :marker-end="'url(#arrow-' + (e.type === '呼唤' ? 'call' : 'reply') + ')'"
-            />
+            >
+              <title>{{ e.hint }}</title>
+            </line>
             <text
               v-for="e in edgeShapes" :key="'t' + e.from + e.to + e.type"
               :x="e.midX" :y="e.midY"
               text-anchor="middle" :fill="e.type === '呼唤' ? '#3b82f6' : '#22c55e'"
               class="edge-label"
-            >{{ e.type }}</text>
+            >
+              <title>{{ e.hint }}</title>{{ e.type }} {{ e.fromLabel }}→{{ e.toLabel }}
+            </text>
           </svg>
 
           <!-- 节点（按 tier 分层） -->
@@ -166,6 +174,7 @@ onMounted(loadSessions)
 .edge-call { stroke: #3b82f6; stroke-width: 1.6; }
 .edge-reply { stroke: #22c55e; stroke-width: 1.6; stroke-dasharray: 6 4; }
 .edge-label { font-size: 11px; font-weight: 600; }
+.edge-call:hover, .edge-reply:hover { stroke-width: 3; }
 .g-node {
   position: absolute; width: 168px; padding: 8px; border-radius: 12px;
   background: var(--bg-secondary); border: 1.5px solid #8b5cf6;
