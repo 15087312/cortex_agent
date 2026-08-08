@@ -227,4 +227,55 @@ if reason and reason.startswith("用户批准"):
 **验证：** 250 次观察 → 保留 200 条，最旧 50 条被清 ✓
 
 
+## 12. 前端裸 fetch 路径在 8765 静态代理下全部 404（前端）
+
+**现象：** 编排图页显示"暂无该层 Agent"、编排页/技能页/会话设置数据不加载；浏览器 Network 面板对应请求 404。
+
+**报错（浏览器 Console）：**
+```
+TypeError: Failed to fetch dynamically imported module: http://localhost:8765/assets/xxx.js
+```
+（此为另一类：构建后旧 chunk 失效，见 12.2）
+
+**根因：** 前端 SPA 由 `frontend/server.py`（端口 8765）静态服务，它**只代理 `/api/*` 到后端 8080 并去掉 `/api` 前缀**。新增页面代码直接写裸路径：
+```js
+fetch('/management/orchestration')   // ❌ 8765 不代理 /management → 404
+fetch('/config/persona/...')          // ❌ 同样 404
+fetch('/stream/session/...')          // ❌ 同样 404
+```
+而走 `endpoints.*` 封装（api.js `BASE='/api'`）或 `fetch('/api/...')` 才经代理正常。
+
+实测：
+- `8765/management/orchestration` → **404**
+- `8765/api/management/orchestration` → **200**（代理去前缀到 8080）
+- `8080/api/management/orchestration` → 401（8080 无 `/api` 路由，**不能直接用 8080 的 /api**）
+
+**修复：** 前端所有裸 `fetch('/management|/config|/stream|/tools/...')` 统一加 `/api/` 前缀（8765 代理去前缀到 8080）。涉及 8 个文件：Graph.vue、Orchestration.vue、Skills.vue、SessionSettings.vue、ScheduledTasks.vue、Dashboard.vue、Settings.vue、ChatMessage.vue。
+
+**关键约定（写前端代码务必遵守）：**
+1. **所有后端 API 请求必须用 `/api/` 前缀**（或走 `endpoints.*` 封装）——8765/vite 代理都会去掉 `/api` 转到 8080；裸路径在 8765 直接 404
+2. **WebSocket 例外**：`ws/client.js` 直连 `:8080/stream/ws/{sid}`（8765 无 WS 转发），不要改成 8765
+3. **`/audio`、`/pet` 资源保留裸路径**（分别由后端静态/桌宠使用，不受代理影响）
+4. **不可用 8080 直接拼 `/api/`**——后端路由无 `/api` 前缀，会 401
+
+**验证：** 修复后各页面数据加载正常；`grep -rnE "fetch\\('/(?!api/)"` 无残留裸 fetch。
+
+### 12.1 同类：懒加载 chunk 404（构建更新后旧页面白屏）
+
+**现象：** `npm run build` 后，已打开的旧页面导航到懒加载路由报：
+```
+Error: Unable to preload CSS for /assets/Graph-xxx.css
+TypeError: Failed to fetch dynamically imported module: /assets/Graph-xxx.js
+```
+
+**根因：** Vite 构建产物带内容 hash，重建后旧 hash 的 chunk 被删除；浏览器旧页面内存中的模块图仍引用旧 hash，导航触发动态 import 即 404。
+
+**修复：**
+- `frontend/src/router.js` 加 `router.onError`：识别 `Failed to fetch dynamically imported module` / `Unable to preload CSS` 时自动 `location.reload()` 拉最新 index.html + chunk
+- `frontend/server.py` 对 `/assets/*` 设 `Cache-Control: public, max-age=31536000, immutable`（hash 文件不变内容不变）；`index.html` 保持 `no-cache`（每次拿最新，引用最新 chunk 列表）
+
+**经验：** 改完后端/前端记得重新 `npm run build`；已打开旧页面的用户需刷新一次；构建更新后懒加载失败会自动刷新恢复。
+
+
+
 
