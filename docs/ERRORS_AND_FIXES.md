@@ -277,5 +277,99 @@ TypeError: Failed to fetch dynamically imported module: /assets/Graph-xxx.js
 **经验：** 改完后端/前端记得重新 `npm run build`；已打开旧页面的用户需刷新一次；构建更新后懒加载失败会自动刷新恢复。
 
 
+## 13. settings 双重 @property → 多 Agent 思考崩溃（后端）
+
+**报错：**
+```
+TypeError: 'property' object is not callable
+```
+
+**现象：** agent 模式对话时 `continuous_thinker think_once` 反复异常，总指挥永远无法委托主管/专家（主管/专家实例不创建）。
+
+**根因：** `config/settings.py` 的 `is_delegation_available` 前有**两个 `@property` 叠加**：
+```python
+@property          # ← 多余：装饰的是下一行的 @property 对象
+
+@property
+def is_delegation_available(self) -> bool:
+    return True
+```
+外层 `@property` 把内层的 **property 对象**当作 getter → 访问 `settings.is_delegation_available` 时调用 getter（property 对象）→ `'property' object is not callable`。任何读取该配置的代码（`model_runner` 工具注入、委托判定）全部崩溃。
+
+**修复：** 删除多余的 `@property`（只保留装饰方法的那一个）。
+
+**验证：** `settings.is_delegation_available` 返回 `True`；agent 模式总指挥完整思考、专家实例正常创建。
+
+**同类排查：** `grep -nB1 "def " config/settings.py | grep @property` 确认无其他重复装饰器。
+
+**经验：** 连续两行相同装饰器叠加会产生极难定位的 `'property' object is not callable`——它既不是真正的属性访问也不是方法调用。凡是 `@xxx` 装饰器，检查其下一行是否紧贴一个函数（空行/另一装饰器都会出错）。
+
+
+## 14. 会话图谱 return_to 节点 tier 为空 → 节点/边被布局丢弃（前端/后端）
+
+**现象：** 会话图谱里某些 Agent 节点不显示、相关呼唤/回复边丢失；偶发把未知层级节点误标为"实现专家"（橙色）。
+
+**根因（两层）：**
+1. **后端** `session_graph.py` 的 `record` 创建被回复方（`return_to`）节点时 `tier` 默认空字符串——若该节点从未作为发言者出现过，tier 一直为空；
+2. **前端** `Graph.vue` 布局只按 4 个已知 tier（user/large/supervisor/expert）分列，空 tier 节点**不落入任何列 → 没有坐标** → 节点不渲染、以它为端点的边被 `if (!f || !t) continue` 跳过；同时 `tierOf('')` 回退到 `expert` 误标橙色。
+
+**修复：**
+- 后端：按发言者层级**推断上级层级**（`expert→supervisor→large→user`）填充 return_to 节点 tier；
+- 前端：`layout` 增加"未知"列兜底（灰色 `bot` 图标），`tierOf` 未知值返回灰色"未知"而非回退到 expert。
+
+**验证：** node 模拟 5 场景（完整链 / 只有总指挥 / 5 专家 / 未知 tier / 空图）——无 NaN 坐标、无同列重叠、无越界、unknown 节点/边不丢失。
+
+**同类排查：** 前端所有"按枚举分列/映射颜色"的逻辑，对**未知枚举值必须显式兜底**，且兜底值不应是某个真实业务枚举（避免误标）。
+
+**经验：** 数据驱动渲染的经典坑——**字段缺失/空值 vs 前端枚举不匹配**，前端枚举必须允许未知值并给中性样式；后端造节点时尽量把展示字段（tier/label）补全。
+
+
+## 15. 补充历史经验（此前未记录）
+
+### 15.1 限流额度被高频轮询耗尽 → 正常操作 429（后端）
+
+**现象：** 健康检查/桌宠轮询后，用户正常打开页面也报"请求频率超限"，日志刷 `限流触发: 127.0.0.1 (GET /xxx)`。
+
+**根因：** `api/main.py` 限流中间件每 IP 每分钟 100 次，白名单只有 `/stream/pet/move`；`/health`（每秒多次）+ 桌宠轮询（`last-reply`/`state`）把额度耗尽，之后所有请求 429。
+
+**修复：** ① 高频只读轮询端点（`/health`、`/stream/pet/*`、`/stream/status`、`/stream/sessions`、`/config`、`/dashboard`、`/metrics`）加入限流白名单；② 本地回环（127.0.0.1/::1）上限放宽到 1000/分钟，公网仍 100。
+
+**同类排查：** 加新端点时区分"高频轮询（只读状态）"与"业务操作"——前者应进限流白名单/日志忽略名单，否则会互相挤占额度。
+
+### 15.2 macOS 截图 could not create image from display（后端）
+
+**现象：** 终端反复打印 `could not create image from display`（每次截图一次）。
+
+**根因（两层）：**
+1. macOS 上 `PIL ImageGrab.grab()` 走 X11，主动打印该错误到 fd（`except` 拦不住）；
+2. 回退的 `screencapture` 子进程错误输出未捕获，直接继承到父终端。
+
+**修复：** `utils/screen_capture.py` macOS 跳过 ImageGrab 直接用 `screencapture`，`subprocess.run(..., capture_output=True)` 捕获子进程输出；`_try_screencapture` 用 `try/finally` 删除临时文件（曾泄漏 3.8 万个临时 png）。
+
+**同类排查：** 所有 `subprocess.run` 未捕获 stdout/stderr 的调用——子进程错误会泄漏到父进程终端。
+
+### 15.3 时段判断用字符串比较 → 跨午夜永不触发（后端）
+
+**现象：** 主动搭话 `time_windows` 配 `22:00-02:00`（跨午夜）永不触发。
+
+**根因：** `_check_time_windows` 用 `start <= cur <= end` **字符串比较**——`"23:38" <= "02:00"` 恒 False。
+
+**修复：** 改为分钟数数值比较，`end < start` 视为跨午夜（`cur >= s or cur <= e`）。
+
+**同类排查：** 任何 `"HH:MM"` 时间比较都应转分钟数再比，字符串比较在跨天/整点边界必然出错。
+
+### 15.4 模板误用未定义变量（前端）
+
+**现象：** 打开因果图/编排图报 `Cannot read properties of undefined (reading 'type'/'color')` → ErrorBoundary 显示"页面加载失败"。
+
+**根因：** 模板里 `v-for="node in ..."` 但表达式写 `{{ n.type }}` / `n.color`（变量名笔误 `n` vs `node`）——Vue 编译不报未定义变量，运行时渲染才崩。
+
+**修复：** `n` → `node`（Causal.vue / Graph.vue 共 7 处）。
+
+**同类排查：** 写脚本提取模板根标识符对照 script 定义 + v-for 局部变量，唯一真 bug 模式是"v-for 变量笔误"；`:style`/`:class` 对象键、箭头函数参数、`(v,k)` 第二变量均为误报。
+
+**经验：** Vue 模板未定义变量在构建期不报错、运行期才崩——新增/重构页面后**务必打开每个页面实测**，或跑模板变量静态检查。
+
+
 
 
