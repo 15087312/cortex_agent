@@ -264,6 +264,13 @@ async def _consume_turn(
                           "identity_name": tok.get("identity_name", "总指挥"),
                           "tier": tok.get("tier", "large")},
                 )): pass
+            elif tok.get("type") == "mental":
+                # 心理活动（conscience 内心独白）
+                if not await _safe_ws_send(websocket, _envelope(
+                    session_id, "mental", "mental",
+                    tok.get("content", ""), "system",
+                    data={"label": "心理活动"},
+                )): pass
             elif tok.get("type") == "done":
                 # 思考过程一次性完整发送（不逐段流式，避免前端一小句一小句冒出来）
                 if flush_buf:

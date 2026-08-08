@@ -68,6 +68,30 @@ class ContinuousThinker:
                 # 3. Compose system prompt
                 system_prompt = self._composer.build_system(memory_context)
 
+                # 3.5 生成并推送心理活动（conscience 内心独白，与 agent 模式一致）
+                try:
+                    from modules.thinking.conscience import get_conscience
+                    from infra.model.small_model_client import SmallModelClient
+                    from config.settings import settings
+                    _cons = get_conscience()
+                    _cons._model_client = SmallModelClient(
+                        api_key=settings.SMALL_MODEL_API_KEY or settings.LARGE_MODEL_API_KEY,
+                        api_url=settings.SMALL_MODEL_API_URL or settings.LARGE_MODEL_API_URL,
+                    )
+                    _cons.add_to_dialog("user", user_message)
+                    _mental = await _cons.think(user_message, owner_id=session_id or "large_primary")
+                    if _mental:
+                        try:
+                            message_queue.put_nowait({
+                                "type": "mental",
+                                "content": _mental,
+                                "identity_name": "总指挥",
+                            })
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+
                 # 4. Stream response
                 full_response = []
 
