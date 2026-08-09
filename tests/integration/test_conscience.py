@@ -223,56 +223,60 @@ def test_analyze_feedback_no_nodes():
     asyncio.run(c.analyze_feedback("hi", "hi"))  # 无节点直接返回
 
 
-def test_analyze_feedback_no_model_client(monkeypatch):
+def test_analyze_feedback_no_model_client(clean_state, monkeypatch):
+    """真实 reducer（无模型 client）：analyze_feedback 直接返回"""
+    graph, _ = clean_state
+    graph.save_node(CausalNode(label="概念A", keywords=["a"]))
     c = Conscience(model_client=None)
-    c._last_analyzed_node_ids = ["n1"]
+    c._last_analyzed_node_ids = [graph.find_nodes_by_label("概念A")[0].id]
+    from modules.memory.event_reducer import EventReducer
+    reducer = EventReducer(model_client=None)
     import modules.memory.event_reducer as er_mod
-    reducer = MagicMock()
-    reducer._model_client = None
     monkeypatch.setattr(er_mod, "get_reducer", lambda: reducer)
     import asyncio
     asyncio.run(c.analyze_feedback("hi", "hi"))
     assert c._last_analyzed_node_ids == []
 
 
-def test_analyze_feedback_adjusts_confidence(monkeypatch):
+def test_analyze_feedback_adjusts_confidence(clean_state, monkeypatch):
+    """真实因果图：确认/反驳节点 → 置信度真实调整"""
+    graph, _ = clean_state
+    node = CausalNode(label="概念A", keywords=["a"])
+    graph.save_node(node)
+    nid = node.id
     c = Conscience(model_client=None)
-    c._last_analyzed_node_ids = ["n1"]
-    import modules.memory.event_reducer as er_mod
-    reducer = MagicMock()
-    class MC:
-        async def generate(self, prompt, max_tokens=0, temperature=0):
-            return '{"confirmed": ["n1"], "contradicted": ["n2"]}'
-    reducer._model_client = MC()
-    monkeypatch.setattr(er_mod, "get_reducer", lambda: reducer)
+    c._last_analyzed_node_ids = [nid]
+    from modules.memory.event_reducer import EventReducer
 
-    import modules.memory.causal_graph as cg_mod
-    node = MagicMock()
-    node.confidence = 0.5
-    graph = MagicMock()
-    graph.get_node.side_effect = lambda nid: node if nid == "n1" else node
-    graph.get_predecessors.return_value = [node]
-    graph.get_successors.return_value = [node]
-    monkeypatch.setattr(cg_mod, "CausalGraph", MagicMock(get_instance=staticmethod(lambda: graph)))
+    class MC:
+        """真实 LLM 接口实现（注入，返回确认 JSON）"""
+        async def generate(self, prompt, max_tokens=0, temperature=0):
+            return '{"confirmed": ["%s"], "contradicted": []}' % nid
+
+    reducer = EventReducer(model_client=MC())
+    import modules.memory.event_reducer as er_mod
+    monkeypatch.setattr(er_mod, "get_reducer", lambda: reducer)
     import asyncio
     asyncio.run(c.analyze_feedback("hi", "hi"))
-    assert node.confidence > 0.5  # 已上调
+    assert graph.get_node(nid).confidence > node.confidence  # 置信度已上调
 
 
-def test_analyze_feedback_json_parse_fail(monkeypatch):
+def test_analyze_feedback_json_parse_fail(clean_state, monkeypatch):
+    """真实图 + LLM 返回非 JSON：容错返回"""
+    graph, _ = clean_state
+    node = CausalNode(label="概念A", keywords=["a"])
+    graph.save_node(node)
     c = Conscience(model_client=None)
-    c._last_analyzed_node_ids = ["n1"]
-    import modules.memory.event_reducer as er_mod
-    reducer = MagicMock()
+    c._last_analyzed_node_ids = [node.id]
+    from modules.memory.event_reducer import EventReducer
+
     class MC:
         async def generate(self, prompt, max_tokens=0, temperature=0):
             return "不是 JSON"
-    reducer._model_client = MC()
+
+    reducer = EventReducer(model_client=MC())
+    import modules.memory.event_reducer as er_mod
     monkeypatch.setattr(er_mod, "get_reducer", lambda: reducer)
-    import modules.memory.causal_graph as cg_mod
-    graph = MagicMock()
-    graph.get_node.return_value = None
-    monkeypatch.setattr(cg_mod, "CausalGraph", MagicMock(get_instance=staticmethod(lambda: graph)))
     import asyncio
     asyncio.run(c.analyze_feedback("hi", "hi"))
     assert c._last_analyzed_node_ids == []
