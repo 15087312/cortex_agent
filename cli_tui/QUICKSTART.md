@@ -166,4 +166,4 @@ A: 减少显示的消息数量
 
 ## 📚 更详细的信息
 
-查看 `TUI_IMPROVEMENTS.md` 了解技术细节和架构设计。
+系统整体架构见 [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md)，思考引擎细节见 [docs/THINKING_ARCHITECTURE.md](../docs/THINKING_ARCHITECTURE.md)。

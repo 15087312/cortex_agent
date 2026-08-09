@@ -388,7 +388,7 @@ def is_delegation_available(self) -> bool:
 
 ## 17. 前端重构期已修复 Bug 汇总（旧 JS 版 → Vue 迁移经验）
 
-> 归档自 `docs/frontend-refactor-plan.md` 第五节
+> 归档自旧版前端重构计划（文档已移除）第五节
 
 ### 17.1 `ws.js` 重复函数定义 → 连接失败无人知晓（复制粘贴）
 `_scheduleRetry` 定义两次，第二个覆盖第一个（丢失 `_connectReject` 通知）——连接失败调用者永远不知道。

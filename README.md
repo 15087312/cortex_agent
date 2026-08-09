@@ -399,11 +399,10 @@ docker-compose down
 | 文档 | 说明 |
 |------|------|
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 详细架构设计文档 |
-| [docs/CODE_QUALITY.md](docs/CODE_QUALITY.md) | 代码质量分析报告 |
+| [docs/THINKING_ARCHITECTURE.md](docs/THINKING_ARCHITECTURE.md) | 思考模块内部架构（双层 ReAct 循环） |
+| [docs/MEMORY_INJECTION.md](docs/MEMORY_INJECTION.md) | 记忆系统与注入链路 |
 | [docs/CONFIG_VALUE_EVOLUTION.md](docs/CONFIG_VALUE_EVOLUTION.md) | 价值观进化系统配置 |
-| [docs/expert_cli_mode.md](docs/expert_cli_mode.md) | 专家 CLI 模式使用指南 |
-| [docs/PERCEPTION_CONFIG.md](docs/PERCEPTION_CONFIG.md) | 感知系统配置说明 |
-| [docs/PROJECT_RESUME.md](docs/PROJECT_RESUME.md) | 项目概要 |
+| [docs/ERRORS_AND_FIXES.md](docs/ERRORS_AND_FIXES.md) | 错误原因与修复记录 |
 
 ---
 
