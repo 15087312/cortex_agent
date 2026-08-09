@@ -33,18 +33,11 @@ def outreach_trigger_allowed() -> bool:
 
     第 3 层（满足具体规则标准）由各触发源的规则判定完成。
     """
-    from config.settings import settings
-    if not getattr(settings, "PROACTIVE_OUTREACH_ENABLED", True):
-        return False
+    # 复用主路径同一套判定（全局开关 + 会话 enabled），保证旁路与主路径永不漂移
     try:
-        from modules.database.session_repo import get_session_repo
-        for s in get_session_repo().get_all_sessions(limit=100):
-            cfg = (s.get("metadata") or {}).get("outreach") or {}
-            if cfg.get("enabled"):
-                return True
+        return bool(ProactiveTrigger()._get_enabled_outreach_sessions())
     except Exception:
-        pass
-    return False
+        return False
 
 
 def _build_outreach_system_prompt(role: str = "orchestrator", tier: str = "large") -> str:

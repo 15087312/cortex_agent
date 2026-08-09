@@ -174,9 +174,14 @@ class ScheduledTaskManager:
             self._mark_run(session_id, task, "error")
             return
         try:
-            await handler(session_id, task)
-            self._mark_run(session_id, task, "success")
-            logger.info(f"[定时任务] session={session_id[:8]} action={action} 已执行")
+            result = await handler(session_id, task)
+            if result == "skipped":
+                # handler 主动跳过（如全局主动搭话关闭）→ 记录 skipped，不算 success
+                self._mark_run(session_id, task, "skipped")
+                logger.debug(f"[定时任务] session={session_id[:8]} action={action} 已跳过（未发送）")
+            else:
+                self._mark_run(session_id, task, "success")
+                logger.info(f"[定时任务] session={session_id[:8]} action={action} 已执行")
         except Exception as e:
             self._mark_run(session_id, task, "error")
             logger.error(f"[定时任务] action={action} 失败: {e}")
@@ -197,12 +202,12 @@ class ScheduledTaskManager:
 
     # ── 默认 action: chat —— 复用主动搭话 LLM 逻辑 → 注入会话 → 推送 ──
 
-    async def _handle_chat(self, session_id: str, task: dict) -> None:
+    async def _handle_chat(self, session_id: str, task: dict) -> str:
         # 主动消息统一闸门：全局主动搭话总开关关闭时不发送（与 ProactiveTrigger 一致）
         from config.settings import settings as _cfg
         if not getattr(_cfg, "PROACTIVE_OUTREACH_ENABLED", True):
             logger.debug(f"[定时任务] 全局主动搭话已关闭，跳过 chat 发送 (session={session_id[:8]})")
-            return
+            return "skipped"
         prompt = task.get("prompt") or "现在是定时任务时间，请自然地向用户说一句话（简短自然，1-2 句）。"
         agent_type = task.get("agent_type") or ""
         tier = "large"

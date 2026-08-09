@@ -170,6 +170,45 @@ def _connect(cm, sid, server):
     asyncio.run_coroutine_threadsafe(cm.connect(sid, _FakeWS()), server.loop).result(timeout=5)
 
 
+def test_outreach_trigger_allowed_real_logic(monkeypatch):
+    """三层闸门真实逻辑：全局开关 / 会话开启情况逐一验证"""
+    import modules.perception.trigger as mod
+    import modules.database.session_repo as sr
+    from unittest.mock import MagicMock
+
+    def _sessions(sessions):
+        monkeypatch.setattr(sr, "get_session_repo",
+                            lambda: MagicMock(get_all_sessions=lambda limit=100: sessions))
+
+    # 1. 全局开关关闭 → False（即使有开启会话）
+    import importlib
+    cfg_mod = importlib.import_module("config.settings")
+    from types import SimpleNamespace
+    monkeypatch.setattr(cfg_mod, "settings", SimpleNamespace(PROACTIVE_OUTREACH_ENABLED=False))
+    _sessions([{"session_id": "s1", "metadata": {"outreach": {"enabled": True}}}])
+    assert mod.outreach_trigger_allowed() is False
+
+    # 2. 全局开关开启 + 无会话 → False
+    monkeypatch.setattr(cfg_mod, "settings", SimpleNamespace(PROACTIVE_OUTREACH_ENABLED=True))
+    _sessions([])
+    assert mod.outreach_trigger_allowed() is False
+
+    # 3. 全局开关开启 + 会话 enabled=True → True
+    _sessions([{"session_id": "s1", "metadata": {"outreach": {"enabled": True}}}])
+    assert mod.outreach_trigger_allowed() is True
+
+    # 4. 全局开关开启 + 会话 enabled=False / 无配置 → False
+    _sessions([
+        {"session_id": "s1", "metadata": {"outreach": {"enabled": False}}},
+        {"session_id": "s2", "metadata": {}},
+    ])
+    assert mod.outreach_trigger_allowed() is False
+
+    # 5. 库异常 → 保守返回 False（不发送）
+    monkeypatch.setattr(sr, "get_session_repo", lambda: (_ for _ in ()).throw(RuntimeError()))
+    assert mod.outreach_trigger_allowed() is False
+
+
 def test_get_global_default_rules(monkeypatch):
     import modules.perception.trigger as mod
     import importlib

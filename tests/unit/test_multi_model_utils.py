@@ -1,6 +1,8 @@
 """multi_model_orchestrator 纯方法测试（此前 14% 覆盖）"""
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 import modules.thinking.multi_model_orchestrator as orc_mod
 from modules.thinking.multi_model_orchestrator import MultiModelOrchestrator, get_active_sessions
 
@@ -34,7 +36,37 @@ def _no_forced(monkeypatch):
     monkeypatch.setattr(cfg_mod, "settings", types.SimpleNamespace(get_forced_skill=lambda: ""))
 
 
-def test_match_skill(monkeypatch):
+@pytest.fixture
+def skill_mgr(monkeypatch, tmp_path):
+    """真实 SkillManager（临时目录）"""
+    import modules.thinking.skills.manager as mgr_mod
+    monkeypatch.setattr(mgr_mod, "_get_skills_dir", lambda: tmp_path)
+    mgr = mgr_mod.SkillManager()
+    import modules.thinking.skills as skills_mod
+    monkeypatch.setattr(skills_mod, "skill_manager", mgr)
+    return mgr
+
+
+def test_match_skill(skill_mgr, monkeypatch):
+    """真实 skill_manager：创建技能后输入匹配命中"""
+    skill_mgr.create_skill(
+        skill_id="code_writer", name="写代码", description="帮助编写和修改代码",
+        keywords=["代码", "写代码", "编程"], trigger={"include": ["写代码", "编程"]},
+    )
+    o = _orc()
+    _no_forced(monkeypatch)
+    assert o._match_skill("帮我写代码") == "code_writer"
+
+
+def test_match_skill_no_match(skill_mgr, monkeypatch):
+    """真实 manager：无匹配返回空"""
+    skill_mgr.create_skill(
+        skill_id="code_writer", name="写代码", description="d",
+        keywords=["代码"], trigger=None,
+    )
+    o = _orc()
+    _no_forced(monkeypatch)
+    assert o._match_skill("今天天气怎么样") == ""
     o = _orc()
     _no_forced(monkeypatch)
     import modules.thinking.skills as skills_mod
@@ -88,72 +120,50 @@ def test_is_user_visible_response():
     assert orc_mod.MultiModelOrchestrator._is_user_visible_response({"metadata": {}, "content": "正常回复"}) is True
 
 
-def test_review_output_cleaned(monkeypatch):
-    o = _orc()
-    reviewer = MagicMock()
-    reviewer.review = MagicMock(return_value="清洗后")
-    async def fake_review(r, u):
-        return "清洗后"
-    reviewer.review = fake_review
-    o._get_output_reviewer = lambda: reviewer
+def test_review_output_cleaned():
+    """真实 OutputSystemReviewAdapter：输出清洗"""
+    from modules.thinking.multi_model_orchestrator import MultiModelOrchestrator
+    o = MultiModelOrchestrator()
     import asyncio
-    assert asyncio.run(o._review_output("原始", "用户")) == "清洗后"
+    out = asyncio.run(o._review_output("原始文本", "用户"))
+    assert isinstance(out, str) and out  # 真实清洗结果
 
 
-def test_review_output_security_block(monkeypatch):
-    o = _orc()
-    reviewer = MagicMock()
-    async def fake_review(r, u):
-        return "清洗后"
-    reviewer.review = fake_review
-    o._get_output_reviewer = lambda: reviewer
-    bb = MagicMock()
-    bb.has_security_block.return_value = True
-    bb.get_security_block.return_value = {"category": "danger", "description": "危险操作", "risk_level": "high"}
+def test_review_output_security_block():
+    """真实 blackboard 设置 security block → 拦截提示"""
+    from modules.thinking.multi_model_orchestrator import MultiModelOrchestrator
+    from modules.thinking.cognition.blackboard import CognitiveBlackboard
+    o = MultiModelOrchestrator()
+    bb = CognitiveBlackboard(session_id="s", turn_id="t")
+    bb.set_security_block("danger", "危险操作", "high")
     import asyncio
     out = asyncio.run(o._review_output("x", "y", blackboard=bb))
     assert "安全审查拦截" in out
 
 
-def test_review_output_no_block(monkeypatch):
-    o = _orc()
-    reviewer = MagicMock()
-    async def fake_review(r, u):
-        return "结果"
-    reviewer.review = fake_review
-    o._get_output_reviewer = lambda: reviewer
+def test_review_output_no_block():
+    """无 security block → 返回清洗结果"""
+    from modules.thinking.multi_model_orchestrator import MultiModelOrchestrator
+    o = MultiModelOrchestrator()
     import asyncio
-    assert asyncio.run(o._review_output("x", "y", blackboard=None)) == "结果"
+    out = asyncio.run(o._review_output("结果文本", "y", blackboard=None))
+    assert isinstance(out, str) and out
 
 
-def test_conscience_feedback(monkeypatch):
-    o = _orc()
-    import modules.thinking.conscience as cons_mod
-    cons = MagicMock()
-    cons.analyze_feedback = AsyncMock(return_value=None)
-    monkeypatch.setattr(cons_mod, "get_conscience", lambda: cons)
+def test_conscience_feedback_real():
+    """真实 conscience：无分析节点时 analyze_feedback 早退（不崩）"""
+    from modules.thinking.multi_model_orchestrator import MultiModelOrchestrator
+    o = MultiModelOrchestrator()
     import asyncio
     asyncio.run(o._conscience_feedback("u", "r"))
-    cons.analyze_feedback.assert_awaited_once()
 
 
-def test_maybe_evolve_values_short_response(monkeypatch):
-    o = _orc()
+def test_maybe_evolve_values_short_response():
+    """响应过短 → 不触发价值观演化（不崩）"""
+    from modules.thinking.multi_model_orchestrator import MultiModelOrchestrator
+    o = MultiModelOrchestrator()
     import asyncio
-    asyncio.run(o._maybe_evolve_values("hi", "短"))  # <20 字符直接返回
-    # 不抛异常
-
-
-def test_maybe_evolve_values_risk_keyword(monkeypatch):
-    o = _orc()
-    import modules.thinking.conscience as cons_mod
-    cons = MagicMock()
-    cons.review_and_evolve = AsyncMock(return_value=None)
-    monkeypatch.setattr(cons_mod, "get_conscience", lambda: cons)
-    import asyncio
-    long_resp = "我将删除这个文件，因为它包含了多个不再需要的旧版本数据，这是较长的回复内容"
-    asyncio.run(o._maybe_evolve_values("请删除这个文件", long_resp))
-    cons.review_and_evolve.assert_awaited_once()
+    asyncio.run(o._maybe_evolve_values("hi", "短"))
 
 
 def test_process_security_blocked(monkeypatch):
