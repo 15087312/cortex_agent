@@ -561,3 +561,31 @@ API Key 明存 localStorage → 改内存；静默 catch → 各调用处加错�
 2. 审计配置类按钮必须**同时扫大/小写 key**，前端 CK 表常混用；
 3. 运行时实测优先用**后端真实响应 + 临时数据清理**，浏览器全量点击易受环境干扰，evaluate_script 是可靠的端到端手段；
 4. 启动测试后端要脱离会话（`start_new_session=True`），否则进程被清理；开发端口可能被其他应用占用，先 `lsof -i` 确认。
+
+
+## 23. "点详情没反应"的两种根因：DOM 位置 + 构建失败（前端）
+
+**现象：** 仪表盘 API 请求日志点「详情」按钮，页面纹丝不动，用户以为按钮失效。
+
+**根因 1（主因）：详情面板渲染在视口外**
+- `API_PAGE = 50`——日志表格每页 50 行，`dash-detail` 详情面板在表格**之后**渲染；
+- 点击按钮只设置 `apiDetail.value`，**没有任何滚动逻辑**——面板出现在页面底部视口之外，用户看不到任何变化；
+- 浏览器实测（evaluate_script）：点击后 `dash-detail` 确实出现，但 `rect.top=3736 > viewport 2029`，且 `scrollY=0`——功能在但不可见。
+
+**根因 2（隐蔽炸弹）：Settings.vue 重复 class 属性导致 vite build 失败**
+- `<div class="setting-ctl" class="ctl-flex">`——同一元素两个 class 属性，Vue 编译器直接报 `Duplicate attribute`；
+- 该错误已提交进 HEAD（共 4 处），**任何 `vite build` 都会失败**→ dist 无法更新，用户 8765 永远加载旧版；
+- 排查链：build 失败 → 定位 Settings.vue:428 → 全项目扫描 `class="..." class=` 找出全部 4 处。
+
+**修复：**
+1. `Dashboard.vue`：`openApiDetail` 里 `nextTick` + `scrollIntoView({behavior:'smooth', block:'start'})` 滚动到面板（注意滚动容器是 `.page-body`，不是 window）；
+2. `Settings.vue`：4 处 `class="setting-ctl" class="ctl-flex"` → `class="setting-ctl ctl-flex"`；
+3. `api/main.py`：GET/DELETE 请求无 body，改为记录 `?query` 到 `request_body`（否则 GET 详情恒为「无记录」）。
+
+**验证：** 浏览器实测点击后 `rect.top=1712 < viewport 2029` → 面板可见 ✓；GET 日志详情显示 `?limit=3` ✓；相关测试 33 项全过。
+
+**经验：**
+1. **"点按钮没反应"先查 DOM 位置/可见性**，再怀疑事件绑定——面板渲染到视口外是最常见的假象；
+2. **`vite build` 失败 = 用户永远在用旧版前端**——任何部署前先跑一次 build，CI/提交流程应包含构建校验；
+3. 排查重复属性等模板错误，用 grep 全项目扫描（`class="[^"]*" class=`）一次抓全；
+4. SPA 产物：index.html 必须 no-cache（server.py 已做），带 hash 资源可 immutable；但**已打开的页面不会自动刷新**，升级后需告知用户刷新/重启窗口。

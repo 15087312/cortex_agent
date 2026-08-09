@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { endpoints } from '@/api.js'
 import Icon from '@/components/Icon.vue'
@@ -102,7 +102,14 @@ function apiReqPrev() { if (apiReqPage.value > 0) { apiReqPage.value -= 1; loadA
 
 // ── API 请求详情（参数 + 返回值）──
 const apiDetail = ref(null)
-function openApiDetail(r) { apiDetail.value = r }
+function openApiDetail(r) {
+  apiDetail.value = r
+  // 详情面板渲染在 50 行日志表格之后——不滚动用户根本看不到（"点了没反应"的根因）
+  nextTick(() => {
+    const el = document.querySelector('.dash-detail')
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  })
+}
 function closeApiDetail() { apiDetail.value = null }
 function formatBody(s) {
   if (!s) return '（无记录）'

@@ -147,14 +147,16 @@ class Conscience:
 
             # 使用 EventRetrieval 的完整评分管道
             loop = asyncio.get_event_loop()
+            from modules.attention import get_recall_max_results
+            max_results = get_recall_max_results(user_input)
             if loop.is_running():
                 events = asyncio.run_coroutine_threadsafe(
-                    retrieval.retrieve(user_input, max_results=10, threshold=0.0, owner_id=owner_id),
+                    retrieval.retrieve(user_input, max_results=max_results, threshold=0.0, owner_id=owner_id),
                     loop,
                 ).result(timeout=10)
             else:
                 events = loop.run_until_complete(
-                    retrieval.retrieve(user_input, max_results=10, threshold=0.0, owner_id=owner_id)
+                    retrieval.retrieve(user_input, max_results=max_results, threshold=0.0, owner_id=owner_id)
                 )
 
             if not events:

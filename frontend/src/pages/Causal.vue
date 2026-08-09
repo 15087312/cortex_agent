@@ -194,8 +194,8 @@ function nodeBadgeClass(type) {
   <div>
     <div class="page-header">
       <h2>因果图</h2>
-      <div style="display:flex;gap:8px;align-items:center">
-        <span v-if="zoom !== 1" style="font-size:12px;color:var(--text-muted)">{{ Math.round(zoom * 100) }}%</span>
+      <div class="causal-toolbar">
+        <span v-if="zoom !== 1" class="causal-zoom-text">{{ Math.round(zoom * 100) }}%</span>
         <button class="btn btn-sm" @click="resetView" v-if="zoom !== 1">重置视图</button>
         <button class="btn btn-sm" @click="loadData"><Icon name="refresh" :size="14" /> 刷新</button>
       </div>
@@ -209,10 +209,10 @@ function nodeBadgeClass(type) {
       </div>
 
       <!-- 因果关系图 -->
-      <div class="card" style="margin-top:12px">
-        <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+      <div class="card dash-mt">
+        <div class="card-header card-header-flex">
           <span>因果图谱（前 {{ displayNodes.length }} 节点 · 点击节点查看因果链）</span>
-          <span v-if="hoveredNode" style="font-size:12px;color:var(--text-muted)">
+          <span v-if="hoveredNode" class="muted-sm">
             {{ displayNodes.find(n => n.id === hoveredNode)?.label }} · {{ connectedNodeIds.size - 1 }} 个关联
           </span>
         </div>
@@ -302,20 +302,20 @@ function nodeBadgeClass(type) {
               >{{ node.label.slice(0, 8) }}</text>
             </g>
           </svg>
-          <div v-else style="text-align:center;padding:40px;color:var(--text-muted)">因果数据将在此显示</div>
+          <div v-else class="causal-empty-lg">因果数据将在此显示</div>
         </div>
         <!-- 图例 -->
         <div class="graph-legend">
-          <span class="legend-item"><span class="legend-dot" style="background:#22C55E"></span>root</span>
-          <span class="legend-item"><span class="legend-dot" style="background:#F59E0B"></span>cause</span>
-          <span class="legend-item"><span class="legend-dot" style="background:#3B82F6"></span>effect</span>
+          <span class="legend-item"><span class="legend-dot legend-root"></span>root</span>
+          <span class="legend-item"><span class="legend-dot legend-cause"></span>cause</span>
+          <span class="legend-item"><span class="legend-dot legend-effect"></span>effect</span>
           <span class="legend-sep"></span>
           <span class="legend-hint">滚轮缩放 · 拖拽平移 · 点击节点</span>
         </div>
       </div>
 
       <!-- 因果节点表 -->
-      <div class="card" style="margin-top:12px">
+      <div class="card dash-mt">
         <div class="card-header">因果节点</div>
         <table class="data-table" v-if="nodes.length > 0">
           <thead><tr><th>标签</th><th>类型</th><th>置信度</th><th>事件数</th><th>操作</th></tr></thead>
@@ -332,20 +332,20 @@ function nodeBadgeClass(type) {
                 <span class="confidence-bar">
                   <span class="confidence-fill" :style="{ width: (node.confidence||0)*100+'%', background: nodeColor(node.type) }"></span>
                 </span>
-                <span style="font-size:12px;margin-left:6px;color:var(--text-muted)">{{ (node.confidence||0).toFixed(2) }}</span>
+                <span class="conf-text">{{ (node.confidence||0).toFixed(2) }}</span>
               </td>
               <td>{{ node.event_count||0 }}</td>
               <td><button class="btn btn-sm" @click="handleShowTree(node.id)" :disabled="treeLoading">因果链</button></td>
             </tr>
           </tbody>
         </table>
-        <div v-else class="empty-state" style="padding:40px"><span class="empty-icon"><Icon name="network" :size="20" /></span><p class="empty-text">因果数据将在此显示</p></div>
+        <div v-else class="empty-state causal-empty-lg2"><span class="empty-icon"><Icon name="network" :size="20" /></span><p class="empty-text">因果数据将在此显示</p></div>
       </div>
 
       <!-- 因果链详情 -->
-      <div v-if="detail" class="card chain-card" style="margin-top:12px">
+      <div v-if="detail" class="card chain-card dash-mt">
         <div class="card-header">
-          <span style="display:flex;align-items:center;gap:8px">
+          <span class="chain-anchor-info">
             <Icon name="network" :size="16" />
             因果链: {{ tree?.anchor?.label || detail.node?.label }}
           </span>
@@ -358,9 +358,9 @@ function nodeBadgeClass(type) {
             <div class="chain-anchor-dot" :style="{ background: nodeColor(detail.node?.type) }"></div>
             <div class="chain-anchor-info">
               <div class="chain-anchor-label">{{ detail.node?.label }}</div>
-              <div style="display:flex;gap:8px;align-items:center;margin-top:4px">
+              <div class="chain-meta">
                 <span class="badge" :class="nodeBadgeClass(detail.node?.type)">{{ detail.node?.type }}</span>
-                <span v-if="detail.node?.confidence" style="font-size:12px;color:var(--text-muted)">置信度 {{ (detail.node?.confidence||0).toFixed(2) }}</span>
+                <span v-if="detail.node?.confidence" class="muted-sm">置信度 {{ (detail.node?.confidence||0).toFixed(2) }}</span>
               </div>
             </div>
           </div>
@@ -406,7 +406,7 @@ function nodeBadgeClass(type) {
           </div>
 
           <!-- 空状态 -->
-          <div v-if="!detail.predecessors?.length && !detail.successors?.length" style="padding:16px;text-align:center;color:var(--text-muted);font-size:13px">
+          <div v-if="!detail.predecessors?.length && !detail.successors?.length" class="chain-empty">
             该节点暂无因果关系数据
           </div>
         </div>
@@ -521,4 +521,20 @@ function nodeBadgeClass(type) {
   font-size: 10px; opacity: 0.6; margin-left: 4px;
   font-family: var(--font-mono);
 }
+
+/* Inline style replacements */
+.causal-toolbar { display: flex; gap: 8px; align-items: center; }
+.causal-zoom-text { font-size: 12px; color: var(--text-muted); }
+.dash-mt { margin-top: 12px; }
+.card-header-flex { display: flex; justify-content: space-between; align-items: center; }
+.muted-sm { font-size: 12px; color: var(--text-muted); }
+.causal-empty-lg { text-align: center; padding: 40px; color: var(--text-muted); }
+.legend-root { background: var(--success); }
+.legend-cause { background: var(--warning); }
+.legend-effect { background: var(--info); }
+.conf-text { font-size: 12px; margin-left: 6px; color: var(--text-muted); }
+.causal-empty-lg2 { padding: 40px; }
+.chain-anchor-info { display: flex; align-items: center; gap: 8px; }
+.chain-meta { display: flex; gap: 8px; align-items: center; margin-top: 4px; }
+.chain-empty { padding: 16px; text-align: center; color: var(--text-muted); font-size: 13px; }
 </style>

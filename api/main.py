@@ -514,6 +514,11 @@ async def api_request_log_middleware(request: Request, call_next):
             req_body = _truncate_body(
                 _sanitize_body((await request.body()).decode("utf-8", errors="replace")), _API_LOG_MAX_REQ_BODY
             )
+        # GET/DELETE 无 body：记录 query 参数，让详情有内容可看（否则恒为“无记录”）
+        elif request.url.query:
+            req_body = _truncate_body(
+                _sanitize_body("?" + request.url.query), _API_LOG_MAX_REQ_BODY
+            )
     except Exception:
         pass
 

@@ -27,32 +27,31 @@ async function stop() { try { await endpoints.stopPerception(); toast.show('已�
     <div class="page-header"><h2>感知系统</h2></div>
     <div class="page-body">
       <!-- 运行状态 + 控制 -->
-      <div class="stat-grid" style="grid-template-columns:repeat(4,1fr)">
+      <div class="stat-grid stat-grid-4">
         <div class="stat-card" :class="{ 'perception-running': running }"><div class="stat-icon"><Icon :name="running ? 'circle' : 'stop'" :size="18" /></div><div class="stat-value">{{ running ? '运行中' : '待启动' }}</div><div class="stat-label">状态</div></div>
         <div class="stat-card"><div class="stat-icon"><Icon name="monitor" :size="18" /></div><div class="stat-value">{{ status.platform || '检测中...' }}</div><div class="stat-label">平台</div></div>
         <div class="stat-card"><div class="stat-icon"><Icon name="mic" :size="18" /></div><div class="stat-value">{{ status.voice_available ? '可用' : '不可用' }}</div><div class="stat-label">语音</div></div>
-        <div class="stat-card"><div class="stat-icon" style="color:#d29922"><Icon name="clock" :size="18" /></div><div class="stat-value">{{ ws.recent_events_count ?? 0 }}</div><div class="stat-label">最近事件</div></div>
+        <div class="stat-card"><div class="stat-icon stat-icon-yellow"><Icon name="clock" :size="18" /></div><div class="stat-value">{{ ws.recent_events_count ?? 0 }}</div><div class="stat-label">最近事件</div></div>
       </div>
 
-      <div style="display:flex;gap:8px;margin-top:12px">
+      <div class="perception-toolbar">
         <button class="btn btn-primary btn-sm" @click="start"><Icon name="play" :size="14" /> 启动</button>
         <button class="btn btn-sm" @click="stop"><Icon name="stop" :size="14" /> 停止</button>
       </div>
 
       <!-- 当前环境（AI 在看什么） -->
-      <div class="card" style="margin-top:12px">
+      <div class="card dash-mt">
         <div class="card-header">当前环境</div>
         <div class="setting-row"><div class="lbl"><div class="t">当前应用</div></div><div class="setting-ctl"><b>{{ ws.active_app || '—' }}</b></div></div>
-        <div class="setting-row"><div class="lbl"><div class="t">当前窗口</div></div><div class="setting-ctl"><span style="color:var(--text-muted);word-break:break-all;text-align:right">{{ ws.active_window || '—' }}</span></div></div>
-        <div class="setting-row" v-if="ws.screen_text"><div class="lbl"><div class="t">屏幕内容</div></div><div class="setting-ctl"><span style="color:var(--text-muted);font-size:12px;white-space:pre-wrap;word-break:break-all;text-align:right;max-width:70%">{{ ws.screen_text }}</span></div></div>
-        <div class="setting-row"><div class="lbl"><div class="t">感知统计</div></div><div class="setting-ctl"><span style="color:var(--text-muted)">OCR {{ ws.recent_ocr_count ?? 0 }} · UI 元素 {{ ws.ui_elements_count ?? 0 }}</span></div></div>
+        <div class="setting-row"><div class="lbl"><div class="t">当前窗口</div></div><div class="setting-ctl"><span class="perception-window">{{ ws.active_window || '—' }}</span></div></div>
+        <div class="setting-row" v-if="ws.screen_text"><div class="lbl"><div class="t">屏幕内容</div></div><div class="setting-ctl"><span class="perception-screen">{{ ws.screen_text }}</span></div></div>
+        <div class="setting-row"><div class="lbl"><div class="t">感知统计</div></div><div class="setting-ctl"><span class="perception-stats">OCR {{ ws.recent_ocr_count ?? 0 }} · UI 元素 {{ ws.ui_elements_count ?? 0 }}</span></div></div>
       </div>
 
-      <!-- 检测器流水线 -->
-      <div class="card" style="margin-top:12px">
+      <div class="card dash-mt">
         <div class="card-header">检测器 ({{ detectors.length }})</div>
-        <div v-if="detectors.length === 0" class="empty-state" style="padding:24px"><p class="empty-text">流水线信息将在此显示</p></div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px">
+        <div v-if="detectors.length === 0" class="empty-state perception-empty"><p class="empty-text">流水线信息将在此显示</p></div>
+        <div class="detector-grid">
           <div v-for="d in detectors" :key="d.step" class="pipeline-card" :class="{ ok: d.ok }">
             <div class="step-dot" :class="{ done: d.ok }"></div>
             <span>{{ d.step }}</span>
@@ -63,3 +62,15 @@ async function stop() { try { await endpoints.stopPerception(); toast.show('已�
     </div>
   </div>
 </template>
+
+<style scoped>
+.stat-grid-4 { grid-template-columns: repeat(4, 1fr); }
+.stat-icon-yellow { color: var(--warning); }
+.perception-toolbar { display: flex; gap: 8px; margin-top: 12px; }
+.dash-mt { margin-top: 12px; }
+.perception-window { color: var(--text-muted); word-break: break-all; text-align: right; }
+.perception-screen { color: var(--text-muted); font-size: 12px; white-space: pre-wrap; word-break: break-all; text-align: right; max-width: 70%; }
+.perception-stats { color: var(--text-muted); }
+.perception-empty { padding: 24px; }
+.detector-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+</style>

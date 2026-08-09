@@ -425,7 +425,7 @@ onMounted(async () => {
             </div>
             <div class="setting-row">
               <div class="lbl"><div class="t">定点发送</div><div class="d">到设定时间 ±误差窗口内触发一次搭话</div></div>
-              <div class="setting-ctl" class="ctl-flex">
+              <div class="setting-ctl ctl-flex">
                 <label class="toggle-switch"><input type="checkbox" v-model="globalDefault.scheduleOn" /><span class="toggle-slider"></span></label>
                 <span class="text-muted">时间</span>
                 <input class="input" v-model="globalDefault.scheduleTime" style="width:80px" placeholder="14:00" :disabled="!globalDefault.scheduleOn" title="触发时刻，24小时制 HH:MM，如 14:00" />
@@ -436,7 +436,7 @@ onMounted(async () => {
             </div>
             <div class="setting-row">
               <div class="lbl"><div class="t">屏幕触发</div><div class="d">屏幕变化比例达到阈值、且随机概率命中时触发</div></div>
-              <div class="setting-ctl" class="ctl-flex">
+              <div class="setting-ctl ctl-flex">
                 <label class="toggle-switch"><input type="checkbox" v-model="globalDefault.screenOn" /><span class="toggle-slider"></span></label>
                 <input class="input" type="number" v-model.number="globalDefault.screenRatio" style="width:50px" :disabled="!globalDefault.screenOn" title="变化阈值（0-1）：屏幕变化比例达到该值才可能触发" />
                 <span class="text-muted">阈值</span>
@@ -450,7 +450,7 @@ onMounted(async () => {
             </div>
             <div class="setting-row">
               <div class="lbl"><div class="t">空闲触发</div><div class="d">用户空闲超过设定时长、且随机概率命中时触发</div></div>
-              <div class="setting-ctl" class="ctl-flex">
+              <div class="setting-ctl ctl-flex">
                 <label class="toggle-switch"><input type="checkbox" v-model="globalDefault.idleOn" /><span class="toggle-slider"></span></label>
                 <input class="input" type="number" v-model.number="globalDefault.idleMinutes" style="width:50px" :disabled="!globalDefault.idleOn" title="空闲时长（分钟）：用户无操作达到该时长才可能触发" />
                 <span class="text-muted">空闲</span>
@@ -462,7 +462,7 @@ onMounted(async () => {
             </div>
             <div class="setting-row">
               <div class="lbl"><div class="t">时段触发</div><div class="d">处于设定时段内、且随机概率命中时触发；跨午夜（如 22:00-02:00）也支持</div></div>
-              <div class="setting-ctl" class="ctl-flex">
+              <div class="setting-ctl ctl-flex">
                 <label class="toggle-switch"><input type="checkbox" v-model="globalDefault.windowsOn" /><span class="toggle-slider"></span></label>
                 <input class="input" v-model="globalDefault.timeWindowsText" style="flex:1;min-width:220px" placeholder="09:00-12:00@0.5,14:00-18:00@0.8" :disabled="!globalDefault.windowsOn" title="格式：开始-结束@概率，多个用逗号分隔。概率省略默认 1.0" />
               </div>

@@ -110,15 +110,15 @@ function starRating(v) { const s = Math.round(v * 5); return '★'.repeat(s) + '
         <template #actions><button class="btn" @click="showCreate = false">取消</button><button class="btn btn-primary btn-sm" @click="handleCreate">创建</button></template>
       </Modal>
       <Modal v-if="detailEvent" title="记忆详情" @close="detailEvent = null">
-        <table style="width:100%;font-size:13px;line-height:1.8">
+        <table class="detail-table">
           <tbody>
-            <tr><td style="width:80px;color:var(--text-muted)">ID</td><td>{{ detailEvent.id }}</td></tr>
-            <tr><td style="width:80px;color:var(--text-muted)">类型</td><td>{{ detailEvent.type }}</td></tr>
-            <tr><td style="width:80px;color:var(--text-muted)">事实</td><td>{{ detailEvent.fact || '-' }}</td></tr>
-            <tr><td style="width:80px;color:var(--text-muted)">思考</td><td>{{ detailEvent.thought || '-' }}</td></tr>
-            <tr><td style="width:80px;color:var(--text-muted)">重要性</td><td>{{ (detailEvent.importance||0).toFixed(3) }}</td></tr>
-            <tr><td style="width:80px;color:var(--text-muted)">关键词</td><td><span v-for="k in (detailEvent.keywords || [])" :key="k" class="badge badge-gray" style="margin-right:4px">{{ k }}</span></td></tr>
-            <tr><td style="width:80px;color:var(--text-muted)">时间</td><td>{{ formatTime(detailEvent.time) }}</td></tr>
+            <tr><td class="detail-label-cell">ID</td><td>{{ detailEvent.id }}</td></tr>
+            <tr><td class="detail-label-cell">类型</td><td>{{ detailEvent.type }}</td></tr>
+            <tr><td class="detail-label-cell">事实</td><td>{{ detailEvent.fact || '-' }}</td></tr>
+            <tr><td class="detail-label-cell">思考</td><td>{{ detailEvent.thought || '-' }}</td></tr>
+            <tr><td class="detail-label-cell">重要性</td><td>{{ (detailEvent.importance||0).toFixed(3) }}</td></tr>
+            <tr><td class="detail-label-cell">关键词</td><td><span v-for="k in (detailEvent.keywords || [])" :key="k" class="badge badge-gray keyword-tag">{{ k }}</span></td></tr>
+            <tr><td class="detail-label-cell">时间</td><td>{{ formatTime(detailEvent.time) }}</td></tr>
           </tbody>
         </table>
         <template #actions><button class="btn" @click="detailEvent = null">关闭</button></template>

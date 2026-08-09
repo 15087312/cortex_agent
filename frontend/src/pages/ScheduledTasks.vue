@@ -114,15 +114,15 @@ onMounted(loadSessions)
         </select>
       </div>
 
-      <div class="card" style="margin-top:12px" v-if="selected">
-        <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+      <div class="card dash-mt" v-if="selected">
+        <div class="card-header card-header-flex">
           <span>定时任务（到点调用与主动搭话相同的大模型逻辑 → 消息推送）</span>
           <button class="btn btn-sm btn-primary" @click="addTask"><Icon name="plus" :size="13" /> 添加任务</button>
         </div>
 
         <div v-if="tasks.length">
-          <div v-for="(task, i) in tasks" :key="task.id" style="padding:12px 0;border-bottom:1px solid var(--border)">
-            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <div v-for="(task, i) in tasks" :key="task.id" class="task-row">
+            <div class="task-controls">
               <select v-model="task.type" class="input" style="width:110px" @change="onTypeChange(task)">
                 <option v-for="t in TASK_TYPES" :key="t.value" :value="t.value">{{ t.label }}</option>
               </select>
@@ -132,7 +132,7 @@ onMounted(loadSessions)
               </template>
               <template v-else-if="task.type === 'interval'">
                 <input v-model.number="task.every_minutes" type="number" min="1" class="input" style="width:80px" @change="task.schedule = { kind: 'interval', every_minutes: task.every_minutes }" />
-                <span style="font-size:12px;color:var(--text-muted)">分钟</span>
+                <span class="task-hint">分钟</span>
               </template>
               <template v-else-if="task.type === 'once'">
                 <input v-model="task.at" class="input" style="width:90px" placeholder="HH:MM" @change="task.schedule = { kind: 'once', at: task.at }" />
@@ -144,7 +144,7 @@ onMounted(loadSessions)
               <label class="toggle-switch" title="启用">
                 <input type="checkbox" v-model="task.enabled" /><span class="toggle-slider"></span>
               </label>
-              <span style="font-size:12px;color:var(--text-muted)">启用</span>
+              <span class="task-hint">启用</span>
               <select v-model="task.action" class="input" style="width:120px" title="触发的逻辑">
                 <option value="chat">chat（大模型）</option>
               </select>
@@ -157,15 +157,26 @@ onMounted(loadSessions)
                 {{ statusBadge(task.last_status).label }}{{ task.last_run ? ' · ' + task.last_run : '' }}
               </span>
             </div>
-            <textarea v-model="task.prompt" rows="2" class="input" style="margin-top:8px;font-size:13px" placeholder="可选提示词（留空用默认提醒语）"></textarea>
+            <textarea v-model="task.prompt" rows="2" class="input task-textarea" placeholder="可选提示词（留空用默认提醒语）"></textarea>
           </div>
         </div>
-        <div v-else style="text-align:center;padding:24px;color:var(--text-muted)">暂无定时任务，点击"添加任务"创建</div>
+        <div v-else class="task-empty">暂无定时任务，点击"添加任务"创建</div>
 
-        <div style="text-align:right;padding-top:12px">
+        <div class="task-save">
           <button class="btn btn-sm btn-primary" :disabled="saving" @click="saveTasks">{{ saving ? '保存中...' : '保存任务' }}</button>
         </div>
       </div>
     </div>
   </div>
 </template>
+
+<style scoped>
+.dash-mt { margin-top: 12px; }
+.card-header-flex { display: flex; justify-content: space-between; align-items: center; }
+.task-row { padding: 12px 0; border-bottom: 1px solid var(--border); }
+.task-controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.task-hint { font-size: 12px; color: var(--text-muted); }
+.task-textarea { margin-top: 8px; font-size: 13px; }
+.task-empty { text-align: center; padding: 24px; color: var(--text-muted); }
+.task-save { text-align: right; padding-top: 12px; }
+</style>

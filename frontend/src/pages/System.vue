@@ -34,14 +34,14 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
       <button class="btn btn-sm" @click="loadData"><Icon name="refresh" :size="14" /> 刷新</button>
     </div>
     <div class="page-body">
-      <div class="stat-grid" style="grid-template-columns:repeat(4,1fr)">
-        <div class="stat-card"><div class="stat-icon" style="background:rgba(88,166,255,.15);color:#58a6ff"><Icon name="monitor" :size="18" /></div><div class="stat-value" style="font-size:16px">{{ info.name || 'Cortex Agent' }}</div><div class="stat-label">系统</div></div>
-        <div class="stat-card"><div class="stat-icon" style="background:rgba(210,153,34,.15);color:#d29922"><Icon name="tag" :size="18" /></div><div class="stat-value">{{ info.version || '-' }}</div><div class="stat-label">版本</div></div>
+      <div class="stat-grid stat-grid-4">
+        <div class="stat-card"><div class="stat-icon stat-icon-blue"><Icon name="monitor" :size="18" /></div><div class="stat-value stat-value-lg">{{ info.name || 'Cortex Agent' }}</div><div class="stat-label">系统</div></div>
+        <div class="stat-card"><div class="stat-icon stat-icon-yellow"><Icon name="tag" :size="18" /></div><div class="stat-value">{{ info.version || '-' }}</div><div class="stat-label">版本</div></div>
         <div class="stat-card"><div class="stat-icon" :style="health.status==='healthy' ? 'background:rgba(63,185,80,.15);color:#3fb950' : 'background:rgba(248,81,73,.15);color:#f85149'"><Icon :name="health.status==='healthy' ? 'check' : 'alert'" :size="18" /></div><div class="stat-value">{{ health.status==='healthy' ? '健康' : health.status || '-' }}</div><div class="stat-label">状态</div></div>
-        <div class="stat-card"><div class="stat-icon" style="background:rgba(163,113,247,.15);color:#a371f7"><Icon name="brain" :size="18" /></div><div class="stat-value">{{ think.status || '-' }}</div><div class="stat-label">思维</div></div>
+        <div class="stat-card"><div class="stat-icon stat-icon-purple"><Icon name="brain" :size="18" /></div><div class="stat-value">{{ think.status || '-' }}</div><div class="stat-label">思维</div></div>
       </div>
 
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
+      <div class="dash-grid-2">
         <div class="card"><div class="card-header"><Icon name="brain" :size="15" /> 思维模块</div>
           <div class="system-info">
             <div class="system-info-row"><span class="info-label">状态</span><span class="info-value"><span class="badge" :class="think.status==='healthy' ? 'badge-green' : 'badge-yellow'">{{ think.status || '-' }}</span></span></div>
@@ -58,7 +58,7 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
           </div>
         </div>
         <div class="card"><div class="card-header"><Icon name="search" :size="15" /> 健康检查</div>
-          <div v-if="!health.checks || Object.keys(health.checks).length === 0" class="system-info"><div class="system-info-row"><span class="info-value" style="color:var(--text-muted)">暂无</span></div></div>
+          <div v-if="!health.checks || Object.keys(health.checks).length === 0" class="system-info"><div class="system-info-row"><span class="info-value muted-text">暂无</span></div></div>
           <div v-else class="system-info"><div class="system-info-row" v-for="(s, n) in health.checks" :key="n"><span class="info-label">{{ n }}</span><span class="info-value"><span class="badge" :class="s === 'ok' ? 'badge-green' : 'badge-red'">{{ s }}</span></span></div></div>
         </div>
         <div class="card"><div class="card-header"><Icon name="eye" :size="15" /> 注意力</div>
@@ -68,3 +68,13 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
     </div>
   </div>
 </template>
+
+<style scoped>
+.stat-grid-4 { grid-template-columns: repeat(4, 1fr); }
+.stat-icon-blue { background: rgba(88,166,255,.15); color: #58a6ff; }
+.stat-icon-yellow { background: rgba(210,153,34,.15); color: var(--warning); }
+.stat-icon-purple { background: rgba(163,113,247,.15); color: #a371f7; }
+.stat-value-lg { font-size: 16px; }
+.dash-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+.muted-text { color: var(--text-muted); }
+</style>

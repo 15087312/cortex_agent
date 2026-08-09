@@ -193,3 +193,29 @@ class AttentionAnalyzer:
 def create_attention_analyzer() -> AttentionAnalyzer:
     """创建注意力分析器（工厂函数）"""
     return AttentionAnalyzer()
+
+
+def get_recall_max_results(user_input: str) -> int:
+    """根据用户输入的重要性动态计算记忆检索量
+
+    返回：
+    - 低重要性（<0.4）: ATTENTION_MAX_RECALL_LOW (默认 5)
+    - 中重要性（0.4-0.7）: ATTENTION_MAX_RECALL_MEDIUM (默认 10)
+    - 高重要性（>=0.7）: ATTENTION_MAX_RECALL_HIGH (默认 20)
+    """
+    from config.settings import settings
+
+    try:
+        analyzer = create_attention_analyzer()
+        result = analyzer.analyze(user_input)
+        score = result.importance_score
+
+        if score >= 0.7:
+            return int(getattr(settings, "ATTENTION_MAX_RECALL_HIGH", 20))
+        elif score >= 0.4:
+            return int(getattr(settings, "ATTENTION_MAX_RECALL_MEDIUM", 10))
+        else:
+            return int(getattr(settings, "ATTENTION_MAX_RECALL_LOW", 5))
+    except Exception as e:
+        logger.debug(f"[Attention] 动态计算检索量失败，使用默认值: {e}")
+        return 10  # 降级到默认值
