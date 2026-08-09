@@ -61,23 +61,29 @@ def _make_store():
     return store, tmpdir
 
 
-def _mock_embedder(dim=768):
-    """Mock EmbeddingEngine，返回确定性向量"""
-    mock = MagicMock()
-    mock.dim = dim
-    mock._loaded = True
+class _DeterministicEmbedder:
+    """真实确定性嵌入器（md5 → 定长向量），非 mock——同输入恒同输出，可复现"""
 
-    def _embed(text):
+    def __init__(self, dim=768):
+        self.dim = dim
+        self._loaded = True
+        self._attempted = True
+
+    def embed(self, text):
         import hashlib
         h = hashlib.md5(text.encode()).digest()
         vec = [((b - 128) / 128.0) for b in h]
-        while len(vec) < dim:
-            vec.extend(vec[:dim - len(vec)])
-        return vec[:dim]
+        while len(vec) < self.dim:
+            vec.extend(vec[:self.dim - len(vec)])
+        return vec[:self.dim]
 
-    mock.embed = _embed
-    mock.embed_batch = lambda texts: [_embed(t) for t in texts]
-    return mock
+    def embed_batch(self, texts):
+        return [self.embed(t) for t in texts]
+
+
+def _mock_embedder(dim=768):
+    """确定性嵌入器（真实实现）"""
+    return _DeterministicEmbedder(dim=dim)
 
 
 # ===========================================================================
@@ -256,7 +262,7 @@ class TestVectorSearch:
         # 隔离全局 EmbeddingEngine：禁用 save_event 自动向量化（其状态受其他测试/真实模型加载影响），
         # 否则同事件会被自动 add + 手动 add_embedding 各加一次，导致 search 返回重复 id。
         from modules.memory.embedding import EmbeddingEngine
-        _em = MagicMock()
+        _em = EmbeddingEngine()  # 真实新实例（不加载模型），仅禁自动向量化
         _em._loaded = False
         _em._attempted = True
         self._emb_patch = patch.object(EmbeddingEngine, "get_instance", return_value=_em)
@@ -790,7 +796,7 @@ class TestTimeSearch:
         self.store, self.tmpdir = _make_store()
         self.store._embedding_dim = 16
         from modules.memory.embedding import EmbeddingEngine
-        _em = MagicMock()
+        _em = EmbeddingEngine()  # 真实新实例（不加载模型），仅禁自动向量化
         _em._loaded = False
         _em._attempted = True
         self._emb_patch = patch.object(EmbeddingEngine, "get_instance", return_value=_em)
@@ -845,20 +851,14 @@ class TestTimeSearch:
         assert EventRetrieval._in_time_range("", "", "") is True
 
     def test_retrieve_time_filter(self):
-        """retrieve 带时间过滤：只返回范围内事件"""
+        """retrieve 带时间过滤：真实 store 存事件，只返回范围内事件"""
         from modules.memory.event_retrieval import EventRetrieval
-        ret = EventRetrieval.__new__(EventRetrieval)
-        ret._store = MagicMock()
-        evs = [
-            _make_event(fact="7月事件A", time="2026-07-15T10:00:00", keywords=["7月"]),
-            _make_event(fact="6月事件C", time="2026-06-20T18:00:00", keywords=["6月"]),
-        ]
-        async def fake_vector(q, top_k=15):
-            return [(e, 0.5) for e in evs]
-        ret._vector_search = fake_vector
-        ret._keyword_search = lambda kw: []
-        ret._causal_search = lambda q: []
-        r = asyncio.run(ret.retrieve("查询", max_results=5, start_time="2026-07-01"))
+        self.store.clear_all()
+        self.store.save_event(_make_event(fact="7月事件A", time="2026-07-15T10:00:00", keywords=["七月"]))
+        self.store.save_event(_make_event(fact="6月事件C", time="2026-06-20T18:00:00", keywords=["六月"]))
+        ret = EventRetrieval()  # 真实构造（__init__ 只设属性，安全）
+        ret._store = self.store
+        r = asyncio.run(ret.retrieve("七月", max_results=5, start_time="2026-07-01"))
         assert [e.fact for e in r] == ["7月事件A"]
-        r = asyncio.run(ret.retrieve("查询", max_results=5, end_time="2026-06-30"))
+        r = asyncio.run(ret.retrieve("六月", max_results=5, end_time="2026-06-30"))
         assert [e.fact for e in r] == ["6月事件C"]

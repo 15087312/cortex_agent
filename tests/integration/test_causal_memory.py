@@ -168,9 +168,7 @@ class TestDepthRecallScheduler:
         from modules.memory.depth_recall import DepthRecallScheduler
         from unittest.mock import AsyncMock, patch
         s = DepthRecallScheduler()
-        # Mock 事件召回以跳过 embedding 加载
-        with patch.object(s, '_recall_events', new_callable=AsyncMock, return_value=([], [])):
-            result = await s.deep_recall("项目延期")
+        result = await s.deep_recall("项目延期")
         # 修复后：孤立节点也返回单节点链，不再 fallback
         assert result.success is True
         assert len(result.causal_chains) >= 1
@@ -182,8 +180,7 @@ class TestDepthRecallScheduler:
         from modules.memory.depth_recall import DepthRecallScheduler
         from unittest.mock import AsyncMock, patch
         s = DepthRecallScheduler()
-        with patch.object(s, '_recall_events', new_callable=AsyncMock, return_value=([], [])):
-            result = await s.deep_recall("项目延期的原因")
+        result = await s.deep_recall("项目延期的原因")
         assert result.success is True
         assert len(result.causal_chains) >= 1
 
@@ -196,8 +193,7 @@ class TestDepthRecallScheduler:
         from modules.memory.depth_recall import DepthRecallScheduler
         from unittest.mock import AsyncMock, patch
         s = DepthRecallScheduler()
-        with patch.object(s, '_recall_events', new_callable=AsyncMock, return_value=([], [])):
-            result = await s.deep_recall("项目延期的原因")
+        result = await s.deep_recall("项目延期的原因")
         assert result.success is True
         assert len(result.causal_chains) >= 1
 
@@ -215,8 +211,7 @@ class TestDepthRecallScheduler:
         from modules.memory.depth_recall import DepthRecallScheduler
         from unittest.mock import AsyncMock, patch
         s = DepthRecallScheduler()
-        with patch.object(s, '_recall_events', new_callable=AsyncMock, return_value=([], [])):
-            result = await s.deep_recall("项目延期的根本原因", depth_level=2)
+        result = await s.deep_recall("项目延期的根本原因", depth_level=2)
         assert result.success or result.fallback  # either is acceptable
 
     @pytest.mark.asyncio
