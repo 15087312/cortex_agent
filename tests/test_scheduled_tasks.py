@@ -1,6 +1,8 @@
 """会话定时任务调度判定测试（每天/间隔/单次/cron）"""
+import asyncio
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
+from unittest.mock import MagicMock
 
 from modules.thinking.scheduled_tasks import ScheduledTaskManager
 
@@ -49,3 +51,147 @@ def test_due_dispatch():
     assert m._due("s", {"id": "t2", "schedule": {"kind": "interval", "every_minutes": 5}}, now)
     assert m._due("s", {"id": "t3", "schedule": {"kind": "once", "at": "10:31"}}, now)
     assert not m._due("s", {"id": "t4", "schedule": "bad"}, now)
+
+
+def test_due_daily_invalid_time():
+    m = ScheduledTaskManager()
+    assert m._due_daily("s", {"id": "t1"}, "abc", datetime.now()) is False
+
+
+def test_due_interval_cooldown():
+    m = ScheduledTaskManager()
+    task = {"id": "i1", "schedule": {"kind": "interval", "every_minutes": 30}}
+    assert m._due("s", task, datetime.now()) is True
+    assert m._due("s", task, datetime.now()) is False  # 冷却中
+
+
+def test_due_once_iso_datetime():
+    m = ScheduledTaskManager()
+    task = {"id": "o1"}
+    past = (datetime.now() - timedelta(minutes=5)).isoformat()
+    assert m._due_once("s", task, past, datetime.now()) is True
+    assert m._due_once("s", task, past, datetime.now()) is False  # 单次不重复
+
+
+def test_due_unknown_schedule_false():
+    m = ScheduledTaskManager()
+    assert m._due("s", {"schedule": {"kind": "weird"}}, datetime.now()) is False
+
+
+def test_fire_unknown_action():
+    m = ScheduledTaskManager()
+    result = asyncio.run(m._fire("s", {"id": "t", "action": "nope"}))
+    # 未知 action 标记 error 后返回
+    assert m._last_fired is not None
+
+
+def test_fire_success(monkeypatch):
+    m = ScheduledTaskManager()
+    calls = []
+    async def handler(sid, task):
+        calls.append((sid, task))
+    m.register_handler("my_action", handler)
+    asyncio.run(m._fire("s", {"id": "t", "action": "my_action"}))
+    assert calls == [("s", {"id": "t", "action": "my_action"})]
+
+
+def test_fire_handler_error(monkeypatch):
+    m = ScheduledTaskManager()
+    async def bad(sid, task):
+        raise RuntimeError("boom")
+    m.register_handler("bad", bad)
+    mm = MagicMock()
+    monkeypatch.setattr(m, "_mark_run", mm)
+    asyncio.run(m._fire("s", {"id": "t", "action": "bad"}))
+    mm.assert_called_once_with("s", {"id": "t", "action": "bad"}, "error")
+
+
+def test_handle_chat(monkeypatch):
+    import modules.perception.trigger as trg
+    m = ScheduledTaskManager()
+    async def fake_llm(prompt, session_id, role=None, tier="large"):
+        return "定时问候"
+    async def fake_push(sid, text):
+        assert text == "定时问候"
+    monkeypatch.setattr(trg, "call_outreach_llm", fake_llm)
+    monkeypatch.setattr(m, "_push", fake_push)
+    asyncio.run(m._handle_chat("s1", {"prompt": "问候"}))
+
+
+def test_handle_chat_empty(monkeypatch):
+    import modules.perception.trigger as trg
+    m = ScheduledTaskManager()
+    async def fake_llm(prompt, session_id, role=None, tier="large"):
+        return ""
+    monkeypatch.setattr(trg, "call_outreach_llm", fake_llm)
+    pushed = []
+    monkeypatch.setattr(m, "_push", lambda sid, text: pushed.append(text))
+    asyncio.run(m._handle_chat("s1", {}))
+    assert pushed == []
+
+
+def test_mark_run(monkeypatch):
+    import modules.database.session_repo as sr
+    repo = MagicMock()
+    repo.get_scheduled_tasks.return_value = {"tasks": [{"id": "t1", "last_run": None, "last_status": None}]}
+    monkeypatch.setattr(sr, "get_session_repo", lambda: repo)
+    m = ScheduledTaskManager()
+    m._mark_run("s1", {"id": "t1"}, "success")
+    assert repo.set_scheduled_tasks.called
+    cfg = repo.set_scheduled_tasks.call_args[0][1]
+    assert cfg["tasks"][0]["last_status"] == "success"
+
+
+def test_mark_run_failure(monkeypatch):
+    import modules.database.session_repo as sr
+    repo = MagicMock()
+    repo.get_scheduled_tasks.side_effect = RuntimeError
+    monkeypatch.setattr(sr, "get_session_repo", lambda: repo)
+    ScheduledTaskManager()._mark_run("s1", {"id": "t1"}, "error")  # 不应抛
+
+
+def test_push(monkeypatch):
+    import modules.thinking.scheduled_tasks as mod
+    import modules.database.session_repo as sr
+    repo = MagicMock()
+    repo.save_message.return_value = "mid1"
+    monkeypatch.setattr(sr, "get_session_repo", lambda: repo)
+    cm = MagicMock()
+    cm.active_connections = {"s1": object()}
+    import modules.thinking.api_stream as stream_mod
+    monkeypatch.setattr(stream_mod, "connection_manager", cm)
+    monkeypatch.setattr(stream_mod, "_build_event", lambda **kw: {"event": "scheduled_task"})
+    m = ScheduledTaskManager()
+    asyncio.run(m._push("s1", "推送内容"))
+    repo.save_message.assert_called_once_with("s1", "assistant", "推送内容")
+    assert cm.send_json_from_thread.called
+
+
+def test_scan(monkeypatch):
+    import modules.thinking.scheduled_tasks as mod
+    m = ScheduledTaskManager()
+    repo = MagicMock()
+    repo.get_all_sessions.return_value = [{"session_id": "s1"}]
+    repo.get_scheduled_tasks.return_value = {"tasks": [{"id": "t1", "enabled": True, "schedule": {"kind": "interval", "every_minutes": 1}}]}
+    import modules.database.session_repo as sr
+    monkeypatch.setattr(sr, "get_session_repo", lambda: repo)
+    fired = []
+    async def fake_fire(sid, task):
+        fired.append((sid, task))
+    monkeypatch.setattr(m, "_fire", fake_fire)
+    asyncio.run(m._scan())
+    assert len(fired) == 1
+
+
+def test_scan_skips_disabled(monkeypatch):
+    m = ScheduledTaskManager()
+    import modules.thinking.scheduled_tasks as mod
+    repo = MagicMock()
+    repo.get_all_sessions.return_value = [{"session_id": "s1"}]
+    repo.get_scheduled_tasks.return_value = {"tasks": [{"id": "t1", "enabled": False}]}
+    import modules.database.session_repo as sr
+    monkeypatch.setattr(sr, "get_session_repo", lambda: repo)
+    fired = []
+    m._fire = lambda sid, task: fired.append((sid, task))
+    asyncio.run(m._scan())
+    assert fired == []

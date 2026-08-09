@@ -99,3 +99,62 @@ def test_get_perception_system_singleton():
     s1 = get_perception_system()
     s2 = get_perception_system()
     assert s1 is s2
+
+
+def test_setup_full_flow(monkeypatch):
+    from modules.perception.setup import PerceptionSystem
+    import modules.perception.setup as mod
+    import modules.perception.events.bus as bus_mod
+    import modules.perception.state.world_state as ws_mod
+    import modules.desktop_pet.pet_engine as pe_mod
+
+    bus = MagicMock()
+    monkeypatch.setattr(bus_mod, "get_event_bus", lambda: bus)
+    ws = MagicMock()
+    monkeypatch.setattr(ws_mod, "WorldStateManager", lambda: ws)
+    pet = MagicMock()
+    monkeypatch.setattr(pe_mod.PetEngine, "get_instance", classmethod(lambda cls, eb: pet))
+
+    ps = PerceptionSystem()
+    ps._setup_window_detector = MagicMock()
+    ps._setup_ocr_detector = MagicMock()
+    ps.setup(voice_enabled=False, proactive_enabled=False)
+    assert ps.event_bus is bus
+    assert ps.world_state is ws
+    assert ps.voice_detector is None
+    assert ps.proactive_trigger is None
+    assert ps.pet_engine is pet
+    ps._setup_window_detector.assert_called_once()
+    ps._setup_ocr_detector.assert_called_once()
+
+
+def test_setup_with_proactive_and_voice(monkeypatch):
+    from modules.perception.setup import PerceptionSystem
+    import modules.perception.setup as mod
+    import modules.perception.events.bus as bus_mod
+    import modules.perception.state.world_state as ws_mod
+    import modules.desktop_pet.pet_engine as pe_mod
+    import modules.perception.trigger as trg_mod
+
+    bus = MagicMock()
+    monkeypatch.setattr(bus_mod, "get_event_bus", lambda: bus)
+    ws = MagicMock()
+    monkeypatch.setattr(ws_mod, "WorldStateManager", lambda: ws)
+    monkeypatch.setattr(pe_mod.PetEngine, "get_instance", classmethod(lambda cls, eb: MagicMock()))
+
+    trg = MagicMock()
+    monkeypatch.setattr(trg_mod, "ProactiveTrigger", lambda: trg)
+    import modules.perception.detectors.hotkey_voice_detector as hvd_mod
+    import modules.perception.detectors.voice_detector as vd_mod
+    vd = MagicMock()
+    vd.is_available.return_value = True
+    monkeypatch.setattr(hvd_mod, "HotkeyVoiceDetector", lambda **k: vd)
+    monkeypatch.setattr(vd_mod, "VoiceDetector", lambda **k: vd)
+
+    ps = PerceptionSystem()
+    ps._setup_window_detector = MagicMock()
+    ps._setup_ocr_detector = MagicMock()
+    ps.setup(voice_enabled=True, proactive_enabled=True, voice_mode="hotkey")
+    assert ps.proactive_trigger is trg
+    assert ps.voice_detector is not None
+    trg.start.assert_called_once_with(bus)

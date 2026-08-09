@@ -74,3 +74,72 @@ def test_build_system_prompt_contains_role(monkeypatch):
         _run(ct._build_prompt("用户输入", "初始问题"))
     except (AttributeError, TypeError):
         pass  # 依赖缺失时不应让测试崩，验证核心路径可调用
+
+
+def test_jaccard_similarity():
+    from modules.thinking.core.continuous_thinker import ContinuousThinker
+    assert ContinuousThinker._jaccard_similarity("你好", "你好") == 0.0  # 长度不足 n
+    assert ContinuousThinker._jaccard_similarity("完全相同的一段文字", "完全相同的一段文字") == 1.0
+    assert 0.0 < ContinuousThinker._jaccard_similarity("abcdefghij", "abcdefghxx") < 1.0
+
+
+def test_strip_control_markers():
+    from modules.thinking.core.continuous_thinker import ContinuousThinker
+    out = ContinuousThinker._strip_control_markers("  hello\n\n\n\nworld  ")
+    assert "\n\n\n\n" not in out
+    assert out == "hello\n\nworld"
+
+
+def test_sanitize_final_context_text_blocks_probe():
+    from modules.thinking.core.continuous_thinker import ContinuousThinker
+    text = "结果 probe_start(expert, task) 已调用 MessageBus 发送"
+    ct = ContinuousThinker(blackboard=MagicMock())
+    out = ct._sanitize_final_context_text(text, limit=4000)
+    assert "probe_start" not in out
+    assert "MessageBus" not in out
+
+
+def test_set_think_fn_and_get_dialog():
+    ct = ContinuousThinker(blackboard=MagicMock())
+    async def fn(s):
+        return s
+    ct.set_think_fn(fn)
+    assert ct.think_fn is fn
+    assert ct._get_dialog() is not None
+
+
+def test_record_delegation_success():
+    ct = ContinuousThinker(blackboard=MagicMock())
+    ct.record_delegation("expert", "写代码", {"task_id": "t1", "success": True})
+    assert "t1" in ct._pending_delegations
+    assert ct._pending_delegations["t1"]["status"] == "pending"
+    assert len(ct._delegation_results) == 1
+
+
+def test_record_delegation_failure():
+    ct = ContinuousThinker(blackboard=MagicMock())
+    ct.record_delegation("expert", "写代码", {"success": False, "error": "挂了"})
+    assert ct._delegation_results[-1]["success"] is False
+
+
+def test_record_control_decision():
+    ct = ContinuousThinker(blackboard=MagicMock())
+    ct.record_control_decision({"continue": True})
+    assert ct._last_control_data == {"continue": True}
+
+
+def test_external_prompts():
+    ct = ContinuousThinker(blackboard=MagicMock())
+    ct.add_external_prompt("持久", persistent=True)
+    ct.add_external_prompt("临时", persistent=False)
+    assert ct.get_external_prompts() == ["持久", "临时"]
+    ct.clear_external_prompts()
+    assert ct.get_external_prompts() == []
+
+
+def test_get_process_snapshot():
+    ct = ContinuousThinker(blackboard=MagicMock())
+    ct._last_process_snapshot = {"step": 3}
+    assert ct.get_process_snapshot() == {"step": 3}
+    ct._last_process_snapshot = None
+    assert ct.get_process_snapshot() is not None
