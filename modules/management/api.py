@@ -223,6 +223,42 @@ async def list_skills():
     return {"success": True, "data": {"skills": skill_manager.to_listing()}}
 
 
+@router.get("/skills/forced")
+async def get_forced_skill():
+    """获取全局强制技能配置（非空时所有对话必须使用该技能，不可切换/停用）"""
+    from config.settings import settings
+    skill_id = settings.get_forced_skill()
+    skill = None
+    if skill_id:
+        from modules.thinking.skills import skill_manager
+        s = skill_manager.get_skill(skill_id)
+        if s:
+            skill = {"id": s.id, "name": s.name, "description": s.description[:120]}
+    return {"success": True, "data": {"forced_skill": skill_id, "skill": skill}}
+
+
+@router.put("/skills/forced")
+async def set_forced_skill(body: dict = None):
+    """设置/清除全局强制技能（body: {"skill_id": "xxx"} 或 {"skill_id": ""} 清除）"""
+    body = body or {}
+    from config.settings import settings
+    skill_id = str(body.get("skill_id") or "").strip()
+    if skill_id:
+        from modules.thinking.skills import skill_manager
+        s = skill_manager.get_skill(skill_id)
+        if not s:
+            return {"success": False, "error": {"code": "SKILL_NOT_FOUND", "message": f"技能不存在: {skill_id}"}}
+        if not s.enabled:
+            return {"success": False, "error": {"code": "SKILL_DISABLED", "message": f"技能已禁用: {skill_id}"}}
+    settings.set_forced_skill(skill_id)
+    skill = None
+    if skill_id:
+        from modules.thinking.skills import skill_manager
+        s = skill_manager.get_skill(skill_id)
+        skill = {"id": s.id, "name": s.name} if s else None
+    return {"success": True, "data": {"forced_skill": skill_id, "skill": skill}}
+
+
 @router.get("/skills/{skill_id}")
 async def get_skill_detail(skill_id: str):
     """技能详情（含原文 raw_content 供编辑回填）"""

@@ -14,9 +14,12 @@ Chat Gateway 协议级端到端测试。
 import asyncio
 import os
 import sys
+import threading
 import types
 
 import pytest
+
+import modules.database.connection as conn
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -119,12 +122,23 @@ def fake_repo():
 
 
 @pytest.fixture
-def gw_app(fake_thinker, fake_repo, monkeypatch):
-    """挂载 chat_gateway 路由的最小 app + 替换 thinker/repo。"""
-    # 避免 schema 对齐触及真实 data/memory.db
+def tmp_repo(tmp_path, monkeypatch):
+    """真实 SessionRepository（临时 SQLite）"""
+    import modules.database.session_repo as sr_mod
+    from modules.database.session_repo import SessionRepository
+    monkeypatch.setattr(conn.config, "sqlite_path", str(tmp_path / "gw.db"))
+    monkeypatch.setattr(conn, "_db_manager", None)
+    monkeypatch.setattr(conn, "_db_manager_lock", threading.RLock())
+    conn.get_db_manager().initialize()
+    return SessionRepository()
+
+
+@pytest.fixture
+def gw_app(fake_thinker, tmp_repo, monkeypatch):
+    """挂载 chat_gateway 路由的最小 app + 真实 repo + 替身 thinker。"""
     monkeypatch.setattr(chat_gateway, "ensure_shared_schema", lambda: None)
     monkeypatch.setattr(chat_gateway, "_get_chat_thinker", lambda: fake_thinker)
-    monkeypatch.setattr(chat_gateway, "_get_chat_session_repo", lambda: fake_repo)
+    monkeypatch.setattr(chat_gateway, "_get_chat_session_repo", lambda: tmp_repo)
 
     app = FastAPI()
 
@@ -140,7 +154,7 @@ def gw_app(fake_thinker, fake_repo, monkeypatch):
         )
 
     app.include_router(chat_gateway.router)
-    return app, fake_thinker, fake_repo
+    return app, fake_thinker, tmp_repo
 
 
 @pytest.fixture(autouse=True)
@@ -402,8 +416,8 @@ def test_agent_mode_delegates_to_api_stream(gw_app, monkeypatch):
         resp = client.get("/stream/status")
         assert resp.json()["data"]["origin"] == "api_stream"
 
-    # chatonly repo 不应被触碰
-    assert gw_app[2].sessions == {}
+    # chatonly repo 不应被触碰（真实 repo 无会话）
+    assert gw_app[2].get_all_sessions() == []
 
 
 # ---------------------------------------------------------------------------

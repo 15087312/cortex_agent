@@ -30,6 +30,12 @@ const todos = ref([])
 const showTodos = ref(false)
 let todoTimer = null
 const todoDone = computed(() => todos.value.filter((t) => t.status === 'completed').length)
+
+// 当前激活技能：从 thinking_progress 的 large 模型 runner 提取（后端 active_skill 字段）
+const activeSkill = computed(() => {
+  const large = chat.runners.find((r) => r.tier === 'large')
+  return large?.active_skill || ''
+})
 async function loadTodos() {
   try {
     const sid = session.sessionId || ''
@@ -443,6 +449,8 @@ function handleAnswerIntent(requestId, answer) {
             @keydown.esc="editingTitle = false"
           />
           <ModelSelector :session-id="session.sessionId" />
+          <!-- 当前激活技能（来自 thinking_progress 的 large_model.active_skill） -->
+          <span v-if="activeSkill" class="chat-skill-chip" :title="'当前技能: ' + activeSkill">⚡ {{ activeSkill }}</span>
         </div>
         <div class="chat-header-right">
           <button class="chat-btn-icon" @click="showTodos = !showTodos" title="待办列表"><Icon name="list" :size="15" /></button>

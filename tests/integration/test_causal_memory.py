@@ -17,7 +17,7 @@ import pytest
 class TestCausalTree:
     @pytest.fixture(autouse=True)
     def setup(self, tmp_path):
-        from modules.memory.causal_graph import CausalGraph, CausalNode, CausalEdge
+        from modules.memory.causal_graph import CausalGraph
         from modules.memory.causal_tree import CausalTree
         # 独立临时测试库（不触碰 data/ 下真实 causal.db）
         self.graph = CausalGraph(db_path=str(tmp_path / "causal_test.db"))
@@ -106,8 +106,8 @@ class TestCausalTree:
 class TestDepthRecallScheduler:
     @pytest.fixture(autouse=True)
     def setup(self, tmp_path, monkeypatch):
-        from modules.memory.causal_graph import CausalGraph, CausalNode, CausalEdge
-        from modules.memory.event_store import EventStore, MemoryEvent
+        from modules.memory.causal_graph import CausalGraph
+        from modules.memory.event_store import EventStore
         # 独立临时测试库：因果图 + 事件库，绝不写入 data/ 下的真实库
         self.tmp_dir = str(tmp_path)
         self.graph = CausalGraph(db_path=os.path.join(self.tmp_dir, "causal_test.db"))
@@ -242,8 +242,8 @@ class TestDepthRecallScheduler:
 class TestIncrementalUpdate:
     @pytest.fixture(autouse=True)
     def setup(self, tmp_path, monkeypatch):
-        from modules.memory.causal_graph import CausalGraph, CausalNode, CausalEdge
-        from modules.memory.event_store import EventStore, MemoryEvent
+        from modules.memory.causal_graph import CausalGraph
+        from modules.memory.event_store import EventStore
         # 独立临时测试库：因果图 + 事件库，绝不写入 data/ 下的真实库
         self.tmp_dir = str(tmp_path)
         self.graph = CausalGraph(db_path=os.path.join(self.tmp_dir, "causal_test.db"))

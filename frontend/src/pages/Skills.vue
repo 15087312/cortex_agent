@@ -16,8 +16,64 @@ const editing = ref(null)
 const form = ref({ id: '', name: '', description: '', keywords: '', trigger: '', tool_rules: '' })
 const roleSel = ref('')
 const roleSkills = ref([])
+const forcedSkill = ref('')      // 当前全局强制技能 id
+const forcedSel = ref('')        // 下拉框选中值
+const forcedSaving = ref(false)
 
 const filtered = computed(() => skills.value)
+
+const forcedName = computed(() => {
+  if (!forcedSkill.value) return ''
+  const s = skillOf(forcedSkill.value)
+  return s ? s.name : forcedSkill.value
+})
+
+async function loadForced() {
+  try {
+    const r = await fetch('/api/management/skills/forced', { headers: { Accept: 'application/json' } })
+    const d = await r.json()
+    if (d.success) {
+      forcedSkill.value = d?.data?.forced_skill || ''
+      forcedSel.value = forcedSkill.value
+    }
+  } catch {}
+}
+
+async function saveForced() {
+  if (!forcedSel.value) return
+  forcedSaving.value = true
+  try {
+    const r = await fetch('/api/management/skills/forced', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ skill_id: forcedSel.value }),
+    })
+    const d = await r.json()
+    if (d.success) {
+      forcedSkill.value = d?.data?.forced_skill || ''
+      toast.show('已强制所有对话使用技能「' + (d?.data?.skill?.name || forcedSel.value) + '」，下次对话立即生效', 'success')
+    } else toast.show('设置失败: ' + (d.error?.message || ''), 'error')
+  } catch (e) { toast.show('设置失败', 'error') }
+  finally { forcedSaving.value = false }
+}
+
+async function clearForced() {
+  forcedSaving.value = true
+  try {
+    const r = await fetch('/api/management/skills/forced', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ skill_id: '' }),
+    })
+    const d = await r.json()
+    if (d.success) {
+      forcedSkill.value = ''
+      forcedSel.value = ''
+      toast.show('已解除强制技能', 'success')
+    } else toast.show('解除失败: ' + (d.error?.message || ''), 'error')
+  } catch (e) { toast.show('解除失败', 'error') }
+  finally { forcedSaving.value = false }
+}
 
 function skillOf(id) {
   return skills.value.find((s) => s.id === id)
@@ -37,6 +93,7 @@ async function loadData() {
     ])
     skills.value = sr?.data?.skills || []
     agents.value = ar?.data?.agents || []
+    await loadForced()
     if (roleSel.value) await loadRoleSkills()
   } catch {} finally { loading.value = false }
 }
@@ -159,6 +216,23 @@ onMounted(loadData)
       </div>
     </div>
     <div class="page-body" v-show="!loading">
+      <!-- 全局强制技能：所有对话必须使用该技能（注入提示词，不可切换/停用） -->
+      <div class="card" :style="{ border: forcedSkill ? '1px solid #d29922' : '', marginBottom: '12px' }">
+        <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+          <span style="display:flex;align-items:center;gap:6px">🔒 全局强制技能 <span style="font-weight:400;font-size:11px;color:var(--text-muted)">（所有对话必须使用，注入提示词，模型不可切换/停用）</span></span>
+          <span v-if="forcedSkill" style="font-size:12px;color:#d29922">当前强制：<b>{{ forcedName }}</b>（{{ forcedSkill }}）</span>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px">
+          <select v-model="forcedSel" class="input" style="min-width:220px;font-size:13px">
+            <option value="">选择要强制使用的技能…</option>
+            <option v-for="s in skills.filter(x => x.enabled)" :key="s.id" :value="s.id">{{ s.name }}（{{ s.id }}）</option>
+          </select>
+          <button class="btn btn-sm btn-primary" :disabled="!forcedSel || forcedSaving || forcedSel === forcedSkill" @click="saveForced">
+            {{ forcedSaving ? '保存中…' : (forcedSel === forcedSkill ? '已强制' : '设为强制') }}
+          </button>
+          <button v-if="forcedSkill" class="btn btn-sm" :disabled="forcedSaving" @click="clearForced">解除强制</button>
+        </div>
+      </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
         <!-- 技能列表 -->
         <div class="card">

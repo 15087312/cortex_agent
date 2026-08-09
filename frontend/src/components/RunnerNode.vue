@@ -43,6 +43,7 @@ function detail(r) {
       <span class="think-avatar">{{ (props.node.name || '?').slice(0, 1) }}</span>
       <span class="think-name">{{ props.node.name || props.node.role || props.node.model_id }}</span>
       <span class="think-model">{{ props.node.model_id }}</span>
+      <span v-if="props.node.active_skill" class="think-badge st-skill" :title="'当前技能: ' + props.node.active_skill">⚡ {{ props.node.active_skill }}</span>
       <span class="think-badge" :class="meta(props.node).cls">{{ meta(props.node).label }}</span>
       <span class="think-detail">{{ detail(props.node) }}</span>
     </div>

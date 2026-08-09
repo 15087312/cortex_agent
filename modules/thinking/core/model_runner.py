@@ -1324,6 +1324,23 @@ class ModelRunner:
             mode = _cfg.effective_execution_mode
             skill_id = self._active_skill.id if self._active_skill else None
 
+            # 运行中会话动态感知强制技能：本轮无活跃技能但设置了全局强制技能时，
+            # 立即注入（含工具规则），保证设置强制技能后无需重启对话即生效
+            if not skill_id:
+                try:
+                    from config.settings import settings as _sf
+                    _forced = _sf.get_forced_skill()
+                    if _forced:
+                        from modules.thinking.skills import skill_manager
+                        _fskill = skill_manager.get_skill(_forced)
+                        if _fskill and _fskill.enabled:
+                            self._active_skill = _fskill
+                            self._active_skill_tool_rules = _fskill.tool_rules
+                            skill_id = _fskill.id
+                            logger.info(f"[ModelRunner] 强制技能动态注入: {_forced}")
+                except Exception:
+                    pass
+
             # 对话历史置于 system prompt 最前面，确保模型最先看到
             conversation_header = ""
             if self.blackboard:
@@ -2494,7 +2511,8 @@ class ModelRunnerManager:
                 try:
                     from modules.thinking.skills import skill_manager
                     skill = skill_manager.get_skill(effective_skill_id)
-                    if skill:
+                    # 与 request_skill 权限路径保持一致：已禁用技能不注入
+                    if skill and skill.enabled:
                         runner._active_skill = skill
                         runner._active_skill_tool_rules = skill.tool_rules
                         if forced_skill_id:
@@ -2503,6 +2521,10 @@ class ModelRunnerManager:
                             source = "auto-match" if skill_id else "default"
                         logger.info(
                             f"[ModelRunnerManager] 技能已注入 ({source}): {effective_skill_id} → {model_id}"
+                        )
+                    else:
+                        logger.warning(
+                            f"[ModelRunnerManager] 技能不可用（不存在或已禁用），跳过注入: {effective_skill_id}"
                         )
                 except Exception as e:
                     logger.debug(f"[ModelRunnerManager] 技能注入失败 (非致命): {e}")

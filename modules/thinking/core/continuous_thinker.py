@@ -690,8 +690,10 @@ class ContinuousThinker:
                     forced = ""
                 suggested = None
                 if forced:
-                    suggested = skill_manager.get_skill(forced)
-                else:
+                    _fs = skill_manager.get_skill(forced)
+                    # 强制技能已禁用时回退自动匹配（与注入/request_skill 权限一致）
+                    suggested = _fs if (_fs and _fs.enabled) else None
+                if not suggested and not forced:
                     suggested = skill_manager.match_skill(initial_question)
                 if suggested:
                     if forced:
