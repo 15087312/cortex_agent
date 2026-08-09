@@ -170,3 +170,76 @@ def test_process_activity_notify_error(monkeypatch):
     import asyncio
     result = asyncio.run(o.process("正常内容", session_id="s1"))
     assert result["security_passed"] is True
+
+
+def test_execute_multi_model_failure_path(monkeypatch):
+    o = _orc()
+    import asyncio
+    # SessionLifecycle / RunnerManager 初始化安全 mock
+    import modules.thinking.context.pool as pool_mod
+    import modules.thinking.cognition.blackboard as bb_mod
+    import modules.thinking.core.model_runner as mr_mod
+    import modules.thinking.communication.message_bus as mb_mod
+
+    turn = MagicMock()
+    turn.turn_id = "turn1"
+    monkeypatch.setattr(pool_mod, "TurnContext", lambda **k: turn)
+    bb = MagicMock()
+    bb.runtime_state = {}
+    monkeypatch.setattr(bb_mod, "CognitiveBlackboard", lambda **k: bb)
+
+    rm = MagicMock()
+    rm.start_listening = AsyncMock()
+    monkeypatch.setattr(mr_mod, "get_runner_manager", lambda *a, **k: rm)
+    monkeypatch.setattr(mr_mod, "remove_runner_manager", AsyncMock())
+
+    # get_message_bus 抛异常 → 主循环走 except
+    monkeypatch.setattr(mb_mod, "get_message_bus", lambda: (_ for _ in ()).throw(RuntimeError("总线挂了")))
+
+    async def cb(event):
+        return None
+    result = asyncio.run(o._execute_multi_model_thinking("你好", "s1", {}, cb))
+    assert "[思考失败]" in result["response"] or "总线" in result["response"]
+
+
+def test_execute_multi_model_success_no_runner(monkeypatch):
+    o = _orc()
+    import asyncio
+    import modules.thinking.context.pool as pool_mod
+    import modules.thinking.cognition.blackboard as bb_mod
+    import modules.thinking.core.model_runner as mr_mod
+
+    turn = MagicMock()
+    turn.turn_id = "turn1"
+    monkeypatch.setattr(pool_mod, "TurnContext", lambda **k: turn)
+    bb = MagicMock()
+    bb.runtime_state = {}
+    bb.final_response = "大模型回复"
+    bb.write_user_input.return_value = MagicMock(timestamp=1.0)
+    monkeypatch.setattr(bb_mod, "CognitiveBlackboard", lambda **k: bb)
+    rm = MagicMock()
+    rm.start_listening = AsyncMock()
+    monkeypatch.setattr(mr_mod, "get_runner_manager", lambda *a, **k: rm)
+    monkeypatch.setattr(mr_mod, "remove_runner_manager", AsyncMock())
+
+    import modules.thinking.communication.message_bus as mb_mod
+    bus = MagicMock()
+    bus.send = AsyncMock()
+    bus.subscribe = AsyncMock()
+    bus.unsubscribe = AsyncMock()
+    async def fake_receive(channel):
+        return type("M", (), {"content": {"action": "thinking_complete", "tier": "large", "session_id": "s1"}})()
+    bus.receive = fake_receive
+    bus.peek = AsyncMock(return_value=[])
+    monkeypatch.setattr(mb_mod, "get_message_bus", lambda: bus)
+
+    import config.prompts.composer as comp_mod
+    composer = MagicMock()
+    composer._build_supervisor_table.return_value = "主管表"
+    composer._build_expert_table.return_value = "专家表"
+    monkeypatch.setattr(comp_mod, "PromptComposer", lambda: composer)
+
+    async def cb(event):
+        return None
+    result = asyncio.run(o._execute_multi_model_thinking("你好", "s1", {}, cb, model_id="large_primary"))
+    assert result["response"] == "大模型回复"
