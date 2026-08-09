@@ -1,6 +1,6 @@
 """perception/trigger 测试（此前 31% 覆盖）：空闲计时器与主动触发"""
 import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from modules.perception.trigger import confirm_frontend_connection as mod_confirm
 
@@ -223,7 +223,7 @@ def test_try_outreach_success(monkeypatch):
     async def fake_push(sid, *, msg_type, event, content, role="assistant", data=None, persist=True):
         pushed.append(content)
         return True
-    monkeypatch.setattr(fc, "confirm_frontend_connection", lambda session_id=None: True)
+    monkeypatch.setattr(fc, "_confirm_async", AsyncMock(return_value=True))
     monkeypatch.setattr(fc, "push_content", fake_push)
     tr._get_session_outreach_config = lambda sid: {"cooldown_minutes": 1}
     tr._get_session_conversation = lambda sid: ""
@@ -256,7 +256,7 @@ def test_try_outreach_empty_response(monkeypatch):
     async def fake_push(sid, *, msg_type, event, content, role="assistant", data=None, persist=True):
         pushed.append(content)
         return True
-    monkeypatch.setattr(fc, "confirm_frontend_connection", lambda session_id=None: True)
+    monkeypatch.setattr(fc, "_confirm_async", AsyncMock(return_value=True))
     monkeypatch.setattr(fc, "push_content", fake_push)
     tr._get_session_outreach_config = lambda sid: {"cooldown_minutes": 1}
     tr._get_session_conversation = lambda sid: ""
@@ -310,10 +310,11 @@ def test_confirm_frontend_connection_send_fail(monkeypatch):
 def test_try_outreach_skips_when_frontend_down(monkeypatch):
     tr = ProactiveTrigger()
     import modules.perception.trigger as mod
+    import modules.thinking.frontend_channel as fc
     async def fake_llm(prompt, session_id):
         raise AssertionError("前端不可达时不应调用 LLM")
     monkeypatch.setattr(mod, "call_outreach_llm", fake_llm)
-    monkeypatch.setattr(mod, "confirm_frontend_connection", lambda: False)
+    monkeypatch.setattr(fc, "_confirm_async", AsyncMock(return_value=False))
     tr._get_session_outreach_config = lambda sid: {"cooldown_minutes": 1}
     import asyncio
     asyncio.run(tr._try_outreach("s1", "schedule"))

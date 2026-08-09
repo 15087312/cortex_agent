@@ -2,7 +2,7 @@
 import asyncio
 import threading
 from datetime import datetime, timedelta
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 from modules.thinking.scheduled_tasks import ScheduledTaskManager
 
@@ -117,7 +117,7 @@ def test_handle_chat(monkeypatch):
         pushed.append(content)
         return True
     monkeypatch.setattr(trg, "call_outreach_llm", fake_llm)
-    monkeypatch.setattr(fc, "confirm_frontend_connection", lambda session_id=None: True)
+    monkeypatch.setattr(fc, "_confirm_async", AsyncMock(return_value=True))
     monkeypatch.setattr(fc, "push_content", fake_push)
     asyncio.run(m._handle_chat("s1", {"prompt": "问候"}))
     assert pushed == ["定时问候"]
@@ -134,7 +134,7 @@ def test_handle_chat_empty(monkeypatch):
     async def fake_push(sid, *, msg_type, event, content, role="assistant", data=None, persist=True):
         pushed.append(content)
         return True
-    monkeypatch.setattr(fc, "confirm_frontend_connection", lambda session_id=None: True)
+    monkeypatch.setattr(fc, "_confirm_async", AsyncMock(return_value=True))
     monkeypatch.setattr(fc, "push_content", fake_push)
     asyncio.run(m._handle_chat("s1", {}))
     assert pushed == []
@@ -174,7 +174,7 @@ def test_handle_chat_handshake_fail_skips_llm(monkeypatch):
     async def fake_push(sid, *, msg_type, event, content, role="assistant", data=None, persist=True):
         pushed.append(content)
         return True
-    monkeypatch.setattr(fc, "confirm_frontend_connection", lambda session_id=None: False)
+    monkeypatch.setattr(fc, "_confirm_async", AsyncMock(return_value=False))
     monkeypatch.setattr(fc, "push_content", fake_push)
     asyncio.run(m._handle_chat("s1", {"prompt": "问候"}))
     assert called["llm"] == 0

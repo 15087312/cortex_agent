@@ -1,6 +1,6 @@
 """感知触发思考测试（冷却 + 强度阈值）"""
 import time
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -110,7 +110,7 @@ def test_think_broadcasts_to_connections(monkeypatch):
     async def fake_push(sid, *, msg_type, event, content, role="assistant", data=None, persist=True):
         pushed.append((sid, msg_type, event, content))
         return True
-    monkeypatch.setattr(fc, "confirm_frontend_connection", lambda session_id=None: True)
+    monkeypatch.setattr(fc, "_confirm_async", AsyncMock(return_value=True))
     monkeypatch.setattr(fc, "push_content", fake_push)
 
     asyncio.run(tt._think("屏幕变化"))
@@ -133,7 +133,7 @@ def test_think_no_connections_drops(monkeypatch):
     async def fake_push(sid, *, msg_type, event, content, role="assistant", data=None, persist=True):
         pushed.append(content)
         return False
-    monkeypatch.setattr(fc, "confirm_frontend_connection", lambda session_id=None: False)
+    monkeypatch.setattr(fc, "_confirm_async", AsyncMock(return_value=False))
     monkeypatch.setattr(fc, "push_content", fake_push)
 
     asyncio.run(tt._think("屏幕变化"))
@@ -155,7 +155,7 @@ def test_think_empty_llm_no_push(monkeypatch):
     async def fake_push(sid, *, msg_type, event, content, role="assistant", data=None, persist=True):
         pushed.append(content)
         return True
-    monkeypatch.setattr(fc, "confirm_frontend_connection", lambda session_id=None: True)
+    monkeypatch.setattr(fc, "_confirm_async", AsyncMock(return_value=True))
     monkeypatch.setattr(fc, "push_content", fake_push)
 
     asyncio.run(tt._think("屏幕变化"))

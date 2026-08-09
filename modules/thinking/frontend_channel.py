@@ -60,6 +60,8 @@ def confirm_frontend_connection(session_id: str = None) -> bool:
             data={"handshake": True},
         )
         candidates = [session_id] if session_id else list(cm.active_connections.keys())
+        # 同步接口（供 daemon 线程调用）。若在事件循环内使用会与主 loop 冲突，
+        # async 场景请用 generate_and_push（内部 async 确认）。
         for sid in candidates:
             if cm.send_json_from_thread(sid, event):
                 return True
@@ -67,6 +69,29 @@ def confirm_frontend_connection(session_id: str = None) -> bool:
     except Exception as e:
         logger.debug(f"[连接确认] 失败: {e}")
         return False
+
+
+async def _confirm_async(session_id: str = None) -> bool:
+    """async 握手确认：在事件循环内 await 发送，避免 run_coroutine_threadsafe 自锁。"""
+    cm = _connections()
+    if not cm.active_connections:
+        return False
+    event = _build_event(
+        session_id="",
+        msg_type="proactive",
+        event="proactive_handshake",
+        content="",
+        role="system",
+        data={"handshake": True},
+    )
+    candidates = [session_id] if session_id else list(cm.active_connections.keys())
+    for sid in candidates:
+        try:
+            await cm.send_json(sid, event)
+            return True
+        except Exception:
+            continue
+    return False
 
 
 def _run_async(coro):
@@ -85,10 +110,17 @@ async def _persist_message(session_id: str, role: str, content: str) -> str:
     try:
         system = _get_thinking_system()
         if session_id in system.sessions:
-            # 必须提交到主事件循环：_append_message 用主 loop 的 asyncio.Lock，
-            # 在 daemon 线程里 asyncio.run 新 loop 直接调用会跨 loop 报错。
+            # 尽量在当前事件循环内直接 await（async 场景），跨线程场景（daemon 线程
+            # 调 run_in_main_loop）才提交到主 loop——避免 run_coroutine_threadsafe 自锁。
             loop = _connections()._loop or _main_event_loop()
-            if loop and not loop.is_closed():
+            current = None
+            try:
+                current = asyncio.get_running_loop()
+            except RuntimeError:
+                current = None
+            if current is not None and loop is not None and loop is current:
+                msg_id = await system._append_message(session_id, role, content)
+            elif loop and not loop.is_closed():
                 fut = asyncio.run_coroutine_threadsafe(
                     system._append_message(session_id, role, content), loop)
                 msg_id = fut.result(timeout=10)
@@ -135,8 +167,11 @@ async def push_content(
     try:
         cm = _connections()
         for sid in list(cm.active_connections.keys()):
-            if cm.send_json_from_thread(sid, event_obj):
+            try:
+                await cm.send_json(sid, event_obj)
                 sent_any = True
+            except Exception:
+                continue
         if not sent_any and persist:
             logger.warning(
                 f"[前端通道] 无活跃 WebSocket 连接，消息已持久化到会话历史 "
@@ -169,7 +204,7 @@ async def generate_and_push(
       场景目标 session 未必是前端当前连接，必须广播握手，否则会因该 session 无连接
       而错误跳过 LLM。按会话对话（如 api_stream.think）才显式传具体 session。
     """
-    if not confirm_frontend_connection(handshake_session_id):
+    if not await _confirm_async(handshake_session_id):
         logger.debug(
             f"[前端通道] 前端不可达，跳过 LLM 调用 (handshake={handshake_session_id or '(广播)'})"
         )
