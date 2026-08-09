@@ -214,6 +214,20 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"感知触发思考注册失败: {e}")
 
+    # 启动时应用系统级设置（真实生效，非摆设）：
+    # 防休眠（caffeinate 保系统不睡）+ 开机启动（LaunchAgent）
+    try:
+        from utils.power import apply as _apply_power
+        _apply_power(bool(getattr(settings, "prevent_sleep", False)))
+    except Exception as e:
+        logger.debug(f"防休眠应用失败 (非致命): {e}")
+    try:
+        from utils.autostart import apply as _apply_autostart
+        if getattr(settings, "launch_at_startup", False):
+            _apply_autostart(True)
+    except Exception as e:
+        logger.debug(f"开机启动应用失败 (非致命): {e}")
+
     yield
     logger.info("Shutting down Humanoid AGI...")
 
@@ -858,6 +872,16 @@ async def update_config(key: str, body: PutConfigRequest):
         # 实时持久化到 ~/.cortex/settings.json（原子写），重启后仍生效
         if not settings.save_user_config([actual]):
             logger.warning(f"配置 {actual} 已更新但持久化失败（重启后将丢失）")
+        # 系统级配置：变更时立即生效（防休眠 caffeinate / 开机启动 LaunchAgent）
+        try:
+            if key_upper == "PREVENT_SLEEP":
+                from utils.power import apply as _apply_power
+                _apply_power(bool(validated))
+            elif key_upper == "LAUNCH_AT_STARTUP":
+                from utils.autostart import apply as _apply_autostart
+                _apply_autostart(bool(validated))
+        except Exception as e:
+            logger.warning(f"系统级配置应用失败 {key}: {e}")
         logger.info(f"配置已更新: {actual} = {validated} (旧值: {old_value})")
         return {
             "success": True,

@@ -795,14 +795,17 @@ onMounted(async () => {
         <div class="settings-group">
           <label class="settings-row" @click.prevent="launchAtStartup = !launchAtStartup">
             <span class="settings-row-label">开机启动</span>
+            <span style="flex:1;font-size:12px;color:var(--text-muted)">登录后自动启动后端 + 桌面窗口（macOS LaunchAgent）</span>
             <span class="toggle-switch"><input type="checkbox" :checked="launchAtStartup" /><span class="toggle-slider"></span></span>
           </label>
           <label class="settings-row" @click.prevent="preventSleep = !preventSleep">
             <span class="settings-row-label">防休眠</span>
+            <span style="flex:1;font-size:12px;color:var(--text-muted)">保持系统不睡眠（caffeinate，macOS）</span>
             <span class="toggle-switch"><input type="checkbox" :checked="preventSleep" /><span class="toggle-slider"></span></span>
           </label>
           <label class="settings-row" @click.prevent="allowLocation = !allowLocation">
             <span class="settings-row-label">授权访问地理位置</span>
+            <span style="flex:1;font-size:12px;color:var(--text-muted)">允许前端获取位置（仅浏览器环境生效；桌面端需系统定位权限）</span>
             <span class="toggle-switch"><input type="checkbox" :checked="allowLocation" /><span class="toggle-slider"></span></span>
           </label>
         </div>
