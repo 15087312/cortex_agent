@@ -423,7 +423,7 @@ function handleAnswerIntent(requestId, answer) {
 </script>
 
 <template>
-  <div style="display:flex;flex-direction:row;height:100%">
+  <div class="chat-layout">
     <SessionList
       :sessions="session.sessions"
       :activeId="session.sessionId"
@@ -435,7 +435,7 @@ function handleAnswerIntent(requestId, answer) {
       @new="handleNewSession"
       :style="{ width: sessionListCollapsed ? 40 : 260, flexShrink: 0 }"
     />
-    <div style="flex:1;display:flex;flex-direction:column;overflow:hidden">
+    <div class="chat-main">
       <div class="chat-header">
         <div class="chat-header-left">
           <span v-if="!editingTitle" class="chat-header-title" :class="{ editable: !!session.sessionId }" @click="startEditTitle">{{ session.currentTitle }}</span>
@@ -479,7 +479,7 @@ function handleAnswerIntent(requestId, answer) {
         <!-- 其他会话正在思考中（切走后仍显示横幅 + 停止按钮，可停止处理中的会话） -->
         <div v-if="chat.processing && chat.processingSid && chat.processingSid !== session.sessionId" class="chat-other-processing">
           <span>会话「{{ (chat.processingSid || '').slice(0, 8) }}…」正在思考中，切回该会话可查看进度</span>
-          <button class="btn btn-sm" style="background:var(--danger);color:white;border-color:var(--danger)" @click="chat.stop()"><Icon name="stop" :size="14" /> 停止</button>
+          <button class="btn btn-sm btn-stop" @click="chat.stop()"><Icon name="stop" :size="14" /> 停止</button>
         </div>
 
         <div class="chat-load-more" v-if="hasMoreMessages" @click="loadMoreMessages">
@@ -504,33 +504,31 @@ function handleAnswerIntent(requestId, answer) {
 
       <ChatInput :processing="chat.processing" :hint="chat.hint" @send="handleSend" @toast="(t) => toast.show(t.message, t.type)">
         <template #actions>
-          <button v-if="chat.processing" class="btn btn-sm" style="background:var(--danger);color:white;border-color:var(--danger)" @click="chat.stop()"><Icon name="stop" :size="14" /> 停止</button>
+          <button v-if="chat.processing" class="btn btn-sm btn-stop" @click="chat.stop()"><Icon name="stop" :size="14" /> 停止</button>
         </template>
       </ChatInput>
     </div>
 
     <!-- todo 待办面板（模型通过 todo 工具维护，按当前会话隔离） -->
-    <div v-if="showTodos" style="width:240px;flex-shrink:0;border-left:1px solid var(--border);display:flex;flex-direction:column;background:var(--bg-secondary)">
-      <div style="padding:10px 12px;font-size:13px;font-weight:600;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border)">
+    <div v-if="showTodos" class="todo-panel">
+      <div class="todo-header">
         <span>待办 ({{ todoDone }}/{{ todos.length }})</span>
         <button class="chat-btn-icon" @click="showTodos = false" title="收起"><Icon name="right" :size="14" /></button>
       </div>
-      <div style="height:3px;background:rgba(139,148,158,0.15)">
-        <div :style="{ height: '100%', width: (todos.length ? (todoDone / todos.length) * 100 : 0) + '%', background: '#3fb950', transition: 'width .3s' }"></div>
+      <div class="todo-progress">
+        <div class="todo-progress-bar" :style="{ width: (todos.length ? (todoDone / todos.length) * 100 : 0) + '%' }"></div>
       </div>
-      <div style="flex:1;overflow-y:auto;padding:4px 12px">
+      <div class="todo-list">
         <div
           v-for="(t, i) in todos" :key="t.id || i"
-          style="display:flex;gap:8px;align-items:flex-start;padding:7px 0;border-bottom:1px solid var(--border);cursor:pointer"
+          class="todo-item"
           :title="t.status === 'completed' ? '点击恢复为待办' : '点击标记完成'"
           @click="toggleTodo(t)"
         >
-          <span :style="{ fontSize: '14px', lineHeight: '1.2', color: t.status === 'completed' ? '#3fb950' : t.status === 'in_progress' ? '#d29922' : '#8b949e' }">
-            {{ t.status === 'completed' ? '☑' : t.status === 'in_progress' ? '◐' : '☐' }}
-          </span>
-          <span :style="{ fontSize: '12px', textDecoration: t.status === 'completed' ? 'line-through' : 'none', color: 'var(--text-primary)' }">{{ t.content }}</span>
+          <span class="todo-icon">{{ t.status === 'completed' ? '☑' : t.status === 'in_progress' ? '◐' : '☐' }}</span>
+          <span class="todo-text" :class="{ done: t.status === 'completed' }">{{ t.content }}</span>
         </div>
-        <div v-if="!todos.length" style="text-align:center;padding:24px;color:var(--text-muted);font-size:12px">暂无待办任务<br/><span style="font-size:11px">（模型会先用 todo 工具规划任务步骤，你也可点击完成）</span></div>
+        <div v-if="!todos.length" class="todo-empty">暂无待办任务<br/><span class="todo-empty-hint">（模型会先用 todo 工具规划任务步骤，你也可点击完成）</span></div>
       </div>
     </div>
 

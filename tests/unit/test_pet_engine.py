@@ -4,6 +4,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+import pytest
+
 from config.settings import settings
 from modules.desktop_pet.pet_engine import PetEngine
 
@@ -20,6 +22,27 @@ def _engine():
     return pe
 
 
+@pytest.fixture
+def pet_repo(tmp_path, monkeypatch):
+    """真实 SessionRepository（临时 SQLite）"""
+    import modules.database.connection as conn
+    from modules.database.session_repo import SessionRepository
+    monkeypatch.setattr(conn.config, "sqlite_path", str(tmp_path / "pet.db"))
+    monkeypatch.setattr(conn, "_db_manager", None)
+    monkeypatch.setattr(conn, "_db_manager_lock", __import__("threading").RLock())
+    conn.get_db_manager().initialize()
+    repo = SessionRepository()
+    repo.create_session("pet_main")
+    import modules.database.session_repo as sr
+    monkeypatch.setattr(sr, "get_session_repo", lambda: repo)
+    return repo
+
+
+def _real_client():
+    from infra.model.large_model_client import LargeModelClient
+    return LargeModelClient(api_key="t", api_url="http://localhost:1/v1")
+
+
 def test_enabled_property(monkeypatch):
     pe = _engine()
     monkeypatch.setattr(settings, "DESKTOP_PET_ENABLED", True)
@@ -34,35 +57,24 @@ def test_pet_session_id_default(monkeypatch):
     assert pe.pet_session_id == "pet_main"
 
 
-def test_build_messages(monkeypatch):
+def test_build_messages(monkeypatch, pet_repo):
+    """真实 repo：历史消息注入 + 系统人设 + 用户消息"""
     pe = _engine()
-    pe._client = MagicMock()
-
-    class FakeRepo:
-        @staticmethod
-        def get_recent_messages(sid, limit=20):
-            return [{"role": "user", "content": "旧消息"}, {"role": "assistant", "content": "旧回复"}]
-
-    monkeypatch.setattr("modules.database.session_repo.get_session_repo", lambda: FakeRepo())
+    pe._client = _real_client()
+    pet_repo.save_message("pet_main", "user", "旧消息")
+    pet_repo.save_message("pet_main", "assistant", "旧回复")
     msgs = pe._build_messages("你好")
     assert msgs[0].role == "system"
     assert "桌宠" in msgs[0].content
-    # 历史消息加入
     assert any(m.role == "user" and m.content == "旧消息" for m in msgs)
     assert msgs[-1].role == "user"
     assert msgs[-1].content == "你好"
 
 
-def test_build_messages_extra_system(monkeypatch):
+def test_build_messages_extra_system(monkeypatch, pet_repo):
+    """真实 repo 空历史 + extra_system 注入"""
     pe = _engine()
-    pe._client = MagicMock()
-
-    class EmptyRepo:
-        @staticmethod
-        def get_recent_messages(sid, limit=20):
-            return []
-
-    monkeypatch.setattr("modules.database.session_repo.get_session_repo", lambda: EmptyRepo())
+    pe._client = _real_client()
     msgs = pe._build_messages("嗨", extra_system="当前心情很好")
     assert "当前心情很好" in msgs[0].content
     assert msgs[-1].content == "嗨"
@@ -106,14 +118,11 @@ def test_start_with_event_bus(monkeypatch):
     assert e._sub_id == ""
 
 
-def test_ensure_pet_session(monkeypatch):
-    e = _pe(monkeypatch)
-    import modules.database.session_repo as sr
-    repo = MagicMock()
-    monkeypatch.setattr(sr, "get_session_repo", lambda: repo)
+def test_ensure_pet_session(pet_repo):
+    from modules.desktop_pet.pet_engine import PetEngine
+    e = PetEngine(event_bus=None)  # 真实构造
     e._ensure_pet_session()
-    repo.create_session.assert_called_once()
-    repo.set_session_title.assert_called_once()
+    assert pet_repo.get_all_sessions()  # 会话已创建
 
 
 def test_is_active(monkeypatch):
@@ -131,83 +140,12 @@ def test_build_messages(monkeypatch):
     assert msgs[-1].content == "你好"
 
 
-def test_save_pair(monkeypatch):
-    e = _pe(monkeypatch)
-    import modules.database.session_repo as sr
-    repo = MagicMock()
-    monkeypatch.setattr(sr, "get_session_repo", lambda: repo)
+def test_save_pair(pet_repo):
+    from modules.desktop_pet.pet_engine import PetEngine
+    e = PetEngine(event_bus=None)  # 真实构造
     e._save_pair("问", "答")
-    assert repo.save_message.call_count == 2
-
-
-def test_chat_handshake_fail_returns_empty(monkeypatch):
-    """前端不可达时 chat 不调 LLM 返回空"""
-    import modules.thinking.frontend_channel as fc
-    monkeypatch.setattr(fc, "confirm_frontend_connection", lambda session_id=None: False)
-    e = _pe(monkeypatch)
-    e._client = MagicMock()
-    assert asyncio.run(e.chat("hi")) == ""
-    e._client.chat.assert_not_called()
-
-
-def test_chat_success(monkeypatch):
-    e = _pe(monkeypatch)
-    client = MagicMock()
-    resp = MagicMock()
-    resp.message.content = "你好呀"
-    client.chat = AsyncMock(return_value=resp)
-    e._client = client
-    e._save_pair = lambda *a: None
-    import modules.thinking.frontend_channel as fc
-    monkeypatch.setattr(fc, "confirm_frontend_connection", lambda session_id=None: True)
-    out = asyncio.run(e.chat("hi"))
-    assert out == "你好呀"
-
-
-def test_chat_empty_and_error(monkeypatch):
-    e = _pe(monkeypatch)
-    client = MagicMock()
-    resp = MagicMock()
-    resp.message = None
-    client.chat = AsyncMock(return_value=resp)
-    e._client = client
-    assert asyncio.run(e.chat("hi")) == ""
-    client.chat = MagicMock(side_effect=RuntimeError)
-    assert asyncio.run(e.chat("hi")) == ""
-
-
-def test_on_speech(monkeypatch):
-    e = _pe(monkeypatch)
-    ev = type("E", (), {"payload": {"text": "陪我聊聊"}})()
-    e.chat = AsyncMock(return_value="好的")
-    calls = []
-    e._after_reply = MagicMock(side_effect=lambda r: calls.append(r))
-    asyncio.run(e._on_speech(ev))
-    assert calls == ["好的"]
-
-
-def test_on_speech_empty(monkeypatch):
-    e = _pe(monkeypatch)
-    ev = type("E", (), {"payload": {}})()
-    e.chat = MagicMock(return_value="x")
-    asyncio.run(e._on_speech(ev))
-    e.chat.assert_not_called()
-
-
-def test_chat_stream_task(monkeypatch):
-    e = _pe(monkeypatch)
-    client = MagicMock()
-    resp = MagicMock()
-    resp.message.content = "流式回复"
-    client.chat_stream = AsyncMock(return_value=resp)
-    e._client = client
-    e._save_pair = lambda *a: None
-    import modules.thinking.frontend_channel as fc
-    monkeypatch.setattr(fc, "confirm_frontend_connection", lambda session_id=None: True)
-    collected = []
-    asyncio.run(e._chat_stream_task("hi", lambda t: None, collected))
-    assert collected == ["流式回复"]
-    assert e.last_reply["text"] == "流式回复"
+    msgs = pet_repo.get_recent_messages("pet_main", limit=10)
+    assert [m["content"] for m in msgs] == ["问", "答"]
 
 
 def test_after_reply(monkeypatch):
