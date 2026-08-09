@@ -152,3 +152,4 @@ test_gpt55_standard*
 
 # 前端依赖
 frontend/node_modules/
+data/backup_test_cleanup_*
