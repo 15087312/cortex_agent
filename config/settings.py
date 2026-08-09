@@ -321,6 +321,23 @@ class Settings(BaseSettings):
         self._save_personas_yaml(data)
         return list(rs.get(role, []))
 
+    def get_forced_skill(self) -> str:
+        """获取全局强制技能 id（非空时所有对话必须使用该技能，不可切换/停用）"""
+        data = self._load_personas_yaml()
+        return str(data.get("forced_skill") or "").strip()
+
+    def set_forced_skill(self, skill_id: str) -> str:
+        """设置全局强制技能 id（空串清除）。返回当前生效值。"""
+        data = self._load_personas_yaml()
+        skill_id = (skill_id or "").strip()
+        if skill_id:
+            data["forced_skill"] = skill_id
+        else:
+            data.pop("forced_skill", None)
+        self._save_personas_yaml(data)
+        return data.get("forced_skill", "")
+
+
     @property
     def _personas_yaml_path(self):
         return Path.home() / ".cortex" / "personas.yaml"

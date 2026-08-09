@@ -1768,22 +1768,39 @@ class ModelRunner:
                             elif tc.name == "request_skill":
                                 skill_id = args.get("skill_id", "")
                                 if skill_id:
-                                    from modules.thinking.skills import skill_manager
-                                    skill = skill_manager.get_skill(skill_id)
-                                    role = getattr(self.identity, "role", "")
-                                    allowed = skill and skill.enabled and (
-                                        skill in skill_manager.list_skills_for_role(role)
-                                    )
-                                    if allowed:
-                                        self._active_skill = skill
-                                        self._active_skill_tool_rules = skill.tool_rules
-                                        logger.info(f"[ModelRunner] 技能已切换: {skill_id}")
-                                        preview = skill.description[:120].replace("\n", " ")
-                                        result = f"【技能已激活】{skill.name}\n{preview}"
+                                    # 强制技能锁定：用户设置了 forced_skill 时，不允许切换到其他技能
+                                    try:
+                                        from config.settings import settings as _settings
+                                        _forced = _settings.get_forced_skill()
+                                    except Exception:
+                                        _forced = ""
+                                    if _forced and _forced != skill_id:
+                                        result = f"【技能切换被拒绝】系统已强制使用技能 '{_forced}'，不可切换到其他技能。使用 list_skills 查看当前可用技能。"
                                     else:
-                                        result = f"【技能不可用】skill_id={skill_id} 不存在、已禁用或当前角色不可用。使用 list_skills 查看可用技能。"
+                                        from modules.thinking.skills import skill_manager
+                                        skill = skill_manager.get_skill(skill_id)
+                                        role = getattr(self.identity, "role", "")
+                                        allowed = skill and skill.enabled and (
+                                            skill in skill_manager.list_skills_for_role(role)
+                                        )
+                                        if allowed:
+                                            self._active_skill = skill
+                                            self._active_skill_tool_rules = skill.tool_rules
+                                            logger.info(f"[ModelRunner] 技能已切换: {skill_id}")
+                                            preview = skill.description[:120].replace("\n", " ")
+                                            result = f"【技能已激活】{skill.name}\n{preview}"
+                                        else:
+                                            result = f"【技能不可用】skill_id={skill_id} 不存在、已禁用或当前角色不可用。使用 list_skills 查看可用技能。"
                             elif tc.name == "stop_skill":
-                                if self._active_skill:
+                                # 强制技能锁定：forced_skill 不可停用
+                                try:
+                                    from config.settings import settings as _settings
+                                    _forced = _settings.get_forced_skill()
+                                except Exception:
+                                    _forced = ""
+                                if _forced:
+                                    result = f"【技能停用被拒绝】系统已强制使用技能 '{_forced}'，不可停用。"
+                                elif self._active_skill:
                                     skill_name = self._active_skill.name
                                     reason = args.get("reason", "")
                                     logger.info(f"[ModelRunner] 技能已停用: {self._active_skill.id} ({reason})")
@@ -2461,7 +2478,18 @@ class ModelRunnerManager:
             runner.identity_key = identity_key
 
             # 技能注入：大模型可按技能扮演角色，专家可按默认技能加载
-            effective_skill_id = skill_id or identity.default_skill
+            # 强制技能优先：用户设置了 forced_skill 时，所有模型统一使用该技能（不可切换/停用）
+            effective_skill_id = ""
+            forced_skill_id = ""
+            try:
+                from config.settings import settings as _settings
+                forced_skill_id = _settings.get_forced_skill()
+            except Exception:
+                forced_skill_id = ""
+            if forced_skill_id:
+                effective_skill_id = forced_skill_id
+            else:
+                effective_skill_id = skill_id or identity.default_skill
             if effective_skill_id:
                 try:
                     from modules.thinking.skills import skill_manager
@@ -2469,7 +2497,10 @@ class ModelRunnerManager:
                     if skill:
                         runner._active_skill = skill
                         runner._active_skill_tool_rules = skill.tool_rules
-                        source = "auto-match" if skill_id else "default"
+                        if forced_skill_id:
+                            source = "forced"
+                        else:
+                            source = "auto-match" if skill_id else "default"
                         logger.info(
                             f"[ModelRunnerManager] 技能已注入 ({source}): {effective_skill_id} → {model_id}"
                         )

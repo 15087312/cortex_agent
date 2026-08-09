@@ -42,6 +42,12 @@ def get_skill_detail(skill_id: str) -> Dict[str, Any]:
                 "id": skill.id,
                 "name": skill.name,
                 "description": skill.description,
+                "keywords": list(skill.keywords or []),
+                "trigger": skill.trigger,
+                "tool_rules": skill.tool_rules,
+                "enabled": skill.enabled,
+                "source": skill.source,
+                "metadata": skill.metadata,
             },
         }
     except Exception as e:

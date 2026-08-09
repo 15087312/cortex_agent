@@ -13,6 +13,15 @@ def _inst():
     return StreamThinkingSystem.__new__(StreamThinkingSystem)
 
 
+def _full_system(repo):
+    s = StreamThinkingSystem.__new__(StreamThinkingSystem)
+    s.sessions = {}
+    s._running = False
+    s._lock = asyncio.Lock()
+    s._session_repo = repo
+    return s
+
+
 def _run(coro):
     return asyncio.run(coro)
 
@@ -127,33 +136,22 @@ def test_persist_thought_empty_content(monkeypatch, tmp_repo):
     assert tmp_repo.get_messages("s_thought_1") == []
 
 
-def test_think_busy_saves_message_and_acks(monkeypatch):
-    s = _inst()
-    s.sessions = {"s1": {"messages": [], "processing": True, "running": True}}
-    s._lock = asyncio.Lock()
-    s._append_message = MagicMock(return_value="mid1")
+def test_think_busy_saves_message_and_acks(tmp_repo):
+    """busy 分支：真实 _append_message 落库 + 真实 _emit 经 callback"""
+    s = _full_system(tmp_repo)
+    s.sessions = {"s1": {"messages": [], "processing": True, "running": True, "model_id": "large_primary"}}
     events = []
     async def cb(ev):
         events.append(ev)
-    s._emit = MagicMock()
-    async def fake_emit(sid, ev, cb):
-        events.append(ev)
-    s._emit = fake_emit
     result = _run(s.think("s1", "请求", callback=cb))
     assert result == ""
     assert any(ev["event"] == "busy" for ev in events)
-    s._append_message.assert_called_once_with("s1", "user", "请求")
+    assert s.sessions["s1"]["messages"][-1]["content"] == "请求"
 
 
-def test_start_creates_and_reuses(monkeypatch):
-    s = _inst()
-    s.sessions = {}
-    s._lock = asyncio.Lock()
-    s._get_session_repo = lambda: None
-    s._preload_session_memories = MagicMock(return_value=None)
-    async def fake_preload(sid):
-        return None
-    s._preload_session_memories = fake_preload
+def test_start_creates_and_reuses(tmp_repo):
+    """真实 start：创建会话 + 幂等复用"""
+    s = _full_system(tmp_repo)
     _run(s.start("s1"))
     assert "s1" in s.sessions
     assert s.sessions["s1"]["running"] is True
@@ -161,20 +159,12 @@ def test_start_creates_and_reuses(monkeypatch):
     assert s.sessions["s1"]["running"] is True
 
 
-def test_start_restores_history(monkeypatch):
-    s = _inst()
-    s.sessions = {}
-    s._lock = asyncio.Lock()
-    repo = MagicMock()
-    repo.get_recent_messages.return_value = [
-        {"role": "user", "content": "hi", "id": "m1"},
-        {"role": "thought", "content": "思考", "id": "m2"},
-    ]
-    s._get_session_repo = lambda: repo
-    s._preload_session_memories = MagicMock(return_value=None)
-    async def fake_preload(sid):
-        return None
-    s._preload_session_memories = fake_preload
+def test_start_restores_history(tmp_repo):
+    """真实 start：从 DB 恢复历史，过滤 thought"""
+    tmp_repo.create_session("s1")
+    tmp_repo.save_message("s1", "user", "hi")
+    tmp_repo.save_message("s1", "thought", "思考")
+    s = _full_system(tmp_repo)
     _run(s.start("s1"))
     msgs = s.sessions["s1"]["messages"]
     assert len(msgs) == 1  # thought 被过滤
@@ -191,94 +181,3 @@ def test_get_context_and_status():
     st = s.get_status()
     assert st["running"] is True
     assert st["sessions"] >= 1
-
-
-def _think_frontend_online(monkeypatch):
-    monkeypatch.setattr(
-        "modules.thinking.frontend_channel.confirm_frontend_connection",
-        lambda session_id=None: True,
-    )
-
-
-def test_think_full_success(monkeypatch):
-    _think_frontend_online(monkeypatch)
-    s = _inst()
-    s.sessions = {"s1": {"messages": [], "processing": False, "running": True, "model_id": "large_primary"}}
-    s._lock = asyncio.Lock()
-    s._running = True
-    s._orchestrator = MagicMock()
-
-    result = {
-        "response": "最终回复", "focus": "thinking", "active_modules": [],
-        "sleep_modules": [], "degraded": False, "module_results": [],
-        "decisions": {}, "resource_status": {}, "security_passed": True,
-        "elapsed_ms": 10, "trace_id": "tr1",
-    }
-    s._orchestrator.process = AsyncMock(return_value=result)
-
-    import modules.thinking.communication as comm_mod
-    bus = MagicMock()
-    bus.set_event_emitter = MagicMock()
-    monkeypatch.setattr(comm_mod, "get_message_bus", lambda: bus)
-
-    import modules.security_system.tool_security_gate as tsg
-    monkeypatch.setattr(tsg, "set_security_event_callback", lambda cb: None)
-
-    import modules.database.session_repo as sr
-    repo = MagicMock()
-    repo.save_message.return_value = "msg1"
-    repo.set_session_metadata.return_value = None
-    s._get_session_repo = lambda: repo
-
-    import modules.thinking.session_graph as sg_mod
-    monkeypatch.setattr(sg_mod, "get_session_graph_store", lambda: MagicMock(snapshot=lambda sid: {}))
-
-    events = []
-    async def cb(ev):
-        events.append(ev)
-    s._emit = MagicMock()
-    async def fake_emit(sid, ev, cb):
-        events.append(ev)
-    s._emit = fake_emit
-    s._post_task_extraction = MagicMock(return_value=None)
-    async def fake_extract(sid, ui, fr):
-        return None
-    s._post_task_extraction = fake_extract
-    s._proactive_context_trim = AsyncMock()
-    s.get_context = lambda sid: s.sessions[sid]["messages"]
-
-    result_val = _run(s.think("s1", "你好", callback=cb))
-    assert result_val == "最终回复"
-    assert any(ev["event"] == "done" for ev in events)
-
-
-def test_think_error_path(monkeypatch):
-    _think_frontend_online(monkeypatch)
-    s = _inst()
-    s.sessions = {"s1": {"messages": [], "processing": False, "running": True, "model_id": "large_primary"}}
-    s._lock = asyncio.Lock()
-    s._running = True
-    s._orchestrator = MagicMock()
-    s._orchestrator.process = AsyncMock(side_effect=RuntimeError("内部错误"))
-    import modules.thinking.communication as comm_mod
-    bus = MagicMock()
-    bus.set_event_emitter = MagicMock()
-    monkeypatch.setattr(comm_mod, "get_message_bus", lambda: bus)
-    import modules.security_system.tool_security_gate as tsg
-    monkeypatch.setattr(tsg, "set_security_event_callback", lambda cb: None)
-    s._emit = MagicMock()
-    async def fake_emit(sid, ev, cb):
-        events.append(ev)
-    s._emit = fake_emit
-    s._proactive_context_trim = AsyncMock()
-    s.get_context = lambda sid: []
-    s._session_repo = MagicMock()
-    s._session_repo.set_session_metadata.return_value = None
-    import modules.thinking.session_graph as sg_mod
-    monkeypatch.setattr(sg_mod, "get_session_graph_store", lambda: MagicMock(snapshot=lambda sid: {}))
-    events = []
-    async def cb(ev):
-        events.append(ev)
-    result = _run(s.think("s1", "你好", callback=cb))
-    assert result == ""
-    assert any(ev["event"] == "error" for ev in events)

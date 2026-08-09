@@ -367,7 +367,18 @@ class MultiModelOrchestrator:
     # ------------------------------------------------------------------
 
     def _match_skill(self, user_input: str) -> str:
-        """根据用户输入自动匹配技能，返回 skill_id 或空字符串"""
+        """根据用户输入自动匹配技能，返回 skill_id 或空字符串
+
+        强制技能优先：用户设置了 forced_skill 时直接使用它，不做自动匹配。
+        """
+        try:
+            from config.settings import settings as _cfg
+            forced = _cfg.get_forced_skill()
+            if forced:
+                logger.info(f"[编排器] 强制技能生效: {forced}")
+                return forced
+        except Exception as e:
+            logger.debug(f"[编排器] 读取强制技能失败 (非致命): {e}")
         try:
             from modules.thinking.skills import skill_manager
             skill = skill_manager.match_skill(user_input, role="orchestrator")

@@ -2,10 +2,8 @@
 因果树深度回忆系统 — 稳定性测试
 """
 import asyncio
-import pytest
-import threading
-import tempfile
 import os
+import pytest
 
 # ===========================================================================
 # 深度回忆系统测试
@@ -17,11 +15,12 @@ import os
 # ===========================================================================
 
 class TestCausalTree:
-    def setup_method(self):
+    @pytest.fixture(autouse=True)
+    def setup(self, tmp_path):
         from modules.memory.causal_graph import CausalGraph, CausalNode, CausalEdge
-        self.graph = CausalGraph.get_instance()
-        self.graph.clear_all()
         from modules.memory.causal_tree import CausalTree
+        # 独立临时测试库（不触碰 data/ 下真实 causal.db）
+        self.graph = CausalGraph(db_path=str(tmp_path / "causal_test.db"))
         self.tree = CausalTree(self.graph)
 
     def _make_chain(self, labels):
@@ -106,14 +105,21 @@ class TestCausalTree:
 
 class TestDepthRecallScheduler:
     @pytest.fixture(autouse=True)
-    def setup(self, monkeypatch):
+    def setup(self, tmp_path, monkeypatch):
         from modules.memory.causal_graph import CausalGraph, CausalNode, CausalEdge
         from modules.memory.event_store import EventStore, MemoryEvent
-        self.graph = CausalGraph.get_instance()
-        self.graph.clear_all()
-        # 重置 EventStore 单例，确保 schema 是最新的
-        EventStore._instance = None
-        self.store = EventStore.get_instance()
+        # 独立临时测试库：因果图 + 事件库，绝不写入 data/ 下的真实库
+        self.tmp_dir = str(tmp_path)
+        self.graph = CausalGraph(db_path=os.path.join(self.tmp_dir, "causal_test.db"))
+        self.store = EventStore(
+            db_path=os.path.join(self.tmp_dir, "memory_test.db"),
+            faiss_index_path=os.path.join(self.tmp_dir, "faiss_test.index"),
+            id_map_path=os.path.join(self.tmp_dir, "id_map_test.json"),
+        )
+        # 类单例指向本次测试实例，使 depth_recall 等模块内部的
+        # CausalGraph.get_instance() / EventStore.get_instance() 也解析到测试库
+        monkeypatch.setattr(CausalGraph, "_instance", self.graph)
+        monkeypatch.setattr(EventStore, "_instance", self.store)
 
         # Mock EmbeddingEngine 以跳过模型加载
         from modules.memory.embedding import EmbeddingEngine
@@ -235,14 +241,19 @@ class TestDepthRecallScheduler:
 
 class TestIncrementalUpdate:
     @pytest.fixture(autouse=True)
-    def setup(self):
+    def setup(self, tmp_path, monkeypatch):
         from modules.memory.causal_graph import CausalGraph, CausalNode, CausalEdge
         from modules.memory.event_store import EventStore, MemoryEvent
-        self.graph = CausalGraph.get_instance()
-        self.graph.clear_all()
-        # 重置 EventStore 单例，确保 schema 是最新的
-        EventStore._instance = None
-        self.store = EventStore.get_instance()
+        # 独立临时测试库：因果图 + 事件库，绝不写入 data/ 下的真实库
+        self.tmp_dir = str(tmp_path)
+        self.graph = CausalGraph(db_path=os.path.join(self.tmp_dir, "causal_test.db"))
+        self.store = EventStore(
+            db_path=os.path.join(self.tmp_dir, "memory_test.db"),
+            faiss_index_path=os.path.join(self.tmp_dir, "faiss_test.index"),
+            id_map_path=os.path.join(self.tmp_dir, "id_map_test.json"),
+        )
+        monkeypatch.setattr(CausalGraph, "_instance", self.graph)
+        monkeypatch.setattr(EventStore, "_instance", self.store)
 
     @pytest.mark.asyncio
     async def test_events_linked_after_recall(self):

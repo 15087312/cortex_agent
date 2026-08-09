@@ -677,16 +677,31 @@ class ContinuousThinker:
         if dlg_status:
             pool.add(ContextFragment("delegation", dlg_status, ("large",), "当前委托状态", 60))
 
-        # 技能建议
+        # 技能建议（强制技能优先：用户设置了 forced_skill 时直接提示已强制激活）
         try:
             from modules.thinking.skills import skill_manager
             runner = getattr(self, '_runner_ref', None)
             if not (runner and getattr(runner, '_active_skill', None)):
-                suggested = skill_manager.match_skill(initial_question)
+                forced = ""
+                try:
+                    from config.settings import settings as _cfg
+                    forced = _cfg.get_forced_skill()
+                except Exception:
+                    forced = ""
+                suggested = None
+                if forced:
+                    suggested = skill_manager.get_skill(forced)
+                else:
+                    suggested = skill_manager.match_skill(initial_question)
                 if suggested:
-                    pool.add(ContextFragment("skill_suggestion",
-                        f"【建议技能】当前场景推荐激活「{suggested.name}」，可用 request_skill(skill_id='{suggested.id}') 激活",
-                        ("large",), "技能建议", 70))
+                    if forced:
+                        pool.add(ContextFragment("skill_suggestion",
+                            f"【强制技能】系统已强制使用技能「{suggested.name}」，无需手动激活。",
+                            ("large",), "技能建议", 70))
+                    else:
+                        pool.add(ContextFragment("skill_suggestion",
+                            f"【建议技能】当前场景推荐激活「{suggested.name}」，可用 request_skill(skill_id='{suggested.id}') 激活",
+                            ("large",), "技能建议", 70))
         except Exception:
             pass
 
