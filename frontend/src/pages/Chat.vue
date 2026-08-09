@@ -256,6 +256,7 @@ onMounted(async () => {
   }
   ws.wsClient.on('thinking', _onThinking)
   ws.wsClient.on('message', _onMessage)
+  ws.wsClient.on('mental', _onMessage)  // 心理活动事件（msg_type='mental'）复用 _onMessage 分支
   ws.wsClient.on('done', _onDone)
   ws.wsClient.on('error', _onError)
   ws.wsClient.on('ack', _onAck)
@@ -280,6 +281,7 @@ onActivated(() => {
 onUnmounted(() => {
   ws.wsClient.off('thinking', _onThinking)
   ws.wsClient.off('message', _onMessage)
+  ws.wsClient.off('mental', _onMessage)
   ws.wsClient.off('done', _onDone)
   ws.wsClient.off('error', _onError)
   ws.wsClient.off('ack', _onAck)
