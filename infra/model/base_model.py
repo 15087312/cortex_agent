@@ -362,17 +362,11 @@ class BaseModelClient(ABC):
     def _log_payload(self, payload: dict):
         """记录完整请求体（INFO 级别）
 
-        tools 字段压缩为单行，固定的 system 提示词（人格/规则）省略，
-        避免每次请求重复刷屏。
+        tools 字段压缩为单行，避免超大工具定义刷屏；
+        system 提示词完整打印，便于排查 prompt 相关问题。
         """
         # 复制一份，不影响原始 payload
         log_data = {k: v for k, v in payload.items() if k != "tools"}
-        msgs = log_data.get("messages")
-        if isinstance(msgs, list):
-            log_data["messages"] = [
-                (dict(m, content="<固定提示词，省略>") if (isinstance(m, dict) and m.get("role") == "system") else m)
-                for m in msgs
-            ]
         tools = payload.get("tools")
 
         main_part = json.dumps(log_data, ensure_ascii=False, indent=2)

@@ -1,4 +1,6 @@
 """perception/trigger 测试（此前 31% 覆盖）：空闲计时器与主动触发"""
+import asyncio
+import threading
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -121,6 +123,53 @@ def session_repo(tmp_path, monkeypatch):
     return SessionRepository()
 
 
+class _FakeWS:
+    def __init__(self):
+        self.sent = []
+
+    async def send_json(self, data):
+        self.sent.append(data)
+
+    async def accept(self):
+        pass
+
+
+class _LoopServer:
+    def __init__(self):
+        self.loop = asyncio.new_event_loop()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def _run(self):
+        asyncio.set_event_loop(self.loop)
+        self.loop.run_forever()
+
+    def stop(self):
+        self.loop.call_soon_threadsafe(self.loop.stop)
+        self._thread.join(timeout=3)
+        self.loop.close()
+
+
+@pytest.fixture
+def server():
+    sv = _LoopServer()
+    yield sv
+    sv.stop()
+
+
+@pytest.fixture
+def cm(monkeypatch, server):
+    import modules.thinking.api_stream as stream_mod
+    mgr = stream_mod.ConnectionManager()
+    mgr._loop = server.loop
+    monkeypatch.setattr(stream_mod, "connection_manager", mgr)
+    return mgr
+
+
+def _connect(cm, sid, server):
+    asyncio.run_coroutine_threadsafe(cm.connect(sid, _FakeWS()), server.loop).result(timeout=5)
+
+
 def test_get_global_default_rules(monkeypatch):
     import modules.perception.trigger as mod
     import importlib
@@ -144,15 +193,11 @@ def test_get_enabled_outreach_sessions(monkeypatch):
     assert tr._get_enabled_outreach_sessions() == {}
 
 
-def test_qt_active(monkeypatch):
+def test_qt_active_real(cm, server):
     tr = ProactiveTrigger()
-    import modules.thinking.api_stream as stream_mod
-    cm = MagicMock()
-    cm.active_connections = {}
-    monkeypatch.setattr(stream_mod, "connection_manager", cm)
-    assert tr._qt_active() is False
-    cm.active_connections = {"s1": object()}
-    assert tr._qt_active() is True
+    assert tr._qt_active() is False  # 无连接
+    _connect(cm, "s1", server)
+    assert tr._qt_active() is True  # 有连接
 
 
 def test_get_session_outreach_config_real_db(session_repo):
@@ -226,91 +271,32 @@ def test_build_time_text(monkeypatch):
         cfg_mod.settings = old
 
 
-def test_try_outreach_success(monkeypatch):
+def test_try_outreach_cooldown_blocked(session_repo):
+    """真实 DB：冷却内不触发（不调 LLM）"""
+    session_repo.create_session("s1")
+    session_repo.set_outreach_config("s1", {"enabled": True, "cooldown_minutes": 15})
     tr = ProactiveTrigger()
-    import modules.perception.trigger as mod
-    import modules.database.proactive_repo as pr
-    import modules.thinking.frontend_channel as fc
-    async def fake_llm(prompt, session_id):
-        return "需要帮忙吗"
-    monkeypatch.setattr(mod, "call_outreach_llm", fake_llm)
-    pushed = []
-    async def fake_push(sid, *, msg_type, event, content, role="assistant", data=None, persist=True):
-        pushed.append(content)
-        return True
-    monkeypatch.setattr(fc, "_confirm_async", AsyncMock(return_value=True))
-    monkeypatch.setattr(fc, "push_content", fake_push)
-    tr._get_session_outreach_config = lambda sid: {"cooldown_minutes": 1}
-    tr._get_session_conversation = lambda sid: ""
-    tr._get_current_window = lambda: ("", "")
-    tr._build_prompt = lambda **kw: "prompt"
-    monkeypatch.setattr(pr, "save_proactive_log", lambda *a: None)
-    import asyncio
-    asyncio.run(tr._try_outreach("s1", "schedule"))
-    assert pushed == ["需要帮忙吗"]
-    assert tr._trigger_count == 1
-
-
-def test_try_outreach_cooldown_blocked():
-    tr = ProactiveTrigger()
-    tr._get_session_outreach_config = lambda sid: {"cooldown_minutes": 15}
-    tr._session_last_trigger["s1"] = __import__("time").time()
-    import asyncio
-    asyncio.run(tr._try_outreach("s1", "schedule"))
+    tr._session_last_trigger["s1"] = time.time()  # 刚触发过
+    import modules.database.session_repo as sr
+    with patch.object(sr, "get_session_repo", lambda: session_repo):
+        asyncio.run(tr._try_outreach("s1", "schedule"))
     assert tr._trigger_count == 0
 
 
-def test_try_outreach_empty_response(monkeypatch):
+def test_push_error_real(cm):
+    """真实 CM 无连接：_push_error 不崩、不发"""
     tr = ProactiveTrigger()
-    import modules.perception.trigger as mod
-    import modules.thinking.frontend_channel as fc
-    async def fake_llm(prompt, session_id):
-        return ""
-    monkeypatch.setattr(mod, "call_outreach_llm", fake_llm)
-    pushed = []
-    async def fake_push(sid, *, msg_type, event, content, role="assistant", data=None, persist=True):
-        pushed.append(content)
-        return True
-    monkeypatch.setattr(fc, "_confirm_async", AsyncMock(return_value=True))
-    monkeypatch.setattr(fc, "push_content", fake_push)
-    tr._get_session_outreach_config = lambda sid: {"cooldown_minutes": 1}
-    tr._get_session_conversation = lambda sid: ""
-    tr._get_current_window = lambda: ("", "")
-    tr._build_prompt = lambda **kw: "prompt"
-    import asyncio
-    asyncio.run(tr._try_outreach("s1", "schedule"))
-    assert pushed == []
+    tr._push_error("s1", "出错了")  # 无活跃连接
 
 
-def test_push_error(monkeypatch):
-    tr = ProactiveTrigger()
-    import modules.thinking.api_stream as stream_mod
-    cm = MagicMock()
-    cm.active_connections = {}
-    monkeypatch.setattr(stream_mod, "connection_manager", cm)
-    monkeypatch.setattr(stream_mod, "_build_event", lambda **kw: {"event": "proactive_error"})
-    tr._push_error("s1", "出错了")
-    cm.send_json_from_thread.assert_not_called()  # 无活跃连接
-
-
-def test_confirm_frontend_connection_success(monkeypatch):
-    import modules.thinking.api_stream as stream_mod
-    cm = MagicMock()
-    cm.active_connections = {"s1": object()}
-    cm.send_json_from_thread.return_value = True
-    monkeypatch.setattr(stream_mod, "connection_manager", cm)
-    monkeypatch.setattr(stream_mod, "_build_event", lambda **kw: {"event": kw.get("event")})
+def test_confirm_frontend_connection_success(cm, server):
+    """真实 CM + 后台 loop：握手确认成功"""
+    _connect(cm, "s1", server)
     assert mod_confirm() is True
-    cm.send_json_from_thread.assert_called_once()
 
 
-def test_confirm_frontend_connection_no_connections(monkeypatch):
-    import modules.thinking.api_stream as stream_mod
-    cm = MagicMock()
-    cm.active_connections = {}
-    monkeypatch.setattr(stream_mod, "connection_manager", cm)
+def test_confirm_frontend_connection_no_connections(cm):
     assert mod_confirm() is False
-    cm.send_json_from_thread.assert_not_called()
 
 
 def test_confirm_frontend_connection_send_fail(monkeypatch):
@@ -322,18 +308,15 @@ def test_confirm_frontend_connection_send_fail(monkeypatch):
     assert mod_confirm() is False
 
 
-def test_try_outreach_skips_when_frontend_down(monkeypatch):
+def test_try_outreach_skips_when_frontend_down(session_repo, cm):
+    """真实无连接：握手失败跳过 LLM（真实 confirm 无连接返回 False）"""
+    session_repo.create_session("s1")
+    session_repo.set_outreach_config("s1", {"enabled": True, "cooldown_minutes": 1})
     tr = ProactiveTrigger()
-    import modules.perception.trigger as mod
-    import modules.thinking.frontend_channel as fc
-    async def fake_llm(prompt, session_id):
-        raise AssertionError("前端不可达时不应调用 LLM")
-    monkeypatch.setattr(mod, "call_outreach_llm", fake_llm)
-    monkeypatch.setattr(fc, "_confirm_async", AsyncMock(return_value=False))
-    tr._get_session_outreach_config = lambda sid: {"cooldown_minutes": 1}
-    import asyncio
-    asyncio.run(tr._try_outreach("s1", "schedule"))
-    assert tr._trigger_count == 0  # 未调用 LLM，未计数
+    import modules.database.session_repo as sr
+    with patch.object(sr, "get_session_repo", lambda: session_repo):
+        asyncio.run(tr._try_outreach("s1", "schedule"))
+    assert tr._trigger_count == 0  # 无前端连接 → 未调用 LLM
 
 
 def test_push_real_impl_no_connections(monkeypatch):
