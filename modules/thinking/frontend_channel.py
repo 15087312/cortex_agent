@@ -156,14 +156,23 @@ async def generate_and_push(
     role: str = "assistant",
     data: Optional[Dict[str, Any]] = None,
     persist: bool = True,
+    handshake_session_id: Optional[str] = None,
 ) -> Optional[str]:
     """统一流程：握手确认 → LLM 生成 → 持久化 → 推送。
 
     握手失败（前端不可达）时跳过 LLM 调用并返回 None——省 token、不产生无处送达的内容。
     返回生成的文本；LLM 返回空或握手失败返回 None。
+
+    - session_id：推送/持久化归属的会话
+    - handshake_session_id：握手确认的会话。
+      默认 None=广播（任一前端在线即可）——主动搭话/定时任务等"广播给所有连接"的
+      场景目标 session 未必是前端当前连接，必须广播握手，否则会因该 session 无连接
+      而错误跳过 LLM。按会话对话（如 api_stream.think）才显式传具体 session。
     """
-    if not confirm_frontend_connection(session_id):
-        logger.debug(f"[前端通道] 前端不可达，跳过 LLM 调用 (session={session_id or '(广播)'})")
+    if not confirm_frontend_connection(handshake_session_id):
+        logger.debug(
+            f"[前端通道] 前端不可达，跳过 LLM 调用 (handshake={handshake_session_id or '(广播)'})"
+        )
         return None
     text = await llm_fn()
     if not text or not str(text).strip():

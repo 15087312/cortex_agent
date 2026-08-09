@@ -174,3 +174,33 @@ async def test_generate_and_push_empty_llm(monkeypatch):
     out = await fc.generate_and_push("s1", llm, msg_type="proactive", event="test")
     assert out is None
     assert pushed == []
+
+
+async def test_generate_and_push_broadcast_handshake(monkeypatch):
+    """主动搭话/定时任务：握手广播（默认 None）——目标 session 无连接但其他连接在线仍触发。
+
+    回归防护：此前 generate_and_push 用 session_id 握手，目标 session 非前端当前连接时
+    握手失败导致主动搭话从不触发、无记录。
+    """
+    _patch_api(monkeypatch, active={"frontend_current": object()})
+    confirm = MagicMock(return_value=True)
+    monkeypatch.setattr(fc, "confirm_frontend_connection", confirm)
+    pushed = []
+    async def fake_push(sid, *, msg_type, event, content, role="assistant", data=None, persist=True):
+        pushed.append(content)
+        return True
+    monkeypatch.setattr(fc, "push_content", fake_push)
+
+    called = {"llm": 0}
+    async def llm():
+        called["llm"] += 1
+        return "主动消息"
+    # session_id="target_session"（目标会话，可能无连接），握手默认广播 → 仍触发
+    out = await fc.generate_and_push(
+        "target_session", llm, msg_type="proactive", event="proactive_outreach"
+    )
+    assert out == "主动消息"
+    assert called["llm"] == 1
+    assert pushed == ["主动消息"]
+    # 握手确认用的是广播（None），而非 target_session
+    confirm.assert_called_once_with(None)
