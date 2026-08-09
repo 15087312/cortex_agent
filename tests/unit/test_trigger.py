@@ -2,6 +2,8 @@
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from modules.perception.trigger import confirm_frontend_connection as mod_confirm
 
 from modules.perception.trigger import IdleTimer, ProactiveTrigger, _build_outreach_system_prompt
@@ -107,6 +109,18 @@ def test_check_time_windows():
     assert tr._check_time_windows({}) is False
 
 
+@pytest.fixture
+def session_repo(tmp_path, monkeypatch):
+    """真实临时 SQLite + 真实 SessionRepository"""
+    import modules.database.connection as conn
+    from modules.database.session_repo import SessionRepository
+    monkeypatch.setattr(conn.config, "sqlite_path", str(tmp_path / "test_trg.db"))
+    monkeypatch.setattr(conn, "_db_manager", None)
+    monkeypatch.setattr(conn, "_db_manager_lock", __import__("threading").RLock())
+    conn.get_db_manager().initialize()
+    return SessionRepository()
+
+
 def test_get_global_default_rules(monkeypatch):
     import modules.perception.trigger as mod
     import importlib
@@ -141,25 +155,26 @@ def test_qt_active(monkeypatch):
     assert tr._qt_active() is True
 
 
-def test_get_session_outreach_config(monkeypatch):
+def test_get_session_outreach_config_real_db(session_repo):
+    """真实 DB：会话 outreach 配置读写一致"""
+    session_repo.create_session("s1")
+    cfg = {"enabled": True, "cooldown_minutes": 5}
+    session_repo.set_outreach_config("s1", cfg)
     tr = ProactiveTrigger()
     import modules.database.session_repo as sr
-    repo = MagicMock()
-    repo.get_outreach_config.return_value = {"enabled": True}
-    monkeypatch.setattr(sr, "get_session_repo", lambda: repo)
-    assert tr._get_session_outreach_config("s1") == {"enabled": True}
+    with patch.object(sr, "get_session_repo", lambda: session_repo):
+        assert tr._get_session_outreach_config("s1") == cfg
 
 
-def test_get_session_conversation(monkeypatch):
+def test_get_session_conversation_real_db(session_repo):
+    """真实 DB：会话历史作为搭话上下文"""
+    session_repo.create_session("s1")
+    session_repo.save_message("s1", "user", "你好")
+    session_repo.save_message("s1", "assistant", "在的")
     tr = ProactiveTrigger()
     import modules.database.session_repo as sr
-    repo = MagicMock()
-    repo.get_recent_messages.return_value = [
-        {"role": "user", "content": "你好"},
-        {"role": "assistant", "content": "在的"},
-    ]
-    monkeypatch.setattr(sr, "get_session_repo", lambda: repo)
-    out = tr._get_session_conversation("s1")
+    with patch.object(sr, "get_session_repo", lambda: session_repo):
+        out = tr._get_session_conversation("s1")
     assert "user" in out and "你好" in out
 
 
