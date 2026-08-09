@@ -339,3 +339,99 @@ def test_think_loop_cancelled_saves(monkeypatch):
     import asyncio
     asyncio.run(r._think_loop())
     r._save_partial_result.assert_awaited_once()
+
+
+def _gen_runner(**kw):
+    r = _runner(**kw)
+    r._build_system_prompt_for_mode = lambda: "system"
+    r._build_time_context = lambda: "时间"
+    r._generate_with_tools = AsyncMock(return_value="工具结果")
+    r.THINK_TIMEOUT = 60.0
+    r.GENERATE_RETRIES = 2
+    r.GENERATE_RETRY_DELAY = 0.01
+    return r
+
+
+def test_generate_traditional(monkeypatch):
+    r = _gen_runner()
+    client = MagicMock()
+    client.generate = AsyncMock(return_value="生成结果")
+    client.supports_native_tools = False
+    r.instance.client = client
+    r._supports_native_tool_chat = lambda c: False
+    import asyncio
+    out = asyncio.run(r._generate("提示"))
+    assert out == "生成结果"
+
+
+def test_generate_retry_then_success(monkeypatch):
+    r = _gen_runner()
+    client = MagicMock()
+    async def gen(prompt, max_tokens=4096):
+        if gen.n == 0:
+            gen.n += 1
+            raise RuntimeError("网络错误")
+        return "重试成功"
+    gen.n = 0
+    client.generate = gen
+    r.instance.client = client
+    r._supports_native_tool_chat = lambda c: False
+    import asyncio
+    out = asyncio.run(r._generate("提示"))
+    assert out == "重试成功"
+
+
+def test_generate_503_after_retries(monkeypatch):
+    r = _gen_runner()
+    client = MagicMock()
+    async def gen(prompt, max_tokens=4096):
+        raise RuntimeError("503 Service Unavailable")
+    client.generate = gen
+    r.instance.client = client
+    r._supports_native_tool_chat = lambda c: False
+    import asyncio
+    out = asyncio.run(r._generate("提示"))
+    assert "503" in out
+
+
+def test_generate_failure_message(monkeypatch):
+    r = _gen_runner()
+    client = MagicMock()
+    async def gen(prompt, max_tokens=4096):
+        raise RuntimeError("API 挂了")
+    client.generate = gen
+    r.instance.client = client
+    r._supports_native_tool_chat = lambda c: False
+    import asyncio
+    out = asyncio.run(r._generate("提示"))
+    assert "模型调用失败" in out
+
+
+def test_generate_native_tools(monkeypatch):
+    r = _gen_runner()
+    client = MagicMock()
+    r.instance.client = client
+    r._supports_native_tool_chat = lambda c: True
+    import asyncio
+    out = asyncio.run(r._generate("提示"))
+    assert out == "工具结果"
+    r._generate_with_tools.assert_awaited_once()
+
+
+def test_visible_tool_whitelist(monkeypatch):
+    r = _runner()
+    r._active_skill_tool_rules = None
+    import modules.security_system.tool_permission_controller as tpc
+    ctrl = MagicMock()
+    ctrl.get_visible_tools.return_value = ["tool_a"]
+    monkeypatch.setattr(tpc, "get_tool_permission_controller", lambda: ctrl)
+    import importlib
+    cfg_mod = importlib.import_module("config.settings")
+    old = cfg_mod.settings
+    from types import SimpleNamespace
+    cfg_mod.settings = SimpleNamespace(effective_execution_mode="edit")
+    try:
+        out = r._visible_tool_whitelist()
+        assert out == ["tool_a"]
+    finally:
+        cfg_mod.settings = old
