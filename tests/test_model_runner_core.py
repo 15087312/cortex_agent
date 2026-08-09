@@ -624,3 +624,56 @@ def test_notify_thinking_complete(monkeypatch):
     asyncio.run(r._notify_thinking_complete())
     assert len(sent) == 1
     assert sent[0].content["action"] == "thinking_complete"
+
+
+def _tool_runner(monkeypatch, tier="large"):
+    r = _runner(tier=tier)
+    r._visible_tool_whitelist = lambda: ["tool_a"]
+    r.GENERATE_RETRIES = 1
+    r.MAX_CHAT_TOOL_TURNS = 25
+    r._react_loop = None
+    r._status = ""
+    r._status_detail = ""
+    r._current_streaming_content = ""
+    r._thinker = MagicMock()
+    r._last_known_mode = "edit"
+    r._push_reasoning = MagicMock()
+
+    import infra.mcp.factory as mcp_mod
+    mcp = MagicMock()
+    mcp.get_tools_for_api.return_value = [{"function": {"name": "tool_a", "description": "工具"}}]
+    monkeypatch.setattr(mcp_mod, "get_mcp_tool_service", lambda: mcp)
+    import modules.security_system.tool_permission_controller as tpc
+    ctrl = MagicMock()
+    ctrl.get_control_tools.return_value = [{"function": {"name": "continue_thinking", "description": "控制"}}]
+    monkeypatch.setattr(tpc, "get_tool_permission_controller", lambda: ctrl)
+    return r
+
+
+def _resp(content=None, tool_calls=None):
+    class TC:
+        def __init__(self, name, arguments="{}"):
+            self.name = name
+            self.arguments = arguments
+            self.id = "tc1"
+    msg = MagicMock()
+    msg.message.content = content
+    msg.message.tool_calls = tool_calls
+    msg.message.reasoning_content = ""
+    return msg
+
+
+def test_generate_with_tools_control_roundtrip(monkeypatch):
+    r = _tool_runner(monkeypatch, tier="large")
+    client = MagicMock()
+    delattr(client, 'chat_stream')
+    first = _resp(content=None, tool_calls=[_resp.TC if hasattr(_resp, "TC") else type("TC", (), {"name": "continue_thinking", "arguments": '{"continue": true, "wait_seconds": 2}', "id": "t1"})()])
+    first.message.tool_calls = [type("TC", (), {"name": "continue_thinking", "arguments": '{"continue": true, "wait_seconds": 2}', "id": "t1"})()]
+    second = _resp(content="工具循环完成")
+    client.chat = AsyncMock(side_effect=[first, second])
+    r.instance.client = client
+    import asyncio
+    out = asyncio.run(r._generate_with_tools("s", "u", client))
+    assert "思考控制" in out  # continue=true → 控制摘要返回
+    assert client.chat.await_count == 1
+    r._thinker.record_control_decision.assert_called_once_with({"continue": True, "wait_seconds": 2})
