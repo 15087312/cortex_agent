@@ -399,7 +399,7 @@ onMounted(async () => {
             <div>· 前端窗口在线（WebSocket 已连接）</div>
             <div>· 距该会话上次主动搭话超过「综合冷却」时长</div>
             <div style="font-weight:600;margin:6px 0 0">配置优先级</div>
-            <div>· 全局总开关（关=全部停）→ <b>会话规则</b>（按会话单独设置，优先）→ 全局默认规则（会话未配置时生效）</div>
+            <div>· <b>全局总开关</b>（强制执行：关=全部会话不触发）→ <b>会话规则</b>（需在设置里<b>单独开启</b>该会话才触发；开启后可配自己的规则）→ 全局默认规则（仅作为「已开启但未细配规则」会话的默认模板）</div>
           </div>
           <div class="setting-row" style="margin-top:12px">
             <div class="lbl"><div class="t">全局总开关</div><div class="d">关闭后所有会话（含全局默认）都不触发主动搭话</div></div>
@@ -410,17 +410,17 @@ onMounted(async () => {
         <div class="settings-divider"></div>
         <!-- 会话规则（核心：按会话单独设置） -->
         <div class="settings-group">
-          <div class="settings-group-title">会话规则<span style="font-weight:400;color:var(--text-muted);font-size:12px"> —— 按会话单独设置，每个会话配自己的规则（优先于全局默认）</span></div>
+          <div class="settings-group-title">会话规则<span style="font-weight:400;color:var(--text-muted);font-size:12px"> —— 在设置里逐个开启会话，触发前提；开启后可配自己的规则</span></div>
           <OutreachView :compact="true" />
         </div>
 
         <div class="settings-divider"></div>
         <!-- 全局默认规则（仅当会话未配置时生效，兜底） -->
         <div class="settings-group">
-          <div class="settings-group-title">全局默认规则<span style="font-weight:400;color:var(--text-muted);font-size:12px"> —— 仅当某会话未配置自己的规则时生效</span></div>
+          <div class="settings-group-title">全局默认规则<span style="font-weight:400;color:var(--text-muted);font-size:12px"> —— 仅作为「已单独开启但未细配规则」会话的默认模板</span></div>
           <div style="display:flex;flex-direction:column;gap:8px;margin-top:4px">
             <div class="setting-row">
-              <div class="lbl"><div class="t">启用全局默认规则</div><div class="d">为所有未单独配置的会话启用统一的搭话规则</div></div>
+              <div class="lbl"><div class="t">启用全局默认规则</div><div class="d">作为已单独开启、但未配具体规则的会话的默认搭话规则</div></div>
               <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" v-model="globalDefault.enabled" /><span class="toggle-slider"></span></label></div>
             </div>
             <div class="setting-row">

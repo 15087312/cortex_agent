@@ -117,6 +117,7 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
       <!-- 会话规则配置 -->
       <div class="card" style="margin-top:12px">
         <div class="card-header">会话规则（最多开启 5 个会话）</div>
+        <div style="font-size:12px;color:var(--text-muted);padding:2px 0 6px">右侧开关 = 在设置里<b>单独开启</b>该会话的主动搭话（全局总开关强制有效）；开启后可展开配置自己的规则</div>
         <div v-if="sessions.length === 0" class="empty-state" style="padding:32px"><p class="empty-text">暂无会话</p></div>
         <div v-for="s in sessions" :key="s.session_id" class="outreach-session">
           <div class="outreach-head" @click="s._open = !s._open">

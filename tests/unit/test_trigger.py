@@ -386,3 +386,51 @@ def test_get_current_window_real_impl_exception(monkeypatch):
     import modules.perception.state.world_state as ws_mod
     monkeypatch.setattr(ws_mod, "get_world_state", lambda: (_ for _ in ()).throw(RuntimeError()))
     assert tr._get_current_window() == ("", "")
+
+
+def _outreach_sessions(monkeypatch, sessions, default=None):
+    """构造触发会话集合（mock get_all_sessions + 全局默认）"""
+    tr = ProactiveTrigger()
+    import modules.perception.trigger as mod
+    import modules.database.session_repo as sr
+    import importlib
+    cfg_mod = importlib.import_module("config.settings")
+    from types import SimpleNamespace
+    monkeypatch.setattr(cfg_mod, "settings", SimpleNamespace(PROACTIVE_OUTREACH_ENABLED=True))
+    monkeypatch.setattr(sr, "get_session_repo", lambda: MagicMock(get_all_sessions=lambda limit=100: sessions))
+    if default is not None:
+        monkeypatch.setattr(mod.ProactiveTrigger, "_get_global_default_rules", staticmethod(lambda: default))
+    return tr
+
+
+def test_outreach_only_enabled_sessions(monkeypatch):
+    """未在设置里单独开启的会话不触发（即使全局默认开启）"""
+    sessions = [
+        {"session_id": "s1", "metadata": {"outreach": {"enabled": True, "screen": {"enabled": True}}}},
+        {"session_id": "s2", "metadata": {"outreach": {}}},  # 未单独开启
+    ]
+    tr = _outreach_sessions(monkeypatch, sessions, default={"enabled": True, "idle": {"enabled": True}})
+    result = tr._get_enabled_outreach_sessions()
+    assert "s1" in result  # 单独开启 + 有规则
+    assert "s2" not in result  # 未单独开启 → 不触发
+
+
+def test_outreach_enabled_no_rules_uses_default(monkeypatch):
+    """会话单独开启但未配具体规则 → 用全局默认规则作模板"""
+    sessions = [
+        {"session_id": "s1", "metadata": {"outreach": {"enabled": True}}},  # 开启但无规则
+    ]
+    default = {"enabled": True, "idle": {"enabled": True, "idle_minutes": 15}}
+    tr = _outreach_sessions(monkeypatch, sessions, default=default)
+    result = tr._get_enabled_outreach_sessions()
+    assert result["s1"] == default
+
+
+def test_outreach_enabled_no_rules_no_default(monkeypatch):
+    """会话单独开启但无规则、全局默认未开启 → 用会话自身配置（无规则则不触发）"""
+    sessions = [
+        {"session_id": "s1", "metadata": {"outreach": {"enabled": True}}},
+    ]
+    tr = _outreach_sessions(monkeypatch, sessions, default={"enabled": False})
+    result = tr._get_enabled_outreach_sessions()
+    assert result["s1"] == {"enabled": True}

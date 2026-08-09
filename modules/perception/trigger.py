@@ -323,7 +323,10 @@ class ProactiveTrigger:
     def _get_enabled_outreach_sessions(self) -> Dict[str, dict]:
         """获取本次应触发的会话及配置
 
-        优先级：全局总开关（关闭全停）> 会话级配置 > 全局默认规则（会话未配置时）
+        强制总闸：全局总开关（PROACTIVE_OUTREACH_ENABLED）关则全部不触发。
+        触发前提：该会话必须在设置里【单独开启】（metadata.outreach.enabled=true）。
+        全局默认规则只作为「已单独开启、但未细配具体规则」会话的默认模板，
+        不会自动应用到未开启的会话。
         """
         from config.settings import settings
         if not getattr(settings, "PROACTIVE_OUTREACH_ENABLED", True):
@@ -334,11 +337,20 @@ class ProactiveTrigger:
             result: Dict[str, dict] = {}
             for s in get_session_repo().get_all_sessions(limit=100):
                 cfg = (s.get("metadata") or {}).get("outreach") or {}
-                if cfg.get("enabled"):
+                if not cfg.get("enabled"):
+                    # 未在设置里单独开启 → 即使全局默认开启也不触发
+                    continue
+                has_rules = bool(
+                    cfg.get("schedule") or cfg.get("screen")
+                    or cfg.get("idle") or cfg.get("time_windows_enabled")
+                )
+                if has_rules:
                     result[s["session_id"]] = cfg
-                elif default.get("enabled") and not cfg:
-                    # 会话未配置 → 用全局默认规则
+                elif default.get("enabled"):
+                    # 会话单独开启但未配具体规则 → 用全局默认规则作为模板
                     result[s["session_id"]] = default
+                else:
+                    result[s["session_id"]] = cfg
             return result
         except Exception:
             return {}
