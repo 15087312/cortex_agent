@@ -24,6 +24,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
 
+pytestmark = pytest.mark.external
+
 DIM = "\033[2m"
 BOLD = "\033[1m"
 GREEN = "\033[92m"

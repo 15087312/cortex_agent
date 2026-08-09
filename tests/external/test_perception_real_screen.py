@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # 手动运行: python3 -m pytest tests/test_perception_real_screen.py -v -s
 import pytest
 
-pytestmark = pytest.mark.slow
+pytestmark = [pytest.mark.slow, pytest.mark.external]
 
 R = "\033[0m"
 B = "\033[1m"

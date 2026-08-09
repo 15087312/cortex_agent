@@ -9,6 +9,10 @@ import time
 import threading
 from pathlib import Path
 
+import pytest
+
+pytestmark = pytest.mark.external
+
 # 确保从项目根目录运行也能找到模块
 _sys_path_added = str(Path(__file__).resolve().parent.parent)
 if _sys_path_added not in sys.path:
