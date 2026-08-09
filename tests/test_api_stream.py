@@ -1,6 +1,7 @@
 """api_stream 测试：事件构建、scheduler 事件格式化、思考持久化（此前 16% 覆盖）"""
 import asyncio
 import threading
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -124,3 +125,69 @@ def test_persist_thought_empty_content(monkeypatch, tmp_repo):
     inst._get_session_repo = lambda: tmp_repo
     _run(inst._persist_thought("s_thought_1", "", "large"))
     assert tmp_repo.get_messages("s_thought_1") == []
+
+
+def test_think_busy_saves_message_and_acks(monkeypatch):
+    s = _inst()
+    s.sessions = {"s1": {"messages": [], "processing": True, "running": True}}
+    s._lock = asyncio.Lock()
+    s._append_message = MagicMock(return_value="mid1")
+    events = []
+    async def cb(ev):
+        events.append(ev)
+    s._emit = MagicMock()
+    async def fake_emit(sid, ev, cb):
+        events.append(ev)
+    s._emit = fake_emit
+    result = _run(s.think("s1", "请求", callback=cb))
+    assert result == ""
+    assert any(ev["event"] == "busy" for ev in events)
+    s._append_message.assert_called_once_with("s1", "user", "请求")
+
+
+def test_start_creates_and_reuses(monkeypatch):
+    s = _inst()
+    s.sessions = {}
+    s._lock = asyncio.Lock()
+    s._get_session_repo = lambda: None
+    s._preload_session_memories = MagicMock(return_value=None)
+    async def fake_preload(sid):
+        return None
+    s._preload_session_memories = fake_preload
+    _run(s.start("s1"))
+    assert "s1" in s.sessions
+    assert s.sessions["s1"]["running"] is True
+    _run(s.start("s1"))  # 已存在
+    assert s.sessions["s1"]["running"] is True
+
+
+def test_start_restores_history(monkeypatch):
+    s = _inst()
+    s.sessions = {}
+    s._lock = asyncio.Lock()
+    repo = MagicMock()
+    repo.get_recent_messages.return_value = [
+        {"role": "user", "content": "hi", "id": "m1"},
+        {"role": "thought", "content": "思考", "id": "m2"},
+    ]
+    s._get_session_repo = lambda: repo
+    s._preload_session_memories = MagicMock(return_value=None)
+    async def fake_preload(sid):
+        return None
+    s._preload_session_memories = fake_preload
+    _run(s.start("s1"))
+    msgs = s.sessions["s1"]["messages"]
+    assert len(msgs) == 1  # thought 被过滤
+    assert msgs[0]["role"] == "user"
+
+
+def test_get_context_and_status():
+    s = _inst()
+    s.sessions = {"s1": {"messages": [{"role": "user", "content": "hi"}], "running": True}}
+    s._running = True
+    s._lock = asyncio.Lock()
+    ctx = s.get_context("s1")
+    assert ctx == [{"role": "user", "content": "hi"}]
+    st = s.get_status()
+    assert st["running"] is True
+    assert st["sessions"] >= 1
