@@ -479,5 +479,24 @@ API Key 明存 localStorage → 改内存；静默 catch → 各调用处加错�
 - **被 mock 掩盖的真实实现**：测 mock 路径前先确认被 mock 的核心逻辑有真实测试覆盖。
 
 
+## 20. 测试假对象与真实模型字段脱节（后端）
+
+**现象：** 感知触发思考（trigger_think）每次触发传给 LLM 的 prompt 完全相同——`"检测到环境高强度变化（perception:）。请自然简短地关心/提醒用户…"`，`perception:` 后面始终是空的。
+
+**根因：** `trigger_think._trigger` 用 `getattr(d, 'description', '')` 构造差异描述，但真实模型 `Difference`（`modules/perception/difference/models.py` 的 dataclass）**根本没有 `description` 字段**——只有 `id/source_type/category/intensity/payload/…`。于是 desc 恒为 `source_type:`（`perception:`），每次触发内容相同。
+
+**为什么测试没抓到：**
+1. **测试用自定义假类 `_Diff`**，自己加了 `description="变化"` 属性——假对象"看起来有 description"，掩盖了真实模型缺字段的事实；
+2. **测试只断言"是否触发"**（`_run` 被调用、触发次数），**从不检查传给 LLM 的 desc/prompt 内容**——内容空洞这类质量问题，断言根本覆盖不到。
+
+**修复：** `_trigger` 改用真实模型存在的字段——`category` + `payload.target/change_type` 构造可读描述（如 `screen_changed:主窗口`），每次随实际差异变化；新增测试用真实字段结构断言 desc 内容。
+
+**经验（最值得记住）：**
+1. **测试输入必须用真实生产模型构造**（或用与其完全一致的字段集），不要自定义"看起来合理"的假类——假对象字段与真实模型不一致时，测试通过但真实运行暴露的恰恰是字段差异。
+2. **消费生产数据对象的代码，测试要断言"输出内容质量"**，而不只是"被调用了"——`getattr(x, 'field', default)` 取到默认空值导致内容空洞，只有断言内容才能抓住。
+3. 给测试写 fixture 前，先 `grep` 生产模型定义确认字段名，别凭感觉。
+
+
+
 
 
