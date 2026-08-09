@@ -128,3 +128,58 @@ def test_collect_expert_progress_empty(monkeypatch):
     import modules.thinking.core.model_runner as mod
     monkeypatch.setattr(mod, "_runner_managers", {})
     assert asyncio.run(r._collect_expert_progress()) == ""
+
+
+def test_emit_streaming_content(monkeypatch):
+    r = _runner()
+    import modules.thinking.communication.message_bus as mb
+    bus = MagicMock()
+    sent = []
+    async def fake_broadcast(msg):
+        sent.append(msg)
+    bus.broadcast = fake_broadcast
+    monkeypatch.setattr(mb, "get_message_bus", lambda: bus)
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(loop.create_task(_emit(r)))
+    loop.close()
+
+
+async def _emit(r):
+    r._emit_streaming_content("增量", 1)
+    await asyncio.sleep(0)
+
+
+def test_emit_streaming_no_loop(monkeypatch):
+    r = _runner()
+    import modules.thinking.communication.message_bus as mb
+    bus = MagicMock()
+    bus.broadcast = MagicMock(side_effect=RuntimeError)
+    monkeypatch.setattr(mb, "get_message_bus", lambda: bus)
+    r._emit_streaming_content("x", 1)  # 无 running loop 时安全
+
+
+def test_save_partial_result_no_thinker():
+    r = _runner()
+    r._thinker = None
+    import asyncio
+    asyncio.run(r._save_partial_result())  # 直接返回
+
+
+def test_save_partial_result_saves(monkeypatch):
+    r = _runner()
+    thinker = MagicMock()
+    thinker.history_thoughts = ["第一轮", "第二轮"]
+    r._thinker = thinker
+    r._current_streaming_content = "未完成内容"
+    bb = MagicMock()
+    r.blackboard = bb
+    r._notify_thinking_complete = MagicMock(return_value=None)
+    async def fake_notify():
+        return None
+    r._notify_thinking_complete = fake_notify
+    import asyncio
+    asyncio.run(r._save_partial_result())
+    assert bb.set_final_response.called
+    assert bb.add_observation.called
+    assert r._current_streaming_content == ""
