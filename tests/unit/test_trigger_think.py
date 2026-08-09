@@ -24,6 +24,14 @@ def _reset():
         tt._state["last"] = 0.0
 
 
+def _allow_outreach(monkeypatch):
+    """默认允许主动搭话三层闸门（隔离真实用户配置）"""
+    monkeypatch.setattr(
+        "modules.perception.trigger.outreach_trigger_allowed",
+        lambda: True,
+    )
+
+
 class _Diff:
     def __init__(self, intensity=80):
         self.intensity = intensity
@@ -33,6 +41,7 @@ class _Diff:
 
 def test_intensity_threshold(monkeypatch):
     _reset()
+    _allow_outreach(monkeypatch)
     fired = []
 
     def _fake_run(desc):
@@ -50,6 +59,7 @@ def test_intensity_threshold(monkeypatch):
 
 def test_cooldown_blocks(monkeypatch):
     _reset()
+    _allow_outreach(monkeypatch)
     fired = []
 
     def _fake_run(desc):
@@ -71,6 +81,7 @@ def test_cooldown_blocks(monkeypatch):
 def test_no_active_connections_skips(monkeypatch):
     """前端未连接时不触发（不发 LLM，不广播）"""
     _reset()
+    _allow_outreach(monkeypatch)
     fired = []
 
     def _fake_run(desc):
@@ -79,6 +90,43 @@ def test_no_active_connections_skips(monkeypatch):
     monkeypatch.setattr(tt, "_run", _fake_run)
     monkeypatch.setattr(tt, "_has_active_connections", lambda: False)
     tt._trigger([_Diff(99)])  # 即使强度很高也不触发
+    assert fired == []
+
+
+def test_global_switch_off_blocks(monkeypatch):
+    """全局主动搭话总开关关闭时，即使高强度变化也不触发（三层闸门第 1 层）"""
+    _reset()
+    fired = []
+
+    def _fake_run(desc):
+        fired.append(desc)
+
+    monkeypatch.setattr(tt, "_run", _fake_run)
+    monkeypatch.setattr(tt, "_has_active_connections", lambda: True)
+    monkeypatch.setattr(
+        "modules.perception.trigger.outreach_trigger_allowed",
+        lambda: False,
+    )
+    tt._trigger([_Diff(99)])
+    assert fired == []
+
+
+def test_no_enabled_session_blocks(monkeypatch):
+    """没有任何会话开启主动搭话时不触发（三层闸门第 2 层）"""
+    _reset()
+    fired = []
+
+    def _fake_run(desc):
+        fired.append(desc)
+
+    monkeypatch.setattr(tt, "_run", _fake_run)
+    monkeypatch.setattr(tt, "_has_active_connections", lambda: True)
+    # outreach_trigger_allowed 内部读库：mock 成无会话开启 → 闸门拦下
+    monkeypatch.setattr(
+        "modules.perception.trigger.outreach_trigger_allowed",
+        lambda: False,
+    )
+    tt._trigger([_Diff(99)])
     assert fired == []
 
 
@@ -165,6 +213,7 @@ def test_think_empty_llm_no_push(monkeypatch):
 def test_trigger_uses_category_and_payload(monkeypatch):
     """desc 应包含 category + payload 目标（有实际内容），不再固定为 source_type:"""
     _reset()
+    _allow_outreach(monkeypatch)
     fired = []
 
     def _fake_run(desc):
@@ -187,6 +236,7 @@ def test_trigger_uses_category_and_payload(monkeypatch):
 def test_trigger_diff_no_payload(monkeypatch):
     """无 payload 时回退 category，不产生空描述"""
     _reset()
+    _allow_outreach(monkeypatch)
     fired = []
 
     def _fake_run(desc):

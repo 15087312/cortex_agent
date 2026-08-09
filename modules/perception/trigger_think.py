@@ -37,6 +37,13 @@ def _has_active_connections() -> bool:
 
 
 def _trigger(differences: List) -> None:
+    # 主动搭话三层闸门（第 1、2 层）：全局总开关关闭，或没有任何会话开启主动搭话 → 不触发。
+    # 修复：感知触发思考之前绕过 PROACTIVE_OUTREACH_ENABLED / 会话 outreach.enabled，
+    # 全局关闭后仍发主动消息——与主动搭话主路径保持一致的生效规则。
+    from modules.perception.trigger import outreach_trigger_allowed
+    if not outreach_trigger_allowed():
+        logger.debug("主动搭话未开启（全局关闭或无会话启用），跳过感知触发思考")
+        return
     if not _has_active_connections():
         logger.debug("无活跃前端连接，跳过感知触发思考")
         return

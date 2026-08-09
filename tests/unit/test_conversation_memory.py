@@ -220,14 +220,29 @@ def test_context_slicer_excludes_conversation_history(blackboard, context_with_h
 
 # ── 第五阶段：StreamThinkingSystem 会话存储 ─────────────────
 
-@pytest.mark.asyncio
-async def test_session_context_accumulation():
-    """StreamThinkingSystem 正确累加对话消息"""
-    from modules.thinking.api_stream import get_thinking_system
-    import uuid
+@pytest.fixture
+def tmp_system(tmp_path, monkeypatch):
+    """隔离系统：临时 SQLite + 独立 StreamThinkingSystem（绝不触碰生产库 data/memory.db）"""
+    import threading
+    import modules.database.connection as conn
+    from modules.database.session_repo import SessionRepository
+    from modules.thinking.api_stream import StreamThinkingSystem
 
-    system = get_thinking_system()
-    sid = f"test_{uuid.uuid4().hex[:6]}"
+    monkeypatch.setattr(conn.config, "sqlite_path", str(tmp_path / "test_conv_mem.db"))
+    monkeypatch.setattr(conn, "_db_manager", None)
+    monkeypatch.setattr(conn, "_db_manager_lock", threading.RLock())
+    conn.get_db_manager().initialize()
+
+    sys_ = StreamThinkingSystem()
+    sys_._session_repo = SessionRepository()
+    return sys_
+
+
+@pytest.mark.asyncio
+async def test_session_context_accumulation(tmp_system):
+    """StreamThinkingSystem 正确累加对话消息（临时库隔离，不污染生产库）"""
+    system = tmp_system
+    sid = "s_conv_mem_test"
     await system.start(sid)
 
     # Turn 1

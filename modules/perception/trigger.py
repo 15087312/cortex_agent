@@ -25,6 +25,28 @@ from modules.thinking.frontend_channel import confirm_frontend_connection  # noq
 
 
 
+def outreach_trigger_allowed() -> bool:
+    """主动搭话三层闸门（第 1、2 层）——所有主动消息触发源（主路径/感知触发/定时任务）统一检查
+
+    1. 全局总开关 PROACTIVE_OUTREACH_ENABLED 必须开启；
+    2. 至少一个会话在设置里【单独开启】主动搭话（metadata.outreach.enabled=true）。
+
+    第 3 层（满足具体规则标准）由各触发源的规则判定完成。
+    """
+    from config.settings import settings
+    if not getattr(settings, "PROACTIVE_OUTREACH_ENABLED", True):
+        return False
+    try:
+        from modules.database.session_repo import get_session_repo
+        for s in get_session_repo().get_all_sessions(limit=100):
+            cfg = (s.get("metadata") or {}).get("outreach") or {}
+            if cfg.get("enabled"):
+                return True
+    except Exception:
+        pass
+    return False
+
+
 def _build_outreach_system_prompt(role: str = "orchestrator", tier: str = "large") -> str:
     """构建主动搭话的 system prompt — 默认复用总指挥人格，可指定角色（roles.yaml），跳过工具规则"""
     from config.prompts.composer import PromptComposer, PromptRequest

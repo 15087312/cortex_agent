@@ -198,6 +198,11 @@ class ScheduledTaskManager:
     # ── 默认 action: chat —— 复用主动搭话 LLM 逻辑 → 注入会话 → 推送 ──
 
     async def _handle_chat(self, session_id: str, task: dict) -> None:
+        # 主动消息统一闸门：全局主动搭话总开关关闭时不发送（与 ProactiveTrigger 一致）
+        from config.settings import settings as _cfg
+        if not getattr(_cfg, "PROACTIVE_OUTREACH_ENABLED", True):
+            logger.debug(f"[定时任务] 全局主动搭话已关闭，跳过 chat 发送 (session={session_id[:8]})")
+            return
         prompt = task.get("prompt") or "现在是定时任务时间，请自然地向用户说一句话（简短自然，1-2 句）。"
         agent_type = task.get("agent_type") or ""
         tier = "large"

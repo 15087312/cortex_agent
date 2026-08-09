@@ -441,7 +441,26 @@ API Key 明存 localStorage → 改内存；静默 catch → 各调用处加错�
 1. **任何"开关/设置"必须真正接入消费方**——只读显示不接判定 = 摆设。加设置时先查谁消费它、判定路径是否引用。
 2. **前端可改配置项必须进 `_MODIFIABLE_FIELDS`**——否则 PUT /config/{key} 报 FORBIDDEN（403），用户点了没反应。
 3. **三层配置（全局/默认/覆盖）明确优先级**，消费方用同一套解析（`会话配置 if cfg else 全局默认`），避免"配了不生效"困惑。
-4. 设置入口与功能页合并（如主动搭话页并入设置）后，侧栏入口要同步移除，避免两处入口、一处失效。
+4. 设置入口与功能页合并（如主动搭话页并入设置）后，侧栏入口要同步移除，避免两处入口、一处失效。## 21. 主动搭话旁路绕过全局/会话开关（后端）+ 测试污染生产库
+
+**现象：** 用户在设置页关闭「主动搭话」全局开关后，感知到屏幕高强度变化/定时任务到点时**仍然收到主动消息**；同时生产库 `data/memory.db` 积累大量 `test_xxx` 前缀的「你好」测试会话。
+
+**根因（两层）：**
+1. **旁路绕过三层闸门**：§18 只修了主路径 `ProactiveTrigger._get_enabled_outreach_sessions()`（全局开关 → 会话 enabled → 规则），但另两条触发源完全绕过：
+   - `trigger_think.py`（感知触发思考）：只有自己的冷却+强度阈值，**不检查** `PROACTIVE_OUTREACH_ENABLED`，也不检查任何会话是否开启主动搭话——全局关闭后仍广播 proactive 消息；
+   - `scheduled_tasks.py::_handle_chat`（定时任务）：只查任务 enabled，**不检查**全局总开关。
+2. **测试写生产库**：`tests/unit/test_conversation_memory.py::test_session_context_accumulation` 直接用全局单例 `get_thinking_system()` + 随机 `test_{hex}` 会话 id → `system.start()` 落库到真实 `data/memory.db`，每次跑测试新增一个「你好」会话。
+
+**修复：**
+1. 新增模块级三层闸门函数 `modules/perception/trigger.py::outreach_trigger_allowed()`——全局开关关闭或无任何会话开启主动搭话时返回 False；`trigger_think._trigger` 入口接入（第 1、2 层），`scheduled_tasks._handle_chat` 接入全局开关检查。第 3 层（规则标准）仍由各触发源判定。
+2. 测试改用临时 SQLite（monkeypatch `sqlite_path` + 独立 `StreamThinkingSystem` + 固定会话 id），绝不触碰生产库；已清理生产库残留 `test_*` 会话（备份 `data/memory.db.bak_pre_test_cleanup`）。
+
+**验证：** 新增单测覆盖「全局关不触发」「无会话开启不触发」；端到端 7 项闸门断言全过；相关测试 71 项通过。
+
+**经验：**
+1. **修开关类 bug 要枚举所有触发源**——主路径修好但旁路（感知触发/定时任务）仍绕过 = 用户依旧觉得"开关是摆设"。§18 的三层闸门语义应作为所有主动消息的统一前置。
+2. **测试必须隔离生产库**——凡调用 `get_thinking_system()`/`get_session_repo()` 全局单例的测试，都必须先 monkeypatch `sqlite_path` 指向临时库；用完随机 `test_` 前缀会话 id 的测试，本身就是污染源。
+
 
 
 ## 19. 自动化替换留下的运行时 NameError + 同名索引重复（后端）
