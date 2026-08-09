@@ -27,6 +27,11 @@ import numpy as np
 _available = True
 _cv2 = None
 
+
+def _log_warn(msg: str):
+    sys.stderr.write(f"[screen_diff_server] {msg}\n")
+    sys.stderr.flush()
+
 try:
     import cv2
     _cv2 = cv2
@@ -68,8 +73,9 @@ def _capture_screen() -> np.ndarray | None:
             from PIL import Image
             pil_img = Image.open(io.BytesIO(daemon_png))
             return np.array(pil_img)[:, :, ::-1]
+        _log_warn("daemon 截图失败，回退本地 screencapture")
     except Exception:
-        pass
+        _log_warn("daemon 取帧异常，回退本地 screencapture")
 
     try:
         tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
@@ -90,8 +96,9 @@ def _capture_screen() -> np.ndarray | None:
                 from PIL import Image
                 pil_img = Image.open(io.BytesIO(img_data.tobytes()))
                 return np.array(pil_img)[:, :, ::-1]  # RGB → BGR
+        _log_warn("本地 screencapture 失败（可能屏幕录制权限未授权）")
     except Exception:
-        pass
+        _log_warn("本地 screencapture 异常")
     return None
 
 

@@ -131,6 +131,11 @@ def capture_screen_bytes(max_width: int = 1280, region: tuple = None) -> Optiona
 
     img = _grab_image(max_width, region)
     if img is None:
+        logger.warning(
+            "[屏幕截图] 全部通道失败：daemon 不可用且本地 screencapture 也未返回图像。"
+            "请检查：1) 系统设置→隐私与安全性→屏幕录制 是否已授权本应用；"
+            "2) 截图 daemon 是否被终止。"
+        )
         return None
 
     buf = io.BytesIO()

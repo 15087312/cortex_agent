@@ -419,3 +419,16 @@ def test_try_screencapture_failure(monkeypatch):
     import subprocess
     monkeypatch.setattr(subprocess, "run", lambda *a, **k: (_ for _ in ()).throw(RuntimeError()))
     assert sc_mod._try_screencapture() is None
+
+
+def test_capture_screen_bytes_all_failed_logs_warning(monkeypatch):
+    """daemon 与本地都失败时给出明确告警（不静默）"""
+    monkeypatch.setattr(sc_mod, "SCREENSHOT_ENABLED", True)
+    monkeypatch.setattr("utils.screen_capture_daemon_client.get_frame_bytes", lambda **kw: None)
+    monkeypatch.setattr(sc_mod, "ensure_daemon_running", lambda: False)
+    monkeypatch.setattr(sc_mod, "_grab_image", lambda *a, **k: None)
+    with patch.object(sc_mod.logger, "warning") as warn:
+        assert sc_mod.capture_screen_bytes() is None
+        warn.assert_called_once()
+        msg = warn.call_args[0][0]
+        assert "屏幕录制" in msg

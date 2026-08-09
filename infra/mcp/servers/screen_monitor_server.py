@@ -25,6 +25,11 @@ _cv2 = None
 _ocr = None
 
 
+def _log_warn(msg: str):
+    sys.stderr.write(f"[screen_monitor_server] {msg}\n")
+    sys.stderr.flush()
+
+
 def _init():
     global _cv2, _ocr, _available
     try:
@@ -134,8 +139,9 @@ def _capture_screen():
         if daemon_png:
             img_data = np.frombuffer(daemon_png, dtype=np.uint8)
             return _cv2.imdecode(img_data, _cv2.IMREAD_COLOR)
+        _log_warn("daemon 截图失败，回退本地 screencapture")
     except Exception:
-        pass
+        _log_warn("daemon 取帧异常，回退本地 screencapture")
 
     import tempfile
     import os
@@ -149,12 +155,14 @@ def _capture_screen():
             capture_output=True, timeout=10,
         )
         if result.returncode != 0 or not os.path.exists(tmp_path):
+            _log_warn("本地 screencapture 失败（可能屏幕录制权限未授权）")
             return None
 
         img_data = np.frombuffer(open(tmp_path, "rb").read(), dtype=np.uint8)
         os.unlink(tmp_path)
         return _cv2.imdecode(img_data, _cv2.IMREAD_COLOR)
     except Exception:
+        _log_warn("本地 screencapture 异常")
         return None
 
 

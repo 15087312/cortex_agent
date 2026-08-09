@@ -24,7 +24,7 @@ SOCKET_PATH = os.environ.get(
 )
 DEFAULT_TIMEOUT = 3.0  # 单次请求超时（秒）
 
-# 避免高并发下反复 connect 失败刷日志
+# 避免高并发下反复 connect 失败刷日志：首次 warning，之后 30s 内静默
 _last_warn_ts = [0.0]
 _warn_lock = threading.Lock()
 
@@ -34,7 +34,7 @@ def _warn_throttled(msg: str):
     with _warn_lock:
         if now - _last_warn_ts[0] > 30.0:
             _last_warn_ts[0] = now
-            logger.debug(msg)
+            logger.warning(msg)
 
 
 def _rpc(method: str, params: dict = None, timeout: float = DEFAULT_TIMEOUT) -> Optional[dict]:
