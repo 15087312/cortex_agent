@@ -162,3 +162,121 @@ def test_voice_detector_init():
 def test_touchpoint_find_app_path_non_mac():
     with patch("modules.perception.detectors.touchpoint_detector._IS_MAC", False):
         assert TouchpointDetector._find_app_path("X") is None
+
+
+def _voice(**kw):
+    import threading
+    import collections
+    from modules.perception.detectors.voice_detector import VoiceDetector
+    v = VoiceDetector.__new__(VoiceDetector)
+    v._available = True
+    v._running = kw.get("running", False)
+    v._thread = None
+    v._recognizer = kw.get("recognizer", MagicMock())
+    v._microphone = kw.get("microphone", MagicMock())
+    v._events = collections.deque(maxlen=100)
+    v._events_lock = threading.Lock()
+    v._wake_word = kw.get("wake_word", "科特")
+    v._end_word = kw.get("end_word", "完毕")
+    v._end_stop_cooldown = kw.get("cooldown", 0.0)
+    v._language = "zh"
+    v._model_size = "tiny"
+    v._timeout = 1.0
+    v._energy_threshold = 300
+    v._event_bus = kw.get("event_bus", None)
+    return v
+
+
+def test_voice_detect_cached_events():
+    v = _voice()
+    v._events.append({"text": "hello"})
+    events = v.detect(roi_image=None, roi_name="x")
+    assert events == [{"text": "hello"}]
+    assert v.detect(roi_image=None, roi_name="x") == []  # 已清空
+
+
+def test_voice_recognize_local_success(monkeypatch):
+    import importlib
+    cfg_mod = importlib.import_module("config.settings")
+    old = cfg_mod.settings
+    from types import SimpleNamespace
+    cfg_mod.settings = SimpleNamespace(PERCEPTION_VOICE_BACKEND="local")
+    try:
+        v = _voice()
+        v._recognizer.recognize_whisper.return_value = "  科特你好完毕  "
+        assert v._recognize("audio") == "科特你好完毕"
+    finally:
+        cfg_mod.settings = old
+
+
+def test_voice_recognize_unknown(monkeypatch):
+    import importlib
+    cfg_mod = importlib.import_module("config.settings")
+    old = cfg_mod.settings
+    from types import SimpleNamespace
+    cfg_mod.settings = SimpleNamespace(PERCEPTION_VOICE_BACKEND="local")
+    try:
+        v = _voice()
+        import sys
+        class SR:
+            class UnknownValueError(Exception):
+                pass
+        monkeypatch.setitem(sys.modules, "speech_recognition", SR())
+        v._recognizer.recognize_whisper.side_effect = SR.UnknownValueError
+        assert v._recognize("audio") is None
+    finally:
+        cfg_mod.settings = old
+
+
+def test_voice_recognize_exception(monkeypatch):
+    import importlib
+    cfg_mod = importlib.import_module("config.settings")
+    old = cfg_mod.settings
+    from types import SimpleNamespace
+    cfg_mod.settings = SimpleNamespace(PERCEPTION_VOICE_BACKEND="local")
+    try:
+        v = _voice()
+        v._recognizer.recognize_whisper.side_effect = RuntimeError
+        assert v._recognize("audio") is None
+    finally:
+        cfg_mod.settings = old
+
+
+def test_voice_listen_loop_wake_word(monkeypatch):
+    import importlib
+    cfg_mod = importlib.import_module("config.settings")
+    old = cfg_mod.settings
+    from types import SimpleNamespace
+    cfg_mod.settings = SimpleNamespace(PERCEPTION_VOICE_BACKEND="local")
+    try:
+        import sys
+        import threading
+        v = _voice(wake_word="科特", end_word="完毕", event_bus=None)
+        audio = MagicMock()
+        rec = MagicMock()
+        rec.listen.return_value = audio
+        rec.recognize_whisper.return_value = "科特帮我看一下完毕"
+        v._recognizer = rec
+
+        class SR:
+            class WaitTimeoutError(Exception):
+                pass
+
+        monkeypatch.setitem(sys.modules, "speech_recognition", SR())
+        # 跑一轮后停止
+        calls = {"n": 0}
+        orig = rec.listen
+        def listen_once(*a, **k):
+            calls["n"] += 1
+            if calls["n"] > 1:
+                v._running = False
+                raise SR.WaitTimeoutError()
+            return audio
+        rec.listen = listen_once
+        v._running = True
+        v._listen_loop()
+        assert len(v._events) == 1
+        ev = v._events[0]
+        assert ev.payload["text"] == "帮我看一下"
+    finally:
+        cfg_mod.settings = old
