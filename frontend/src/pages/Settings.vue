@@ -425,7 +425,7 @@ onMounted(async () => {
             </div>
             <div class="setting-row">
               <div class="lbl"><div class="t">定点发送</div><div class="d">到设定时间 ±误差窗口内触发一次搭话</div></div>
-              <div class="setting-ctl" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+              <div class="setting-ctl" class="ctl-flex">
                 <label class="toggle-switch"><input type="checkbox" v-model="globalDefault.scheduleOn" /><span class="toggle-slider"></span></label>
                 <span class="text-muted">时间</span>
                 <input class="input" v-model="globalDefault.scheduleTime" style="width:80px" placeholder="14:00" :disabled="!globalDefault.scheduleOn" title="触发时刻，24小时制 HH:MM，如 14:00" />
@@ -436,7 +436,7 @@ onMounted(async () => {
             </div>
             <div class="setting-row">
               <div class="lbl"><div class="t">屏幕触发</div><div class="d">屏幕变化比例达到阈值、且随机概率命中时触发</div></div>
-              <div class="setting-ctl" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+              <div class="setting-ctl" class="ctl-flex">
                 <label class="toggle-switch"><input type="checkbox" v-model="globalDefault.screenOn" /><span class="toggle-slider"></span></label>
                 <input class="input" type="number" v-model.number="globalDefault.screenRatio" style="width:50px" :disabled="!globalDefault.screenOn" title="变化阈值（0-1）：屏幕变化比例达到该值才可能触发" />
                 <span class="text-muted">阈值</span>
@@ -450,7 +450,7 @@ onMounted(async () => {
             </div>
             <div class="setting-row">
               <div class="lbl"><div class="t">空闲触发</div><div class="d">用户空闲超过设定时长、且随机概率命中时触发</div></div>
-              <div class="setting-ctl" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+              <div class="setting-ctl" class="ctl-flex">
                 <label class="toggle-switch"><input type="checkbox" v-model="globalDefault.idleOn" /><span class="toggle-slider"></span></label>
                 <input class="input" type="number" v-model.number="globalDefault.idleMinutes" style="width:50px" :disabled="!globalDefault.idleOn" title="空闲时长（分钟）：用户无操作达到该时长才可能触发" />
                 <span class="text-muted">空闲</span>
@@ -462,7 +462,7 @@ onMounted(async () => {
             </div>
             <div class="setting-row">
               <div class="lbl"><div class="t">时段触发</div><div class="d">处于设定时段内、且随机概率命中时触发；跨午夜（如 22:00-02:00）也支持</div></div>
-              <div class="setting-ctl" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+              <div class="setting-ctl" class="ctl-flex">
                 <label class="toggle-switch"><input type="checkbox" v-model="globalDefault.windowsOn" /><span class="toggle-slider"></span></label>
                 <input class="input" v-model="globalDefault.timeWindowsText" style="flex:1;min-width:220px" placeholder="09:00-12:00@0.5,14:00-18:00@0.8" :disabled="!globalDefault.windowsOn" title="格式：开始-结束@概率，多个用逗号分隔。概率省略默认 1.0" />
               </div>
@@ -693,7 +693,7 @@ onMounted(async () => {
             <button class="btn btn-sm btn-primary" @click="createLib">新建记忆库</button>
             <button class="btn btn-sm" @click="loadMemoryLibs" title="刷新记忆库列表"><Icon name="refresh" :size="14" /> 刷新</button>
           </div>
-          <div v-if="memoryLibs.length === 0" class="empty-state" style="padding:24px"><p class="empty-text">暂无记忆库（可点击刷新）</p></div>
+          <div v-if="memoryLibs.length === 0" class="empty-state empty-padded"><p class="empty-text">暂无记忆库（可点击刷新）</p></div>
           <div v-for="lib in memoryLibs" :key="lib.name" class="card" style="margin-bottom:10px">
             <div class="card-header" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
               <b>{{ lib.name }}</b>
@@ -776,12 +776,12 @@ onMounted(async () => {
         <div class="settings-group">
           <div class="settings-group-title">注意力 / 因果图</div>
           <p class="settings-hint">进阶参数，谨慎修改</p>
-          <div v-if="advancedKeys.length === 0" class="empty-state" style="padding:24px"><p class="empty-text">暂无高级参数</p></div>
+          <div v-if="advancedKeys.length === 0" class="empty-state empty-padded"><p class="empty-text">暂无高级参数</p></div>
           <table v-else class="data-table">
             <thead><tr><th>参数</th><th>当前值</th><th>操作</th></tr></thead>
             <tbody>
               <tr v-for="k in advancedKeys" :key="k">
-                <td><code style="font-size:12px">{{ k }}</code></td>
+                <td><code class="text-sm">{{ k }}</code></td>
                 <td><span style="font-family:var(--font-mono);font-size:12px">{{ typeof configStore.config[k] === 'object' ? JSON.stringify(configStore.config[k]) : String(configStore.config[k]) }}</span></td>
                 <td><button class="btn btn-sm" @click="editConfig(k, configStore.config[k])">编辑</button></td>
               </tr>
@@ -859,7 +859,7 @@ onMounted(async () => {
         <div class="settings-group">
           <div class="settings-group-title">API 密钥</div>
           <div class="config-api-hint">用于访问需要认证的后端接口。由后端 .env 中的 SIMPLE_API_KEY 控制。</div>
-          <div class="search-bar" style="margin-bottom:0">
+          <div class="search-bar mb-none">
             <input class="input" v-model="keyInput" placeholder="输入 X-API-Key" style="flex:1" />
             <button class="btn btn-primary btn-sm" @click="saveKey">保存</button>
             <button v-if="keyInput" class="btn btn-sm" @click="clearKey">清除</button>
@@ -872,12 +872,12 @@ onMounted(async () => {
         <div class="settings-divider"></div>
         <div class="settings-group">
           <div class="settings-group-title">运行时配置 ({{ Object.keys(configStore.config).length }} 项)</div>
-          <div v-if="Object.keys(configStore.config).length === 0" class="empty-state" style="padding:24px"><p class="empty-text">暂无配置项</p></div>
+          <div v-if="Object.keys(configStore.config).length === 0" class="empty-state empty-padded"><p class="empty-text">暂无配置项</p></div>
           <table v-else class="data-table">
             <thead><tr><th>配置键</th><th>当前值</th><th>操作</th></tr></thead>
             <tbody>
               <tr v-for="(v, k) in configStore.config" :key="k">
-                <td><code style="font-size:12px">{{ k }}</code></td>
+                <td><code class="text-sm">{{ k }}</code></td>
                 <td><span class="config-cell-value">{{ typeof v === 'object' ? JSON.stringify(v) : String(v) }}</span></td>
                 <td><button class="btn btn-sm" @click="editConfig(k, v)">编辑</button></td>
               </tr>
@@ -916,7 +916,7 @@ onMounted(async () => {
         <button class="btn btn-sm" @click="showDiag = false">✕</button>
       </div>
       <div class="modal-body">
-        <div v-if="diagLoading" class="empty-state" style="padding:32px"><p class="empty-text">正在收集诊断信息…</p></div>
+        <div v-if="diagLoading" class="empty-state empty-padded-lg"><p class="empty-text">正在收集诊断信息…</p></div>
         <pre v-else class="diag-pre">{{ JSON.stringify(diagData, null, 2) }}</pre>
       </div>
       <div class="modal-footer">

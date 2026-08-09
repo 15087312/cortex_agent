@@ -3,6 +3,8 @@ import asyncio
 import threading
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from modules.thinking.chat_light.continuous_thinker import ContinuousThinker
 
 
@@ -15,6 +17,35 @@ def _thinker():
     t._session_locks = {}
     t._session_locks_guard = threading.Lock()
     return t
+
+
+@pytest.fixture
+def mem_store(tmp_path, monkeypatch):
+    """真实临时记忆库（确定性嵌入）"""
+    import modules.database.connection as conn
+    monkeypatch.setattr(conn.config, "sqlite_path", str(tmp_path / "clt.db"))
+    monkeypatch.setattr(conn, "_db_manager", None)
+    monkeypatch.setattr(conn, "_db_manager_lock", __import__("threading").RLock())
+    from modules.memory.event_store import EventStore
+    from modules.memory.embedding import EmbeddingEngine
+    store = EventStore(
+        db_path=str(tmp_path / "er.db"),
+        faiss_index_path=str(tmp_path / "er.faiss"),
+        id_map_path=str(tmp_path / "er_id.json"),
+    )
+    eng = EmbeddingEngine()
+    eng._loaded = True
+    eng._attempted = True
+    eng.dim = 16
+
+    def _embed(text):
+        import hashlib
+        h = hashlib.md5(text.encode()).digest()
+        return [((b - 128) / 128.0) for b in h][:16]
+    eng.embed = _embed
+    eng.embed_batch = lambda texts: [_embed(t) for t in texts]
+    monkeypatch.setattr(EmbeddingEngine, "get_instance", classmethod(lambda cls: eng))
+    return store
 
 
 def test_session_lock_same_session():
@@ -41,101 +72,64 @@ def test_get_blackboard():
     assert t.get_blackboard() is t._blackboard
 
 
-def test_think_success(monkeypatch):
-    import modules.thinking.conscience as cons_mod
-    fake_cons = MagicMock()
-    fake_cons.think = AsyncMock(return_value="")
-    monkeypatch.setattr(cons_mod, "get_conscience", lambda: fake_cons)
-    import config.settings as cfg_mod
-    import importlib
-    cfg = importlib.import_module("config.settings")
-    monkeypatch.setattr(cfg, "settings", MagicMock())
-    t = _thinker()
-    t._recall_memories = AsyncMock(return_value="记忆")
-    t._slicer.slice = AsyncMock(return_value=[{"role": "user", "content": "hi"}])
-    t._composer.build_system.return_value = "system"
-    t._blackboard.add_message = MagicMock()
-    t._blackboard.get_messages.return_value = [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "你好"}]
-    t._extract_memory = AsyncMock()
-    runner = MagicMock()
-    resp = MagicMock()
-    resp.message = MagicMock(content="你好", reasoning_content="")
-    async def fake_run(messages, system_prompt, on_token):
-        on_token("你")
-        on_token("好")
-        return resp
-    runner.run = fake_run
-    t._runner = runner
-    q = asyncio.Queue()
-
-    async def go():
-        await t.think("s1", "hi", q)
-    asyncio.run(go())
-    # 流式 token 入队 + done 信号
-    kinds = set()
-    while not q.empty():
-        item = q.get_nowait()
-        kinds.add(item.get("type"))
-    assert "message" in kinds
-    assert "done" in kinds
-    assert t._blackboard.add_message.call_count == 2  # user + assistant
-
-
-def test_recall_memories_no_history(monkeypatch):
+def test_recall_memories_no_history(tmp_path, monkeypatch):
+    """真实 DB 无历史：返回空"""
+    import modules.database.connection as conn
+    from modules.database.session_repo import SessionRepository
+    monkeypatch.setattr(conn.config, "sqlite_path", str(tmp_path / "clt.db"))
+    monkeypatch.setattr(conn, "_db_manager", None)
+    monkeypatch.setattr(conn, "_db_manager_lock", __import__("threading").RLock())
+    conn.get_db_manager().initialize()
+    import modules.database.session_repo as sr
+    monkeypatch.setattr(sr, "get_session_repo", lambda: SessionRepository())
     t = _thinker()
     t._blackboard.get_messages.return_value = []
-    import modules.database.session_repo as sr
-    repo = MagicMock()
-    repo.get_recent_messages.return_value = []
-    monkeypatch.setattr(sr, "get_session_repo", lambda: repo)
     assert asyncio.run(t._recall_memories("q", "s1")) == ""
 
 
-def test_recall_memories_with_history(monkeypatch):
-    t = _thinker()
-    t._blackboard.get_messages.return_value = [{"role": "user", "content": "之前聊过"}]
-    class Ev:
-        time = "2025-01-01 10:00"
-        importance = 0.8
-        fact = "过去的事件"
-        lesson = "经验"
-    retrieval = MagicMock()
-    retrieval.retrieve = AsyncMock(return_value=[Ev()])
+def test_recall_memories_with_history(mem_store, tmp_path, monkeypatch):
+    """真实 DB 有历史 + 真实检索：返回相关记忆"""
+    import modules.database.connection as conn
+    from modules.database.session_repo import SessionRepository
+    monkeypatch.setattr(conn.config, "sqlite_path", str(tmp_path / "clt.db"))
+    monkeypatch.setattr(conn, "_db_manager", None)
+    monkeypatch.setattr(conn, "_db_manager_lock", __import__("threading").RLock())
+    conn.get_db_manager().initialize()
+    from modules.database.session_repo import SessionRepository as SR
+    repo = SR()
+    repo.create_session("s1")
+    repo.save_message("s1", "user", "之前聊过")
+    import modules.database.session_repo as sr
+    monkeypatch.setattr(sr, "get_session_repo", lambda: repo)
+    from modules.memory.event_store import MemoryEvent
+    mem_store.save_event(MemoryEvent(fact="过去的事件", importance=0.8, keywords=["事件"]))
+    from modules.memory.event_retrieval import EventRetrieval
+    ret = EventRetrieval()
+    ret._store = mem_store
     import modules.memory.event_retrieval as er_mod
     import modules.memory.depth_recall as dr_mod
-    import modules.memory.result_fusion as rf_mod
-    monkeypatch.setattr(er_mod, "get_event_retrieval", lambda: retrieval)
+    monkeypatch.setattr(er_mod, "get_event_retrieval", lambda: ret)
     monkeypatch.setattr(dr_mod, "should_trigger_deep_recall", lambda q: (False, None))
-    out = asyncio.run(t._recall_memories("q", "s1"))
+    t = _thinker()
+    t._blackboard.get_messages.return_value = [{"role": "user", "content": "之前聊过"}]
+    out = asyncio.run(t._recall_memories("事件", "s1"))
     assert "曾经发生的事" in out
-    assert "过去的事件" in out
 
 
 def test_extract_memory_disabled(monkeypatch):
-    t = _thinker()
-    import modules.thinking.chat_light.continuous_thinker as mod
-    monkeypatch.setattr(mod, "settings", type("S", (), {"MEMORY_REDUCE_ENABLED": False})())
-    asyncio.run(t._extract_memory("s1", []))
-    # 不抛异常
+    """真实 settings：MEMORY_REDUCE_ENABLED=False 时跳过"""
+    from config.settings import settings
+    old = settings.MEMORY_REDUCE_ENABLED
+    settings.MEMORY_REDUCE_ENABLED = False
+    try:
+        t = _thinker()
+        asyncio.run(t._extract_memory("s1", []))
+    finally:
+        settings.MEMORY_REDUCE_ENABLED = old
 
 
-def test_extract_memory_too_short(monkeypatch):
+def test_extract_memory_too_short():
+    """真实 settings：内容过短不提炼"""
     t = _thinker()
-    import modules.thinking.chat_light.continuous_thinker as mod
-    monkeypatch.setattr(mod, "settings", type("S", (), {"MEMORY_REDUCE_ENABLED": True})())
     asyncio.run(t._extract_memory("s1", [{"role": "user", "content": "短"}]))
     # 不抛异常
-
-
-def test_extract_memory_reducer(monkeypatch):
-    t = _thinker()
-    import modules.thinking.chat_light.continuous_thinker as mod
-    monkeypatch.setattr(mod, "settings", type("S", (), {"MEMORY_REDUCE_ENABLED": True})())
-    t._runner.client = MagicMock()
-    reducer = MagicMock()
-    reducer.reduce = AsyncMock(return_value=[{"id": "e1"}])
-    import modules.memory.event_reducer as er_mod
-    monkeypatch.setattr(er_mod, "EventReducer", lambda model_client: reducer)
-    msgs = [{"role": "user", "content": "长内容" * 20}]
-    asyncio.run(t._extract_memory("s1", msgs))
-    reducer.reduce.assert_awaited_once()

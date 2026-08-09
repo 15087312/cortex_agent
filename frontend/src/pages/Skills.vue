@@ -209,7 +209,7 @@ onMounted(loadData)
   <div>
     <div class="page-header" v-if="!compact">
       <h2>技能管理</h2>
-      <div style="display:flex;gap:6px">
+      <div class="btn-group">
         <button class="btn btn-sm" @click="loadData"><Icon name="refresh" :size="14" /> 刷新</button>
         <button class="btn btn-sm" @click="reloadSkills"><Icon name="refresh" :size="14" /> 重载</button>
         <button class="btn btn-sm btn-primary" @click="openNew"><Icon name="plus" :size="14" /> 新建技能</button>
@@ -218,11 +218,11 @@ onMounted(loadData)
     <div class="page-body" v-show="!loading">
       <!-- 全局强制技能：所有对话必须使用该技能（注入提示词，不可切换/停用） -->
       <div class="card" :style="{ border: forcedSkill ? '1px solid #d29922' : '', marginBottom: '12px' }">
-        <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
-          <span style="display:flex;align-items:center;gap:6px">🔒 全局强制技能 <span style="font-weight:400;font-size:11px;color:var(--text-muted)">（所有对话必须使用，注入提示词，模型不可切换/停用）</span></span>
-          <span v-if="forcedSkill" style="font-size:12px;color:#d29922">当前强制：<b>{{ forcedName }}</b>（{{ forcedSkill }}）</span>
+        <div class="card-header card-header-wrap">
+          <span class="gap-sm">🔒 全局强制技能 <span class="text-xs-muted">（所有对话必须使用，注入提示词，模型不可切换/停用）</span></span>
+          <span v-if="forcedSkill" class="forced-status">当前强制：<b>{{ forcedName }}</b>（{{ forcedSkill }}）</span>
         </div>
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px">
+        <div class="filter-bar">
           <select v-model="forcedSel" class="input" style="min-width:220px;font-size:13px">
             <option value="">选择要强制使用的技能…</option>
             <option v-for="s in skills.filter(x => x.enabled)" :key="s.id" :value="s.id">{{ s.name }}（{{ s.id }}）</option>
@@ -233,52 +233,52 @@ onMounted(loadData)
           <button v-if="forcedSkill" class="btn btn-sm" :disabled="forcedSaving" @click="clearForced">解除强制</button>
         </div>
       </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div class="detail-grid">
         <!-- 技能列表 -->
         <div class="card">
           <div class="card-header">技能列表（{{ skills.length }}）</div>
-          <div v-if="skills.length" style="max-height:560px;overflow-y:auto">
+          <div v-if="skills.length" class="scroll-list">
             <div
               v-for="s in filtered"
               :key="s.id"
-              style="padding:10px 12px;border-bottom:1px solid var(--border);cursor:pointer"
+              class="skill-item"
               :style="{ background: selected === s.id ? 'rgba(56,139,253,0.08)' : '' }"
               @click="selected = s.id"
             >
-              <div style="display:flex;justify-content:space-between;align-items:center;gap:6px">
-                <div style="display:flex;align-items:center;gap:8px;min-width:0">
-                  <span style="font-family:monospace;color:var(--accent);font-size:13px">{{ s.id }}</span>
-                  <span v-if="s.metadata?.type === 'builtin'" class="badge badge-blue" style="font-size:10px">内置</span>
-                  <span v-if="!s.enabled" class="badge" style="font-size:10px;background:rgba(139,148,158,0.15);color:#8b949e">已禁用</span>
+              <div class="item-header">
+                <div class="item-id-group">
+                  <span class="skill-id">{{ s.id }}</span>
+                  <span v-if="s.metadata?.type === 'builtin'" class="badge badge-blue text-xs">内置</span>
+                  <span v-if="!s.enabled" class="badge badge-disabled">已禁用</span>
                 </div>
                 <label class="toggle-switch" @click.stop title="启用/禁用">
                   <input type="checkbox" :checked="s.enabled" @change="toggleEnabled(s)" />
                   <span class="toggle-slider"></span>
                 </label>
               </div>
-              <div style="font-size:12px;color:var(--text-muted);margin-top:2px">{{ s.name }}</div>
-              <div style="font-size:11px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ s.description || '' }}</div>
+              <div class="skill-name">{{ s.name }}</div>
+              <div class="skill-desc">{{ s.description || '' }}</div>
             </div>
           </div>
-          <div v-else style="text-align:center;padding:24px;color:var(--text-muted)">暂无技能</div>
+          <div v-else class="empty-state">暂无技能</div>
         </div>
 
         <!-- 详情/编辑 -->
         <div>
           <div class="card" v-if="showForm">
-            <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+            <div class="card-header card-header-between">
               <span>{{ editing ? '编辑技能：' + editing : '新建技能' }}</span>
               <button class="btn btn-sm" @click="showForm = false"><Icon name="x" :size="13" /> 关闭</button>
             </div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">
-              <input v-model="form.id" class="input" style="font-size:13px" placeholder="id（小写/数字/下划线，仅新建）" :disabled="!!editing" />
-              <input v-model="form.name" class="input" style="font-size:13px" placeholder="名称（如：代码审查专家）" />
+            <div class="form-grid">
+              <input v-model="form.id" class="input" placeholder="id（小写/数字/下划线，仅新建）" :disabled="!!editing" />
+              <input v-model="form.name" class="input" placeholder="名称（如：代码审查专家）" />
             </div>
-            <textarea v-model="form.description" rows="8" class="input" style="width:100%;margin-top:8px;font-size:13px" placeholder="技能说明书正文（模型阅读后知道怎么做）"></textarea>
-            <input v-model="form.keywords" class="input" style="width:100%;margin-top:8px;font-size:12px" placeholder="关键词（逗号分隔，用于自动匹配）" />
-            <input v-model="form.trigger" class="input" style="width:100%;margin-top:8px;font-size:12px;font-family:monospace" placeholder='触发规则 JSON：{"include":["审查"],"exclude":["架构"],"min_score":1}' />
-            <input v-model="form.tool_rules" class="input" style="width:100%;margin-top:8px;font-size:12px;font-family:monospace" placeholder='工具权限 JSON：{"allow_tools":["read_file"],"restrict_to":true}' />
-            <div style="text-align:right;margin-top:10px">
+            <textarea v-model="form.description" rows="8" class="input form-textarea" placeholder="技能说明书正文（模型阅读后知道怎么做）"></textarea>
+            <input v-model="form.keywords" class="input form-input-sm" placeholder="关键词（逗号分隔，用于自动匹配）" />
+            <input v-model="form.trigger" class="input form-input-mono" placeholder='触发规则 JSON：{"include":["审查"],"exclude":["架构"],"min_score":1}' />
+            <input v-model="form.tool_rules" class="input form-input-mono" placeholder='工具权限 JSON：{"allow_tools":["read_file"],"restrict_to":true}' />
+            <div class="form-actions">
               <button class="btn btn-sm btn-primary" :disabled="saving === (editing || 'new')" @click="submit">
                 {{ saving === (editing || 'new') ? '保存中...' : '保存' }}
               </button>
@@ -286,27 +286,27 @@ onMounted(loadData)
           </div>
 
           <div class="card" v-else-if="selected && skillOf(selected)">
-            <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+            <div class="card-header card-header-between">
               <span>{{ skillOf(selected).name }}（{{ selected }}）</span>
-              <div style="display:flex;gap:6px">
+              <div class="btn-group">
                 <button class="btn btn-sm" @click="openEdit(selected)"><Icon name="pencil" :size="12" /> 编辑</button>
                 <button class="btn btn-sm danger" @click="removeSkill(skillOf(selected))"><Icon name="trash" :size="12" /> 删除</button>
               </div>
             </div>
-            <div style="margin-top:8px">
-              <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px">
+            <div class="detail-section">
+              <div class="skill-meta">
                 来源：{{ skillOf(selected).source }} · 触发：{{ triggerText(skillOf(selected)) }} · 启用：{{ skillOf(selected).enabled ? '是' : '否' }}
               </div>
-              <pre style="white-space:pre-wrap;font-size:12px;max-height:420px;overflow-y:auto;background:var(--bg-2, rgba(255,255,255,0.02));padding:10px;border:1px solid var(--border);border-radius:6px">{{ skillOf(selected).description }}</pre>
+              <pre class="code-block" :style="{ width: '100%', fontFamily: 'monospace', border: selected ? '1px solid var(--border)' : '' }">{{ skillOf(selected).description }}</pre>
             </div>
           </div>
-          <div class="card" v-else style="text-align:center;padding:40px;color:var(--text-muted)">选择左侧技能查看详情，或点击「新建技能」</div>
+          <div class="card empty-state-lg" v-else>选择左侧技能查看详情，或点击「新建技能」</div>
 
           <!-- per-agent 技能可见性 -->
-          <div class="card" style="margin-top:12px">
-            <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+          <div class="card section-card">
+            <div class="card-header card-header-wrap">
               <span>角色技能白名单（角色可见的技能）</span>
-              <div style="display:flex;gap:6px">
+              <div class="btn-group">
                 <select v-model="roleSel" class="input" style="width:160px;font-size:12px" @change="loadRoleSkills">
                   <option value="">选择角色</option>
                   <option v-for="a in agents" :key="a.role" :value="a.role">{{ a.name }}（{{ a.role }}）</option>
@@ -314,20 +314,194 @@ onMounted(loadData)
                 <button class="btn btn-sm btn-primary" @click="saveRoleSkills">保存白名单</button>
               </div>
             </div>
-            <div v-if="roleSel" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:6px;margin-top:10px;max-height:200px;overflow-y:auto">
-              <label v-for="s in skills" :key="s.id" style="display:flex;align-items:center;gap:6px;font-size:12px">
+            <div v-if="roleSel" class="role-grid">
+              <label v-for="s in skills" :key="s.id" class="role-label">
                 <input type="checkbox" :checked="roleSkills.includes(s.id) || roleSkills.includes('*')" @change="roleSkills.includes('*') ? null : (roleSkills.includes(s.id) ? roleSkills.splice(roleSkills.indexOf(s.id), 1) : roleSkills.push(s.id))" :disabled="roleSkills.includes('*')" />
-                <span style="font-family:monospace">{{ s.id }}</span>
+                <span class="mono">{{ s.id }}</span>
               </label>
-              <label style="display:flex;align-items:center;gap:6px;font-size:12px">
+              <label class="role-label">
                 <input type="checkbox" :checked="roleSkills.includes('*')" @change="roleSkills = roleSkills.includes('*') ? [] : ['*']" />
-                <span style="font-weight:600">全部 (*)</span>
+                <span class="fw-600">全部 (*)</span>
               </label>
             </div>
-            <div v-else style="text-align:center;padding:16px;color:var(--text-muted);font-size:12px">选择角色后配置其可见技能（空 = 全部可见）</div>
+            <div v-else class="empty-state-sm">选择角色后配置其可见技能（空 = 全部可见）</div>
           </div>
         </div>
       </div>
     </div>
   </div>
 </template>
+
+<style scoped>
+.btn-group {
+  display: flex;
+  gap: 6px;
+}
+.gap-sm {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.text-xs-muted {
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.forced-status {
+  font-size: 12px;
+  color: #d29922;
+}
+.filter-bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+.detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.scroll-list {
+  max-height: 560px;
+  overflow-y: auto;
+}
+.skill-item {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+.item-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 6px;
+}
+.item-id-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.skill-id {
+  font-family: monospace;
+  color: var(--accent);
+  font-size: 13px;
+}
+.text-xs {
+  font-size: 10px;
+}
+.badge-disabled {
+  font-size: 10px;
+  background: rgba(139, 148, 158, 0.15);
+  color: #8b949e;
+}
+.skill-name {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+.skill-desc {
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.empty-state {
+  text-align: center;
+  padding: 24px;
+  color: var(--text-muted);
+}
+.card-header-between {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 8px;
+}
+.form-textarea {
+  width: 100%;
+  margin-top: 8px;
+  font-size: 13px;
+}
+.form-input-sm {
+  width: 100%;
+  margin-top: 8px;
+  font-size: 12px;
+}
+.form-input-mono {
+  width: 100%;
+  margin-top: 8px;
+  font-size: 12px;
+  font-family: monospace;
+}
+.form-actions {
+  text-align: right;
+  margin-top: 10px;
+}
+.detail-section {
+  margin-top: 8px;
+}
+.skill-meta {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+.code-block {
+  white-space: pre-wrap;
+  font-size: 12px;
+  max-height: 420px;
+  overflow-y: auto;
+  background: var(--bg-2, rgba(255, 255, 255, 0.02));
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.empty-state-lg {
+  text-align: center;
+  padding: 40px;
+  color: var(--text-muted);
+}
+.section-card {
+  margin-top: 12px;
+}
+.card-header-wrap {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.role-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 6px;
+  margin-top: 10px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+.role-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+.mono {
+  font-family: monospace;
+}
+.fw-600 {
+  font-weight: 600;
+}
+.empty-state-sm {
+  text-align: center;
+  padding: 16px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+</style>
