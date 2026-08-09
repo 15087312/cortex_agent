@@ -66,6 +66,12 @@ const visibleMessages = computed(() =>
 const msgOffset = computed(() => chat.messages.length - visibleMessages.value.length)
 const hasMoreMessages = computed(() => chat.messages.length > visibleMessages.value.length)
 
+// 正在等待 AI 回复：最后一条消息是 user（或消息为空）→ 在用户消息下方显示“正在思考”
+const showThinkingWaiting = computed(() =>
+  chat.processing &&
+  (chat.messages.length === 0 || chat.messages[chat.messages.length - 1].role === 'user')
+)
+
 function loadMoreMessages() {
   const el = messagesWrap.value
   const prevHeight = el ? el.scrollHeight : 0
@@ -458,9 +464,6 @@ function handleAnswerIntent(requestId, answer) {
             <div class="quick-action" @click="handleSend({ text: '给我写一段代码', attachments: [] })">写代码</div>
           </div>
         </div>
-        <div v-if="chat.processing && chat.messages.filter(m => m.role === 'assistant').length === 0">
-          <ThinkingIndicator :label="chat.elapsed ? '正在思考 ' + chat.elapsed + 's' : '正在思考'" />
-        </div>
 
         <!-- 思考循环状态面板：大循环（指挥→主管→专家）/ 连续思考 / 工具循环 -->
         <ThinkingStatusPanel v-if="chat.processing && chat.runners.length" :runners="chat.runners" :elapsed="chat.elapsed" />
@@ -486,6 +489,9 @@ function handleAnswerIntent(requestId, answer) {
           @approve="handleApprove"
           @answer-intent="handleAnswerIntent"
         />
+
+        <!-- 正在等待 AI 回复：显示在最后一条用户消息下方 -->
+        <ThinkingIndicator v-if="showThinkingWaiting" :label="chat.elapsed ? '正在思考 ' + chat.elapsed + 's' : '正在思考'" />
       </div>
 
       <ChatInput :processing="chat.processing" :hint="chat.hint" @send="handleSend" @toast="(t) => toast.show(t.message, t.type)">

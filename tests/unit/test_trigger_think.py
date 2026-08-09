@@ -160,3 +160,47 @@ def test_think_empty_llm_no_push(monkeypatch):
 
     asyncio.run(tt._think("屏幕变化"))
     assert pushed == []
+
+
+def test_trigger_uses_category_and_payload(monkeypatch):
+    """desc 应包含 category + payload 目标（有实际内容），不再固定为 source_type:"""
+    _reset()
+    fired = []
+
+    def _fake_run(desc):
+        fired.append(desc)
+
+    monkeypatch.setattr(tt, "_run", _fake_run)
+    monkeypatch.setattr(tt, "_has_active_connections", lambda: True)
+    monkeypatch.setattr(tt.threading, "Thread", _SyncThread)
+
+    class D:
+        source_type = "perception"
+        category = "screen_changed"
+        intensity = 80
+        payload = {"target_type": "screen", "change_type": "changed", "target": "主窗口"}
+
+    tt._trigger([D()])
+    assert fired == ["screen_changed:主窗口"]
+
+
+def test_trigger_diff_no_payload(monkeypatch):
+    """无 payload 时回退 category，不产生空描述"""
+    _reset()
+    fired = []
+
+    def _fake_run(desc):
+        fired.append(desc)
+
+    monkeypatch.setattr(tt, "_run", _fake_run)
+    monkeypatch.setattr(tt, "_has_active_connections", lambda: True)
+    monkeypatch.setattr(tt.threading, "Thread", _SyncThread)
+
+    class D:
+        source_type = "perception"
+        category = "file_modified"
+        intensity = 90
+        payload = {}
+
+    tt._trigger([D()])
+    assert fired == ["file_modified"]

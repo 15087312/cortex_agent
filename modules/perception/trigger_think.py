@@ -51,10 +51,22 @@ def _trigger(differences: List) -> None:
     strong = [d for d in differences if float(getattr(d, "intensity", 0) or 0) >= min_int]
     if not strong:
         return
-    desc = "、".join(
-        f"{getattr(d, 'source_type', '?')}:{str(getattr(d, 'description', ''))[:30]}"
-        for d in strong[:3]
-    )
+
+    def _diff_desc(d):
+        """Difference 没有 description 字段——用 category + payload 目标构造可读描述"""
+        parts = []
+        cat = str(getattr(d, "category", "") or getattr(d, "source_type", "") or "?")
+        payload = getattr(d, "payload", {}) or {}
+        target = str(payload.get("target", "") or "")
+        change = str(payload.get("change_type", "") or "")
+        parts.append(cat)
+        if target:
+            parts.append(target)
+        if change and change not in cat:
+            parts.append(change)
+        return ":".join(p for p in parts if p)
+
+    desc = "、".join(_diff_desc(d) for d in strong[:3])
     threading.Thread(target=_run, args=(desc,), daemon=True).start()
 
 
