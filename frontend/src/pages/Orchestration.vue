@@ -289,7 +289,7 @@ onMounted(loadData)
       <button class="btn btn-sm" @click="loadData"><Icon name="refresh" :size="14" /> 刷新</button>
     </div>
     <div class="page-body">
-      <div class="seg" style="margin-bottom:12px">
+      <div class="seg mt-3">
         <button :class="{ on: activeTab === 'agents' }" @click="activeTab = 'agents'">Agent 定义</button>
         <button :class="{ on: activeTab === 'skills' }" @click="activeTab = 'skills'">技能</button>
         <button :class="{ on: activeTab === 'graph' }" @click="activeTab = 'graph'">编排图</button>
@@ -310,21 +310,21 @@ onMounted(loadData)
       <!-- Agent 定义 -->
       <div v-if="activeTab === 'agents'" v-show="!loading">
         <div v-for="tier in ['large', 'supervisor', 'expert']" :key="tier">
-          <div class="card" style="margin-bottom:12px">
+          <div class="card mt-3">
             <div class="card-header">{{ TIER_LABEL[tier] }}（{{ grouped[tier]?.length || 0 }}）</div>
             <div v-if="grouped[tier]?.length">
-              <div v-for="agent in grouped[tier]" :key="agent.role" style="padding:12px 0;border-bottom:1px solid var(--border)">
-                <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
-                  <div style="display:flex;align-items:center;gap:8px">
+              <div v-for="agent in grouped[tier]" :key="agent.role" class="agent-row">
+                <div class="flex-between flex-wrap">
+                  <div class="flex-center">
                     <strong>{{ agent.name }}</strong>
-                    <span class="badge badge-gray" style="font-family:monospace;font-size:10px">{{ agent.role }}</span>
-                    <span class="badge badge-blue" style="font-size:10px">{{ agent.model_id || '默认模型' }}</span>
-                    <span v-if="agent.custom_persona" class="badge badge-green" style="font-size:10px">自定义人设</span>
-                    <span v-if="agent.system_override" class="badge badge-green" style="font-size:10px">完整覆盖</span>
-                    <span v-if="agent.role_tools?.whitelist?.length || agent.role_tools?.blacklist?.length" class="badge badge-green" style="font-size:10px">工具权限</span>
-                    <span v-if="Object.keys(agent.model_params || {}).length" class="badge badge-green" style="font-size:10px">模型参数</span>
+                    <span class="badge badge-gray badge-mono">{{ agent.role }}</span>
+                    <span class="badge badge-blue badge-sm">{{ agent.model_id || '默认模型' }}</span>
+                    <span v-if="agent.custom_persona" class="badge badge-green badge-sm">自定义人设</span>
+                    <span v-if="agent.system_override" class="badge badge-green badge-sm">完整覆盖</span>
+                    <span v-if="agent.role_tools?.whitelist?.length || agent.role_tools?.blacklist?.length" class="badge badge-green badge-sm">工具权限</span>
+                    <span v-if="Object.keys(agent.model_params || {}).length" class="badge badge-green badge-sm">模型参数</span>
                   </div>
-                  <div style="display:flex;gap:6px">
+                  <div class="flex gap-2">
                     <button class="btn btn-sm" @click="previewPrompt(agent)"><Icon name="eye" :size="13" /> 预览提示词</button>
                     <button class="btn btn-sm" @click="expanded[agent.role] = !expanded[agent.role]">
                       {{ expanded[agent.role] ? '收起' : '更多设置' }}
@@ -333,90 +333,89 @@ onMounted(loadData)
                 </div>
 
                 <!-- 人设编辑 -->
-                <div style="display:flex;gap:8px;margin-top:8px;align-items:flex-start">
+                <div class="flex gap-3 mt-2 flex-start">
                   <textarea
                     v-model="drafts[agent.role]"
                     rows="2"
-                    class="input"
-                    style="flex:1;min-height:60px;font-size:13px"
+                    class="input persona-textarea"
                     placeholder="自定义人设（留空则用默认人格）"
                   ></textarea>
-                  <div style="display:flex;flex-direction:column;gap:6px">
+                  <div class="flex-col gap-2">
                     <button class="btn btn-sm btn-primary" :disabled="saving === agent.role" @click="savePersona(agent)">
                       {{ saving === agent.role ? '保存中...' : '保存' }}
                     </button>
                     <button v-if="agent.custom_persona" class="btn btn-sm" @click="clearCustom(agent)">恢复默认</button>
                   </div>
                 </div>
-                <div v-if="agent.speaking_style || agent.expertise" style="margin-top:6px;font-size:12px;color:var(--text-muted)">
+                <div v-if="agent.speaking_style || agent.expertise" class="muted-text mt-2">
                   <span v-if="agent.speaking_style">风格：{{ agent.speaking_style }}</span>
-                  <span v-if="agent.expertise" style="margin-left:12px">专长：{{ agent.expertise }}</span>
+                  <span v-if="agent.expertise" class="ml-3">专长：{{ agent.expertise }}</span>
                 </div>
 
                 <!-- 更多设置 -->
-                <div v-if="expanded[agent.role]" style="margin-top:10px;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--bg-2, rgba(255,255,255,0.02))">
+                <div v-if="expanded[agent.role]" class="settings-panel">
                   <!-- 完整系统提示词覆盖 -->
-                  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-                    <span style="font-size:13px;font-weight:600">完整系统提示词覆盖（非空则跳过所有组装，直接使用）</span>
-                    <div style="display:flex;gap:6px">
+                  <div class="flex-between mb-2">
+                    <span class="label">完整系统提示词覆盖（非空则跳过所有组装，直接使用）</span>
+                    <div class="flex gap-2">
                       <button class="btn btn-sm btn-primary" :disabled="saving === 'ov_' + agent.role" @click="saveOverride(agent)">保存覆盖</button>
                       <button v-if="agent.system_override" class="btn btn-sm" @click="clearOverride(agent)">清除</button>
                     </div>
                   </div>
-                  <textarea v-model="overrides[agent.role]" rows="4" class="input" style="width:100%;font-size:12px;font-family:monospace" placeholder="粘贴完整 system prompt（可含所有段）"></textarea>
+                  <textarea v-model="overrides[agent.role]" rows="4" class="input textarea-mono" placeholder="粘贴完整 system prompt（可含所有段）"></textarea>
 
                   <!-- 模型参数 -->
-                  <div style="display:flex;justify-content:space-between;align-items:center;margin:12px 0 6px">
-                    <span style="font-size:13px;font-weight:600">模型参数</span>
+                  <div class="section-heading">
+                    <span class="label">模型参数</span>
                     <button class="btn btn-sm btn-primary" :disabled="saving === 'mp_' + agent.role" @click="saveModelParams(agent)">保存参数</button>
                   </div>
-                  <div style="display:flex;gap:16px;align-items:center">
-                    <label style="font-size:12px">温度 temperature
+                  <div class="flex gap-4 items-center">
+                    <label class="text-xs">温度 temperature
                       <input v-model="modelParams[agent.role].temperature" type="number" step="0.1" min="0" max="2" class="input" style="width:90px;margin-left:6px" />
                     </label>
-                    <label style="font-size:12px">最大 tokens
+                    <label class="text-xs">最大 tokens
                       <input v-model="modelParams[agent.role].max_tokens" type="number" step="256" min="0" class="input" style="width:110px;margin-left:6px" />
                     </label>
                   </div>
 
                   <!-- 工具权限 -->
-                  <div style="display:flex;justify-content:space-between;align-items:center;margin:12px 0 6px">
-                    <span style="font-size:13px;font-weight:600">工具权限（白名单：非空则整体替换默认；黑名单：剔除）</span>
+                  <div class="section-heading">
+                    <span class="label">工具权限（白名单：非空则整体替换默认；黑名单：剔除）</span>
                     <button class="btn btn-sm btn-primary" :disabled="saving === 'tools_' + agent.role" @click="saveRoleTools(agent)">保存权限</button>
                   </div>
-                  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+                  <div class="grid-2 gap-3">
                     <div>
-                      <div style="font-size:12px;margin-bottom:4px;display:flex;justify-content:space-between;align-items:center">
+                      <div class="list-label flex-between">
                         <span>白名单（{{ toolsCfg[agent.role]?.whitelist?.length || 0 }}）</span>
                         <button class="btn btn-sm" @click="toggleAll(agent, 'whitelist')">{{ hasAll(agent, 'whitelist') ? '取消全部' : '全部 (*)' }}</button>
                       </div>
-                      <div style="max-height:180px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;padding:6px">
-                        <label v-for="tool in tools" :key="'w' + tool.name" style="display:flex;align-items:center;gap:6px;font-size:12px;padding:2px 0">
+                      <div class="scroll-list">
+                        <label v-for="tool in tools" :key="'w' + tool.name" class="tool-check">
                           <input type="checkbox" :checked="toolsCfg[agent.role]?.whitelist?.includes(tool.name)" @change="toggleToolList(agent, 'whitelist', tool.name)" />
-                          <span style="font-family:monospace">{{ tool.name }}</span>
+                          <span class="mono">{{ tool.name }}</span>
                         </label>
                       </div>
                     </div>
                     <div>
-                      <div style="font-size:12px;margin-bottom:4px">黑名单（{{ toolsCfg[agent.role]?.blacklist?.length || 0 }}）</div>
-                      <div style="max-height:180px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;padding:6px">
-                        <label v-for="tool in tools" :key="'b' + tool.name" style="display:flex;align-items:center;gap:6px;font-size:12px;padding:2px 0">
+                      <div class="list-label">黑名单（{{ toolsCfg[agent.role]?.blacklist?.length || 0 }}）</div>
+                      <div class="scroll-list">
+                        <label v-for="tool in tools" :key="'b' + tool.name" class="tool-check">
                           <input type="checkbox" :checked="toolsCfg[agent.role]?.blacklist?.includes(tool.name)" @change="toggleToolList(agent, 'blacklist', tool.name)" />
-                          <span style="font-family:monospace">{{ tool.name }}</span>
+                          <span class="mono">{{ tool.name }}</span>
                         </label>
                       </div>
                     </div>
                   </div>
 
                   <!-- 预览 -->
-                  <div v-if="preview.role === agent.role && preview.text" style="margin-top:12px">
-                    <div style="font-size:13px;font-weight:600;margin-bottom:6px">System Prompt 预览（已应用人设/覆盖）</div>
-                    <pre style="white-space:pre-wrap;font-size:12px;max-height:280px;overflow-y:auto;background:var(--bg-2, rgba(255,255,255,0.02));padding:10px;border:1px solid var(--border);border-radius:6px">{{ preview.text }}</pre>
+                  <div v-if="preview.role === agent.role && preview.text" class="mt-3">
+                    <div class="section-subheading">System Prompt 预览（已应用人设/覆盖）</div>
+                    <pre class="code-preview">{{ preview.text }}</pre>
                   </div>
                 </div>
               </div>
             </div>
-            <div v-else style="text-align:center;padding:20px;color:var(--text-muted)">暂无该层 Agent</div>
+            <div v-else class="empty-state">暂无该层 Agent</div>
           </div>
         </div>
       </div>
@@ -424,9 +423,9 @@ onMounted(loadData)
       <!-- 权限管理：每角色工具权限（替换原工具管理 tab） -->
       <div v-if="activeTab === 'permission'" v-show="!loading">
         <div class="card">
-          <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+          <div class="card-header flex-between flex-wrap">
             <span>角色工具权限（每角色分别配置可用工具）</span>
-            <div style="display:flex;gap:6px">
+            <div class="flex gap-2">
               <select v-model="roleToolSel" class="input" style="width:200px;font-size:12px" @change="onRoleSel">
                 <option value="">选择角色</option>
                 <option v-for="a in agents" :key="a.role" :value="a.role">{{ a.name }}（{{ a.role }}）</option>
@@ -434,30 +433,30 @@ onMounted(loadData)
               <button class="btn btn-sm btn-primary" :disabled="saving === 'role_tools'" @click="saveRoleToolsSel">保存权限</button>
             </div>
           </div>
-          <div v-if="roleToolSel" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:10px">
+          <div v-if="roleToolSel" class="grid-2 gap-3 mt-3">
             <div>
-              <div style="font-size:12px;margin-bottom:4px;display:flex;justify-content:space-between;align-items:center">
+              <div class="list-label flex-between">
                 <span>白名单（{{ roleToolCfg.whitelist.length }}）—— 非空则整体替换默认</span>
                 <button class="btn btn-sm" @click="toggleRoleAll('whitelist')">{{ roleToolCfg.whitelist.includes('*') ? '取消全部' : '全部 (*)' }}</button>
               </div>
-              <div style="max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;padding:6px">
-                <label v-for="tool in tools" :key="'rw' + tool.name" style="display:flex;align-items:center;gap:6px;font-size:12px;padding:2px 0">
+              <div class="scroll-list scroll-list-lg">
+                <label v-for="tool in tools" :key="'rw' + tool.name" class="tool-check">
                   <input type="checkbox" :checked="roleToolCfg.whitelist.includes(tool.name)" @change="toggleRoleTool('whitelist', tool.name)" />
-                  <span style="font-family:monospace">{{ tool.name }}</span>
+                  <span class="mono">{{ tool.name }}</span>
                 </label>
               </div>
             </div>
             <div>
-              <div style="font-size:12px;margin-bottom:4px">黑名单（{{ roleToolCfg.blacklist.length }}）—— 剔除</div>
-              <div style="max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;padding:6px">
-                <label v-for="tool in tools" :key="'rb' + tool.name" style="display:flex;align-items:center;gap:6px;font-size:12px;padding:2px 0">
+              <div class="list-label">黑名单（{{ roleToolCfg.blacklist.length }}）—— 剔除</div>
+              <div class="scroll-list scroll-list-lg">
+                <label v-for="tool in tools" :key="'rb' + tool.name" class="tool-check">
                   <input type="checkbox" :checked="roleToolCfg.blacklist.includes(tool.name)" @change="toggleRoleTool('blacklist', tool.name)" />
-                  <span style="font-family:monospace">{{ tool.name }}</span>
+                  <span class="mono">{{ tool.name }}</span>
                 </label>
               </div>
             </div>
           </div>
-          <div v-else style="text-align:center;padding:14px;color:var(--text-muted);font-size:12px">选择角色后配置其可用工具（白名单替换默认 / 黑名单剔除）</div>
+          <div v-else class="empty-state text-xs">选择角色后配置其可用工具（白名单替换默认 / 黑名单剔除）</div>
         </div>
       </div>
 
@@ -466,31 +465,31 @@ onMounted(loadData)
         <ToolsView :compact="true" />
 
         <!-- AI 工具管理 -->
-        <div class="card" style="margin-top:12px">
-          <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+        <div class="card mt-3">
+          <div class="card-header flex-between">
             <span>AI 自创工具（{{ Object.keys(aiTools).length }}）—— 模型可提交代码动态注册</span>
             <button class="btn btn-sm btn-primary" @click="openAiForm(null)"><Icon name="plus" :size="13" /> 新建工具</button>
           </div>
-          <div v-if="showAiForm" style="padding:12px 0;border-bottom:1px solid var(--border)">
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-              <input v-model="aiForm.tool_name" class="input" style="font-size:13px" placeholder="工具名（函数名）" :disabled="!!editingAi" />
-              <input v-model="aiForm.description" class="input" style="font-size:13px" placeholder="描述" />
+          <div v-if="showAiForm" class="form-section">
+            <div class="grid-2 gap-2">
+              <input v-model="aiForm.tool_name" class="input text-sm" placeholder="工具名（函数名）" :disabled="!!editingAi" />
+              <input v-model="aiForm.description" class="input text-sm" placeholder="描述" />
             </div>
-            <textarea v-model="aiForm.code" rows="6" class="input" style="width:100%;margin-top:8px;font-size:12px;font-family:monospace" placeholder="Python 函数代码（禁止 import，用内置函数）"></textarea>
-            <input v-model="aiForm.params" class="input" style="width:100%;margin-top:8px;font-size:12px;font-family:monospace" placeholder='可选参数 JSON：{"query":{"type":"string","required":true}}' />
-            <div style="text-align:right;margin-top:8px;display:flex;gap:6px;justify-content:flex-end">
+            <textarea v-model="aiForm.code" rows="6" class="input textarea-mono mt-2" placeholder="Python 函数代码（禁止 import，用内置函数）"></textarea>
+            <input v-model="aiForm.params" class="input textarea-mono mt-2" placeholder='可选参数 JSON：{"query":{"type":"string","required":true}}' />
+            <div class="form-actions">
               <button class="btn btn-sm" @click="showAiForm = false">取消</button>
               <button class="btn btn-sm btn-primary" @click="submitAiForm">{{ editingAi ? '保存修改' : '创建工具' }}</button>
             </div>
           </div>
           <div v-if="Object.keys(aiTools).length">
-            <div v-for="(info, name) in aiTools" :key="name" style="padding:10px 0;border-bottom:1px solid var(--border)">
-              <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
-                <div style="min-width:0">
-                  <span style="font-family:monospace;color:var(--accent)">{{ name }}</span>
-                  <span style="color:var(--text-muted);font-size:12px;margin-left:8px">{{ info.description || '' }}</span>
+            <div v-for="(info, name) in aiTools" :key="name" class="ai-tool-row">
+              <div class="flex-between">
+                <div class="min-w-0">
+                  <span class="mono accent-text">{{ name }}</span>
+                  <span class="muted-text text-xs ml-2">{{ info.description || '' }}</span>
                 </div>
-                <div style="display:flex;gap:6px">
+                <div class="flex gap-2">
                   <button class="btn btn-sm" @click="viewSource(name)"><Icon name="eye" :size="12" /> 脚本</button>
                   <button class="btn btn-sm" @click="openAiForm(name)"><Icon name="pencil" :size="12" /> 编辑</button>
                   <button class="btn btn-sm danger" @click="deleteAiTool(name)"><Icon name="trash" :size="12" /> 删除</button>
@@ -498,15 +497,15 @@ onMounted(loadData)
               </div>
             </div>
           </div>
-          <div v-else style="text-align:center;padding:24px;color:var(--text-muted)">暂无 AI 自创工具</div>
+          <div v-else class="empty-state">暂无 AI 自创工具</div>
         </div>
 
         <!-- 工具源码弹窗 -->
         <div v-if="srcModal.open" class="src-overlay" @click.self="srcModal.open = false">
           <div class="src-panel">
             <div class="src-head">
-              <span style="font-weight:600">工具脚本：{{ srcModal.name }}{{ srcModal.editable ? '（可编辑）' : '（只读）' }}</span>
-              <div style="display:flex;gap:6px">
+              <span class="font-semibold">工具脚本：{{ srcModal.name }}{{ srcModal.editable ? '（可编辑）' : '（只读）' }}</span>
+              <div class="flex gap-2">
                 <button v-if="srcModal.editable" class="btn btn-sm btn-primary" @click="editAiFromSource">编辑此工具</button>
                 <button class="btn btn-sm" @click="srcModal.open = false"><Icon name="x" :size="14" /> 关闭</button>
               </div>
@@ -516,12 +515,54 @@ onMounted(loadData)
         </div>
       </div>
 
-      <div v-else style="text-align:center;padding:40px;color:var(--text-muted)">加载中...</div>
+      <div v-else class="empty-state loading-state">加载中...</div>
     </div>
   </div>
 </template>
 
 <style scoped>
+.mt-2 { margin-top: 8px; }
+.mt-3 { margin-top: 12px; }
+.mb-2 { margin-bottom: 6px; }
+.ml-2 { margin-left: 8px; }
+.ml-3 { margin-left: 12px; }
+.gap-2 { gap: 6px; }
+.gap-3 { gap: 8px; }
+.gap-4 { gap: 16px; }
+.flex { display: flex; }
+.flex-col { display: flex; flex-direction: column; }
+.flex-between { display: flex; justify-content: space-between; align-items: center; }
+.flex-center { display: flex; align-items: center; gap: 8px; }
+.flex-start { align-items: flex-start; }
+.flex-wrap { flex-wrap: wrap; }
+.items-center { align-items: center; }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; }
+.text-xs { font-size: 12px; }
+.text-sm { font-size: 13px; }
+.label { font-size: 13px; font-weight: 600; }
+.font-semibold { font-weight: 600; }
+.mono { font-family: monospace; }
+.badge-mono { font-family: monospace; font-size: 10px; }
+.badge-sm { font-size: 10px; }
+.muted-text { font-size: 12px; color: var(--text-muted); }
+.accent-text { color: var(--accent); }
+.min-w-0 { min-width: 0; }
+.agent-row { padding: 12px 0; border-bottom: 1px solid var(--border); }
+.persona-textarea { flex: 1; min-height: 60px; font-size: 13px; }
+.settings-panel { margin-top: 10px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-2, rgba(255,255,255,0.02)); }
+.section-heading { display: flex; justify-content: space-between; align-items: center; margin: 12px 0 6px; }
+.section-subheading { font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+.list-label { font-size: 12px; margin-bottom: 4px; }
+.scroll-list { max-height: 180px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; padding: 6px; }
+.scroll-list-lg { max-height: 200px; }
+.tool-check { display: flex; align-items: center; gap: 6px; font-size: 12px; padding: 2px 0; }
+.textarea-mono { width: 100%; font-size: 12px; font-family: monospace; }
+.code-preview { white-space: pre-wrap; font-size: 12px; max-height: 280px; overflow-y: auto; background: var(--bg-2, rgba(255,255,255,0.02)); padding: 10px; border: 1px solid var(--border); border-radius: 6px; }
+.empty-state { text-align: center; padding: 20px; color: var(--text-muted); }
+.loading-state { padding: 40px; }
+.form-section { padding: 12px 0; border-bottom: 1px solid var(--border); }
+.form-actions { text-align: right; margin-top: 8px; display: flex; gap: 6px; justify-content: flex-end; }
+.ai-tool-row { padding: 10px 0; border-bottom: 1px solid var(--border); }
 .tool-card { padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 12px; cursor: pointer; }
 .tool-card:hover { border-color: var(--accent); }
 .src-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 1000; display: flex; align-items: center; justify-content: center; }

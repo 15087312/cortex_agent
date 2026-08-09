@@ -427,11 +427,11 @@ onMounted(async () => {
               <div class="lbl"><div class="t">定点发送</div><div class="d">到设定时间 ±误差窗口内触发一次搭话</div></div>
               <div class="setting-ctl" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
                 <label class="toggle-switch"><input type="checkbox" v-model="globalDefault.scheduleOn" /><span class="toggle-slider"></span></label>
-                <span style="font-size:12px;color:var(--text-muted)">时间</span>
+                <span class="text-muted">时间</span>
                 <input class="input" v-model="globalDefault.scheduleTime" style="width:80px" placeholder="14:00" :disabled="!globalDefault.scheduleOn" title="触发时刻，24小时制 HH:MM，如 14:00" />
-                <span style="font-size:12px;color:var(--text-muted)">± 误差</span>
+                <span class="text-muted">± 误差</span>
                 <input class="input" type="number" v-model.number="globalDefault.scheduleJitter" style="width:60px" :disabled="!globalDefault.scheduleOn" title="到点前后误差窗口（分钟），避免精确到秒的偶发" />
-                <span style="font-size:12px;color:var(--text-muted)">min</span>
+                <span class="text-muted">min</span>
               </div>
             </div>
             <div class="setting-row">
@@ -439,13 +439,13 @@ onMounted(async () => {
               <div class="setting-ctl" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
                 <label class="toggle-switch"><input type="checkbox" v-model="globalDefault.screenOn" /><span class="toggle-slider"></span></label>
                 <input class="input" type="number" v-model.number="globalDefault.screenRatio" style="width:50px" :disabled="!globalDefault.screenOn" title="变化阈值（0-1）：屏幕变化比例达到该值才可能触发" />
-                <span style="font-size:12px;color:var(--text-muted)">阈值</span>
+                <span class="text-muted">阈值</span>
                 <input class="input" type="number" v-model.number="globalDefault.screenProb" style="width:50px" :disabled="!globalDefault.screenOn" title="触发概率（0-1）：条件满足后随机命中的概率" />
-                <span style="font-size:12px;color:var(--text-muted)">概率</span>
+                <span class="text-muted">概率</span>
                 <input class="input" type="number" v-model.number="globalDefault.screenInterval" style="width:50px" :disabled="!globalDefault.screenOn" title="判定间隔（秒）：两次屏幕规则判定的最小间隔" />
-                <span style="font-size:12px;color:var(--text-muted)">间隔</span>
+                <span class="text-muted">间隔</span>
                 <input class="input" type="number" v-model.number="globalDefault.screenCooldown" style="width:50px" :disabled="!globalDefault.screenOn" title="冷却（分钟）：屏幕规则触发后该规则的额外冷却" />
-                <span style="font-size:12px;color:var(--text-muted)">冷却</span>
+                <span class="text-muted">冷却</span>
               </div>
             </div>
             <div class="setting-row">
@@ -453,11 +453,11 @@ onMounted(async () => {
               <div class="setting-ctl" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
                 <label class="toggle-switch"><input type="checkbox" v-model="globalDefault.idleOn" /><span class="toggle-slider"></span></label>
                 <input class="input" type="number" v-model.number="globalDefault.idleMinutes" style="width:50px" :disabled="!globalDefault.idleOn" title="空闲时长（分钟）：用户无操作达到该时长才可能触发" />
-                <span style="font-size:12px;color:var(--text-muted)">空闲</span>
+                <span class="text-muted">空闲</span>
                 <input class="input" type="number" v-model.number="globalDefault.idleProb" style="width:50px" :disabled="!globalDefault.idleOn" title="触发概率（0-1）：满足空闲后随机命中的概率" />
-                <span style="font-size:12px;color:var(--text-muted)">概率</span>
+                <span class="text-muted">概率</span>
                 <input class="input" type="number" v-model.number="globalDefault.idleInterval" style="width:50px" :disabled="!globalDefault.idleOn" title="判定间隔（秒）：两次空闲规则判定的最小间隔" />
-                <span style="font-size:12px;color:var(--text-muted)">间隔</span>
+                <span class="text-muted">间隔</span>
               </div>
             </div>
             <div class="setting-row">
