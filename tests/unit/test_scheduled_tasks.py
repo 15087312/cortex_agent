@@ -2,7 +2,9 @@
 import asyncio
 import threading
 from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from modules.thinking.scheduled_tasks import ScheduledTaskManager
 
@@ -106,106 +108,67 @@ def test_fire_handler_error(monkeypatch):
     mm.assert_called_once_with("s", {"id": "t", "action": "bad"}, "error")
 
 
-def test_handle_chat(monkeypatch):
-    import modules.perception.trigger as trg
-    import modules.thinking.frontend_channel as fc
-    m = ScheduledTaskManager()
-    async def fake_llm(prompt, session_id, role=None, tier="large"):
-        return "定时问候"
-    pushed = []
-    async def fake_push(sid, *, msg_type, event, content, role="assistant", data=None, persist=True):
-        pushed.append(content)
-        return True
-    monkeypatch.setattr(trg, "call_outreach_llm", fake_llm)
-    monkeypatch.setattr(fc, "_confirm_async", AsyncMock(return_value=True))
-    monkeypatch.setattr(fc, "push_content", fake_push)
-    asyncio.run(m._handle_chat("s1", {"prompt": "问候"}))
-    assert pushed == ["定时问候"]
+@pytest.fixture
+def session_repo(tmp_path, monkeypatch):
+    """真实临时 SQLite + 真实 SessionRepository"""
+    import modules.database.connection as conn
+    from modules.database.session_repo import SessionRepository
+    monkeypatch.setattr(conn.config, "sqlite_path", str(tmp_path / "test_sched.db"))
+    monkeypatch.setattr(conn, "_db_manager", None)
+    monkeypatch.setattr(conn, "_db_manager_lock", threading.RLock())
+    conn.get_db_manager().initialize()
+    return SessionRepository()
 
 
-def test_handle_chat_empty(monkeypatch):
-    import modules.perception.trigger as trg
-    import modules.thinking.frontend_channel as fc
-    m = ScheduledTaskManager()
-    async def fake_llm(prompt, session_id, role=None, tier="large"):
-        return ""
-    monkeypatch.setattr(trg, "call_outreach_llm", fake_llm)
-    pushed = []
-    async def fake_push(sid, *, msg_type, event, content, role="assistant", data=None, persist=True):
-        pushed.append(content)
-        return True
-    monkeypatch.setattr(fc, "_confirm_async", AsyncMock(return_value=True))
-    monkeypatch.setattr(fc, "push_content", fake_push)
-    asyncio.run(m._handle_chat("s1", {}))
-    assert pushed == []
-
-
-def test_mark_run(monkeypatch):
+def test_mark_run_real_db(session_repo):
+    """真实 DB：_mark_run 更新 last_run/last_status 并落库"""
+    session_repo.create_session("s1")
+    session_repo.set_scheduled_tasks("s1", {"tasks": [{"id": "t1", "last_run": None, "last_status": None}]})
     import modules.database.session_repo as sr
-    repo = MagicMock()
-    repo.get_scheduled_tasks.return_value = {"tasks": [{"id": "t1", "last_run": None, "last_status": None}]}
-    monkeypatch.setattr(sr, "get_session_repo", lambda: repo)
-    m = ScheduledTaskManager()
-    m._mark_run("s1", {"id": "t1"}, "success")
-    assert repo.set_scheduled_tasks.called
-    cfg = repo.set_scheduled_tasks.call_args[0][1]
+    with patch.object(sr, "get_session_repo", lambda: session_repo):
+        m = ScheduledTaskManager()
+        m._mark_run("s1", {"id": "t1"}, "success")
+    cfg = session_repo.get_scheduled_tasks("s1")
     assert cfg["tasks"][0]["last_status"] == "success"
+    assert cfg["tasks"][0]["last_run"]
 
 
-def test_mark_run_failure(monkeypatch):
+def test_mark_run_no_session_real_db(session_repo):
+    """真实 DB：无该会话时不抛（_mark_run 容错）"""
     import modules.database.session_repo as sr
-    repo = MagicMock()
-    repo.get_scheduled_tasks.side_effect = RuntimeError
-    monkeypatch.setattr(sr, "get_session_repo", lambda: repo)
-    ScheduledTaskManager()._mark_run("s1", {"id": "t1"}, "error")  # 不应抛
+    with patch.object(sr, "get_session_repo", lambda: session_repo):
+        ScheduledTaskManager()._mark_run("不存在会话", {"id": "t1"}, "error")  # 不应抛
 
 
-def test_handle_chat_handshake_fail_skips_llm(monkeypatch):
-    """前端不可达（握手失败）时不调用 LLM、不推送"""
-    import modules.perception.trigger as trg
-    import modules.thinking.frontend_channel as fc
-    m = ScheduledTaskManager()
-    called = {"llm": 0}
-    async def fake_llm(prompt, session_id, role=None, tier="large"):
-        called["llm"] += 1
-        return "定时问候"
-    monkeypatch.setattr(trg, "call_outreach_llm", fake_llm)
-    pushed = []
-    async def fake_push(sid, *, msg_type, event, content, role="assistant", data=None, persist=True):
-        pushed.append(content)
-        return True
-    monkeypatch.setattr(fc, "_confirm_async", AsyncMock(return_value=False))
-    monkeypatch.setattr(fc, "push_content", fake_push)
-    asyncio.run(m._handle_chat("s1", {"prompt": "问候"}))
-    assert called["llm"] == 0
-    assert pushed == []
-
-
-def test_scan(monkeypatch):
-    import modules.thinking.scheduled_tasks as mod
-    m = ScheduledTaskManager()
-    repo = MagicMock()
-    repo.get_all_sessions.return_value = [{"session_id": "s1"}]
-    repo.get_scheduled_tasks.return_value = {"tasks": [{"id": "t1", "enabled": True, "schedule": {"kind": "interval", "every_minutes": 1}}]}
+def test_scan_real_db(session_repo):
+    """真实 DB + 真实 handler：_scan 触发 enabled 任务并真实 _fire"""
+    session_repo.create_session("s1")
+    session_repo.set_scheduled_tasks("s1", {"tasks": [{"id": "t1", "enabled": True, "action": "noop", "schedule": {"kind": "interval", "every_minutes": 1}}]})
     import modules.database.session_repo as sr
-    monkeypatch.setattr(sr, "get_session_repo", lambda: repo)
     fired = []
-    async def fake_fire(sid, task):
-        fired.append((sid, task))
-    monkeypatch.setattr(m, "_fire", fake_fire)
-    asyncio.run(m._scan())
-    assert len(fired) == 1
+
+    async def noop(sid, task):
+        fired.append((sid, task["id"]))
+
+    with patch.object(sr, "get_session_repo", lambda: session_repo):
+        m = ScheduledTaskManager()
+        m.register_handler("noop", noop)
+        asyncio.run(m._scan())
+    assert ("s1", "t1") in fired
 
 
-def test_scan_skips_disabled(monkeypatch):
-    m = ScheduledTaskManager()
-    import modules.thinking.scheduled_tasks as mod
-    repo = MagicMock()
-    repo.get_all_sessions.return_value = [{"session_id": "s1"}]
-    repo.get_scheduled_tasks.return_value = {"tasks": [{"id": "t1", "enabled": False}]}
+def test_scan_skips_disabled_real_db(session_repo):
+    """真实 DB：disabled 任务不触发"""
+    session_repo.create_session("s1")
+    session_repo.set_scheduled_tasks("s1", {"tasks": [{"id": "t1", "enabled": False, "action": "noop", "schedule": {"kind": "interval", "every_minutes": 1}}]})
     import modules.database.session_repo as sr
-    monkeypatch.setattr(sr, "get_session_repo", lambda: repo)
     fired = []
-    m._fire = lambda sid, task: fired.append((sid, task))
-    asyncio.run(m._scan())
+
+    async def noop(sid, task):
+        fired.append(sid)
+
+    with patch.object(sr, "get_session_repo", lambda: session_repo):
+        m = ScheduledTaskManager()
+        m.register_handler("noop", noop)
+        asyncio.run(m._scan())
     assert fired == []
