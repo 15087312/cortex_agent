@@ -143,3 +143,112 @@ def test_get_process_snapshot():
     assert ct.get_process_snapshot() == {"step": 3}
     ct._last_process_snapshot = None
     assert ct.get_process_snapshot() is not None
+
+
+def _ct(**kw):
+    from modules.thinking.core.continuous_thinker import ContinuousThinker
+    ct = ContinuousThinker.__new__(ContinuousThinker)
+    ct._task_context = kw.get("task_context", None)
+    ct._model_id = kw.get("model_id", "large_primary")
+    ct._tier = "large"
+    ct._session_id = kw.get("session_id", "s1")
+    ct._pending_delegations = kw.get("pending", {})
+    ct.history_thoughts = []
+    ct._delegation_results = []
+    ct.logger = MagicMock()
+    ct.memory = None
+    ct.notebook = None
+    ct._process_collector = MagicMock()
+    ct._last_process_snapshot = None
+    return ct
+
+
+def test_select_final_result_prefers_final_output():
+    ct = _ct()
+    results = [
+        {"thought": "raw1", "final_output": "整合结果"},
+        {"thought": "raw2", "final_output": "  "},
+    ]
+    assert ct._select_final_result(results) == "整合结果"
+
+
+def test_select_final_result_fallback_thought():
+    ct = _ct()
+    results = [{"thought": "  原始思考  "}, {"thought": ""}]
+    assert ct._select_final_result(results) == "原始思考"
+
+
+def test_select_final_result_empty():
+    ct = _ct()
+    assert ct._select_final_result([]) == ""
+
+
+def test_has_successful_external_result():
+    ct = _ct()
+    assert ct._has_successful_external_result("【工具结果】读取成功") is True
+    assert ct._has_successful_external_result("专家已执行完成") is True
+    assert ct._has_successful_external_result("没有任何外部结果") is False
+    assert ct._has_successful_external_result("") is False
+
+
+def test_build_final_synthesis_prompt_no_external():
+    ct = _ct()
+    ct._collect_final_synthesis_context = lambda q, r: "无外部结果"
+    prompt = ct._build_final_synthesis_prompt("问题", [])
+    assert "不得编造" in prompt
+
+
+def test_build_final_synthesis_prompt_with_external():
+    ct = _ct()
+    ct._collect_final_synthesis_context = lambda q, r: "【工具结果】成功读取文件"
+    prompt = ct._build_final_synthesis_prompt("问题", [])
+    assert "不得补全" in prompt
+
+
+def test_notify_return_target_no_context():
+    ct = _ct(task_context=None)
+    import asyncio
+    asyncio.run(ct._notify_return_target(None, "结果"))  # 无 ctx 直接返回
+
+
+def test_notify_return_target_pending_block(monkeypatch):
+    ctx = MagicMock()
+    ctx.return_to_model_id = "supervisor_x"
+    ctx.task_id = "t1"
+    ctx.origin_model_id = ""
+    ctx.return_to_session_id = "s1"
+    ctx.loop_goal = "目标"
+    ctx.caller_tier = "large"
+    ctx.metadata = {}
+    ct = _ct(task_context=ctx, pending={"t9": {"status": "pending"}})
+    ct._model_id = "expert_y"
+    import asyncio
+    sent = []
+    async def fake_send(self, msg):
+        sent.append(msg)
+    import modules.thinking.communication.interface as iface_mod
+    monkeypatch.setattr(iface_mod, "get_message_bus_port", lambda: type("B", (), {"send": fake_send})())
+    asyncio.run(ct._notify_return_target(ctx, "结果"))
+    assert sent == []  # 有 pending 委托不发送
+
+
+def test_notify_return_target_sends(monkeypatch):
+    ctx = MagicMock()
+    ctx.return_to_model_id = "supervisor_x"
+    ctx.task_id = "t1"
+    ctx.origin_model_id = ""
+    ctx.return_to_session_id = "s1"
+    ctx.loop_goal = "目标"
+    ctx.caller_tier = "large"
+    ctx.metadata = {}
+    ct = _ct(task_context=ctx)
+    ct._model_id = "expert_y"
+    import asyncio
+    sent = []
+    async def fake_send(self, msg):
+        sent.append(msg)
+    import modules.thinking.communication.interface as iface_mod
+    monkeypatch.setattr(iface_mod, "get_message_bus_port", lambda: type("B", (), {"send": fake_send})())
+    asyncio.run(ct._notify_return_target(ctx, "最终结果"))
+    assert len(sent) == 1
+    assert sent[0].content["result"] == "最终结果"
