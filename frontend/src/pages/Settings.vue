@@ -387,69 +387,90 @@ onMounted(async () => {
       <div v-if="activeTab === '主动搭话'" class="settings-section">
         <div class="settings-group">
           <div class="settings-group-title">主动搭话</div>
-          <p class="settings-hint">空闲/屏幕变化/指定时段时系统会主动关心你。全局总开关 &gt; 会话规则（单会话覆盖全局默认）</p>
-          <div class="setting-row">
-            <div class="lbl"><div class="t">全局总开关</div><div class="d">关闭后所有会话（含全局默认）不触发</div></div>
+          <p class="settings-hint">系统在合适时机主动关心你：触发后生成内容 → 存入会话历史 → 推送到前端 → 记入触发记录。</p>
+          <!-- 触发逻辑说明 -->
+          <div style="background:var(--bg-inset,#0d1117);border:1px solid var(--border,#30363d);border-radius:8px;padding:12px 14px;font-size:13px;color:var(--text,#e6edf3);line-height:2">
+            <div style="font-weight:600;margin-bottom:4px">触发逻辑（4 条规则，满足任一即触发）</div>
+            <div>· <b>定点发送</b>：到设定时间（±误差分钟窗口内）触发一次</div>
+            <div>· <b>屏幕触发</b>：屏幕变化比例达到阈值、且随机概率命中时触发</div>
+            <div>· <b>空闲触发</b>：用户空闲超过设定时长、且随机概率命中时触发</div>
+            <div>· <b>时段触发</b>：处于设定时段内、且随机概率命中时触发</div>
+            <div style="font-weight:600;margin:6px 0 0">公共前置条件</div>
+            <div>· 前端窗口在线（WebSocket 已连接）</div>
+            <div>· 距该会话上次主动搭话超过「综合冷却」时长</div>
+            <div style="font-weight:600;margin:6px 0 0">配置优先级</div>
+            <div>· 全局总开关（关=全部停）→ <b>会话规则</b>（按会话单独设置，优先）→ 全局默认规则（会话未配置时生效）</div>
+          </div>
+          <div class="setting-row" style="margin-top:12px">
+            <div class="lbl"><div class="t">全局总开关</div><div class="d">关闭后所有会话（含全局默认）都不触发主动搭话</div></div>
             <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="proactiveEnabled" @change="proactiveEnabled = !proactiveEnabled" /><span class="toggle-slider"></span></label></div>
           </div>
         </div>
 
         <div class="settings-divider"></div>
-        <!-- 全局默认规则（会话未单独配置时生效） -->
+        <!-- 会话规则（核心：按会话单独设置） -->
         <div class="settings-group">
-          <div class="settings-group-title">全局默认规则<span style="font-weight:400;color:var(--text-muted);font-size:12px"> —— 会话未单独配置时生效</span></div>
+          <div class="settings-group-title">会话规则<span style="font-weight:400;color:var(--text-muted);font-size:12px"> —— 按会话单独设置，每个会话配自己的规则（优先于全局默认）</span></div>
+          <OutreachView :compact="true" />
+        </div>
+
+        <div class="settings-divider"></div>
+        <!-- 全局默认规则（仅当会话未配置时生效，兜底） -->
+        <div class="settings-group">
+          <div class="settings-group-title">全局默认规则<span style="font-weight:400;color:var(--text-muted);font-size:12px"> —— 仅当某会话未配置自己的规则时生效</span></div>
           <div style="display:flex;flex-direction:column;gap:8px;margin-top:4px">
             <div class="setting-row">
-              <div class="lbl"><div class="t">启用全局默认规则</div></div>
+              <div class="lbl"><div class="t">启用全局默认规则</div><div class="d">为所有未单独配置的会话启用统一的搭话规则</div></div>
               <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" v-model="globalDefault.enabled" /><span class="toggle-slider"></span></label></div>
             </div>
             <div class="setting-row">
-              <div class="lbl"><div class="t">定点发送</div></div>
+              <div class="lbl"><div class="t">定点发送</div><div class="d">到设定时间 ±误差窗口内触发一次搭话</div></div>
               <div class="setting-ctl" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
                 <label class="toggle-switch"><input type="checkbox" v-model="globalDefault.scheduleOn" /><span class="toggle-slider"></span></label>
-                <input class="input" v-model="globalDefault.scheduleTime" style="width:80px" placeholder="14:00" :disabled="!globalDefault.scheduleOn" />
-                <span style="font-size:12px;color:var(--text-muted)">±</span>
-                <input class="input" type="number" v-model.number="globalDefault.scheduleJitter" style="width:60px" :disabled="!globalDefault.scheduleOn" />
+                <span style="font-size:12px;color:var(--text-muted)">时间</span>
+                <input class="input" v-model="globalDefault.scheduleTime" style="width:80px" placeholder="14:00" :disabled="!globalDefault.scheduleOn" title="触发时刻，24小时制 HH:MM，如 14:00" />
+                <span style="font-size:12px;color:var(--text-muted)">± 误差</span>
+                <input class="input" type="number" v-model.number="globalDefault.scheduleJitter" style="width:60px" :disabled="!globalDefault.scheduleOn" title="到点前后误差窗口（分钟），避免精确到秒的偶发" />
                 <span style="font-size:12px;color:var(--text-muted)">min</span>
               </div>
             </div>
             <div class="setting-row">
-              <div class="lbl"><div class="t">屏幕触发</div></div>
+              <div class="lbl"><div class="t">屏幕触发</div><div class="d">屏幕变化比例达到阈值、且随机概率命中时触发</div></div>
               <div class="setting-ctl" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
                 <label class="toggle-switch"><input type="checkbox" v-model="globalDefault.screenOn" /><span class="toggle-slider"></span></label>
-                <input class="input" type="number" v-model.number="globalDefault.screenRatio" style="width:50px" :disabled="!globalDefault.screenOn" title="变化幅度" />
-                <input class="input" type="number" v-model.number="globalDefault.screenProb" style="width:50px" :disabled="!globalDefault.screenOn" title="概率" />
-                <input class="input" type="number" v-model.number="globalDefault.screenInterval" style="width:50px" :disabled="!globalDefault.screenOn" title="间隔(s)" />
-                <input class="input" type="number" v-model.number="globalDefault.screenCooldown" style="width:50px" :disabled="!globalDefault.screenOn" title="冷却(min)" />
+                <input class="input" type="number" v-model.number="globalDefault.screenRatio" style="width:50px" :disabled="!globalDefault.screenOn" title="变化阈值（0-1）：屏幕变化比例达到该值才可能触发" />
+                <span style="font-size:12px;color:var(--text-muted)">阈值</span>
+                <input class="input" type="number" v-model.number="globalDefault.screenProb" style="width:50px" :disabled="!globalDefault.screenOn" title="触发概率（0-1）：条件满足后随机命中的概率" />
+                <span style="font-size:12px;color:var(--text-muted)">概率</span>
+                <input class="input" type="number" v-model.number="globalDefault.screenInterval" style="width:50px" :disabled="!globalDefault.screenOn" title="判定间隔（秒）：两次屏幕规则判定的最小间隔" />
+                <span style="font-size:12px;color:var(--text-muted)">间隔</span>
+                <input class="input" type="number" v-model.number="globalDefault.screenCooldown" style="width:50px" :disabled="!globalDefault.screenOn" title="冷却（分钟）：屏幕规则触发后该规则的额外冷却" />
+                <span style="font-size:12px;color:var(--text-muted)">冷却</span>
               </div>
             </div>
             <div class="setting-row">
-              <div class="lbl"><div class="t">空闲触发</div></div>
+              <div class="lbl"><div class="t">空闲触发</div><div class="d">用户空闲超过设定时长、且随机概率命中时触发</div></div>
               <div class="setting-ctl" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
                 <label class="toggle-switch"><input type="checkbox" v-model="globalDefault.idleOn" /><span class="toggle-slider"></span></label>
-                <input class="input" type="number" v-model.number="globalDefault.idleMinutes" style="width:50px" :disabled="!globalDefault.idleOn" title="空闲(min)" />
-                <input class="input" type="number" v-model.number="globalDefault.idleProb" style="width:50px" :disabled="!globalDefault.idleOn" title="概率" />
-                <input class="input" type="number" v-model.number="globalDefault.idleInterval" style="width:50px" :disabled="!globalDefault.idleOn" title="间隔(s)" />
+                <input class="input" type="number" v-model.number="globalDefault.idleMinutes" style="width:50px" :disabled="!globalDefault.idleOn" title="空闲时长（分钟）：用户无操作达到该时长才可能触发" />
+                <span style="font-size:12px;color:var(--text-muted)">空闲</span>
+                <input class="input" type="number" v-model.number="globalDefault.idleProb" style="width:50px" :disabled="!globalDefault.idleOn" title="触发概率（0-1）：满足空闲后随机命中的概率" />
+                <span style="font-size:12px;color:var(--text-muted)">概率</span>
+                <input class="input" type="number" v-model.number="globalDefault.idleInterval" style="width:50px" :disabled="!globalDefault.idleOn" title="判定间隔（秒）：两次空闲规则判定的最小间隔" />
+                <span style="font-size:12px;color:var(--text-muted)">间隔</span>
               </div>
             </div>
             <div class="setting-row">
-              <div class="lbl"><div class="t">时段触发</div></div>
+              <div class="lbl"><div class="t">时段触发</div><div class="d">处于设定时段内、且随机概率命中时触发；跨午夜（如 22:00-02:00）也支持</div></div>
               <div class="setting-ctl" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
                 <label class="toggle-switch"><input type="checkbox" v-model="globalDefault.windowsOn" /><span class="toggle-slider"></span></label>
-                <input class="input" v-model="globalDefault.timeWindowsText" style="flex:1;min-width:180px" placeholder="09:00-12:00@0.5,14:00-18:00@0.8" :disabled="!globalDefault.windowsOn" />
+                <input class="input" v-model="globalDefault.timeWindowsText" style="flex:1;min-width:220px" placeholder="09:00-12:00@0.5,14:00-18:00@0.8" :disabled="!globalDefault.windowsOn" title="格式：开始-结束@概率，多个用逗号分隔。概率省略默认 1.0" />
               </div>
             </div>
             <div style="text-align:right;margin-top:4px">
               <button class="btn btn-sm btn-primary" @click="saveGlobalDefault">保存全局默认规则</button>
             </div>
           </div>
-        </div>
-
-        <div class="settings-divider"></div>
-        <!-- 会话规则管理（Outreach 并入，每会话可覆盖全局默认） -->
-        <div class="settings-group">
-          <div class="settings-group-title">会话规则<span style="font-weight:400;color:var(--text-muted);font-size:12px"> —— 单会话配置，覆盖全局默认</span></div>
-          <OutreachView :compact="true" />
         </div>
       </div>
 
