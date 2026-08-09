@@ -154,3 +154,61 @@ async def test_emit_real_impl_no_callback(monkeypatch):
     monkeypatch.setattr(stream_mod, "connection_manager", cm)
     await s._emit("s1", {"event": "x"})
     cm.send_json.assert_awaited_once_with("s1", {"event": "x"})
+
+
+def test_get_session_repo_real_impl(monkeypatch):
+    """_get_session_repo 真实实现：懒加载 + 缓存"""
+    s = _system()
+    s._session_repo = None
+    import modules.database.session_repo as sr
+    repo = MagicMock()
+    monkeypatch.setattr(sr, "get_session_repo", lambda: repo)
+    assert s._get_session_repo() is repo
+    assert s._session_repo is repo  # 已缓存
+    # 二次调用不再触发 get_session_repo
+    assert s._get_session_repo() is repo
+
+
+def test_get_session_repo_real_impl_failure(monkeypatch):
+    s = _system()
+    s._session_repo = None
+    import modules.database.session_repo as sr
+    monkeypatch.setattr(sr, "get_session_repo", lambda: (_ for _ in ()).throw(RuntimeError("db down")))
+    assert s._get_session_repo() is None
+
+
+async def test_proactive_context_trim_real_impl_no_session(monkeypatch):
+    """无会话 → 直接返回"""
+    s = _system()
+    s.sessions = {}
+    s._lock = asyncio.Lock()
+    await s._proactive_context_trim("nope")
+
+
+async def test_proactive_context_trim_real_impl_under_threshold(monkeypatch):
+    """消息量未超 80% 水位 → 不裁剪"""
+    s = _system()
+    s.sessions = {"s1": {"messages": [{"role": "user", "content": "短"}] * 3, "running": True}}
+    s._lock = asyncio.Lock()
+    import modules.thinking.context.compression as comp_mod
+    engine = MagicMock()
+    engine.estimate_tokens.return_value = 1000  # 远低于 128000*0.8
+    monkeypatch.setattr(comp_mod, "get_compression_engine", lambda: engine)
+    await s._proactive_context_trim("s1")
+    assert len(s.sessions["s1"]["messages"]) == 3  # 未裁剪
+
+
+async def test_proactive_context_trim_real_impl_over_threshold(monkeypatch):
+    """消息超水位 → 丢弃最旧 50%，保留最新"""
+    s = _system()
+    s.sessions = {"s1": {"messages": [{"role": "user", "content": f"内容{i}"} for i in range(8)], "running": True}}
+    s._lock = asyncio.Lock()
+    import modules.thinking.context.compression as comp_mod
+    import importlib
+    cfg_mod = importlib.import_module("config.settings")
+    engine = MagicMock()
+    engine.estimate_tokens.return_value = 999999  # 超阈值
+    monkeypatch.setattr(comp_mod, "get_compression_engine", lambda: engine)
+    monkeypatch.setattr(cfg_mod, "settings", type("S", (), {"CONTEXT_WINDOW_SIZE": 1000})())
+    await s._proactive_context_trim("s1")
+    assert len(s.sessions["s1"]["messages"]) == 4  # 保留最新 4 条（8//2）

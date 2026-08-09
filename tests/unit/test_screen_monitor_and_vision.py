@@ -157,3 +157,13 @@ def test_read_response_invalid():
     import queue
     s._resp_queue.put("not json")
     assert s._read_response(timeout=0.1) is None
+
+
+def test_read_response_success_and_empty():
+    """_read_response 真实实现：读队列成功 / 超时空"""
+    s = _source(None)
+    import queue
+    s._resp_queue.put('{"jsonrpc":"2.0","id":"1","result":{}}')
+    resp = s._read_response(timeout=0.5)
+    assert resp == {"jsonrpc": "2.0", "id": "1", "result": {}}
+    assert s._read_response(timeout=0.1) is None  # 队列空 → 超时 None

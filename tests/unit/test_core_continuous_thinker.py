@@ -491,3 +491,42 @@ def test_continuous_think_control_decision_stops(monkeypatch):
     import asyncio
     results = asyncio.run(ct.continuous_think("问题"))
     assert len(results) == 1
+
+
+def test_continuous_thinker_real_init():
+    """ContinuousThinker 真实 __init__（不 mock）"""
+    from modules.thinking.core.continuous_thinker import ContinuousThinker
+    ct = ContinuousThinker(think_fn=None, session_id="real_s1", model_id="m1", tier="large")
+    assert ct.think_fn is None
+    assert ct.max_rounds == 30
+    assert ct.min_rounds == 1
+    assert ct.interval == 3.0
+    assert ct.memory is None  # 旧版 MemoryManager 已废弃
+    assert ct._persistent_prompts == []
+    assert ct._running is False
+    assert ct._session_id == "real_s1"
+    assert ct._model_id == "m1"
+    assert ct._tier == "large"
+    assert ct._pending_delegations == {}
+    assert ct.notebook is not None
+    assert ct._process_collector is not None
+    assert ct._delegation_port is not None
+
+
+def test_parse_wait_seconds_real_impl():
+    """_parse_wait_seconds 真实实现：返回 interval"""
+    from modules.thinking.core.continuous_thinker import ContinuousThinker
+    ct = ContinuousThinker(think_fn=None, interval=2.5)
+    assert ct._parse_wait_seconds("任意思考文本") == 2.5
+
+
+def test_normalize_think_result_real_impl():
+    """_normalize_think_result 真实实现：dict 原样 / None / 字符串规范化"""
+    from modules.thinking.core.continuous_thinker import ContinuousThinker
+    ct = ContinuousThinker(think_fn=None)
+    assert ct._normalize_think_result({"thought": "x"}) == {"thought": "x"}
+    none_res = ct._normalize_think_result(None)
+    assert none_res["thought"] == ""
+    assert none_res.get("is_finished") is True
+    str_res = ct._normalize_think_result("字符串结果")
+    assert str_res["thought"] == "字符串结果"

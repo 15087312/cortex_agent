@@ -243,3 +243,25 @@ def test_execute_multi_model_success_no_runner(monkeypatch):
         return None
     result = asyncio.run(o._execute_multi_model_thinking("你好", "s1", {}, cb, model_id="large_primary"))
     assert result["response"] == "大模型回复"
+
+
+def test_dependency_getters_real_impl(monkeypatch):
+    """编排器依赖获取真实实现：懒加载 + 缓存（真实 __init__ 构造）"""
+    from modules.thinking.multi_model_orchestrator import MultiModelOrchestrator
+    o = MultiModelOrchestrator()  # 真实 __init__（无副作用，纯赋值）
+    # 首次调用创建并缓存
+    r1 = o._get_output_reviewer()
+    assert r1 is o._output_reviewer  # 缓存
+    assert o._get_output_reviewer() is r1  # 二次调用返回缓存
+    # activity notifier / security / guidance 懒加载（用 mock 注入避免副作用污染全局）
+    notifier = MagicMock()
+    sec = MagicMock()
+    guidance = MagicMock()
+    import modules.thinking.adapters as ad_mod
+    monkeypatch.setattr(ad_mod, "DifferenceDetectorActivityNotifier", lambda: notifier)
+    monkeypatch.setattr(ad_mod, "SecurityApiAdapter", lambda: sec)
+    monkeypatch.setattr(ad_mod, "PreGenExpertGuidanceAdapter", lambda: guidance)
+    assert o._get_activity_notifier() is notifier
+    assert o._get_activity_notifier() is o._activity_notifier
+    assert o._get_security() is sec
+    assert o._get_guidance_service() is guidance
