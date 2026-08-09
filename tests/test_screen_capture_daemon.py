@@ -8,6 +8,7 @@ import time
 from unittest.mock import MagicMock, patch
 
 import os
+import sys
 
 import infra.screen_capture_daemon as daemon_mod
 from utils import screen_capture_daemon_client as client_mod
@@ -286,3 +287,135 @@ def test_daemon_run_ignores_dev_null_stdin(monkeypatch):
     d._shutdown.set()
     t.join(timeout=2)
     assert not os.path.exists(sock_path)
+
+
+# ── init_screen_permission ──
+
+def test_init_permission_non_mac(monkeypatch):
+    monkeypatch.setattr(sc_mod.sys, "platform", "linux")
+    sc_mod.init_screen_permission()
+    assert sc_mod.SCREENSHOT_ENABLED is True
+
+
+def test_init_permission_quartz_granted(monkeypatch):
+    monkeypatch.setattr(sc_mod.sys, "platform", "darwin")
+    fake_quartz = MagicMock()
+    fake_quartz.CGPreflightScreenCaptureAccess.return_value = True
+    monkeypatch.setitem(sys.modules, "Quartz", fake_quartz)
+    import importlib
+    importlib.reload(sc_mod)
+    monkeypatch.setattr(sc_mod, "ensure_daemon_running", lambda: True)
+    sc_mod.init_screen_permission()
+    assert sc_mod.SCREENSHOT_ENABLED is True
+
+
+def test_init_permission_quartz_denied(monkeypatch):
+    monkeypatch.setattr(sc_mod.sys, "platform", "darwin")
+    fake_quartz = MagicMock()
+    fake_quartz.CGPreflightScreenCaptureAccess.return_value = False
+    monkeypatch.setitem(sys.modules, "Quartz", fake_quartz)
+    import importlib
+    importlib.reload(sc_mod)
+    sc_mod.init_screen_permission()
+    assert sc_mod.SCREENSHOT_ENABLED is False
+
+
+def test_init_permission_no_quartz_screencapture_ok(monkeypatch):
+    monkeypatch.setattr(sc_mod.sys, "platform", "darwin")
+    import sys as _sys
+    monkeypatch.setitem(_sys.modules, "Quartz", None)
+    import subprocess
+    result = MagicMock()
+    result.returncode = 0
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: result)
+    monkeypatch.setattr(sc_mod.os.path, "getsize", lambda p: 100)
+    monkeypatch.setattr(sc_mod.os, "unlink", lambda p: None)
+    monkeypatch.setattr(sc_mod, "ensure_daemon_running", lambda: True)
+    sc_mod.init_screen_permission()
+    assert sc_mod.SCREENSHOT_ENABLED is True
+
+
+def test_init_permission_no_quartz_screencapture_fail(monkeypatch):
+    monkeypatch.setattr(sc_mod.sys, "platform", "darwin")
+    import sys as _sys
+    monkeypatch.setitem(_sys.modules, "Quartz", None)
+    import subprocess
+    result = MagicMock()
+    result.returncode = 1
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: result)
+    monkeypatch.setattr(sc_mod.os.path, "getsize", lambda p: 0)
+    monkeypatch.setattr(sc_mod.os, "unlink", lambda p: None)
+    sc_mod.init_screen_permission()
+    assert sc_mod.SCREENSHOT_ENABLED is False
+
+
+def test_init_permission_no_quartz_exception(monkeypatch):
+    monkeypatch.setattr(sc_mod.sys, "platform", "darwin")
+    import sys as _sys
+    monkeypatch.setitem(_sys.modules, "Quartz", None)
+    import subprocess
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: (_ for _ in ()).throw(RuntimeError()))
+    sc_mod.init_screen_permission()
+    assert sc_mod.SCREENSHOT_ENABLED is False
+
+
+def test_ensure_daemon_missing_script(monkeypatch):
+    monkeypatch.setattr(sc_mod, "_DAEMON_PROC", None)
+    monkeypatch.setattr(sc_mod.sys, "platform", "darwin")
+    monkeypatch.setattr(sc_mod.os.path, "exists", lambda p: False)
+    assert sc_mod.ensure_daemon_running() is False
+
+
+def test_ensure_daemon_popen_failure(monkeypatch):
+    monkeypatch.setattr(sc_mod, "_DAEMON_PROC", None)
+    monkeypatch.setattr(sc_mod.sys, "platform", "darwin")
+    import subprocess
+    monkeypatch.setattr(sc_mod.os.path, "exists", lambda p: True)
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no")))
+    assert sc_mod.ensure_daemon_running() is False
+
+
+def test_capture_screen_base64(monkeypatch):
+    monkeypatch.setattr(sc_mod, "SCREENSHOT_ENABLED", True)
+    monkeypatch.setattr("utils.screen_capture_daemon_client.get_frame_bytes", lambda **kw: b"\x89PNG-fake")
+    import base64 as b64
+    assert sc_mod.capture_screen() == b64.b64encode(b"\x89PNG-fake").decode()
+
+
+def test_grab_image_darwin_fallback(monkeypatch):
+    monkeypatch.setattr(sc_mod.sys, "platform", "darwin")
+    monkeypatch.setattr(sc_mod, "_try_screencapture", lambda: None)
+    assert sc_mod._grab_image(1280) is None
+
+
+def test_try_screencapture_success(monkeypatch):
+    import subprocess
+    result = MagicMock()
+    result.returncode = 0
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: result)
+    import tempfile as _tf
+    from PIL import Image as _PIL
+    tmp = os.path.join(_tf.gettempdir(), "sc_test.png")
+    _PIL.new("RGB", (4, 4), color=(10, 20, 30)).save(tmp)
+    class _FakeTF:
+        def __init__(self):
+            self.name = tmp
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            return False
+        def close(self):
+            pass
+    monkeypatch.setattr("tempfile.NamedTemporaryFile", lambda suffix=".png", delete=False: _FakeTF())
+    try:
+        img = sc_mod._try_screencapture()
+        assert img is not None
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+
+
+def test_try_screencapture_failure(monkeypatch):
+    import subprocess
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: (_ for _ in ()).throw(RuntimeError()))
+    assert sc_mod._try_screencapture() is None
