@@ -108,32 +108,32 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
     </div>
     <div class="page-body" v-if="!loading">
       <!-- 概览卡 -->
-      <div class="stat-grid" style="grid-template-columns:repeat(3,1fr)">
-        <div class="stat-card"><div class="stat-icon" style="background:rgba(88,166,255,.15);color:#58a6ff"><Icon name="heart" :size="18" /></div><div class="stat-value">{{ enabledCount }}/5</div><div class="stat-label">已开启会话</div></div>
-        <div class="stat-card"><div class="stat-icon" style="background:rgba(63,185,80,.15);color:#3fb950"><Icon name="message" :size="18" /></div><div class="stat-value">{{ totalLogs }}</div><div class="stat-label">累计搭话</div></div>
-        <div class="stat-card"><div class="stat-icon" style="background:rgba(210,153,34,.15);color:#d29922"><Icon name="clock" :size="18" /></div><div class="stat-value">{{ logs.length }}</div><div class="stat-label">最近记录</div></div>
+      <div class="stat-grid stat-grid-3">
+        <div class="stat-card"><div class="stat-icon stat-icon-blue"><Icon name="heart" :size="18" /></div><div class="stat-value">{{ enabledCount }}/5</div><div class="stat-label">已开启会话</div></div>
+        <div class="stat-card"><div class="stat-icon stat-icon-green"><Icon name="message" :size="18" /></div><div class="stat-value">{{ totalLogs }}</div><div class="stat-label">累计搭话</div></div>
+        <div class="stat-card"><div class="stat-icon stat-icon-yellow"><Icon name="clock" :size="18" /></div><div class="stat-value">{{ logs.length }}</div><div class="stat-label">最近记录</div></div>
       </div>
 
       <!-- 会话规则配置 -->
-      <div class="card" style="margin-top:12px">
+      <div class="card dash-mt">
         <div class="card-header">会话规则（最多开启 5 个会话）</div>
-        <div style="font-size:12px;color:var(--text-muted);padding:2px 0 6px">右侧开关 = 在设置里<b>单独开启</b>该会话的主动搭话（全局总开关强制有效）；开启后可展开配置自己的规则</div>
-        <div v-if="sessions.length === 0" class="empty-state" style="padding:32px"><p class="empty-text">暂无会话</p></div>
+        <div class="outreach-hint">右侧开关 = 在设置里<b>单独开启</b>该会话的主动搭话（全局总开关强制有效）；开启后可展开配置自己的规则</div>
+        <div v-if="sessions.length === 0" class="empty-state outreach-empty"><p class="empty-text">暂无会话</p></div>
         <div v-for="s in sessions" :key="s.session_id" class="outreach-session">
-          <div class="outreach-head" @click="s._open = !s._open">
-            <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0">
-              <Icon :name="s._open ? 'down' : 'right'" :size="14" style="color:var(--text-muted)" />
-              <b style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ s.title }}</b>
+            <div class="outreach-head" @click="s._open = !s._open">
+            <div class="outreach-session-head">
+              <Icon :name="s._open ? 'down' : 'right'" :size="14" class="outreach-icon-muted" />
+              <b class="outreach-session-title">{{ s.title }}</b>
               <span v-if="s.enabled" class="badge badge-green">已开启</span>
               <span v-else class="badge badge-gray">关闭</span>
             </div>
             <label class="toggle-switch" @click.stop><input type="checkbox" v-model="s.enabled" @change="saveConfig(s)" /><span class="toggle-slider"></span></label>
           </div>
           <div v-if="s._open" class="outreach-body">
-            <div class="outreach-row" style="align-items:center">
+            <div class="outreach-row outreach-row-align">
               <span class="outreach-lbl">综合冷却</span>
               <input class="input" type="number" v-model.number="s.cooldownMin" style="width:64px;text-align:right" title="同一会话两次主动搭话的最小间隔（分钟）" /> <span class="outreach-unit">min</span>
-              <span style="font-size:12px;color:var(--text-muted)">两次搭话的最小间隔</span>
+              <span class="outreach-hint-text">两次搭话的最小间隔</span>
             </div>
             <div class="outreach-row">
               <span class="outreach-lbl">定点发送</span>
@@ -158,13 +158,13 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
               <input class="input" type="number" v-model.number="s.idleProb" style="width:52px;text-align:right" title="触发概率（0-1）：满足空闲后随机命中的概率" :disabled="!s.idleOn" /> <span class="outreach-unit" :class="{ off: !s.idleOn }">概率</span>
               <input class="input" type="number" v-model.number="s.idleInterval" style="width:52px;text-align:right" title="判定间隔（秒）：两次空闲规则判定的最小间隔" :disabled="!s.idleOn" /> <span class="outreach-unit" :class="{ off: !s.idleOn }">间隔 s</span>
             </div>
-            <div class="outreach-row" style="flex-wrap:wrap">
+            <div class="outreach-row outreach-row-wrap">
               <span class="outreach-lbl">时段触发</span>
               <label class="toggle-switch" @click.stop><input type="checkbox" v-model="s.windowsOn" /><span class="toggle-slider"></span></label>
               <input class="input" v-model="s.timeWindowsText" style="flex:1;min-width:200px" placeholder="09:00-12:00@0.5,14:00-18:00@0.8" :disabled="!s.windowsOn" title="格式：开始-结束@概率，多个用逗号分隔。概率省略默认 1.0，跨午夜（如 22:00-02:00）也支持" />
             </div>
-            <div style="font-size:12px;color:var(--text-muted);margin-top:4px">时段格式：<code>开始-结束@概率</code>，逗号分隔多项，如 <code>09:00-12:00@0.5,14:00-18:00@0.8</code>（概率省略默认 1.0，跨午夜也支持）</div>
-            <div style="display:flex;justify-content:flex-end;margin-top:10px">
+            <div class="outreach-hint-mt">时段格式：<code>开始-结束@概率</code>，逗号分隔多项，如 <code>09:00-12:00@0.5,14:00-18:00@0.8</code>（概率省略默认 1.0，跨午夜也支持）</div>
+            <div class="outreach-save">
               <button class="btn btn-sm btn-primary" @click="saveConfig(s)"><Icon name="check" :size="14" /> 保存</button>
             </div>
           </div>
@@ -172,18 +172,38 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
       </div>
 
       <!-- 触发记录 -->
-      <div class="card" style="margin-top:12px">
+      <div class="card dash-mt">
         <div class="card-header">触发记录</div>
-        <div v-if="logs.length === 0" class="empty-state" style="padding:32px"><p class="empty-text">暂无主动搭话记录（开启会话并满足规则后触发）</p></div>
+        <div v-if="logs.length === 0" class="empty-state outreach-empty"><p class="empty-text">暂无主动搭话记录（开启会话并满足规则后触发）</p></div>
         <div v-else class="activity-timeline">
           <div v-for="l in logs" :key="l.session_id + l.created_at" class="activity-item">
             <span class="activity-time">{{ formatTime(l.created_at) }}</span>
             <span class="badge" :class="l.reason === 'screen' ? 'badge-yellow' : 'badge-blue'">{{ reasonLabels[l.reason] || l.reason }}</span>
-            <span style="color:var(--text-muted);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ l.content }}</span>
+            <span class="outreach-log-content">{{ l.content }}</span>
           </div>
         </div>
       </div>
     </div>
-    <div class="page-body" v-else style="text-align:center;padding:60px;color:var(--text-muted)">加载中...</div>
+    <div class="page-body" v-else>加载中...</div>
   </div>
 </template>
+
+<style scoped>
+.stat-icon-blue { background: rgba(88,166,255,.15); color: #58a6ff; }
+.stat-icon-green { background: rgba(63,185,80,.15); color: var(--success); }
+.stat-icon-yellow { background: rgba(210,153,34,.15); color: var(--warning); }
+.dash-mt { margin-top: 12px; }
+.outreach-hint { font-size: 12px; color: var(--text-muted); padding: 2px 0 6px; }
+.outreach-empty { padding: 32px; }
+.outreach-session-head { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
+.outreach-session-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.outreach-icon-muted { color: var(--text-muted); }
+.outreach-row-align { align-items: center; }
+.outreach-hint-text { font-size: 12px; color: var(--text-muted); }
+.outreach-row-wrap { flex-wrap: wrap; }
+.outreach-hint-mt { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+.outreach-save { display: flex; justify-content: flex-end; margin-top: 10px; }
+.outreach-log-content { color: var(--text-muted); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.outreach-loading { text-align: center; padding: 60px; color: var(--text-muted); }
+.stat-grid-3 { grid-template-columns: repeat(3, 1fr); }
+</style>

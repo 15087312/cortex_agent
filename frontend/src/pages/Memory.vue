@@ -59,15 +59,15 @@ function starRating(v) { const s = Math.round(v * 5); return '★'.repeat(s) + '
         <div class="stat-card"><button class="btn btn-danger btn-sm" @click="handleClear">清空记忆</button><div class="stat-label">不可撤销</div></div>
       </div>
       <div class="search-bar">
-        <input class="input" v-model="filter.keyword" placeholder="搜索关键词..." @keyup.enter="loadData" style="flex:1" />
+        <input class="input search-input" v-model="filter.keyword" placeholder="搜索关键词..." @keyup.enter="loadData" />
         <select class="input" v-model="filter.type"><option value="">全部</option><option value="fact">fact</option><option value="thought">thought</option><option value="strategy">strategy</option><option value="emotion">emotion</option></select>
         <button class="btn btn-primary btn-sm" @click="loadData">搜索</button>
         <button class="btn btn-sm" @click="showCreate = true">+新建</button>
       </div>
       <div class="card">
-        <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+        <div class="card-header card-header-flex">
           <span>记忆列表 ({{ total }})</span>
-          <div style="display:flex;gap:4px">
+          <div class="view-toggle">
             <button class="btn btn-sm" :class="{ 'btn-primary': viewMode === 'list' }" @click="viewMode = 'list'">列表</button>
             <button class="btn btn-sm" :class="{ 'btn-primary': viewMode === 'timeline' }" @click="viewMode = 'timeline'">时间线</button>
           </div>
@@ -79,7 +79,7 @@ function starRating(v) { const s = Math.round(v * 5); return '★'.repeat(s) + '
             <tr v-for="e in events" :key="e.id">
               <td><span class="badge" :class="typeBadgeClass(e.type)">{{ e.type }}</span></td>
               <td><span class="mem-content-ellipsis">{{ e.fact || '' }}</span></td>
-              <td><span class="star-rating" style="font-size:14px;letter-spacing:1px">{{ starRating(e.importance || 0) }}</span> <span style="color:var(--text-muted);font-size:12px">{{ (e.importance||0).toFixed(2) }}</span></td>
+              <td><span class="star-rating star-text">{{ starRating(e.importance || 0) }}</span> <span class="importance-text">{{ (e.importance||0).toFixed(2) }}</span></td>
               <td>{{ formatTime(e.time) }}</td>
               <td><button class="btn btn-sm" @click="handleDetail(e.id)">详情</button> <button class="btn btn-sm btn-danger" @click="handleDelete(e.id)">删除</button></td>
             </tr>
@@ -92,20 +92,20 @@ function starRating(v) { const s = Math.round(v * 5); return '★'.repeat(s) + '
             <div v-for="e in group[1]" :key="e.id" class="memory-timeline-item" @click="handleDetail(e.id)">
               <span class="badge" :class="typeBadgeClass(e.type)">{{ e.type }}</span>
               <span class="memory-timeline-fact">{{ e.fact || '' }}</span>
-              <span style="color:var(--text-muted);font-size:12px">{{ formatTime(e.time) }}</span>
-              <span style="flex:1"></span>
+              <span class="timeline-time">{{ formatTime(e.time) }}</span>
+              <span class="timeline-spacer"></span>
               <button class="btn btn-sm btn-danger" @click.stop="handleDelete(e.id)"><Icon name="trash" :size="13" /></button>
             </div>
           </div>
         </div>
-        <div v-else class="empty-state" style="padding:40px"><span class="empty-icon"><Icon name="inbox" :size="20" /></span><p class="empty-text">暂无记忆</p></div>
+        <div v-else class="empty-state timeline-empty"><span class="empty-icon"><Icon name="inbox" :size="20" /></span><p class="empty-text">暂无记忆</p></div>
       </div>
       <Modal v-if="showCreate" title="新建记忆" @close="showCreate = false">
-        <div style="display:flex;flex-direction:column;gap:12px">
-          <div><label style="font-size:12px;color:var(--text-muted)">类型</label><select class="input" v-model="newEvent.event_type" style="width:100%"><option value="fact">fact</option><option value="thought">thought</option><option value="strategy">strategy</option><option value="emotion">emotion</option></select></div>
-          <div><label style="font-size:12px;color:var(--text-muted)">内容 *</label><textarea class="input" v-model="newEvent.fact" style="width:100%;min-height:60px"></textarea></div>
-          <div><label style="font-size:12px;color:var(--text-muted)">关键词</label><input class="input" v-model="newEvent.keywords" style="width:100%" /></div>
-          <div><label style="font-size:12px;color:var(--text-muted)">重要性 0-1</label><input class="input" v-model.number="newEvent.importance" type="number" min="0" max="1" step="0.1" style="width:100%" /></div>
+        <div class="modal-form">
+          <div><label class="form-label">类型</label><select class="input" v-model="newEvent.event_type" style="width:100%"><option value="fact">fact</option><option value="thought">thought</option><option value="strategy">strategy</option><option value="emotion">emotion</option></select></div>
+          <div><label class="form-label">内容 *</label><textarea class="input" v-model="newEvent.fact" style="width:100%;min-height:60px"></textarea></div>
+          <div><label class="form-label">关键词</label><input class="input" v-model="newEvent.keywords" style="width:100%" /></div>
+          <div><label class="form-label">重要性 0-1</label><input class="input" v-model.number="newEvent.importance" type="number" min="0" max="1" step="0.1" style="width:100%" /></div>
         </div>
         <template #actions><button class="btn" @click="showCreate = false">取消</button><button class="btn btn-primary btn-sm" @click="handleCreate">创建</button></template>
       </Modal>
@@ -126,3 +126,19 @@ function starRating(v) { const s = Math.round(v * 5); return '★'.repeat(s) + '
     </div>
   </div>
 </template>
+
+<style scoped>
+.card-header-flex { display: flex; justify-content: space-between; align-items: center; }
+.view-toggle { display: flex; gap: 4px; }
+.star-text { font-size: 14px; letter-spacing: 1px; }
+.importance-text { color: var(--text-muted); font-size: 12px; }
+.timeline-time { color: var(--text-muted); font-size: 12px; }
+.timeline-spacer { flex: 1; }
+.timeline-empty { padding: 40px; }
+.modal-form { display: flex; flex-direction: column; gap: 12px; }
+.form-label { font-size: 12px; color: var(--text-muted); }
+.detail-table { width: 100%; font-size: 13px; line-height: 1.8; }
+.detail-label-cell { width: 80px; color: var(--text-muted); }
+.keyword-tag { margin-right: 4px; }
+.search-input { flex: 1; }
+</style>

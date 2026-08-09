@@ -389,19 +389,19 @@ onMounted(async () => {
           <div class="settings-group-title">主动搭话</div>
           <p class="settings-hint">系统在合适时机主动关心你：触发后生成内容 → 存入会话历史 → 推送到前端 → 记入触发记录。</p>
           <!-- 触发逻辑说明 -->
-          <div style="background:var(--bg-inset,#0d1117);border:1px solid var(--border,#30363d);border-radius:8px;padding:12px 14px;font-size:13px;color:var(--text,#e6edf3);line-height:2">
-            <div style="font-weight:600;margin-bottom:4px">触发逻辑（4 条规则，满足任一即触发）</div>
+          <div class="info-box">
+            <div class="info-box-title">触发逻辑（4 条规则，满足任一即触发）</div>
             <div>· <b>定点发送</b>：到设定时间（±误差分钟窗口内）触发一次</div>
             <div>· <b>屏幕触发</b>：屏幕变化比例达到阈值、且随机概率命中时触发</div>
             <div>· <b>空闲触发</b>：用户空闲超过设定时长、且随机概率命中时触发</div>
             <div>· <b>时段触发</b>：处于设定时段内、且随机概率命中时触发</div>
-            <div style="font-weight:600;margin:6px 0 0">公共前置条件</div>
+            <div class="info-box-sub">公共前置条件</div>
             <div>· 前端窗口在线（WebSocket 已连接）</div>
             <div>· 距该会话上次主动搭话超过「综合冷却」时长</div>
-            <div style="font-weight:600;margin:6px 0 0">配置优先级</div>
+            <div class="info-box-sub">配置优先级</div>
             <div>· <b>全局总开关</b>（强制执行：关=全部会话不触发）→ <b>会话规则</b>（需在设置里<b>单独开启</b>该会话才触发；开启后可配自己的规则）→ 全局默认规则（仅作为「已开启但未细配规则」会话的默认模板）</div>
           </div>
-          <div class="setting-row" style="margin-top:12px">
+          <div class="setting-row mt-3">
             <div class="lbl"><div class="t">全局总开关</div><div class="d">关闭后所有会话（含全局默认）都不触发主动搭话</div></div>
             <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="proactiveEnabled" @change="proactiveEnabled = !proactiveEnabled" /><span class="toggle-slider"></span></label></div>
           </div>
@@ -410,15 +410,15 @@ onMounted(async () => {
         <div class="settings-divider"></div>
         <!-- 会话规则（核心：按会话单独设置） -->
         <div class="settings-group">
-          <div class="settings-group-title">会话规则<span style="font-weight:400;color:var(--text-muted);font-size:12px"> —— 在设置里逐个开启会话，触发前提；开启后可配自己的规则</span></div>
+          <div class="settings-group-title">会话规则<span class="setting-group-title-hint"> —— 在设置里逐个开启会话，触发前提；开启后可配自己的规则</span></div>
           <OutreachView :compact="true" />
         </div>
 
         <div class="settings-divider"></div>
         <!-- 全局默认规则（仅当会话未配置时生效，兜底） -->
         <div class="settings-group">
-          <div class="settings-group-title">全局默认规则<span style="font-weight:400;color:var(--text-muted);font-size:12px"> —— 仅作为「已单独开启但未细配规则」会话的默认模板</span></div>
-          <div style="display:flex;flex-direction:column;gap:8px;margin-top:4px">
+          <div class="settings-group-title">全局默认规则<span class="setting-group-title-hint"> —— 仅作为「已单独开启但未细配规则」会话的默认模板</span></div>
+          <div class="flex-col">
             <div class="setting-row">
               <div class="lbl"><div class="t">启用全局默认规则</div><div class="d">作为已单独开启、但未配具体规则的会话的默认搭话规则</div></div>
               <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" v-model="globalDefault.enabled" /><span class="toggle-slider"></span></label></div>
@@ -467,7 +467,7 @@ onMounted(async () => {
                 <input class="input" v-model="globalDefault.timeWindowsText" style="flex:1;min-width:220px" placeholder="09:00-12:00@0.5,14:00-18:00@0.8" :disabled="!globalDefault.windowsOn" title="格式：开始-结束@概率，多个用逗号分隔。概率省略默认 1.0" />
               </div>
             </div>
-            <div style="text-align:right;margin-top:4px">
+            <div class="text-right">
               <button class="btn btn-sm btn-primary" @click="saveGlobalDefault">保存全局默认规则</button>
             </div>
           </div>
@@ -662,7 +662,7 @@ onMounted(async () => {
           </div>
           <div class="setting-row">
             <div class="lbl"><div class="t">当前状态</div><div class="d">互动影响状态，随时间衰减</div></div>
-            <div class="setting-ctl" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+            <div class="setting-ctl flex-wrap">
               <span v-for="(label, key) in petStateLabels" :key="key" class="badge" :style="{ background: 'rgba(88,166,255,.12)', color: 'var(--accent)' }">
                 {{ label }} <b>{{ petState[key] ?? '-' }}</b>
               </span>
@@ -670,13 +670,13 @@ onMounted(async () => {
           </div>
           <div class="setting-row">
             <div class="lbl"><div class="t">状态描述</div></div>
-            <div class="setting-ctl"><span style="font-size:12px;color:var(--text-secondary)">{{ petStateText || '—' }}</span></div>
+            <div class="setting-ctl"><span class="setting-hint-inline">{{ petStateText || '—' }}</span></div>
           </div>
           <div class="setting-row">
             <div class="lbl"></div>
             <div class="setting-ctl">
               <button class="btn btn-sm" @click="resetPetState">重置状态</button>
-              <button class="btn btn-sm" @click="openFolder('pet')" style="margin-left:8px">打开桌宠模型文件夹</button>
+              <button class="btn btn-sm ml-2" @click="openFolder('pet')">打开桌宠模型文件夹</button>
             </div>
           </div>
           <p class="settings-hint">语音触发：按 <b>{{ voiceHotkey }}</b> 或说"<b>{{ voiceWakePrefix }}</b>…"后开始说话，桌宠回复会语音播报并显示气泡。关闭开关后桌宠窗口自动隐藏。</p>
@@ -688,19 +688,19 @@ onMounted(async () => {
         <div class="settings-group">
           <div class="settings-group-title">记忆库</div>
           <p class="settings-hint">事件记忆按记忆库隔离存储，可命名多个库并切换当前使用的库。切换即时生效。</p>
-          <div style="display:flex;gap:8px;margin-bottom:12px">
+          <div class="flex-start-gap">
             <input class="input" v-model="newLibName" style="flex:1;max-width:260px" placeholder="新记忆库名称" @keydown.enter="createLib" />
             <button class="btn btn-sm btn-primary" @click="createLib">新建记忆库</button>
             <button class="btn btn-sm" @click="loadMemoryLibs" title="刷新记忆库列表"><Icon name="refresh" :size="14" /> 刷新</button>
           </div>
           <div v-if="memoryLibs.length === 0" class="empty-state empty-padded"><p class="empty-text">暂无记忆库（可点击刷新）</p></div>
-          <div v-for="lib in memoryLibs" :key="lib.name" class="card" style="margin-bottom:10px">
-            <div class="card-header" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <div v-for="lib in memoryLibs" :key="lib.name" class="card card-mb">
+            <div class="card-header card-header-flex">
               <b>{{ lib.name }}</b>
               <span v-if="lib.current" class="badge badge-blue">当前</span>
               <span class="badge badge-gray">{{ lib.event_count ?? 0 }} 条事件</span>
             </div>
-            <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+            <div class="flex-mt">
               <button v-if="!lib.current" class="btn btn-sm" @click="switchLib(lib.name)">切换到此库</button>
               <button class="btn btn-sm" @click="renameLib(lib)">重命名</button>
               <button v-if="lib.name !== '默认'" class="btn btn-sm danger" @click="deleteLib(lib)">删除</button>
@@ -782,7 +782,7 @@ onMounted(async () => {
             <tbody>
               <tr v-for="k in advancedKeys" :key="k">
                 <td><code class="text-sm">{{ k }}</code></td>
-                <td><span style="font-family:var(--font-mono);font-size:12px">{{ typeof configStore.config[k] === 'object' ? JSON.stringify(configStore.config[k]) : String(configStore.config[k]) }}</span></td>
+                <td><span class="mono-sm">{{ typeof configStore.config[k] === 'object' ? JSON.stringify(configStore.config[k]) : String(configStore.config[k]) }}</span></td>
                 <td><button class="btn btn-sm" @click="editConfig(k, configStore.config[k])">编辑</button></td>
               </tr>
             </tbody>
@@ -795,17 +795,17 @@ onMounted(async () => {
         <div class="settings-group">
           <label class="settings-row" @click.prevent="launchAtStartup = !launchAtStartup">
             <span class="settings-row-label">开机启动</span>
-            <span style="flex:1;font-size:12px;color:var(--text-muted)">登录后自动启动后端 + 桌面窗口（macOS LaunchAgent）</span>
+            <span class="flex-1-muted">登录后自动启动后端 + 桌面窗口（macOS LaunchAgent）</span>
             <span class="toggle-switch"><input type="checkbox" :checked="launchAtStartup" /><span class="toggle-slider"></span></span>
           </label>
           <label class="settings-row" @click.prevent="preventSleep = !preventSleep">
             <span class="settings-row-label">防休眠</span>
-            <span style="flex:1;font-size:12px;color:var(--text-muted)">保持系统不睡眠（caffeinate，macOS）</span>
+            <span class="flex-1-muted">保持系统不睡眠（caffeinate，macOS）</span>
             <span class="toggle-switch"><input type="checkbox" :checked="preventSleep" /><span class="toggle-slider"></span></span>
           </label>
           <label class="settings-row" @click.prevent="allowLocation = !allowLocation">
             <span class="settings-row-label">授权访问地理位置</span>
-            <span style="flex:1;font-size:12px;color:var(--text-muted)">允许前端获取位置（仅浏览器环境生效；桌面端需系统定位权限）</span>
+            <span class="flex-1-muted">允许前端获取位置（仅浏览器环境生效；桌面端需系统定位权限）</span>
             <span class="toggle-switch"><input type="checkbox" :checked="allowLocation" /><span class="toggle-slider"></span></span>
           </label>
         </div>
@@ -860,13 +860,13 @@ onMounted(async () => {
           <div class="settings-group-title">API 密钥</div>
           <div class="config-api-hint">用于访问需要认证的后端接口。由后端 .env 中的 SIMPLE_API_KEY 控制。</div>
           <div class="search-bar mb-none">
-            <input class="input" v-model="keyInput" placeholder="输入 X-API-Key" style="flex:1" />
+            <input class="input key-input" v-model="keyInput" placeholder="输入 X-API-Key" />
             <button class="btn btn-primary btn-sm" @click="saveKey">保存</button>
             <button v-if="keyInput" class="btn btn-sm" @click="clearKey">清除</button>
           </div>
-          <div style="margin-top:8px;font-size:12px">
+          <div class="key-status">
             <span v-if="getApiKey()" class="badge badge-green"><Icon name="check" :size="13" /> 已配置</span>
-            <span v-else style="color:var(--text-muted)">未配置</span>
+            <span v-else class="key-unconfigured">未配置</span>
           </div>
         </div>
         <div class="settings-divider"></div>

@@ -327,7 +327,7 @@ class TestEventReducerEffectiveness:
 class TestPetEngineEffectiveness:
     """评估桌宠对话流程"""
 
-    def test_context_building(self, tmp_path):
+    def test_context_building(self, tmp_path, monkeypatch):
         """上下文构建是否包含有用信息（跳过embedding，测试基础部分）"""
         import asyncio
         from modules.desktop_pet.pet_engine import PetEngine
@@ -335,9 +335,11 @@ class TestPetEngineEffectiveness:
         import modules.database.connection as conn
         import threading
 
-        # 设置临时数据库
+        # 设置临时数据库（monkeypatch 自动恢复，避免污染全局配置）
         db_path = str(tmp_path / "pet_test.db")
-        conn.config.sqlite_path = db_path
+        monkeypatch.setattr(conn.config, "sqlite_path", db_path)
+        monkeypatch.setattr(conn, "_db_manager", None)
+        monkeypatch.setattr(conn, "_db_manager_lock", threading.RLock())
 
         # 初始化数据库
         manager = conn.get_db_manager()

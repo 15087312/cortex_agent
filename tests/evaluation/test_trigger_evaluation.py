@@ -166,7 +166,9 @@ class TestTriggerIntegration:
         assert trigger._event_bus is not None, "启动后应该有 event_bus"
 
         trigger.stop()
-        assert trigger._event_bus is None, "停止后 event_bus 应为 None"
+        # 真实 stop：保留 event_bus 引用，清空订阅与定时任务
+        assert trigger._sub_id == ""
+        assert trigger._timer_task is None
 
         print(f"\n【生命周期评估】")
         print(f"  启动/停止正常")
