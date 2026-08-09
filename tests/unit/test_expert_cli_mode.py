@@ -50,13 +50,15 @@ class MockExpert(RuntimeExpert):
         return "Mock process result"
 
     def _load_identity(self):
-        """返回 Mock identity"""
-        mock_identity = MagicMock()
-        mock_identity.name = "Test Expert"
-        mock_identity.role = "test_expert"
-        mock_identity.expertise = ["testing", "mocking"]
-        mock_identity.tier = "standard"
-        return mock_identity
+        """返回真实 ModelIdentity（测试替身专家）"""
+        from modules.thinking.identity import ModelIdentity
+        return ModelIdentity(
+            model_id="expert_test_001",
+            name="Test Expert",
+            role="test_expert",
+            expertise=["testing", "mocking"],
+            tier="standard",
+        )
 
 
 def create_mock_expert(model_instance=None):

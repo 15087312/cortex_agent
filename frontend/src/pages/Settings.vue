@@ -926,3 +926,27 @@ onMounted(async () => {
     </div>
   </div>
 </template>
+
+<style scoped>
+.info-box { background: var(--bg-inset); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; font-size: 13px; color: var(--text-primary); line-height: 2; }
+.info-box-title { font-weight: 600; margin-bottom: 4px; }
+.info-box-sub { font-weight: 600; margin: 6px 0 0; }
+.setting-group-title-hint { font-weight: 400; color: var(--text-muted); font-size: 12px; }
+.flex-col { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+.text-right { text-align: right; }
+.mt-3 { margin-top: 12px; }
+.flex-wrap { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.flex-start-gap { display: flex; gap: 8px; margin-bottom: 12px; }
+.card-mb { margin-bottom: 10px; }
+.card-header-flex { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.flex-mt { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; }
+.mono-sm { font-family: var(--font-mono); font-size: 12px; }
+.flex-1 { flex: 1; }
+.setting-hint-inline { font-size: 12px; color: var(--text-secondary); }
+.muted-sm { font-size: 12px; color: var(--text-muted); }
+.ml-2 { margin-left: 8px; }
+.flex-1-muted { flex: 1; font-size: 12px; color: var(--text-muted); }
+.key-input { flex: 1; }
+.key-status { margin-top: 8px; font-size: 12px; }
+.key-unconfigured { color: var(--text-muted); }
+</style>
