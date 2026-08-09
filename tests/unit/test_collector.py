@@ -37,7 +37,7 @@ def test_status_collector_collect_all():
     assert "memory" in results
     assert results["memory"]["status"] == "healthy"
     assert results["thinking"]["status"] == "healthy"
-    assert "attention" in results
+    assert "perception" in results
 
 
 def test_status_collector_generic():

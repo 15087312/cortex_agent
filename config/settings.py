@@ -17,7 +17,6 @@ class Settings(BaseSettings):
     # 运行时可通过 API 修改的配置项（api/main.py 的 /config/{key} 端点使用）
     _MODIFIABLE_FIELDS: set = {
         "LOG_LEVEL", "DEBUG", "MAX_WORKERS", "LOGGING_ENABLED",
-        "ATTENTION_IMPORTANCE_ENABLED", "ATTENTION_FORCE_STATIC_LEVEL",
         "PROACTIVE_OUTREACH_ENABLED", "PROACTIVE_OUTREACH_COOLDOWN_MINUTES",
         "PROACTIVE_OUTREACH_IDLE_MINUTES", "PROACTIVE_OUTREACH_DEFAULT",
         "CAUSAL_MAX_ANCHORS", "CAUSAL_MAX_NEIGHBORS_PER_HOP",
@@ -547,20 +546,6 @@ class Settings(BaseSettings):
     CAUSAL_CONFIDENCE_BOOST_DELTA: float = 0.05  # 每次回忆边置信度增量
     CAUSAL_CONFIDENCE_MAX: float = 0.99     # 最大置信度上限
     CAUSAL_UPDATE_STATS_INTERVAL: int = 10  # 增量更新统计推送（秒）
-
-    # 注意力配置
-    ATTENTION_WEIGHT_THRESHOLD: float = 0.7
-    INTERRUPT_URGENCY_THRESHOLD: float = 0.9
-    ATTENTION_IMPORTANCE_ENABLED: bool = True
-    ATTENTION_IMPORTANCE_MODEL_ENABLED: bool = False
-    ATTENTION_FORCE_STATIC_LEVEL: Optional[float] = None
-    ATTENTION_THRESHOLD_BASE: float = 0.6
-    ATTENTION_THRESHOLD_SLOPE: float = 0.5
-    ATTENTION_THRESHOLD_MIN: float = 0.1
-    ATTENTION_THRESHOLD_MAX: float = 0.6
-    ATTENTION_MAX_RECALL_LOW: int = 5
-    ATTENTION_MAX_RECALL_MEDIUM: int = 10
-    ATTENTION_MAX_RECALL_HIGH: int = 20
 
     model_config = SettingsConfigDict(
         env_file=str(Path(__file__).resolve().parents[1] / ".env"),

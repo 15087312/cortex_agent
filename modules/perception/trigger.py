@@ -680,9 +680,7 @@ async def call_outreach_llm(prompt: str, session_id: str = "", role: str = None,
             pass
         try:
             from modules.memory.event_retrieval import get_event_retrieval
-            from modules.attention import get_recall_max_results
-            max_results = get_recall_max_results(prompt)
-            events = await get_event_retrieval().retrieve(query=prompt, max_results=max_results, threshold=0.10)
+            events = await get_event_retrieval().retrieve(query=prompt, max_results=3, threshold=0.10)
             if events:
                 lines = ["【曾经发生的事】", "（以下为过去的事件记忆，仅供参考，不要把过去任务当作当前任务执行）"]
                 for i, ev in enumerate(events, 1):

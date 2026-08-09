@@ -43,7 +43,6 @@ class ModuleRegistry:
         modules_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
         
         module_dirs = [
-            "attention",
             "database",
             "info_process",
             "memory",

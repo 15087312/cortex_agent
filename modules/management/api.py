@@ -1044,33 +1044,6 @@ async def get_thinking_status():
 
 
 # ==============================================================================
-# 10. 注意力模块 (Attention)
-# ==============================================================================
-
-@router.get("/attention")
-async def get_attention_status():
-    """获取注意力模块状态"""
-    try:
-        return {
-            "success": True,
-            "data": {
-                "status": "available",
-                "capabilities": [
-                    "weight_calculation",
-                    "task_scheduling",
-                    "priority_queue"
-                ]
-            }
-        }
-    except Exception as e:
-        logger.warning(f"获取注意力模块状态失败: {e}")
-        return {
-            "success": True,
-            "data": {"status": "unavailable", "message": "注意力模块暂不可用"}
-        }
-
-
-# ==============================================================================
 # 11. 安全模块 (Security)
 # ==============================================================================
 
@@ -1140,7 +1113,6 @@ async def root():
                 "database": "/management/database",
                 "info_process": "/management/info-process",
                 "thinking": "/management/thinking",
-                "attention": "/management/attention",
                 "security": "/management/security",
                 "health": "/management/health"
             }

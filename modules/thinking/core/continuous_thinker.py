@@ -618,11 +618,8 @@ class ContinuousThinker:
                 )
             elif has_conversation:
                 # 会话已有历史对话 → 注入与当前问题相关的全局事件记忆
-                # 根据注意力分析动态调整检索量
-                from modules.attention import get_recall_max_results
-                max_results = get_recall_max_results(initial_question or "")
                 events = await _asyncio_thinker.wait_for(
-                    retrieval.retrieve(query=initial_question or "", max_results=max_results, threshold=0.10, owner_id=owner_id),
+                    retrieval.retrieve(query=initial_question or "", max_results=5, threshold=0.10, owner_id=owner_id),
                     timeout=10,
                 )
             # 无历史对话且无聚焦 → events 为空，不注入事件记忆

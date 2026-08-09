@@ -189,10 +189,8 @@ class ContinuousThinker:
 
             # 浅层全局事件记忆（标注"曾经发生的事"，提示优先当前会话）
             try:
-                from modules.attention import get_recall_max_results
                 retrieval = get_event_retrieval()
-                max_results = get_recall_max_results(query)
-                global_events = await retrieval.retrieve(query, max_results=max_results)
+                global_events = await retrieval.retrieve(query, max_results=10)
                 if global_events:
                     lines = [
                         "【曾经发生的事】",

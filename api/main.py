@@ -29,7 +29,6 @@ except Exception:
 from infra.data_process.api import router as data_process_router
 from infra.tool_manager.api import router as tool_router
 from modules.thinking.chat_gateway import router as stream_router
-from modules.attention.api import router as attention_router
 from modules.management.api import router as management_router
 from modules.output_system.api import router as output_router
 from modules.output_system.tts import DEFAULT_TTS_OUTPUT_DIR as _tts_dir
@@ -598,7 +597,6 @@ def register_module_routers(app: FastAPI) -> None:
     app.include_router(tool_router)
     # 记忆 API 已迁移，不再挂载旧路由
     app.include_router(stream_router)
-    app.include_router(attention_router)
     app.include_router(management_router)
     app.include_router(output_router)
     app.include_router(security_router)

@@ -124,10 +124,8 @@ class PetEngine:
             pass
         try:
             from modules.memory.event_retrieval import get_event_retrieval
-            from modules.attention import get_recall_max_results
-            max_results = get_recall_max_results(query or "用户与桌宠互动")
             events = await get_event_retrieval().retrieve(
-                query=query or "用户与桌宠互动", max_results=max_results, threshold=0.10
+                query=query or "用户与桌宠互动", max_results=3, threshold=0.10
             )
             if events:
                 lines = ["【相关过往记忆】（仅供参考，不要把过去任务当作当前任务执行）"]
