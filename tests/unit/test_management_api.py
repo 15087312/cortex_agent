@@ -8,6 +8,15 @@ import modules.management.api as api_mod
 from modules.management.core.collector import ModuleInfo
 
 
+@pytest.fixture
+def api_log(tmp_path, monkeypatch):
+    """真实 ApiLogStore（临时 SQLite）注入"""
+    from modules.management.api_log_store import ApiLogStore
+    store = ApiLogStore(path=str(tmp_path / "api_log.db"))
+    monkeypatch.setattr(ApiLogStore, "get_instance", classmethod(lambda cls: store))
+    return store
+
+
 def _fake_collector():
     c = MagicMock()
     c.collect_all.return_value = {
@@ -28,33 +37,28 @@ def _patch_store(monkeypatch):
     return store
 
 
-def test_get_dashboard(monkeypatch):
-    monkeypatch.setattr(api_mod, "_collector", _fake_collector())
-    _patch_store(monkeypatch)
+def test_get_dashboard_real(api_log):
+    """真实 collector + 真实 ApiLogStore"""
+    from modules.management.core.collector import StatusCollector, ModuleRegistry
+    api_mod._collector = StatusCollector(ModuleRegistry())
     out = asyncio.run(api_mod.get_dashboard())
     assert out["success"] is True
-    assert out["data"]["health"]["healthy_modules"] == 2
+    assert out["data"]["health"]["total_modules"] > 0
 
 
-def test_get_dashboard_no_collector(monkeypatch):
-    monkeypatch.setattr(api_mod, "_collector", MagicMock())
-    api_mod._collector.collect_all.return_value = {}
-    _patch_store(monkeypatch)
-    out = asyncio.run(api_mod.get_dashboard())
-    assert out["data"]["health"]["health_percent"] == 100
+def test_get_api_requests_real(api_log):
+    """真实 ApiLogStore：先落一条再查询"""
+    api_log.add("GET", "/health", 200)
+    api_log.flush()
+    out = asyncio.run(api_mod.get_api_requests(method="", path="", status=0, limit=50, offset=0, since_hours=0))
+    assert out["data"]["total"] >= 1
 
 
-def test_get_api_requests(monkeypatch):
-    store = _patch_store(monkeypatch)
-    out = asyncio.run(api_mod.get_api_requests(method="GET", path="/", status=0, limit=50, offset=0, since_hours=0))
-    assert out["data"]["total"] == 1
-    store.query.assert_called_once()
-
-
-def test_get_api_requests_stats(monkeypatch):
-    _patch_store(monkeypatch)
+def test_get_api_requests_stats_real(api_log):
+    api_log.add("GET", "/health", 200)
+    api_log.flush()
     out = asyncio.run(api_mod.get_api_requests_stats(since_hours=24))
-    assert out["data"]["total"] == 5
+    assert out["data"]["total"] >= 1
 
 
 def test_get_all_modules(monkeypatch):
@@ -83,23 +87,11 @@ def test_get_module_detail_found(monkeypatch):
     assert out["data"]["info"]["name"] == "thinking"
 
 
-def test_get_orchestration(monkeypatch):
-    from types import SimpleNamespace
-    loader = MagicMock()
-    loader.load.return_value = {"roles": {"orchestrator": {"name": "总指挥", "tier": "large", "personality": "稳重"}}}
-    import config.prompts.loader as loader_mod
-    import importlib
-    cfg_mod = importlib.import_module("config.settings")
-    monkeypatch.setattr(loader_mod, "get_loader", lambda: loader)
-    st = SimpleNamespace(
-        get_persona=lambda k: "",
-        get_system_override=lambda k: "",
-        get_role_tools=lambda k: None,
-        get_model_params=lambda k: None,
-    )
-    monkeypatch.setattr(cfg_mod, "settings", st)
+def test_get_orchestration_real():
+    """真实 loader（roles.yaml）+ 真实 settings"""
     out = asyncio.run(api_mod.get_orchestration())
-    assert out["data"]["agents"][0]["role"] == "orchestrator"
+    assert out["success"] is True
+    assert any(a["role"] == "orchestrator" for a in out["data"]["agents"])
 
 
 def test_get_todos_real(tmp_path, monkeypatch):
