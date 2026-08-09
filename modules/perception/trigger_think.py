@@ -67,23 +67,16 @@ def _run(desc: str) -> None:
 
 async def _think(desc: str) -> None:
     from modules.perception.trigger import call_outreach_llm
-    text = await call_outreach_llm(
-        f"检测到环境高强度变化（{desc}）。请自然简短地关心/提醒用户（1-2 句），不要提'感知'或'检测'。",
-        "",
+    from modules.thinking.frontend_channel import generate_and_push
+
+    await generate_and_push(
+        None,  # 广播：任意活跃连接可达即推送
+        lambda: call_outreach_llm(
+            f"检测到环境高强度变化（{desc}）。请自然简短地关心/提醒用户（1-2 句），不要提'感知'或'检测'。",
+            "",
+        ),
+        msg_type="proactive",
+        event="trigger_think",
+        role="assistant",
+        data={"label": "感知触发", "source": "trigger_think"},
     )
-    if not text:
-        return
-    try:
-        from modules.thinking.api_stream import connection_manager, _build_event
-        event = _build_event(
-            session_id="",
-            msg_type="proactive",
-            event="trigger_think",
-            content=text,
-            role="assistant",
-            data={"label": "感知触发", "source": "trigger_think"},
-        )
-        for sid in list(connection_manager.active_connections.keys()):
-            connection_manager.send_json_from_thread(sid, event)
-    except Exception as e:
-        logger.debug(f"触发思考推送失败: {e}")

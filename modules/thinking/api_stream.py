@@ -554,6 +554,25 @@ class StreamThinkingSystem:
                 session_data = self.sessions.get(session_id, {})
                 model_id = session_data.get("model_id", "large_primary")
 
+            # 统一握手：LLM 前确认前端可达（对话级）。前端断线瞬间跳过本轮调用，避免白耗 token。
+            try:
+                from modules.thinking.frontend_channel import confirm_frontend_connection
+                if not confirm_frontend_connection(session_id):
+                    await self._emit(
+                        session_id,
+                        _build_event(
+                            session_id=session_id,
+                            msg_type="error",
+                            event="connection_lost",
+                            content="前端连接已断开，本轮请求已跳过，可在重连后重试",
+                            role="system",
+                        ),
+                        callback,
+                    )
+                    return ""
+            except Exception as e:
+                logger.debug(f"[api_stream] 对话握手失败 (非致命): {e}")
+
             scheduler_task = asyncio.create_task(
                 self._orchestrator.process(
                     user_input,

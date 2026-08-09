@@ -146,6 +146,13 @@ def gw_app(fake_thinker, fake_repo, monkeypatch):
 @pytest.fixture(autouse=True)
 def chatonly_mode(monkeypatch):
     monkeypatch.setenv("CORTEX_MODE", "chatonly")
+    # 测试环境无主事件循环，connection_manager._loop 为 None 导致握手返回 False；
+    # 模拟前端在线，让对话链路正常走（握手行为由 frontend_channel 单测覆盖）。
+    monkeypatch.setattr(
+        "modules.thinking.frontend_channel.confirm_frontend_connection",
+        lambda session_id=None: True,
+    )
+
 
 
 def _drain_ws(ws, until_event):

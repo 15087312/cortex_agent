@@ -1214,6 +1214,18 @@ class ModelRunner:
         超时保护：超过 self.THINK_TIMEOUT 秒（含重试）则抛出 TimeoutError，
         由外层 think_loop 捕获并终止思考循环，防止模型调用永久挂起。
         """
+        # 握手：LLM 调用前确认前端可达（统一出口），前端断开则跳过本轮生成
+        try:
+            from modules.thinking.frontend_channel import confirm_frontend_connection
+            if not confirm_frontend_connection(self.session_id):
+                logger.warning(
+                    f"[ModelRunner] {self.model_id} 前端不可达，跳过本轮 LLM 调用 "
+                    f"(session={self.session_id[:8]})"
+                )
+                return f"[系统] 前端连接已断开，本轮思考已跳过。"
+        except Exception as e:
+            logger.debug(f"[ModelRunner] 握手失败 (非致命): {e}")
+
         system_prompt = self._build_system_prompt_for_mode()
 
         # 大模型注入时间感知 + 用户身份（专家/主管不需要）

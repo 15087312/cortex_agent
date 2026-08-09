@@ -140,6 +140,16 @@ def test_save_pair(monkeypatch):
     assert repo.save_message.call_count == 2
 
 
+def test_chat_handshake_fail_returns_empty(monkeypatch):
+    """前端不可达时 chat 不调 LLM 返回空"""
+    import modules.thinking.frontend_channel as fc
+    monkeypatch.setattr(fc, "confirm_frontend_connection", lambda session_id=None: False)
+    e = _pe(monkeypatch)
+    e._client = MagicMock()
+    assert asyncio.run(e.chat("hi")) == ""
+    e._client.chat.assert_not_called()
+
+
 def test_chat_success(monkeypatch):
     e = _pe(monkeypatch)
     client = MagicMock()
@@ -148,6 +158,8 @@ def test_chat_success(monkeypatch):
     client.chat = AsyncMock(return_value=resp)
     e._client = client
     e._save_pair = lambda *a: None
+    import modules.thinking.frontend_channel as fc
+    monkeypatch.setattr(fc, "confirm_frontend_connection", lambda session_id=None: True)
     out = asyncio.run(e.chat("hi"))
     assert out == "你好呀"
 
@@ -190,6 +202,8 @@ def test_chat_stream_task(monkeypatch):
     client.chat_stream = AsyncMock(return_value=resp)
     e._client = client
     e._save_pair = lambda *a: None
+    import modules.thinking.frontend_channel as fc
+    monkeypatch.setattr(fc, "confirm_frontend_connection", lambda session_id=None: True)
     collected = []
     asyncio.run(e._chat_stream_task("hi", lambda t: None, collected))
     assert collected == ["流式回复"]

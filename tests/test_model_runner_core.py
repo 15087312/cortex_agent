@@ -353,6 +353,7 @@ def _gen_runner(**kw):
 
 
 def test_generate_traditional(monkeypatch):
+    monkeypatch.setattr("modules.thinking.frontend_channel.confirm_frontend_connection", lambda session_id=None: True)  # 模拟前端在线
     r = _gen_runner()
     client = MagicMock()
     client.generate = AsyncMock(return_value="生成结果")
@@ -365,6 +366,7 @@ def test_generate_traditional(monkeypatch):
 
 
 def test_generate_retry_then_success(monkeypatch):
+    monkeypatch.setattr("modules.thinking.frontend_channel.confirm_frontend_connection", lambda session_id=None: True)  # 模拟前端在线
     r = _gen_runner()
     client = MagicMock()
     async def gen(prompt, max_tokens=4096):
@@ -382,6 +384,7 @@ def test_generate_retry_then_success(monkeypatch):
 
 
 def test_generate_503_after_retries(monkeypatch):
+    monkeypatch.setattr("modules.thinking.frontend_channel.confirm_frontend_connection", lambda session_id=None: True)  # 模拟前端在线
     r = _gen_runner()
     client = MagicMock()
     async def gen(prompt, max_tokens=4096):
@@ -395,6 +398,7 @@ def test_generate_503_after_retries(monkeypatch):
 
 
 def test_generate_failure_message(monkeypatch):
+    monkeypatch.setattr("modules.thinking.frontend_channel.confirm_frontend_connection", lambda session_id=None: True)  # 模拟前端在线
     r = _gen_runner()
     client = MagicMock()
     async def gen(prompt, max_tokens=4096):
@@ -408,6 +412,7 @@ def test_generate_failure_message(monkeypatch):
 
 
 def test_generate_native_tools(monkeypatch):
+    monkeypatch.setattr("modules.thinking.frontend_channel.confirm_frontend_connection", lambda session_id=None: True)  # 模拟前端在线
     r = _gen_runner()
     client = MagicMock()
     r.instance.client = client

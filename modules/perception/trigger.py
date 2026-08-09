@@ -20,32 +20,9 @@ from utils.logger import setup_logger
 logger = setup_logger("perception_proactive_trigger")
 
 
-def confirm_frontend_connection() -> bool:
-    """向前端发送连接确认（握手）事件，验证推送链路可达。
+# 统一前端推送出口的握手函数（迁移自本模块，详见 modules/thinking/frontend_channel.py）
+from modules.thinking.frontend_channel import confirm_frontend_connection  # noqa: E402,F401
 
-    主动搭话/感知触发思考在调用 LLM 前调用本函数：只有至少一个活跃
-    WebSocket 连接成功送达握手，才值得发起 LLM 调用——避免模型生成内容后
-    因前端离线而丢失（白耗 API 费用）。握手 content 为空，前端会忽略。
-    """
-    try:
-        from modules.thinking.api_stream import connection_manager, _build_event
-        if not connection_manager.active_connections:
-            return False
-        event = _build_event(
-            session_id="",
-            msg_type="proactive",
-            event="proactive_handshake",
-            content="",
-            role="system",
-            data={"handshake": True},
-        )
-        for sid in list(connection_manager.active_connections.keys()):
-            if connection_manager.send_json_from_thread(sid, event):
-                return True
-        return False
-    except Exception as e:
-        logger.debug(f"[连接确认] 失败: {e}")
-        return False
 
 
 def _build_outreach_system_prompt(role: str = "orchestrator", tier: str = "large") -> str:
@@ -239,19 +216,11 @@ class ProactiveTrigger:
 
     async def _try_outreach(self, session_id: str, reason: str,
                             change_ratio: float = 0, changed_regions: list = None) -> None:
-        """触发一次主动搭话：综合冷却检查 → 会话记忆构建 prompt → LLM → 推送 → 更新冷却"""
+        """触发一次主动搭话：走统一出口（握手 → LLM → 持久化 → 推送）"""
         try:
             cfg = self._get_session_outreach_config(session_id)
             if not self._cooldown_ok(session_id, cfg):
                 return
-
-            # 先握手确认前端可达，再投入 LLM 调用——避免模型生成内容后推送落空
-            if not confirm_frontend_connection():
-                logger.debug(f"[主动触发] 前端不可达，跳过: session={session_id[:8]}")
-                return
-
-            self._trigger_count += 1
-            count = self._trigger_count
 
             # 该会话的会话记忆（历史对话）作为搭话上下文
             conversation = self._get_session_conversation(session_id)
@@ -264,11 +233,21 @@ class ProactiveTrigger:
                 current_window=current_window,
                 conversation=conversation,
             )
-            response = await self._call_llm(prompt, session_id)
+            # 统一出口：握手确认（前端不可达则跳过 LLM）→ 生成 → 持久化 → 推送
+            from modules.thinking.frontend_channel import generate_and_push
+            response = await generate_and_push(
+                session_id,
+                lambda: self._call_llm(prompt, session_id),
+                msg_type="proactive",
+                event="proactive_outreach",
+                role="assistant",
+            )
             if not response:
                 return
 
-            self._push(session_id, response)
+            self._trigger_count += 1
+            count = self._trigger_count
+
             # 记录主动搭话历史（追溯/统计）
             try:
                 from modules.database.proactive_repo import save_proactive_log

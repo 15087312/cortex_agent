@@ -178,8 +178,16 @@ class PetEngine:
             pass
 
     async def chat(self, text: str) -> str:
-        """主会话对话：主动搭话式上下文 + 历史 + 桌宠人设 + LLM → 回复"""
+        """主会话对话：主动搭话式上下文 + 历史 + 桌宠人设 + LLM → 回复
+
+        走统一出口：LLM 前握手确认前端可达，不可达则跳过（省 token）。
+        """
         try:
+            # 握手：前端不可达时不调用 LLM
+            from modules.thinking.frontend_channel import confirm_frontend_connection
+            if not confirm_frontend_connection():
+                logger.debug("[Pet] 前端不可达，跳过对话")
+                return ""
             context = await self._build_context(text)
             messages = self._build_messages(text, extra_system=context)
             response = await self._client.chat(messages=messages)
@@ -223,6 +231,11 @@ class PetEngine:
 
     async def _chat_stream_task(self, text: str, on_token, collected: list, extra_system: str = "") -> None:
         try:
+            # 握手：前端不可达时不调用 LLM
+            from modules.thinking.frontend_channel import confirm_frontend_connection
+            if not confirm_frontend_connection():
+                logger.debug("[Pet] 前端不可达，跳过流式对话")
+                return
             context = await self._build_context(text)
             combined = "\n\n".join(x for x in [context, extra_system] if x)
             messages = self._build_messages(text, extra_system=combined)
@@ -250,19 +263,18 @@ class PetEngine:
                     await asyncio.to_thread(_play_audio, path)
         except Exception as e:
             logger.debug(f"[Pet] TTS 失败: {e}")
-        # 广播 pet_reply
+        # 广播 pet_reply（统一推送出口；桌宠历史已由 _save_pair 持久化，此处不重复落库）
         try:
-            from modules.thinking.api_stream import connection_manager, _build_event
-            event = _build_event(
-                session_id=self.pet_session_id,
+            from modules.thinking.frontend_channel import push_content
+            await push_content(
+                self.pet_session_id,
                 msg_type="pet",
                 event="pet_reply",
                 content=reply,
                 role="assistant",
                 data={"session_id": self.pet_session_id},
+                persist=False,
             )
-            for sid in list(connection_manager.active_connections.keys()):
-                connection_manager.send_json_from_thread(sid, event)
         except Exception as e:
             logger.debug(f"[Pet] 广播回复失败: {e}")
 

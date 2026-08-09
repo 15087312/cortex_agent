@@ -209,32 +209,15 @@ class ScheduledTaskManager:
             except Exception:
                 pass
         from modules.perception.trigger import call_outreach_llm
-        text = await call_outreach_llm(prompt, session_id, role=agent_type or None, tier=tier)
-        if not text:
-            return
-        await self._push(session_id, text)
-
-    async def _push(self, session_id: str, text: str) -> None:
-        msg_id = ""
-        try:
-            from modules.database.session_repo import get_session_repo
-            msg_id = get_session_repo().save_message(session_id, "assistant", text)
-        except Exception:
-            pass
-        try:
-            from modules.thinking.api_stream import connection_manager, _build_event
-            event = _build_event(
-                session_id=session_id,
-                msg_type="proactive",
-                event="scheduled_task",
-                content=text,
-                role="assistant",
-                data={"message_id": msg_id},
-            )
-            for sid in list(connection_manager.active_connections.keys()):
-                connection_manager.send_json_from_thread(sid, event)
-        except Exception as e:
-            logger.debug(f"[定时任务] 推送失败: {e}")
+        from modules.thinking.frontend_channel import generate_and_push
+        # 统一出口：握手（前端不可达则跳过 LLM）→ 生成 → 持久化 → 推送
+        await generate_and_push(
+            session_id,
+            lambda: call_outreach_llm(prompt, session_id, role=agent_type or None, tier=tier),
+            msg_type="proactive",
+            event="scheduled_task",
+            role="assistant",
+        )
 
 
 _manager: Optional[ScheduledTaskManager] = None

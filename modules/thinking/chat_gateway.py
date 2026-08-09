@@ -211,6 +211,16 @@ async def _consume_turn(
     )): return
 
     queue: asyncio.Queue = asyncio.Queue()
+    # 统一握手：LLM 前确认前端可达（用户主动对话，仅断线瞬间会失败）
+    try:
+        from modules.thinking.frontend_channel import confirm_frontend_connection
+        if not confirm_frontend_connection(session_id):
+            await _safe_ws_send(websocket, _envelope(
+                session_id, "error", "connection_lost", "前端连接已断开，本轮请求已跳过", "system",
+            ))
+            return
+    except Exception as e:
+        logger.debug(f"[chat_gateway] 对话握手失败 (非致命): {e}")
     think_task = asyncio.create_task(thinker.think(session_id, content, queue))
     full_text = []
     done = False

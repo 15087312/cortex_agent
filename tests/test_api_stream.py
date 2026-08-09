@@ -193,7 +193,15 @@ def test_get_context_and_status():
     assert st["sessions"] >= 1
 
 
+def _think_frontend_online(monkeypatch):
+    monkeypatch.setattr(
+        "modules.thinking.frontend_channel.confirm_frontend_connection",
+        lambda session_id=None: True,
+    )
+
+
 def test_think_full_success(monkeypatch):
+    _think_frontend_online(monkeypatch)
     s = _inst()
     s.sessions = {"s1": {"messages": [], "processing": False, "running": True, "model_id": "large_primary"}}
     s._lock = asyncio.Lock()
@@ -245,6 +253,7 @@ def test_think_full_success(monkeypatch):
 
 
 def test_think_error_path(monkeypatch):
+    _think_frontend_online(monkeypatch)
     s = _inst()
     s.sessions = {"s1": {"messages": [], "processing": False, "running": True, "model_id": "large_primary"}}
     s._lock = asyncio.Lock()

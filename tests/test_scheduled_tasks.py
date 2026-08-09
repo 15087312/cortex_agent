@@ -108,24 +108,34 @@ def test_fire_handler_error(monkeypatch):
 
 def test_handle_chat(monkeypatch):
     import modules.perception.trigger as trg
+    import modules.thinking.frontend_channel as fc
     m = ScheduledTaskManager()
     async def fake_llm(prompt, session_id, role=None, tier="large"):
         return "定时问候"
-    async def fake_push(sid, text):
-        assert text == "定时问候"
+    pushed = []
+    async def fake_push(sid, *, msg_type, event, content, role="assistant", data=None, persist=True):
+        pushed.append(content)
+        return True
     monkeypatch.setattr(trg, "call_outreach_llm", fake_llm)
-    monkeypatch.setattr(m, "_push", fake_push)
+    monkeypatch.setattr(fc, "confirm_frontend_connection", lambda session_id=None: True)
+    monkeypatch.setattr(fc, "push_content", fake_push)
     asyncio.run(m._handle_chat("s1", {"prompt": "问候"}))
+    assert pushed == ["定时问候"]
 
 
 def test_handle_chat_empty(monkeypatch):
     import modules.perception.trigger as trg
+    import modules.thinking.frontend_channel as fc
     m = ScheduledTaskManager()
     async def fake_llm(prompt, session_id, role=None, tier="large"):
         return ""
     monkeypatch.setattr(trg, "call_outreach_llm", fake_llm)
     pushed = []
-    monkeypatch.setattr(m, "_push", lambda sid, text: pushed.append(text))
+    async def fake_push(sid, *, msg_type, event, content, role="assistant", data=None, persist=True):
+        pushed.append(content)
+        return True
+    monkeypatch.setattr(fc, "confirm_frontend_connection", lambda session_id=None: True)
+    monkeypatch.setattr(fc, "push_content", fake_push)
     asyncio.run(m._handle_chat("s1", {}))
     assert pushed == []
 
@@ -150,21 +160,25 @@ def test_mark_run_failure(monkeypatch):
     ScheduledTaskManager()._mark_run("s1", {"id": "t1"}, "error")  # 不应抛
 
 
-def test_push(monkeypatch):
-    import modules.thinking.scheduled_tasks as mod
-    import modules.database.session_repo as sr
-    repo = MagicMock()
-    repo.save_message.return_value = "mid1"
-    monkeypatch.setattr(sr, "get_session_repo", lambda: repo)
-    cm = MagicMock()
-    cm.active_connections = {"s1": object()}
-    import modules.thinking.api_stream as stream_mod
-    monkeypatch.setattr(stream_mod, "connection_manager", cm)
-    monkeypatch.setattr(stream_mod, "_build_event", lambda **kw: {"event": "scheduled_task"})
+def test_handle_chat_handshake_fail_skips_llm(monkeypatch):
+    """前端不可达（握手失败）时不调用 LLM、不推送"""
+    import modules.perception.trigger as trg
+    import modules.thinking.frontend_channel as fc
     m = ScheduledTaskManager()
-    asyncio.run(m._push("s1", "推送内容"))
-    repo.save_message.assert_called_once_with("s1", "assistant", "推送内容")
-    assert cm.send_json_from_thread.called
+    called = {"llm": 0}
+    async def fake_llm(prompt, session_id, role=None, tier="large"):
+        called["llm"] += 1
+        return "定时问候"
+    monkeypatch.setattr(trg, "call_outreach_llm", fake_llm)
+    pushed = []
+    async def fake_push(sid, *, msg_type, event, content, role="assistant", data=None, persist=True):
+        pushed.append(content)
+        return True
+    monkeypatch.setattr(fc, "confirm_frontend_connection", lambda session_id=None: False)
+    monkeypatch.setattr(fc, "push_content", fake_push)
+    asyncio.run(m._handle_chat("s1", {"prompt": "问候"}))
+    assert called["llm"] == 0
+    assert pushed == []
 
 
 def test_scan(monkeypatch):

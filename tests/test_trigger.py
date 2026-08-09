@@ -215,17 +215,21 @@ def test_try_outreach_success(monkeypatch):
     tr = ProactiveTrigger()
     import modules.perception.trigger as mod
     import modules.database.proactive_repo as pr
+    import modules.thinking.frontend_channel as fc
     async def fake_llm(prompt, session_id):
         return "需要帮忙吗"
     monkeypatch.setattr(mod, "call_outreach_llm", fake_llm)
     pushed = []
-    tr._push = lambda sid, text: pushed.append(text)
+    async def fake_push(sid, *, msg_type, event, content, role="assistant", data=None, persist=True):
+        pushed.append(content)
+        return True
+    monkeypatch.setattr(fc, "confirm_frontend_connection", lambda session_id=None: True)
+    monkeypatch.setattr(fc, "push_content", fake_push)
     tr._get_session_outreach_config = lambda sid: {"cooldown_minutes": 1}
     tr._get_session_conversation = lambda sid: ""
     tr._get_current_window = lambda: ("", "")
     tr._build_prompt = lambda **kw: "prompt"
     monkeypatch.setattr(pr, "save_proactive_log", lambda *a: None)
-    monkeypatch.setattr(mod, "confirm_frontend_connection", lambda: True)
     import asyncio
     asyncio.run(tr._try_outreach("s1", "schedule"))
     assert pushed == ["需要帮忙吗"]
@@ -244,16 +248,20 @@ def test_try_outreach_cooldown_blocked():
 def test_try_outreach_empty_response(monkeypatch):
     tr = ProactiveTrigger()
     import modules.perception.trigger as mod
+    import modules.thinking.frontend_channel as fc
     async def fake_llm(prompt, session_id):
         return ""
     monkeypatch.setattr(mod, "call_outreach_llm", fake_llm)
     pushed = []
-    tr._push = lambda sid, text: pushed.append(text)
+    async def fake_push(sid, *, msg_type, event, content, role="assistant", data=None, persist=True):
+        pushed.append(content)
+        return True
+    monkeypatch.setattr(fc, "confirm_frontend_connection", lambda session_id=None: True)
+    monkeypatch.setattr(fc, "push_content", fake_push)
     tr._get_session_outreach_config = lambda sid: {"cooldown_minutes": 1}
     tr._get_session_conversation = lambda sid: ""
     tr._get_current_window = lambda: ("", "")
     tr._build_prompt = lambda **kw: "prompt"
-    monkeypatch.setattr(mod, "confirm_frontend_connection", lambda: True)
     import asyncio
     asyncio.run(tr._try_outreach("s1", "schedule"))
     assert pushed == []

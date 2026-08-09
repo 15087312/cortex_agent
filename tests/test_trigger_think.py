@@ -97,30 +97,31 @@ def test_register_uses_detector(monkeypatch):
 
 
 def test_think_broadcasts_to_connections(monkeypatch):
-    """_think 全链路：LLM 返回内容 → 广播到所有活跃连接"""
+    """_think 走统一出口：LLM 返回内容 → 握手通过 → push_content 推送"""
     import asyncio
     import modules.perception.trigger as trg_mod
-    import modules.thinking.api_stream as stream_mod
+    import modules.thinking.frontend_channel as fc
 
     async def fake_llm(prompt, session_id="", role=None, tier="large"):
         return "主动消息内容"
     monkeypatch.setattr(trg_mod, "call_outreach_llm", fake_llm)
 
-    cm = MagicMock()
-    cm.active_connections = {"s1": object(), "s2": object()}
-    cm.send_json_from_thread.return_value = True
-    monkeypatch.setattr(stream_mod, "connection_manager", cm)
-    monkeypatch.setattr(stream_mod, "_build_event", lambda **kw: {"event": kw.get("event"), "content": kw.get("content")})
+    pushed = []
+    async def fake_push(sid, *, msg_type, event, content, role="assistant", data=None, persist=True):
+        pushed.append((sid, msg_type, event, content))
+        return True
+    monkeypatch.setattr(fc, "confirm_frontend_connection", lambda session_id=None: True)
+    monkeypatch.setattr(fc, "push_content", fake_push)
 
     asyncio.run(tt._think("屏幕变化"))
-    assert cm.send_json_from_thread.call_count == 2
+    assert pushed == [(None, "proactive", "trigger_think", "主动消息内容")]
 
 
 def test_think_no_connections_drops(monkeypatch):
-    """BUG 场景：无活跃连接时 LLM 已调用但广播落空（消息丢失）"""
+    """前端不可达（握手失败）时不调用 LLM——修复原"LLM 已调但广播落空"bug"""
     import asyncio
     import modules.perception.trigger as trg_mod
-    import modules.thinking.api_stream as stream_mod
+    import modules.thinking.frontend_channel as fc
 
     called = {"llm": 0}
     async def fake_llm(prompt, session_id="", role=None, tier="large"):
@@ -128,30 +129,34 @@ def test_think_no_connections_drops(monkeypatch):
         return "主动消息内容"
     monkeypatch.setattr(trg_mod, "call_outreach_llm", fake_llm)
 
-    cm = MagicMock()
-    cm.active_connections = {}  # 前端未连接
-    monkeypatch.setattr(stream_mod, "connection_manager", cm)
-    monkeypatch.setattr(stream_mod, "_build_event", lambda **kw: {"event": kw.get("event")})
+    pushed = []
+    async def fake_push(sid, *, msg_type, event, content, role="assistant", data=None, persist=True):
+        pushed.append(content)
+        return False
+    monkeypatch.setattr(fc, "confirm_frontend_connection", lambda session_id=None: False)
+    monkeypatch.setattr(fc, "push_content", fake_push)
 
     asyncio.run(tt._think("屏幕变化"))
-    # LLM 被调了（旧行为），但消息没送达任何连接 → 前端收不到
-    assert called["llm"] == 1
-    assert cm.send_json_from_thread.call_count == 0
+    # 握手失败 → 跳过 LLM，不产生无处送达的内容
+    assert called["llm"] == 0
+    assert pushed == []
 
 
 def test_think_empty_llm_no_push(monkeypatch):
-    """LLM 返回空时不广播"""
+    """LLM 返回空时不推送"""
     import asyncio
     import modules.perception.trigger as trg_mod
-    import modules.thinking.api_stream as stream_mod
+    import modules.thinking.frontend_channel as fc
 
     async def fake_llm(prompt, session_id="", role=None, tier="large"):
         return ""
     monkeypatch.setattr(trg_mod, "call_outreach_llm", fake_llm)
-    cm = MagicMock()
-    cm.active_connections = {"s1": object()}
-    monkeypatch.setattr(stream_mod, "connection_manager", cm)
-    monkeypatch.setattr(stream_mod, "_build_event", lambda **kw: {"event": kw.get("event")})
+    pushed = []
+    async def fake_push(sid, *, msg_type, event, content, role="assistant", data=None, persist=True):
+        pushed.append(content)
+        return True
+    monkeypatch.setattr(fc, "confirm_frontend_connection", lambda session_id=None: True)
+    monkeypatch.setattr(fc, "push_content", fake_push)
 
     asyncio.run(tt._think("屏幕变化"))
-    assert cm.send_json_from_thread.call_count == 0
+    assert pushed == []
