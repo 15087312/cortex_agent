@@ -125,3 +125,32 @@ def test_stop_session(monkeypatch):
     asyncio.run(go())
     assert s.sessions["s1"]["running"] is False
     task.cancel.assert_called_once()
+
+
+async def test_emit_real_impl_callback_and_ws(monkeypatch):
+    """_emit 真实实现：调 callback + 走 connection_manager.send_json"""
+    s = _system()
+    s.sessions["s1"] = {"messages": [], "running": True}
+    import modules.thinking.api_stream as stream_mod
+    cm = MagicMock()
+    cm.send_json = AsyncMock()
+    monkeypatch.setattr(stream_mod, "connection_manager", cm)
+
+    called = []
+    async def cb(ev):
+        called.append(ev)
+    await s._emit("s1", {"event": "test"}, callback=cb)
+    assert called == [{"event": "test"}]
+    cm.send_json.assert_awaited_once_with("s1", {"event": "test"})
+
+
+async def test_emit_real_impl_no_callback(monkeypatch):
+    """无 callback 时只走 WS"""
+    s = _system()
+    s.sessions["s1"] = {"messages": [], "running": True}
+    import modules.thinking.api_stream as stream_mod
+    cm = MagicMock()
+    cm.send_json = AsyncMock()
+    monkeypatch.setattr(stream_mod, "connection_manager", cm)
+    await s._emit("s1", {"event": "x"})
+    cm.send_json.assert_awaited_once_with("s1", {"event": "x"})

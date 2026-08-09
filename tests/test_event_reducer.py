@@ -86,3 +86,15 @@ def test_get_store_instance(monkeypatch):
     r = EventReducer()
     assert r._get_store() is fake
     assert r._get_store() is fake  # 二次调用返回缓存
+
+
+def test_event_reducer_real_init():
+    """EventReducer 真实构造（不 mock __init__）"""
+    r = EventReducer()  # 真实 __init__
+    assert r._model_client is None
+    assert r._store is None
+    assert r._embedder is None
+    # set_model 兼容旧 API
+    client = MagicMock()
+    r.set_model(client)
+    assert r._model_client is client

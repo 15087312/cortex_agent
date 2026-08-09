@@ -45,3 +45,10 @@ def test_build_system_identity_format_failure(monkeypatch):
 def test_build_perception_section():
     c = pc.PromptComposer.__new__(pc.PromptComposer)
     assert isinstance(c._build_perception_section(), str)
+
+
+def test_prompt_composer_real_init_loads_identity():
+    """PromptComposer 真实构造：_load_prompts 真实读取 base.yaml"""
+    from modules.thinking.chat_light.prompt_composer import PromptComposer
+    c = PromptComposer()  # 真实 __init__（不 mock）
+    assert isinstance(c._identity, str)

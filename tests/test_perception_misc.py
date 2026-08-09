@@ -158,3 +158,71 @@ def test_setup_with_proactive_and_voice(monkeypatch):
     assert ps.proactive_trigger is trg
     assert ps.voice_detector is not None
     trg.start.assert_called_once_with(bus)
+
+
+def test_setup_window_detector_real_impl_available(monkeypatch):
+    """_setup_window_detector 真实控制流：检测器可用 → 启动线程"""
+    from modules.perception.setup import PerceptionSystem
+    import modules.perception.detectors.window_detector as wd_mod
+    import threading
+
+    fake = MagicMock()
+    fake.is_available.return_value = True
+    monkeypatch.setattr(wd_mod, "WindowDetector", lambda: fake)
+
+    ps = PerceptionSystem()  # 真实 __init__
+    fake_thread = MagicMock()
+    monkeypatch.setattr(threading, "Thread", lambda **k: fake_thread)
+
+    ps._setup_window_detector()
+    assert ps.window_detector is fake
+    fake_thread.start.assert_called_once()
+    assert ps._window_detector_thread is fake_thread
+
+
+def test_setup_window_detector_real_impl_unavailable(monkeypatch):
+    from modules.perception.setup import PerceptionSystem
+    import modules.perception.detectors.window_detector as wd_mod
+    fake = MagicMock()
+    fake.is_available.return_value = False
+    monkeypatch.setattr(wd_mod, "WindowDetector", lambda: fake)
+    ps = PerceptionSystem()
+    ps._setup_window_detector()
+    assert ps.window_detector is None
+    assert ps._window_detector_thread is None
+
+
+def test_setup_window_detector_real_impl_exception(monkeypatch):
+    from modules.perception.setup import PerceptionSystem
+    import modules.perception.detectors.window_detector as wd_mod
+    monkeypatch.setattr(wd_mod, "WindowDetector", lambda: (_ for _ in ()).throw(RuntimeError("no window")))
+    ps = PerceptionSystem()
+    ps._setup_window_detector()
+    assert ps.window_detector is None
+
+
+def test_setup_ocr_detector_real_impl_available(monkeypatch):
+    """_setup_ocr_detector 真实控制流：OCR 可用 → start"""
+    from modules.perception.setup import PerceptionSystem
+    import modules.perception.detectors.ocr_detector as ocr_mod
+
+    fake = MagicMock()
+    fake.is_available.return_value = True
+    monkeypatch.setattr(ocr_mod, "OCRDetector", lambda **kw: fake)
+
+    ps = PerceptionSystem()  # 真实 __init__
+    ps.event_bus = MagicMock()
+    ps._setup_ocr_detector()
+    assert ps.ocr_detector is fake
+    fake.start.assert_called_once_with(event_bus=ps.event_bus)
+
+
+def test_setup_ocr_detector_real_impl_unavailable(monkeypatch):
+    from modules.perception.setup import PerceptionSystem
+    import modules.perception.detectors.ocr_detector as ocr_mod
+    fake = MagicMock()
+    fake.is_available.return_value = False
+    monkeypatch.setattr(ocr_mod, "OCRDetector", lambda **kw: fake)
+    ps = PerceptionSystem()
+    ps._setup_ocr_detector()
+    assert ps.ocr_detector is None

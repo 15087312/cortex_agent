@@ -357,3 +357,24 @@ def test_push_real_impl_broadcast(monkeypatch):
     monkeypatch.setattr(stream_mod2, "get_thinking_system", lambda: system)
     tr._push("s1", "内容")
     assert cm.send_json_from_thread.call_count == 2
+
+
+def test_get_current_window_real_impl(monkeypatch):
+    """_get_current_window 真实实现：读 world_state 的 active_app/active_window"""
+    tr = ProactiveTrigger()
+    import modules.perception.state.world_state as ws_mod
+    state = MagicMock()
+    state.active_app = "Chrome"
+    state.active_window = "页面标题"
+    monkeypatch.setattr(ws_mod, "get_world_state", lambda: state)
+    app, win = tr._get_current_window()
+    assert app == "Chrome"
+    assert win == "页面标题"
+
+
+def test_get_current_window_real_impl_exception(monkeypatch):
+    """world_state 异常时回退空"""
+    tr = ProactiveTrigger()
+    import modules.perception.state.world_state as ws_mod
+    monkeypatch.setattr(ws_mod, "get_world_state", lambda: (_ for _ in ()).throw(RuntimeError()))
+    assert tr._get_current_window() == ("", "")

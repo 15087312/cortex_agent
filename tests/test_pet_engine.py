@@ -232,3 +232,15 @@ def test_build_context(monkeypatch):
     monkeypatch.setattr(er_mod, "get_event_retrieval", lambda: retrieval)
     out = asyncio.run(e._build_context("查询"))
     assert "感知信息" in out
+
+
+def test_pet_engine_real_init():
+    """PetEngine 真实构造（不 mock __init__）"""
+    from modules.desktop_pet.pet_engine import PetEngine
+    pe = PetEngine(event_bus=None)  # 真实 __init__
+    assert pe._running is False
+    assert pe._client is None
+    assert pe.last_reply is None
+    assert pe._sub_id == ""
+    pe2 = PetEngine(event_bus=MagicMock())
+    assert pe2._event_bus is not None
