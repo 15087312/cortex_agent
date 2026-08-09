@@ -1,7 +1,7 @@
 """api_stream 测试：事件构建、scheduler 事件格式化、思考持久化（此前 16% 覆盖）"""
 import asyncio
 import threading
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -191,3 +191,85 @@ def test_get_context_and_status():
     st = s.get_status()
     assert st["running"] is True
     assert st["sessions"] >= 1
+
+
+def test_think_full_success(monkeypatch):
+    s = _inst()
+    s.sessions = {"s1": {"messages": [], "processing": False, "running": True, "model_id": "large_primary"}}
+    s._lock = asyncio.Lock()
+    s._running = True
+    s._orchestrator = MagicMock()
+
+    result = {
+        "response": "最终回复", "focus": "thinking", "active_modules": [],
+        "sleep_modules": [], "degraded": False, "module_results": [],
+        "decisions": {}, "resource_status": {}, "security_passed": True,
+        "elapsed_ms": 10, "trace_id": "tr1",
+    }
+    s._orchestrator.process = AsyncMock(return_value=result)
+
+    import modules.thinking.communication as comm_mod
+    bus = MagicMock()
+    bus.set_event_emitter = MagicMock()
+    monkeypatch.setattr(comm_mod, "get_message_bus", lambda: bus)
+
+    import modules.security_system.tool_security_gate as tsg
+    monkeypatch.setattr(tsg, "set_security_event_callback", lambda cb: None)
+
+    import modules.database.session_repo as sr
+    repo = MagicMock()
+    repo.save_message.return_value = "msg1"
+    repo.set_session_metadata.return_value = None
+    s._get_session_repo = lambda: repo
+
+    import modules.thinking.session_graph as sg_mod
+    monkeypatch.setattr(sg_mod, "get_session_graph_store", lambda: MagicMock(snapshot=lambda sid: {}))
+
+    events = []
+    async def cb(ev):
+        events.append(ev)
+    s._emit = MagicMock()
+    async def fake_emit(sid, ev, cb):
+        events.append(ev)
+    s._emit = fake_emit
+    s._post_task_extraction = MagicMock(return_value=None)
+    async def fake_extract(sid, ui, fr):
+        return None
+    s._post_task_extraction = fake_extract
+    s._proactive_context_trim = AsyncMock()
+    s.get_context = lambda sid: s.sessions[sid]["messages"]
+
+    result_val = _run(s.think("s1", "你好", callback=cb))
+    assert result_val == "最终回复"
+    assert any(ev["event"] == "done" for ev in events)
+
+
+def test_think_error_path(monkeypatch):
+    s = _inst()
+    s.sessions = {"s1": {"messages": [], "processing": False, "running": True, "model_id": "large_primary"}}
+    s._lock = asyncio.Lock()
+    s._running = True
+    s._orchestrator = MagicMock()
+    s._orchestrator.process = AsyncMock(side_effect=RuntimeError("内部错误"))
+    import modules.thinking.communication as comm_mod
+    bus = MagicMock()
+    bus.set_event_emitter = MagicMock()
+    monkeypatch.setattr(comm_mod, "get_message_bus", lambda: bus)
+    import modules.security_system.tool_security_gate as tsg
+    monkeypatch.setattr(tsg, "set_security_event_callback", lambda cb: None)
+    s._emit = MagicMock()
+    async def fake_emit(sid, ev, cb):
+        events.append(ev)
+    s._emit = fake_emit
+    s._proactive_context_trim = AsyncMock()
+    s.get_context = lambda sid: []
+    s._session_repo = MagicMock()
+    s._session_repo.set_session_metadata.return_value = None
+    import modules.thinking.session_graph as sg_mod
+    monkeypatch.setattr(sg_mod, "get_session_graph_store", lambda: MagicMock(snapshot=lambda sid: {}))
+    events = []
+    async def cb(ev):
+        events.append(ev)
+    result = _run(s.think("s1", "你好", callback=cb))
+    assert result == ""
+    assert any(ev["event"] == "error" for ev in events)
