@@ -1,6 +1,6 @@
 """perception/trigger 测试（此前 31% 覆盖）：空闲计时器与主动触发"""
 import time
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from modules.perception.trigger import confirm_frontend_connection as mod_confirm
 
@@ -310,3 +310,50 @@ def test_try_outreach_skips_when_frontend_down(monkeypatch):
     import asyncio
     asyncio.run(tr._try_outreach("s1", "schedule"))
     assert tr._trigger_count == 0  # 未调用 LLM，未计数
+
+
+def test_push_real_impl_no_connections(monkeypatch):
+    """_push 真实实现：无活跃连接时消息只落历史，不推 WS（并告警）"""
+    tr = ProactiveTrigger()
+    import modules.thinking.api_stream as stream_mod
+    cm = MagicMock()
+    cm.active_connections = {}
+    cm.send_json_from_thread.return_value = False
+    monkeypatch.setattr(stream_mod, "connection_manager", cm)
+    monkeypatch.setattr(stream_mod, "_build_event", lambda **kw: {"event": kw.get("event")})
+    import modules.database.session_repo as sr
+    repo = MagicMock()
+    repo.save_message.return_value = "mid"
+    monkeypatch.setattr(sr, "get_session_repo", lambda: repo)
+    import modules.thinking.api_stream as stream_mod2
+    system = MagicMock()
+    system.sessions = {}  # chatonly 分支 → 直接落 DB
+    monkeypatch.setattr(stream_mod2, "get_thinking_system", lambda: system)
+    import modules.perception.trigger as mod
+    with patch.object(mod.logger, "warning") as warn:
+        tr._push("s1", "内容")
+        warn.assert_called_once()
+        assert "无活跃 WebSocket" in warn.call_args[0][0]
+    assert cm.send_json_from_thread.call_count == 0
+    repo.save_message.assert_called_once_with("s1", "assistant", "内容")
+
+
+def test_push_real_impl_broadcast(monkeypatch):
+    """_push 真实实现：有连接时广播成功"""
+    tr = ProactiveTrigger()
+    import modules.thinking.api_stream as stream_mod
+    cm = MagicMock()
+    cm.active_connections = {"s1": object(), "s2": object()}
+    cm.send_json_from_thread.return_value = True
+    monkeypatch.setattr(stream_mod, "connection_manager", cm)
+    monkeypatch.setattr(stream_mod, "_build_event", lambda **kw: {"event": kw.get("event")})
+    import modules.database.session_repo as sr
+    repo = MagicMock()
+    repo.save_message.return_value = "mid"
+    monkeypatch.setattr(sr, "get_session_repo", lambda: repo)
+    import modules.thinking.api_stream as stream_mod2
+    system = MagicMock()
+    system.sessions = {}
+    monkeypatch.setattr(stream_mod2, "get_thinking_system", lambda: system)
+    tr._push("s1", "内容")
+    assert cm.send_json_from_thread.call_count == 2

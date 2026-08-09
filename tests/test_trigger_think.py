@@ -1,5 +1,6 @@
 """感知触发思考测试（冷却 + 强度阈值）"""
 import time
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -93,3 +94,64 @@ def test_register_uses_detector(monkeypatch):
     monkeypatch.setattr("modules.perception.difference.get_detector", lambda: fake)
     tt.register()
     assert len(fake.cbs) == 1
+
+
+def test_think_broadcasts_to_connections(monkeypatch):
+    """_think 全链路：LLM 返回内容 → 广播到所有活跃连接"""
+    import asyncio
+    import modules.perception.trigger as trg_mod
+    import modules.thinking.api_stream as stream_mod
+
+    async def fake_llm(prompt, session_id="", role=None, tier="large"):
+        return "主动消息内容"
+    monkeypatch.setattr(trg_mod, "call_outreach_llm", fake_llm)
+
+    cm = MagicMock()
+    cm.active_connections = {"s1": object(), "s2": object()}
+    cm.send_json_from_thread.return_value = True
+    monkeypatch.setattr(stream_mod, "connection_manager", cm)
+    monkeypatch.setattr(stream_mod, "_build_event", lambda **kw: {"event": kw.get("event"), "content": kw.get("content")})
+
+    asyncio.run(tt._think("屏幕变化"))
+    assert cm.send_json_from_thread.call_count == 2
+
+
+def test_think_no_connections_drops(monkeypatch):
+    """BUG 场景：无活跃连接时 LLM 已调用但广播落空（消息丢失）"""
+    import asyncio
+    import modules.perception.trigger as trg_mod
+    import modules.thinking.api_stream as stream_mod
+
+    called = {"llm": 0}
+    async def fake_llm(prompt, session_id="", role=None, tier="large"):
+        called["llm"] += 1
+        return "主动消息内容"
+    monkeypatch.setattr(trg_mod, "call_outreach_llm", fake_llm)
+
+    cm = MagicMock()
+    cm.active_connections = {}  # 前端未连接
+    monkeypatch.setattr(stream_mod, "connection_manager", cm)
+    monkeypatch.setattr(stream_mod, "_build_event", lambda **kw: {"event": kw.get("event")})
+
+    asyncio.run(tt._think("屏幕变化"))
+    # LLM 被调了（旧行为），但消息没送达任何连接 → 前端收不到
+    assert called["llm"] == 1
+    assert cm.send_json_from_thread.call_count == 0
+
+
+def test_think_empty_llm_no_push(monkeypatch):
+    """LLM 返回空时不广播"""
+    import asyncio
+    import modules.perception.trigger as trg_mod
+    import modules.thinking.api_stream as stream_mod
+
+    async def fake_llm(prompt, session_id="", role=None, tier="large"):
+        return ""
+    monkeypatch.setattr(trg_mod, "call_outreach_llm", fake_llm)
+    cm = MagicMock()
+    cm.active_connections = {"s1": object()}
+    monkeypatch.setattr(stream_mod, "connection_manager", cm)
+    monkeypatch.setattr(stream_mod, "_build_event", lambda **kw: {"event": kw.get("event")})
+
+    asyncio.run(tt._think("屏幕变化"))
+    assert cm.send_json_from_thread.call_count == 0
