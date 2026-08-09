@@ -5,9 +5,11 @@ import pytest
 import threading
 import tempfile
 import os
+from unittest.mock import MagicMock
 
 from modules.memory.causal_graph import CausalGraph, CausalNode, CausalEdge
 from modules.memory.event_store import EventStore, MemoryEvent
+from modules.thinking.conscience import Conscience
 
 
 @pytest.fixture
@@ -205,3 +207,72 @@ def test_extract_keywords(clean_state):
     assert "why" in kws
     assert "build" in kws
     assert "fail" in kws
+
+
+def test_add_to_dialog():
+    c = Conscience(model_client=None)
+    c.add_to_dialog("user", "你好")
+    c.add_to_dialog("assistant", "在的")
+    assert any("用户: 你好" in x for x in c._last_dialog_buffer)
+    assert any("助手: 在的" in x for x in c._last_dialog_buffer)
+
+
+def test_analyze_feedback_no_nodes():
+    c = Conscience(model_client=None)
+    import asyncio
+    asyncio.run(c.analyze_feedback("hi", "hi"))  # 无节点直接返回
+
+
+def test_analyze_feedback_no_model_client(monkeypatch):
+    c = Conscience(model_client=None)
+    c._last_analyzed_node_ids = ["n1"]
+    import modules.memory.event_reducer as er_mod
+    reducer = MagicMock()
+    reducer._model_client = None
+    monkeypatch.setattr(er_mod, "get_reducer", lambda: reducer)
+    import asyncio
+    asyncio.run(c.analyze_feedback("hi", "hi"))
+    assert c._last_analyzed_node_ids == []
+
+
+def test_analyze_feedback_adjusts_confidence(monkeypatch):
+    c = Conscience(model_client=None)
+    c._last_analyzed_node_ids = ["n1"]
+    import modules.memory.event_reducer as er_mod
+    reducer = MagicMock()
+    class MC:
+        async def generate(self, prompt, max_tokens=0, temperature=0):
+            return '{"confirmed": ["n1"], "contradicted": ["n2"]}'
+    reducer._model_client = MC()
+    monkeypatch.setattr(er_mod, "get_reducer", lambda: reducer)
+
+    import modules.memory.causal_graph as cg_mod
+    node = MagicMock()
+    node.confidence = 0.5
+    graph = MagicMock()
+    graph.get_node.side_effect = lambda nid: node if nid == "n1" else node
+    graph.get_predecessors.return_value = [node]
+    graph.get_successors.return_value = [node]
+    monkeypatch.setattr(cg_mod, "CausalGraph", MagicMock(get_instance=staticmethod(lambda: graph)))
+    import asyncio
+    asyncio.run(c.analyze_feedback("hi", "hi"))
+    assert node.confidence > 0.5  # 已上调
+
+
+def test_analyze_feedback_json_parse_fail(monkeypatch):
+    c = Conscience(model_client=None)
+    c._last_analyzed_node_ids = ["n1"]
+    import modules.memory.event_reducer as er_mod
+    reducer = MagicMock()
+    class MC:
+        async def generate(self, prompt, max_tokens=0, temperature=0):
+            return "不是 JSON"
+    reducer._model_client = MC()
+    monkeypatch.setattr(er_mod, "get_reducer", lambda: reducer)
+    import modules.memory.causal_graph as cg_mod
+    graph = MagicMock()
+    graph.get_node.return_value = None
+    monkeypatch.setattr(cg_mod, "CausalGraph", MagicMock(get_instance=staticmethod(lambda: graph)))
+    import asyncio
+    asyncio.run(c.analyze_feedback("hi", "hi"))
+    assert c._last_analyzed_node_ids == []

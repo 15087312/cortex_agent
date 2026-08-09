@@ -128,3 +128,84 @@ def test_set_todo_status_invalid_and_missing(monkeypatch):
     assert out["success"] is False
     out2 = asyncio.run(api_mod.set_todo_status("t1", {"status": "done"}, session_id="s1"))
     assert out2["success"] is False
+
+
+class _Skill:
+    def __init__(self, **kw):
+        self.id = kw.get("id", "s1")
+        self.name = kw.get("name", "技能")
+        self.description = kw.get("description", "描述")
+        self.keywords = kw.get("keywords", [])
+        self.source = kw.get("source", "user")
+        self.enabled = kw.get("enabled", True)
+        self.metadata = kw.get("metadata", {})
+        self.tool_rules = kw.get("tool_rules", None)
+        self.trigger = kw.get("trigger", None)
+        self.raw_content = kw.get("raw_content", "# 技能")
+        self.path = kw.get("path", "/tmp/skills/s1/SKILL.md")
+
+
+def _patch_skill_manager(monkeypatch):
+    import modules.thinking.skills as skills_mod
+    mgr = MagicMock()
+    mgr.to_listing.return_value = [{"id": "s1"}]
+    mgr.get_skill.return_value = _Skill()
+    mgr.create_skill.return_value = (True, "已创建")
+    mgr.update_skill.return_value = (True, "已更新")
+    mgr.set_enabled.return_value = (True, "ok")
+    mgr.delete_skill.return_value = (True, "已删除")
+    mgr.reload.return_value = 3
+    monkeypatch.setattr(skills_mod, "skill_manager", mgr)
+    return mgr
+
+
+def test_list_skills(monkeypatch):
+    mgr = _patch_skill_manager(monkeypatch)
+    out = asyncio.run(api_mod.list_skills())
+    assert out["data"]["skills"] == [{"id": "s1"}]
+
+
+def test_get_skill_detail(monkeypatch):
+    mgr = _patch_skill_manager(monkeypatch)
+    out = asyncio.run(api_mod.get_skill_detail("s1"))
+    assert out["data"]["id"] == "s1"
+
+
+def test_get_skill_detail_missing(monkeypatch):
+    import modules.thinking.skills as skills_mod
+    mgr = MagicMock()
+    mgr.get_skill.return_value = None
+    monkeypatch.setattr(skills_mod, "skill_manager", mgr)
+    out = asyncio.run(api_mod.get_skill_detail("nope"))
+    assert out["success"] is False
+
+
+def test_create_skill(monkeypatch):
+    mgr = _patch_skill_manager(monkeypatch)
+    out = asyncio.run(api_mod.create_skill({"id": "s2", "name": "新技能"}))
+    assert out["success"] is True
+
+
+def test_update_skill(monkeypatch):
+    mgr = _patch_skill_manager(monkeypatch)
+    out = asyncio.run(api_mod.update_skill("s1", {"name": "改名"}))
+    assert out["success"] is True
+
+
+def test_set_skill_enabled(monkeypatch):
+    mgr = _patch_skill_manager(monkeypatch)
+    out = asyncio.run(api_mod.set_skill_enabled("s1", {"enabled": False}))
+    assert out["success"] is True
+    assert out["data"]["enabled"] is False
+
+
+def test_delete_skill(monkeypatch):
+    mgr = _patch_skill_manager(monkeypatch)
+    out = asyncio.run(api_mod.delete_skill("s1"))
+    assert out["success"] is True
+
+
+def test_reload_skills(monkeypatch):
+    mgr = _patch_skill_manager(monkeypatch)
+    out = asyncio.run(api_mod.reload_skills())
+    assert out["data"]["count"] == 3

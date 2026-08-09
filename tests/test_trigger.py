@@ -159,3 +159,108 @@ def test_get_session_conversation(monkeypatch):
     monkeypatch.setattr(sr, "get_session_repo", lambda: repo)
     out = tr._get_session_conversation("s1")
     assert "user" in out and "你好" in out
+
+
+def test_build_prompt_default():
+    tr = ProactiveTrigger()
+    import modules.perception.trigger as mod
+    import importlib
+    cfg_mod = importlib.import_module("config.settings")
+    from types import SimpleNamespace
+    old = cfg_mod.settings
+    cfg_mod.settings = SimpleNamespace(PROACTIVE_OUTREACH_WORK_PROMPT="", USER_NAME="用户")
+    try:
+        p = tr._build_prompt(idle_minutes=5, change_ratio=0.2, changed_regions=[1, 2], current_app="Chrome", current_window="页面", conversation="最近对话")
+        assert "20%" in p
+        assert "Chrome" in p
+        assert "最近对话" in p
+    finally:
+        cfg_mod.settings = old
+
+
+def test_build_prompt_custom(monkeypatch):
+    tr = ProactiveTrigger()
+    import modules.perception.trigger as mod
+    import importlib
+    cfg_mod = importlib.import_module("config.settings")
+    from types import SimpleNamespace
+    old = cfg_mod.settings
+    cfg_mod.settings = SimpleNamespace(PROACTIVE_OUTREACH_WORK_PROMPT="用户空闲{idle_minutes}分钟，应用{current_app}")
+    try:
+        p = tr._build_prompt(idle_minutes=5, change_ratio=0, changed_regions=[], current_app="Chrome", current_window="", conversation="")
+        assert "用户空闲5分钟" in p
+    finally:
+        cfg_mod.settings = old
+
+
+def test_build_time_text(monkeypatch):
+    tr = ProactiveTrigger()
+    import modules.perception.trigger as mod
+    import importlib
+    cfg_mod = importlib.import_module("config.settings")
+    from types import SimpleNamespace
+    old = cfg_mod.settings
+    cfg_mod.settings = SimpleNamespace(USER_NAME="用户")
+    try:
+        t = tr._build_time_text()
+        assert "当前时间" in t
+        assert "用户" in t
+    finally:
+        cfg_mod.settings = old
+
+
+def test_try_outreach_success(monkeypatch):
+    tr = ProactiveTrigger()
+    import modules.perception.trigger as mod
+    import modules.database.proactive_repo as pr
+    async def fake_llm(prompt, session_id):
+        return "需要帮忙吗"
+    monkeypatch.setattr(mod, "call_outreach_llm", fake_llm)
+    pushed = []
+    tr._push = lambda sid, text: pushed.append(text)
+    tr._get_session_outreach_config = lambda sid: {"cooldown_minutes": 1}
+    tr._get_session_conversation = lambda sid: ""
+    tr._get_current_window = lambda: ("", "")
+    tr._build_prompt = lambda **kw: "prompt"
+    monkeypatch.setattr(pr, "save_proactive_log", lambda *a: None)
+    import asyncio
+    asyncio.run(tr._try_outreach("s1", "schedule"))
+    assert pushed == ["需要帮忙吗"]
+    assert tr._trigger_count == 1
+
+
+def test_try_outreach_cooldown_blocked():
+    tr = ProactiveTrigger()
+    tr._get_session_outreach_config = lambda sid: {"cooldown_minutes": 15}
+    tr._session_last_trigger["s1"] = __import__("time").time()
+    import asyncio
+    asyncio.run(tr._try_outreach("s1", "schedule"))
+    assert tr._trigger_count == 0
+
+
+def test_try_outreach_empty_response(monkeypatch):
+    tr = ProactiveTrigger()
+    import modules.perception.trigger as mod
+    async def fake_llm(prompt, session_id):
+        return ""
+    monkeypatch.setattr(mod, "call_outreach_llm", fake_llm)
+    pushed = []
+    tr._push = lambda sid, text: pushed.append(text)
+    tr._get_session_outreach_config = lambda sid: {"cooldown_minutes": 1}
+    tr._get_session_conversation = lambda sid: ""
+    tr._get_current_window = lambda: ("", "")
+    tr._build_prompt = lambda **kw: "prompt"
+    import asyncio
+    asyncio.run(tr._try_outreach("s1", "schedule"))
+    assert pushed == []
+
+
+def test_push_error(monkeypatch):
+    tr = ProactiveTrigger()
+    import modules.thinking.api_stream as stream_mod
+    cm = MagicMock()
+    cm.active_connections = {}
+    monkeypatch.setattr(stream_mod, "connection_manager", cm)
+    monkeypatch.setattr(stream_mod, "_build_event", lambda **kw: {"event": "proactive_error"})
+    tr._push_error("s1", "出错了")
+    cm.send_json_from_thread.assert_not_called()  # 无活跃连接
