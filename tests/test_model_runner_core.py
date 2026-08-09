@@ -183,3 +183,70 @@ def test_save_partial_result_saves(monkeypatch):
     assert bb.set_final_response.called
     assert bb.add_observation.called
     assert r._current_streaming_content == ""
+
+
+def test_run_task_cleanup(monkeypatch):
+    r = _runner()
+    r._running = True
+    r.manager = None
+    async def fake_loop():
+        return None
+    r._think_loop = fake_loop
+    r._get_runtime_expert_class = lambda role: None
+    import asyncio
+    asyncio.run(r._run_task())
+    assert r._running is False
+    assert r._thinker is None
+
+
+def test_run_task_error_status(monkeypatch):
+    r = _runner()
+    r._running = True
+    r.manager = None
+    async def bad_loop():
+        raise RuntimeError("崩溃")
+    r._think_loop = bad_loop
+    r._get_runtime_expert_class = lambda role: None
+    import asyncio
+    asyncio.run(r._run_task())
+    assert r._status == "error"
+    assert r._running is False
+
+
+def test_run_task_cancelled(monkeypatch):
+    r = _runner()
+    r._running = True
+    r.manager = None
+    async def cancel_loop():
+        raise asyncio.CancelledError()
+    r._think_loop = cancel_loop
+    r._get_runtime_expert_class = lambda role: None
+    import asyncio
+    asyncio.run(r._run_task())
+    assert r._status == "completed"
+
+
+def test_run_task_manager_cleanup(monkeypatch):
+    r = _runner()
+    r._running = True
+    r.manager = None
+    mgr = MagicMock()
+    mgr._lock = __import__("threading").RLock()
+    mgr._runners = {"large_primary": r}
+    mgr._count_by_tier = {"large": 1}
+    r.manager = mgr
+    async def fake_loop():
+        return None
+    r._think_loop = fake_loop
+    r._get_runtime_expert_class = lambda role: None
+    import asyncio
+    asyncio.run(r._run_task())
+    assert "large_primary" not in mgr._runners
+    assert mgr._count_by_tier["large"] == 0
+
+
+def test_get_runtime_expert_class(monkeypatch):
+    import modules.thinking.runtime_expert as re_mod
+    fake = MagicMock()
+    monkeypatch.setattr(re_mod, "get_runtime_expert_class", lambda role: fake)
+    assert ModelRunner._get_runtime_expert_class("code_writer") is fake
