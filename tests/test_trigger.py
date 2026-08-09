@@ -2,6 +2,8 @@
 import time
 from unittest.mock import MagicMock
 
+from modules.perception.trigger import confirm_frontend_connection as mod_confirm
+
 from modules.perception.trigger import IdleTimer, ProactiveTrigger, _build_outreach_system_prompt
 
 
@@ -223,6 +225,7 @@ def test_try_outreach_success(monkeypatch):
     tr._get_current_window = lambda: ("", "")
     tr._build_prompt = lambda **kw: "prompt"
     monkeypatch.setattr(pr, "save_proactive_log", lambda *a: None)
+    monkeypatch.setattr(mod, "confirm_frontend_connection", lambda: True)
     import asyncio
     asyncio.run(tr._try_outreach("s1", "schedule"))
     assert pushed == ["需要帮忙吗"]
@@ -250,6 +253,7 @@ def test_try_outreach_empty_response(monkeypatch):
     tr._get_session_conversation = lambda sid: ""
     tr._get_current_window = lambda: ("", "")
     tr._build_prompt = lambda **kw: "prompt"
+    monkeypatch.setattr(mod, "confirm_frontend_connection", lambda: True)
     import asyncio
     asyncio.run(tr._try_outreach("s1", "schedule"))
     assert pushed == []
@@ -264,3 +268,45 @@ def test_push_error(monkeypatch):
     monkeypatch.setattr(stream_mod, "_build_event", lambda **kw: {"event": "proactive_error"})
     tr._push_error("s1", "出错了")
     cm.send_json_from_thread.assert_not_called()  # 无活跃连接
+
+
+def test_confirm_frontend_connection_success(monkeypatch):
+    import modules.thinking.api_stream as stream_mod
+    cm = MagicMock()
+    cm.active_connections = {"s1": object()}
+    cm.send_json_from_thread.return_value = True
+    monkeypatch.setattr(stream_mod, "connection_manager", cm)
+    monkeypatch.setattr(stream_mod, "_build_event", lambda **kw: {"event": kw.get("event")})
+    assert mod_confirm() is True
+    cm.send_json_from_thread.assert_called_once()
+
+
+def test_confirm_frontend_connection_no_connections(monkeypatch):
+    import modules.thinking.api_stream as stream_mod
+    cm = MagicMock()
+    cm.active_connections = {}
+    monkeypatch.setattr(stream_mod, "connection_manager", cm)
+    assert mod_confirm() is False
+    cm.send_json_from_thread.assert_not_called()
+
+
+def test_confirm_frontend_connection_send_fail(monkeypatch):
+    import modules.thinking.api_stream as stream_mod
+    cm = MagicMock()
+    cm.active_connections = {"s1": object(), "s2": object()}
+    cm.send_json_from_thread.return_value = False
+    monkeypatch.setattr(stream_mod, "connection_manager", cm)
+    assert mod_confirm() is False
+
+
+def test_try_outreach_skips_when_frontend_down(monkeypatch):
+    tr = ProactiveTrigger()
+    import modules.perception.trigger as mod
+    async def fake_llm(prompt, session_id):
+        raise AssertionError("前端不可达时不应调用 LLM")
+    monkeypatch.setattr(mod, "call_outreach_llm", fake_llm)
+    monkeypatch.setattr(mod, "confirm_frontend_connection", lambda: False)
+    tr._get_session_outreach_config = lambda sid: {"cooldown_minutes": 1}
+    import asyncio
+    asyncio.run(tr._try_outreach("s1", "schedule"))
+    assert tr._trigger_count == 0  # 未调用 LLM，未计数

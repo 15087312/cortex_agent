@@ -20,6 +20,34 @@ from utils.logger import setup_logger
 logger = setup_logger("perception_proactive_trigger")
 
 
+def confirm_frontend_connection() -> bool:
+    """向前端发送连接确认（握手）事件，验证推送链路可达。
+
+    主动搭话/感知触发思考在调用 LLM 前调用本函数：只有至少一个活跃
+    WebSocket 连接成功送达握手，才值得发起 LLM 调用——避免模型生成内容后
+    因前端离线而丢失（白耗 API 费用）。握手 content 为空，前端会忽略。
+    """
+    try:
+        from modules.thinking.api_stream import connection_manager, _build_event
+        if not connection_manager.active_connections:
+            return False
+        event = _build_event(
+            session_id="",
+            msg_type="proactive",
+            event="proactive_handshake",
+            content="",
+            role="system",
+            data={"handshake": True},
+        )
+        for sid in list(connection_manager.active_connections.keys()):
+            if connection_manager.send_json_from_thread(sid, event):
+                return True
+        return False
+    except Exception as e:
+        logger.debug(f"[连接确认] 失败: {e}")
+        return False
+
+
 def _build_outreach_system_prompt(role: str = "orchestrator", tier: str = "large") -> str:
     """构建主动搭话的 system prompt — 默认复用总指挥人格，可指定角色（roles.yaml），跳过工具规则"""
     from config.prompts.composer import PromptComposer, PromptRequest
@@ -215,6 +243,11 @@ class ProactiveTrigger:
         try:
             cfg = self._get_session_outreach_config(session_id)
             if not self._cooldown_ok(session_id, cfg):
+                return
+
+            # 先握手确认前端可达，再投入 LLM 调用——避免模型生成内容后推送落空
+            if not confirm_frontend_connection():
+                logger.debug(f"[主动触发] 前端不可达，跳过: session={session_id[:8]}")
                 return
 
             self._trigger_count += 1

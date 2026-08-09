@@ -38,6 +38,7 @@ def test_intensity_threshold(monkeypatch):
         fired.append(desc)
 
     monkeypatch.setattr(tt, "_run", _fake_run)
+    monkeypatch.setattr(tt, "_has_active_connections", lambda: True)
     monkeypatch.setattr(tt.threading, "Thread", _SyncThread)
     tt._trigger([_Diff(10)])  # 低于默认阈值 50 → 不触发
     assert fired == []
@@ -54,6 +55,7 @@ def test_cooldown_blocks(monkeypatch):
         fired.append(desc)
 
     monkeypatch.setattr(tt, "_run", _fake_run)
+    monkeypatch.setattr(tt, "_has_active_connections", lambda: True)
     monkeypatch.setattr(tt.threading, "Thread", _SyncThread)
     tt._trigger([_Diff(80)])
     assert len(fired) == 1
@@ -63,6 +65,20 @@ def test_cooldown_blocks(monkeypatch):
         tt._state["last"] = time.time() - 9999  # 模拟冷却结束
     tt._trigger([_Diff(80)])
     assert len(fired) == 2
+
+
+def test_no_active_connections_skips(monkeypatch):
+    """前端未连接时不触发（不发 LLM，不广播）"""
+    _reset()
+    fired = []
+
+    def _fake_run(desc):
+        fired.append(desc)
+
+    monkeypatch.setattr(tt, "_run", _fake_run)
+    monkeypatch.setattr(tt, "_has_active_connections", lambda: False)
+    tt._trigger([_Diff(99)])  # 即使强度很高也不触发
+    assert fired == []
 
 
 def test_register_uses_detector(monkeypatch):

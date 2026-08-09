@@ -24,7 +24,22 @@ def register() -> None:
     logger.info("感知触发思考已注册（高强度差异 → AI 主动思考）")
 
 
+def _has_active_connections() -> bool:
+    """前端是否在线且推送链路可达（发握手确认，通了才算）。
+
+    无连接时不触发——主动消息广播给空连接会直接丢失，还白耗一次 LLM 调用。
+    """
+    try:
+        from modules.perception.trigger import confirm_frontend_connection
+        return confirm_frontend_connection()
+    except Exception:
+        return False
+
+
 def _trigger(differences: List) -> None:
+    if not _has_active_connections():
+        logger.debug("无活跃前端连接，跳过感知触发思考")
+        return
     from config.settings import settings
     cd = max(1, int(getattr(settings, "PERCEPTION_TRIGGER_COOLDOWN", 60) or 60))
     min_int = float(getattr(settings, "PERCEPTION_TRIGGER_MIN_INTENSITY", 50) or 50)
