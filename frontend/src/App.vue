@@ -2,6 +2,7 @@
 import { onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useThemeStore } from '@/stores/theme.js'
+import { useConfigStore } from '@/stores/config.js'
 import { useWakeLock, useGeolocation } from '@/composables/index.js'
 import { dialogState, resolveDialog } from '@/composables/useDialog.js'
 import { useToastStore } from '@/stores/toast.js'
@@ -14,12 +15,15 @@ import LoadingState from '@/components/LoadingState.vue'
 
 const theme = useThemeStore()
 theme.init()
+const configStore = useConfigStore()
 
 // Wire system composables (self-initializing, react to config changes)
 useWakeLock()
 useGeolocation()
 
-// ── 全局键盘快捷键（对齐 js/app.js setupKeyboard） ──
+// ── 全局键盘快捷键 ──
+// 优先级：用户配置的 shortcut_keys（设置 → 通用设置 → 启动快捷键）> 内置默认
+// 解析 '⌥ + T' / 'Cmd+K' / 'Ctrl+Shift+P' 等格式，真实消费后端配置（非摆设）
 const router = useRouter()
 const toast = useToastStore()
 
@@ -28,12 +32,48 @@ function _isTyping(el) {
   return t === 'INPUT' || t === 'TEXTAREA' || (el && el.isContentEditable)
 }
 
+function parseShortcut(str) {
+  const parts = String(str || '').split('+').map((s) => s.trim()).filter(Boolean)
+  const sc = { ctrl: false, meta: false, alt: false, shift: false, key: '' }
+  for (const p of parts) {
+    const l = p.toLowerCase()
+    if (['⌘', 'cmd', 'command', 'meta', 'win', '⊞'].includes(l)) sc.meta = true
+    else if (['⌥', 'alt', 'option', 'opt'].includes(l)) sc.alt = true
+    else if (['⇧', 'shift'].includes(l)) sc.shift = true
+    else if (['⌃', 'ctrl', 'control'].includes(l)) sc.ctrl = true
+    else if (l) sc.key = l
+  }
+  return sc
+}
+
+function shortcutMatches(e, sc) {
+  if (!sc.key) return false
+  if (e.ctrlKey !== sc.ctrl || e.metaKey !== sc.meta || e.altKey !== sc.alt || e.shiftKey !== sc.shift) return false
+  return e.key.toLowerCase() === sc.key
+}
+
+// 聚焦对话输入框（真实生效动作）
+function _focusChat() {
+  router.push('/chat')
+  window.dispatchEvent(new CustomEvent('cortex-focus-input'))
+}
+
 function onKeydown(e) {
+  // 1) 用户配置的快捷键（后端持久化，实时读取）
+  const cfgShortcut = configStore.config?.shortcut_keys || configStore.config?.SHORTCUT_KEYS
+  if (cfgShortcut) {
+    const sc = parseShortcut(cfgShortcut)
+    if (sc.key && shortcutMatches(e, sc)) {
+      e.preventDefault()
+      _focusChat()
+      return
+    }
+  }
+  // 2) 内置默认：Cmd/Ctrl+K 聚焦输入
   const mod = e.ctrlKey || e.metaKey
   if (mod && (e.key === 'k' || e.key === 'K')) {
     e.preventDefault()
-    router.push('/chat')
-    window.dispatchEvent(new CustomEvent('cortex-focus-input'))
+    _focusChat()
     return
   }
   if (e.key === 'Escape') {

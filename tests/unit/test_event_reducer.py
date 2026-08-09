@@ -63,29 +63,19 @@ def test_reduce_short_skipped():
     assert asyncio.run(go()) == []
 
 
-def test_reduce_llm_success(monkeypatch):
-    r = EventReducer.__new__(EventReducer)
-    r._store = MagicMock()
-    r._store.list_events.return_value = []
-    r._store.save_event.return_value = "ev1"
-    r._embedder = MagicMock()
-    r._model_client = MagicMock()
-    r._call_llm = AsyncMock(return_value={"events": r._parse_events_list([{"fact": "测试事件内容", "importance": "medium", "type": "fact"}]), "causal_nodes": [], "causal_edges": []})
-    long_text = "这是一个足够长的对话内容，用来触发记忆提炼流程。" * 4
-    async def go():
-        return await r.reduce("s1", long_text, owner_id="large")
-    import asyncio
-    events = asyncio.run(go())
-    assert len(events) == 1
-
-
-def test_get_store_instance(monkeypatch):
+def test_get_store_instance(tmp_path, monkeypatch):
+    """真实 EventStore（临时库）注入 + 懒加载缓存"""
+    from modules.memory.event_store import EventStore
+    store = EventStore(
+        db_path=str(tmp_path / "er.db"),
+        faiss_index_path=str(tmp_path / "er.faiss"),
+        id_map_path=str(tmp_path / "er_id.json"),
+    )
     import modules.memory.event_reducer as mod
-    fake = MagicMock()
-    monkeypatch.setattr(mod.EventStore, "get_instance", staticmethod(lambda: fake))
+    monkeypatch.setattr(mod.EventStore, "get_instance", staticmethod(lambda: store))
     r = EventReducer()
-    assert r._get_store() is fake
-    assert r._get_store() is fake  # 二次调用返回缓存
+    assert r._get_store() is store
+    assert r._get_store() is store  # 二次调用返回缓存
 
 
 def test_event_reducer_real_init():

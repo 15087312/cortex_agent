@@ -815,7 +815,7 @@ onMounted(async () => {
           <div class="settings-shortcut" @click="startEditShortcut">
             <input v-if="editingShortcut" ref="shortcutInput" v-model="shortcutKeys" class="input shortcut-input" @blur="saveShortcut" @keyup.enter="saveShortcut" />
             <span v-else class="shortcut-key">{{ shortcutKeys }}</span>
-            <span class="shortcut-desc">点击快捷键可编辑 — 通过快捷键快速唤起应用窗口</span>
+            <span class="shortcut-desc">点击快捷键可编辑 — 按下后聚焦对话输入框（实时生效，无需重启）</span>
           </div>
         </div>
         <div class="settings-divider"></div>
