@@ -432,3 +432,73 @@ def test_capture_screen_bytes_all_failed_logs_warning(monkeypatch):
         warn.assert_called_once()
         msg = warn.call_args[0][0]
         assert "屏幕录制" in msg
+
+
+def test_bind_server_race_existing_daemon(monkeypatch):
+    """已有 daemon 在服务时，新 daemon _bind_server 返回 None（不误杀、不抢占）"""
+    sock_path = "/tmp/cortex_test_race.sock"
+    try:
+        if os.path.exists(sock_path):
+            os.unlink(sock_path)
+    except OSError:
+        pass
+    import threading
+    d1 = daemon_mod.ScreenCaptureDaemon(socket_path=sock_path)
+    monkeypatch.setattr(daemon_mod, "_screencapture_image", lambda: FakeImage())
+    t = threading.Thread(target=d1.run, daemon=True)
+    t.start()
+    time.sleep(0.3)
+
+    d2 = daemon_mod.ScreenCaptureDaemon(socket_path=sock_path)
+    assert d2._bind_server() is None  # 已有服务 → 退出
+
+    with patch.object(client_mod, "SOCKET_PATH", sock_path):
+        assert client_mod.ping(timeout=2.0) is True  # d1 仍正常服务
+
+    d1._shutdown.set()
+    t.join(timeout=2)
+    try:
+        if os.path.exists(sock_path):
+            os.unlink(sock_path)
+    except OSError:
+        pass
+
+
+def test_bind_server_stale_socket(monkeypatch):
+    """残留 stale socket（不可连）→ 清理后成功 bind"""
+    sock_path = "/tmp/cortex_test_stale.sock"
+    try:
+        if os.path.exists(sock_path):
+            os.unlink(sock_path)
+    except OSError:
+        pass
+    # 创建一个无人监听的空 socket 文件（模拟 stale）
+    stale = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    stale.bind(sock_path)
+    stale.close()
+
+    d = daemon_mod.ScreenCaptureDaemon(socket_path=sock_path)
+    server = d._bind_server()
+    assert server is not None  # stale 被清理并成功 bind
+    server.close()
+    try:
+        if os.path.exists(sock_path):
+            os.unlink(sock_path)
+    except OSError:
+        pass
+
+
+def test_client_ensure_daemon_launches(monkeypatch):
+    """客户端 socket 不存在时自动拉起 daemon（幂等）"""
+    import subprocess
+    proc = MagicMock()
+    popen = MagicMock(return_value=proc)
+    monkeypatch.setattr(subprocess, "Popen", popen)
+    monkeypatch.setattr(client_mod, "SOCKET_PATH", "/nonexistent.sock")
+    real_exists = os.path.exists
+    monkeypatch.setattr(
+        client_mod.os.path, "exists",
+        lambda p: real_exists(p) if str(p).endswith("screen_capture_daemon.py") else False,
+    )
+    assert client_mod._ensure_daemon() is True
+    popen.assert_called_once()

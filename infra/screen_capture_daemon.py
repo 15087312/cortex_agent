@@ -26,7 +26,8 @@ SOCKET_PATH = os.environ.get(
     "CORTEX_SCREEN_CAPTURE_SOCKET",
     "/tmp/cortex_screen_capture.sock",
 )
-CACHE_TTL_SECONDS = float(os.environ.get("CORTEX_SCREEN_CAPTURE_TTL", "1.0"))
+# 截图约 1s/次；缓存 3s 可覆盖大多数并发请求，避免每个请求都重新截屏
+CACHE_TTL_SECONDS = float(os.environ.get("CORTEX_SCREEN_CAPTURE_TTL", "3.0"))
 LOG_PREFIX = "[screen_capture_daemon]"
 
 
@@ -145,13 +146,6 @@ class ScreenCaptureDaemon:
 
     # ── socket 服务 ──
 
-    def _cleanup_socket(self):
-        try:
-            if os.path.exists(self._socket_path):
-                os.unlink(self._socket_path)
-        except OSError:
-            pass
-
     def _serve_connection(self, conn):
         try:
             conn.settimeout(30.0)
@@ -175,13 +169,50 @@ class ScreenCaptureDaemon:
             except OSError:
                 pass
 
+    def _bind_server(self):
+        """绑定 Unix socket。处理多进程竞态：
+        - bind 失败且已有 daemon 在服务（socket 可连）→ 本进程退出，不误杀他人
+        - bind 失败且是残留 stale socket（不可连）→ 清理后重试一次
+        探测时给其他 daemon 留出「bind 后 listen 前」的窗口（重试 3 次），
+        避免把正在初始化的 daemon 误判为 stale 而抢占其 socket。
+        返回 server 或 None（None 表示应退出，不进行服务）。
+        """
+        try:
+            server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            server.bind(self._socket_path)
+            os.chmod(self._socket_path, 0o600)
+            server.listen(8)
+            return server
+        except OSError:
+            # 探测 socket：能连上说明已有 daemon 在服务（可能还在 bind/listen 途中，多探几次）
+            for _ in range(3):
+                try:
+                    probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                    probe.settimeout(1)
+                    probe.connect(self._socket_path)
+                    probe.close()
+                    _log("检测到已有 daemon 在服务，本进程退出")
+                    return None
+                except Exception:
+                    time.sleep(0.3)
+            # 仍连不上 → stale socket → 清理后重试一次
+            try:
+                if os.path.exists(self._socket_path):
+                    os.unlink(self._socket_path)
+                server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                server.bind(self._socket_path)
+                os.chmod(self._socket_path, 0o600)
+                server.listen(8)
+                return server
+            except Exception as e:
+                _log(f"socket 绑定失败: {e}")
+                return None
+
     def run(self):
         """启动 Unix socket 服务（阻塞，直到收到 shutdown）"""
-        self._cleanup_socket()
-        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        server.bind(self._socket_path)
-        os.chmod(self._socket_path, 0o600)
-        server.listen(8)
+        server = self._bind_server()
+        if server is None:
+            return
         server.settimeout(1.0)
         _log(f"监听 {self._socket_path}")
 
@@ -213,9 +244,17 @@ class ScreenCaptureDaemon:
                 except OSError:
                     break
                 threading.Thread(target=self._serve_connection, args=(conn,), daemon=True).start()
+        except Exception as e:
+            _log(f"主循环异常（不退出，继续服务）: {e}")
         finally:
             server.close()
-            self._cleanup_socket()
+            # 仅当本进程成功绑定时清理自己占用的 socket；若本进程未 bind 成功，
+            # 绝不 unlink（可能误杀正在服务的另一个 daemon 的 socket）
+            try:
+                if os.path.exists(self._socket_path):
+                    os.unlink(self._socket_path)
+            except OSError:
+                pass
             _log("已退出")
 
 

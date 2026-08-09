@@ -22,7 +22,75 @@ SOCKET_PATH = os.environ.get(
     "CORTEX_SCREEN_CAPTURE_SOCKET",
     "/tmp/cortex_screen_capture.sock",
 )
-DEFAULT_TIMEOUT = 3.0  # 单次请求超时（秒）
+DEFAULT_TIMEOUT = 8.0  # 单次请求超时（秒）。daemon 截图约 1s + 并发排队，需大于单帧耗时
+_DAEMON_START_LOCK = threading.Lock()
+
+
+def _ensure_daemon() -> bool:
+    """socket 不存在时尝试拉起 daemon（幂等：daemon 自己处理 bind 竞态）。
+
+    任意进程（后端/MCP 子进程等）都能拉起；若已有 daemon 在服务，新进程的
+    bind 会失败并自动退出，不互相误杀。
+    """
+    if os.path.exists(SOCKET_PATH):
+        return True
+    with _DAEMON_START_LOCK:
+        if os.path.exists(SOCKET_PATH):
+            return True
+        try:
+            import subprocess
+            import sys
+            daemon_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                "infra", "screen_capture_daemon.py",
+            )
+            if not os.path.exists(daemon_path):
+                return False
+            subprocess.Popen(
+                [sys.executable, daemon_path],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            return True
+        except Exception as e:
+            logger.debug(f"拉起截图 daemon 失败: {e}")
+            return False
+
+
+def _rpc(method: str, params: dict = None, timeout: float = DEFAULT_TIMEOUT) -> Optional[dict]:
+    """向 daemon 发送一行 JSON 请求，读取一行响应。失败返回 None。"""
+    if not os.path.exists(SOCKET_PATH):
+        if not _ensure_daemon():
+            return None
+        time.sleep(0.2)  # 等 daemon 完成 bind
+    for attempt in (0, 1):
+        try:
+            client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            client.settimeout(timeout)
+            try:
+                client.connect(SOCKET_PATH)
+                req = json.dumps({"id": 1, "method": method, "params": params or {}}) + "\n"
+                client.sendall(req.encode())
+                with client.makefile("r") as f:
+                    line = f.readline()
+                if not line:
+                    return None
+                return json.loads(line)
+            finally:
+                try:
+                    client.close()
+                except OSError:
+                    pass
+        except (ConnectionRefusedError, FileNotFoundError):
+            # daemon 可能刚启动/竞态，稍等重试一次
+            if attempt == 0:
+                time.sleep(0.3)
+                continue
+            _warn_throttled("daemon 未就绪（连接被拒/socket 消失）")
+            return None
+        except Exception as e:
+            _warn_throttled(f"daemon 通信失败: {e}")
+            return None
+    return None
 
 # 避免高并发下反复 connect 失败刷日志：首次 warning，之后 30s 内静默
 _last_warn_ts = [0.0]
@@ -35,32 +103,6 @@ def _warn_throttled(msg: str):
         if now - _last_warn_ts[0] > 30.0:
             _last_warn_ts[0] = now
             logger.warning(msg)
-
-
-def _rpc(method: str, params: dict = None, timeout: float = DEFAULT_TIMEOUT) -> Optional[dict]:
-    """向 daemon 发送一行 JSON 请求，读取一行响应。失败返回 None。"""
-    if not os.path.exists(SOCKET_PATH):
-        return None
-    try:
-        client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        client.settimeout(timeout)
-        try:
-            client.connect(SOCKET_PATH)
-            req = json.dumps({"id": 1, "method": method, "params": params or {}}) + "\n"
-            client.sendall(req.encode())
-            with client.makefile("r") as f:
-                line = f.readline()
-            if not line:
-                return None
-            return json.loads(line)
-        finally:
-            try:
-                client.close()
-            except OSError:
-                pass
-    except Exception as e:
-        _warn_throttled(f"daemon 通信失败: {e}")
-        return None
 
 
 def ping(timeout: float = DEFAULT_TIMEOUT) -> bool:
