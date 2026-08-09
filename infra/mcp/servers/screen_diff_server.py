@@ -57,6 +57,20 @@ def _capture_screen() -> np.ndarray | None:
     if not SCREENSHOT_ENABLED:
         return None
 
+    # 优先从常驻截图 daemon 取帧（避免本子进程再次调用 screencapture 触发权限确认）
+    try:
+        from utils.screen_capture_daemon_client import get_frame_bytes
+        daemon_png = get_frame_bytes(max_width=1280)
+        if daemon_png:
+            img_data = np.frombuffer(daemon_png, dtype=np.uint8)
+            if _cv2:
+                return _cv2.imdecode(img_data, _cv2.IMREAD_COLOR)
+            from PIL import Image
+            pil_img = Image.open(io.BytesIO(daemon_png))
+            return np.array(pil_img)[:, :, ::-1]
+    except Exception:
+        pass
+
     try:
         tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
         tmp_path = tmp.name

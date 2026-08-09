@@ -7,6 +7,7 @@ import base64
 import io
 import os
 import sys
+import threading
 from typing import Optional
 
 from utils.logger import setup_logger
@@ -55,19 +56,78 @@ def init_screen_permission():
 
     if SCREENSHOT_ENABLED:
         logger.info("[屏幕权限] 已授予")
+        _ensure_daemon_running()
     else:
         logger.warning("[屏幕权限] 未授予，截图功能不可用")
         logger.warning("[屏幕权限] 请在 系统设置 → 隐私与安全性 → 屏幕录制 中授权")
 
 
+_DAEMON_PROC = None
+_daemon_lock = threading.Lock()
+_daemon_checked = False
+
+
+def ensure_daemon_running() -> bool:
+    """确保常驻截图 daemon 在运行。
+
+    启动一次后按需保活：daemon 退出（或 socket 消失）时自动拉起。
+    macOS 上 daemon 继承本进程归属（如 PyCharm），屏幕录制权限只需授权一次。
+    失败（如平台不支持/启动异常）静默回退，不影响本地截图。
+    """
+    global _DAEMON_PROC, _daemon_checked
+    if sys.platform != "darwin":
+        return False
+    with _daemon_lock:
+        # 已在运行（进程活着 + socket 存在）→ 直接复用
+        if _DAEMON_PROC is not None and _DAEMON_PROC.poll() is None:
+            return True
+        try:
+            import subprocess
+            daemon_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                "infra", "screen_capture_daemon.py",
+            )
+            if not os.path.exists(daemon_path):
+                return False
+            _DAEMON_PROC = subprocess.Popen(
+                [sys.executable, daemon_path],
+                stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            _daemon_checked = True
+            return True
+        except Exception as e:
+            logger.debug(f"启动截图 daemon 失败: {e}")
+            _DAEMON_PROC = None
+            return False
+
+
+_ensure_daemon_running = ensure_daemon_running
+
+
 def capture_screen_bytes(max_width: int = 1280, region: tuple = None) -> Optional[bytes]:
     """截取屏幕返回 PNG bytes（支持 region=(x,y,w,h) 裁剪）
+
+    优先从常驻 screen_capture_daemon 取帧（全项目唯一截图入口，macOS 只授权一次），
+    daemon 不可用（未启动/超时）时回退本地 screencapture。
 
     macOS 上 PIL ImageGrab 走 X11 会主动打印 "could not create image from display"（except 拦不住），
     因此 macOS 直接用 screencapture 命令，不再调 ImageGrab。
     """
     if not SCREENSHOT_ENABLED:
         return None
+
+    # 优先走 daemon（避免每次启动 screencapture 触发权限确认）
+    from utils.screen_capture_daemon_client import get_frame_bytes
+    daemon_bytes = get_frame_bytes(max_width=max_width, region=region)
+    if daemon_bytes is not None:
+        return daemon_bytes
+
+    # daemon 不可用时尝试拉起一次（首次请求时懒启动），仍失败则本地截图
+    ensure_daemon_running()
+    from utils.screen_capture_daemon_client import get_frame_bytes as _get_frame
+    daemon_bytes = _get_frame(max_width=max_width, region=region)
+    if daemon_bytes is not None:
+        return daemon_bytes
 
     img = _grab_image(max_width, region)
     if img is None:
