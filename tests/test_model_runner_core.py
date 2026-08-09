@@ -435,3 +435,192 @@ def test_visible_tool_whitelist(monkeypatch):
         assert out == ["tool_a"]
     finally:
         cfg_mod.settings = old
+
+
+def test_generate_with_tools_final_text(monkeypatch):
+    r = _runner(tier="large")
+    r._visible_tool_whitelist = lambda: ["tool_a"]
+    r.GENERATE_RETRIES = 1
+    r.MAX_CHAT_TOOL_TURNS = 25
+    r._react_loop = None
+    r._status = ""
+    r._status_detail = ""
+    r._current_streaming_content = ""
+    r._thinker = MagicMock()
+    r._last_known_mode = ""
+
+    import infra.mcp.factory as mcp_mod
+    mcp = MagicMock()
+    mcp.get_tools_for_api.return_value = [{"function": {"name": "tool_a", "description": "工具"}}]
+    monkeypatch.setattr(mcp_mod, "get_mcp_tool_service", lambda: mcp)
+
+    import modules.security_system.tool_permission_controller as tpc
+    ctrl = MagicMock()
+    ctrl.get_control_tools.return_value = []
+    monkeypatch.setattr(tpc, "get_tool_permission_controller", lambda: ctrl)
+
+    client = MagicMock()
+    delattr(client, 'chat_stream')  # 走 chat() 而非 chat_stream()
+    msg = MagicMock()
+    msg.message.content = "最终回复"
+    msg.message.tool_calls = None
+    msg.message.reasoning_content = ""
+    client.chat = AsyncMock(return_value=msg)
+    r.instance.client = client
+    r._push_reasoning = MagicMock()
+
+    import asyncio
+    out = asyncio.run(r._generate_with_tools("system", "user", client))
+    assert out == "最终回复"
+    client.chat.assert_awaited_once()
+
+
+def test_generate_with_tools_no_tools(monkeypatch):
+    r = _runner(tier="large")
+    r._visible_tool_whitelist = lambda: []
+    import infra.mcp.factory as mcp_mod
+    mcp = MagicMock()
+    mcp.get_tools_for_api.return_value = []
+    monkeypatch.setattr(mcp_mod, "get_mcp_tool_service", lambda: mcp)
+    client = MagicMock()
+    r.instance.client = client
+    import asyncio
+    try:
+        asyncio.run(r._generate_with_tools("s", "u", client))
+        assert False
+    except RuntimeError as e:
+        assert "无可用工具" in str(e)
+
+
+def test_generate_with_tools_expert_final(monkeypatch):
+    r = _runner(tier="expert")
+    r._visible_tool_whitelist = lambda: ["tool_a"]
+    r.GENERATE_RETRIES = 1
+    r.MAX_CHAT_TOOL_TURNS = 25
+    r._react_loop = None
+    r._status = ""
+    r._status_detail = ""
+    r._current_streaming_content = ""
+    r._thinker = MagicMock()
+    r._last_known_mode = ""
+
+    import infra.mcp.factory as mcp_mod
+    mcp = MagicMock()
+    mcp.get_tools_for_api.return_value = [{"function": {"name": "tool_a", "description": "工具"}}]
+    monkeypatch.setattr(mcp_mod, "get_mcp_tool_service", lambda: mcp)
+    import modules.security_system.tool_permission_controller as tpc
+    ctrl = MagicMock()
+    ctrl.get_control_tools.return_value = []
+    monkeypatch.setattr(tpc, "get_tool_permission_controller", lambda: ctrl)
+
+    client = MagicMock()
+    delattr(client, 'chat_stream')
+    msg = MagicMock()
+    msg.message.content = "专家完成"
+    msg.message.tool_calls = None
+    msg.message.reasoning_content = ""
+    client.chat = AsyncMock(return_value=msg)
+    r.instance.client = client
+    r._push_reasoning = MagicMock()
+    import asyncio
+    out = asyncio.run(r._generate_with_tools("s", "u", client))
+    assert out == "专家完成"
+    r._thinker.record_control_decision.assert_called_once()
+
+
+def _final_runner(**kw):
+    r = _runner(**kw)
+    r._thinker = kw.get("thinker", None)
+    r._task_description = "任务描述"
+    r._task_id = "t1"
+    return r
+
+
+def test_write_final_result_no_thinker():
+    r = _final_runner()
+    r.blackboard = MagicMock()
+    import asyncio
+    asyncio.run(r._write_final_result())  # 无 thinker → 无结果跳过
+
+
+def test_write_final_result_large(monkeypatch):
+    r = _final_runner(tier="large")
+    snap = MagicMock()
+    snap.final_result = "最终结果"
+    cd = MagicMock()
+    cd.result_summary = "精炼结果"
+    snap.control_decision = cd
+    thinker = MagicMock()
+    thinker.get_process_snapshot.return_value = snap
+    r._thinker = thinker
+    bb = MagicMock()
+    r.blackboard = bb
+    import asyncio
+    asyncio.run(r._write_final_result())
+    bb.set_final_response.assert_called_once_with("精炼结果")
+
+
+def test_write_final_result_large_no_summary(monkeypatch):
+    r = _final_runner(tier="large")
+    snap = MagicMock()
+    snap.final_result = "结果"
+    snap.control_decision = None
+    thinker = MagicMock()
+    thinker.get_process_snapshot.return_value = snap
+    r._thinker = thinker
+    bb = MagicMock()
+    r.blackboard = bb
+    import asyncio
+    asyncio.run(r._write_final_result())
+    bb.set_final_response.assert_not_called()
+
+
+def test_write_final_result_supervisor(monkeypatch):
+    r = _final_runner(tier="supervisor")
+    snap = MagicMock()
+    snap.final_result = "发现"
+    cd = MagicMock()
+    cd.result_summary = "发现"
+    snap.control_decision = cd
+    thinker = MagicMock()
+    thinker.get_process_snapshot.return_value = snap
+    r._thinker = thinker
+    bb = MagicMock()
+    bb.write_expert_finding.return_value = "f1"
+    r.blackboard = bb
+    import asyncio
+    asyncio.run(r._write_final_result())
+    bb.write_expert_finding.assert_called_once()
+
+
+def test_write_final_result_expert(monkeypatch):
+    r = _final_runner(tier="expert")
+    snap = MagicMock()
+    snap.final_result = "观察内容"
+    snap.control_decision = None
+    thinker = MagicMock()
+    thinker.get_process_snapshot.return_value = snap
+    r._thinker = thinker
+    bb = MagicMock()
+    r.blackboard = bb
+    import modules.thinking.api_stream as stream_mod
+    monkeypatch.setattr(stream_mod, "_post_task_extraction_helper", AsyncMock())
+    import asyncio
+    asyncio.run(r._write_final_result())
+    bb.add_observation.assert_called_once()
+
+
+def test_notify_thinking_complete(monkeypatch):
+    r = _runner()
+    r._task_id = "t1"
+    import modules.thinking.communication.interface as iface_mod
+    bus = MagicMock()
+    sent = []
+    async def fake_send(msg):
+        sent.append(msg)
+    bus.send = fake_send
+    monkeypatch.setattr(iface_mod, "get_message_bus_port", lambda: bus)
+    import asyncio
+    asyncio.run(r._notify_thinking_complete())
+    assert len(sent) == 1
+    assert sent[0].content["action"] == "thinking_complete"
