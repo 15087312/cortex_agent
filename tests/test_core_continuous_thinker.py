@@ -319,3 +319,92 @@ def test_process_delegation_response_no_id():
     ct = _ct()
     ct._process_delegation_response("x", delegation_id="")
     assert "d1" not in ct._pending_delegations
+
+
+def _think_ct(**kw):
+    ct = _ct(**kw)
+    ct.think_fn = kw.get("think_fn", None)
+    ct._blackboard = kw.get("dialog", None)
+    ct.memory = kw.get("memory", None)
+    ct.notebook = kw.get("notebook", None)
+    return ct
+
+
+def test_think_once_no_think_fn():
+    ct = _think_ct(think_fn=None)
+    import asyncio
+    result = asyncio.run(ct.think_once("ctx"))
+    assert result["error"] == "思考函数未配置"
+
+
+def test_think_once_success():
+    async def fn(ctx):
+        return "思考结果"
+    ct = _think_ct(think_fn=fn, dialog=None)
+    ct.history_thoughts = []
+    import asyncio
+    result = asyncio.run(ct.think_once("ctx"))
+    assert result["thought"] == "思考结果"
+    assert ct.history_thoughts == ["思考结果"]
+
+
+def test_think_once_exception():
+    async def fn(ctx):
+        raise RuntimeError("模型挂了")
+    ct = _think_ct(think_fn=fn, dialog=None)
+    ct.history_thoughts = []
+    import asyncio
+    result = asyncio.run(ct.think_once("ctx"))
+    assert "思考异常" in result["thought"]
+    assert "is_finished" in result
+
+
+def test_think_sets_default_think_fn(monkeypatch):
+    from modules.thinking.core.continuous_thinker import ContinuousThinker
+    ct = ContinuousThinker.__new__(ContinuousThinker)
+    ct._model_id = "m1"
+    ct._tier = "large"
+    ct._task_context = None
+    ct._pending_delegations = {}
+    ct.history_thoughts = []
+    ct._delegation_results = []
+    ct.logger = MagicMock()
+    ct.memory = None
+    ct.notebook = None
+    ct._process_collector = MagicMock()
+    ct._last_process_snapshot = None
+    ct._blackboard = None
+    ct.think_fn = None
+    import modules.thinking.model_factory as mf_mod
+    model = MagicMock()
+    factory = MagicMock()
+    factory.get_client.return_value = model
+    monkeypatch.setattr(mf_mod, "get_model_factory", lambda: factory)
+    import asyncio
+    result = asyncio.run(ct.think("问题"))
+    assert ct.think_fn is model.generate
+
+
+def test_think_no_model_placeholder(monkeypatch):
+    from modules.thinking.core.continuous_thinker import ContinuousThinker
+    ct = ContinuousThinker.__new__(ContinuousThinker)
+    ct._model_id = "m1"
+    ct._tier = "large"
+    ct._task_context = None
+    ct._pending_delegations = {}
+    ct.history_thoughts = []
+    ct._delegation_results = []
+    ct.logger = MagicMock()
+    ct.memory = None
+    ct.notebook = None
+    ct._process_collector = MagicMock()
+    ct._last_process_snapshot = None
+    ct._blackboard = None
+    ct.think_fn = None
+    import modules.thinking.model_factory as mf_mod
+    factory = MagicMock()
+    factory.get_client.return_value = None
+    monkeypatch.setattr(mf_mod, "get_model_factory", lambda: factory)
+    import asyncio
+    result = asyncio.run(ct.think("问题"))
+    assert "处理" in result["thought"]

@@ -129,3 +129,44 @@ def test_maybe_evolve_values_risk_keyword(monkeypatch):
     long_resp = "我将删除这个文件，因为它包含了多个不再需要的旧版本数据，这是较长的回复内容"
     asyncio.run(o._maybe_evolve_values("请删除这个文件", long_resp))
     cons.review_and_evolve.assert_awaited_once()
+
+
+def test_process_security_blocked(monkeypatch):
+    o = _orc()
+    sec = MagicMock()
+    sec.validate_input.return_value = (False, "非法输入")
+    o._get_security = lambda: sec
+    notifier = MagicMock()
+    o._get_activity_notifier = lambda: notifier
+    import asyncio
+    result = asyncio.run(o.process("危险内容", session_id="s1"))
+    assert result["security_passed"] is False
+    assert "非法输入" in result["response"]
+
+
+def test_process_activity_notify_error(monkeypatch):
+    o = _orc()
+    notifier = MagicMock()
+    notifier.notify_activity.side_effect = RuntimeError
+    o._get_activity_notifier = lambda: notifier
+    sec = MagicMock()
+    sec.validate_input.return_value = (True, "")
+    o._get_security = lambda: sec
+    o._get_guidance_service = lambda: MagicMock(run=AsyncMock(return_value={}))
+    o._get_context_controller = lambda: None
+    o._get_output_reviewer = lambda: None
+    o._review_output = AsyncMock(return_value="ok")
+    import modules.perception.setup as ps_mod
+    ps = MagicMock()
+    ps.proactive_trigger = None
+    monkeypatch.setattr(ps_mod, "get_perception_system", lambda: ps)
+    # 后续 _execute_multi_model_thinking 走 mock
+    o._execute_multi_model_thinking = MagicMock()
+    async def fake_exec(user_input, session_id, expert_guidance, event_callback, **kw):
+        return {"response": "ok", "focus": "thinking", "active_modules": [], "sleep_modules": [],
+                "degraded": False, "module_results": [], "decisions": {}, "resource_status": {},
+                "security_passed": True}
+    o._execute_multi_model_thinking = fake_exec
+    import asyncio
+    result = asyncio.run(o.process("正常内容", session_id="s1"))
+    assert result["security_passed"] is True
