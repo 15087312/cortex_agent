@@ -73,7 +73,7 @@ def _recent_api_requests(limit: int = 50) -> list:
         from modules.management.api_log_store import ApiLogStore
         store = ApiLogStore.get_instance()
         store.flush()
-        return store.query(limit=limit)
+        return store.query(limit=limit, include_body=False)
     except Exception:
         return []
 

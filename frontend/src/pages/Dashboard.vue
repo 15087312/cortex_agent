@@ -99,6 +99,21 @@ async function loadApiStats() {
 function applyApiFilter() { apiReqPage.value = 0; loadApiRequests(); loadApiStats() }
 function apiReqNext() { apiReqPage.value += 1; loadApiRequests() }
 function apiReqPrev() { if (apiReqPage.value > 0) { apiReqPage.value -= 1; loadApiRequests() } }
+
+// ── API 请求详情（参数 + 返回值）──
+const apiDetail = ref(null)
+function openApiDetail(r) { apiDetail.value = r }
+function closeApiDetail() { apiDetail.value = null }
+function formatBody(s) {
+  if (!s) return '（无记录）'
+  const text = String(s)
+  try { return JSON.stringify(JSON.parse(text), null, 2) }
+  catch { return text }
+}
+function copyApiBody(s) {
+  const text = s || ''
+  navigator.clipboard?.writeText(text).catch(() => {})
+}
 </script>
 
 <template>
@@ -288,7 +303,7 @@ function apiReqPrev() { if (apiReqPage.value > 0) { apiReqPage.value -= 1; loadA
         </div>
 
         <table class="data-table" v-if="apiReq.items.length">
-          <thead><tr><th>时间</th><th>方法</th><th>路径</th><th>状态</th><th>耗时</th></tr></thead>
+          <thead><tr><th>时间</th><th>方法</th><th>路径</th><th>状态</th><th>耗时</th><th></th></tr></thead>
           <tbody>
             <tr v-for="(r, i) in apiReq.items" :key="apiReqPage * API_PAGE + i">
               <td style="color:var(--text-muted);white-space:nowrap">{{ r.time }}</td>
@@ -296,10 +311,40 @@ function apiReqPrev() { if (apiReqPage.value > 0) { apiReqPage.value -= 1; loadA
               <td style="word-break:break-all;font-size:12px">{{ r.path }}</td>
               <td><span class="badge" :class="r.status < 400 ? 'badge-green' : 'badge-red'">{{ r.status }}</span></td>
               <td style="color:var(--text-muted);white-space:nowrap">{{ r.ms != null ? r.ms + 'ms' : '-' }}</td>
+              <td style="text-align:right;white-space:nowrap">
+                <button class="btn btn-sm" @click="openApiDetail(r)" :class="{ 'btn-primary': apiDetail === r }"><Icon name="search" :size="12" /> 详情</button>
+              </td>
             </tr>
           </tbody>
         </table>
         <div v-else style="text-align:center;padding:24px;color:var(--text-muted)">暂无请求记录（发送 API 请求后会显示在这里）</div>
+
+        <!-- 请求详情：参数 + 返回值 -->
+        <div v-if="apiDetail" style="margin-top:12px;border:1px solid var(--border);border-radius:var(--radius-md);overflow:hidden;background:var(--bg-secondary)">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 14px;background:var(--bg-tertiary);border-bottom:1px solid var(--border);flex-wrap:wrap">
+            <div style="display:flex;align-items:center;gap:10px;font-size:13px;flex-wrap:wrap">
+              <span class="badge" :class="apiDetail.method === 'POST' ? 'badge-blue' : 'badge-gray'">{{ apiDetail.method }}</span>
+              <span style="word-break:break-all">{{ apiDetail.path }}</span>
+              <span class="badge" :class="apiDetail.status < 400 ? 'badge-green' : 'badge-red'">{{ apiDetail.status }}</span>
+              <span style="color:var(--text-muted);font-size:12px">{{ apiDetail.time }} · {{ apiDetail.ms != null ? apiDetail.ms + 'ms' : '-' }}</span>
+            </div>
+            <div style="display:flex;gap:8px">
+              <button class="btn btn-sm" @click="copyApiBody(apiDetail.request_body)"><Icon name="copy" :size="12" /> 复制请求</button>
+              <button class="btn btn-sm" @click="copyApiBody(apiDetail.response_body)"><Icon name="copy" :size="12" /> 复制返回</button>
+              <button class="btn btn-sm" @click="closeApiDetail()"><Icon name="x" :size="12" /> 关闭</button>
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:14px">
+            <div style="min-width:0">
+              <div style="font-size:12px;font-weight:600;color:var(--text-secondary);margin-bottom:6px">请求参数</div>
+              <pre class="diag-pre" style="max-height:360px;margin:0">{{ formatBody(apiDetail.request_body) }}</pre>
+            </div>
+            <div style="min-width:0">
+              <div style="font-size:12px;font-weight:600;color:var(--text-secondary);margin-bottom:6px">返回值</div>
+              <pre class="diag-pre" style="max-height:360px;margin:0">{{ formatBody(apiDetail.response_body) }}</pre>
+            </div>
+          </div>
+        </div>
 
         <div style="display:flex;justify-content:flex-end;gap:8px;padding-top:8px;align-items:center">
           <span style="font-size:12px;color:var(--text-muted)">共 {{ apiReq.total }} 条</span>

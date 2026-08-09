@@ -24,8 +24,19 @@ def test_build_security_error():
     assert d["security_passed"] is False
 
 
+def _no_forced(monkeypatch):
+    """隔离：确保不受用户真实 ~/.cortex/personas.yaml 中 forced_skill 残留影响"""
+    # 注意：settings 是 pydantic BaseSettings 实例（__setattr__ 拒绝未知字段），
+    # 不能直接改实例属性；替换 config.settings 模块上的 settings 属性为 fake。
+    # 函数内 `from config.settings import settings` 走 sys.modules 属性查找，会拿到 fake。
+    import sys, types
+    cfg_mod = sys.modules["config.settings"]
+    monkeypatch.setattr(cfg_mod, "settings", types.SimpleNamespace(get_forced_skill=lambda: ""))
+
+
 def test_match_skill(monkeypatch):
     o = _orc()
+    _no_forced(monkeypatch)
     import modules.thinking.skills as skills_mod
     mgr = MagicMock()
     skill = MagicMock()
@@ -38,6 +49,7 @@ def test_match_skill(monkeypatch):
 
 def test_match_skill_no_match(monkeypatch):
     o = _orc()
+    _no_forced(monkeypatch)
     import modules.thinking.skills as skills_mod
     mgr = MagicMock()
     mgr.match_skill.return_value = None
@@ -45,8 +57,21 @@ def test_match_skill_no_match(monkeypatch):
     assert o._match_skill("随便聊聊") == ""
 
 
+def test_match_skill_forced_priority(monkeypatch):
+    o = _orc()
+    import sys, types
+    cfg_mod = sys.modules["config.settings"]
+    monkeypatch.setattr(cfg_mod, "settings", types.SimpleNamespace(get_forced_skill=lambda: "code_writer"))
+    import modules.thinking.skills as skills_mod
+    mgr = MagicMock()
+    mgr.match_skill.return_value = None
+    monkeypatch.setattr(skills_mod, "skill_manager", mgr)
+    assert o._match_skill("随便聊聊") == "code_writer"
+
+
 def test_match_skill_exception(monkeypatch):
     o = _orc()
+    _no_forced(monkeypatch)
     import modules.thinking.skills as skills_mod
     mgr = MagicMock()
     mgr.match_skill.side_effect = RuntimeError("boom")

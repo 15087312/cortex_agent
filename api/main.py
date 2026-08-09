@@ -3,7 +3,7 @@ FastAPI 主入口 - 挂载所有模块的路由、全局中间件
 """
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, RedirectResponse, HTMLResponse
+from fastapi.responses import JSONResponse, RedirectResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel
@@ -468,19 +468,88 @@ _API_GET_IGNORE = {
     "/config", "/health", "/metrics", "/dashboard", "/dashboard/",
 }
 
+# 不记录 body 的内容类型（流式 / 二进制 / 表单上传）
+_API_BODY_IGNORE_CT = ("text/event-stream", "application/octet-stream")
+# 不读取请求体的内容类型
+_API_REQ_BODY_IGNORE_CT = ("multipart/form-data", "application/x-www-form-urlencoded", "text/event-stream")
+
+# 记录上限（与 ApiLogStore._MAX_RESP_BODY 配合，避免超大响应拖慢/撑爆）
+_API_LOG_MAX_RESP_BODY = 8000
+_API_LOG_MAX_REQ_BODY = 4000
+
+# 脱敏：屏蔽常见密钥/口令字段的值（password/secret/api_key/token 等）
+import re as _re
+_API_SECRET_PAT = _re.compile(
+    r'(?i)("?(?:password|passwd|secret|api[_-]?key|access[_-]?token|authorization|token)"?\s*[:=]\s*)([^",}]{4,})'
+)
+
+
+def _sanitize_body(text: str) -> str:
+    if not text:
+        return ""
+    return _API_SECRET_PAT.sub(r"\1***", text)
+
+
+def _truncate_body(text: str, limit: int) -> str:
+    if text is None:
+        return ""
+    if len(text) > limit:
+        return text[:limit] + "\n...[已截断]"
+    return text
+
 
 @app.middleware("http")
 async def api_request_log_middleware(request: Request, call_next):
-    """记录 API 请求（持久化 SQLite，供仪表盘筛选/分析/追溯）"""
+    """记录 API 请求（持久化 SQLite，供仪表盘筛选/分析/追溯）
+
+    记录详细参数与返回值（请求体/响应体），敏感字段脱敏，超大 body 截断；
+    流式响应（SSE）与二进制内容不读取 body，保留原响应直通。
+    """
     t0 = time.monotonic()
+    # 读取并缓存请求体（Starlette 会写入 request._body，不影响下游消费）
+    req_body = ""
+    try:
+        ct = request.headers.get("content-type", "")
+        if request.method in ("POST", "PUT", "PATCH", "DELETE") and not any(k in ct for k in _API_REQ_BODY_IGNORE_CT):
+            req_body = _truncate_body(
+                _sanitize_body((await request.body()).decode("utf-8", errors="replace")), _API_LOG_MAX_REQ_BODY
+            )
+    except Exception:
+        pass
+
     response = await call_next(request)
     try:
+        # 高频轮询 GET 不记录
         if request.method == "GET" and request.url.path in _API_GET_IGNORE:
             return response
+
+        resp_body = ""
+        resp_ct = response.headers.get("content-type", "")
+        if not any(k in resp_ct for k in _API_BODY_IGNORE_CT):
+            # 消费响应体以便记录，随后重建响应（保留 headers / background）
+            chunks = []
+            async for chunk in response.body_iterator:
+                chunks.append(chunk)
+            resp_bytes = b"".join(chunks)
+            if resp_bytes:
+                resp_body = _truncate_body(
+                    _sanitize_body(resp_bytes.decode("utf-8", errors="replace")), _API_LOG_MAX_RESP_BODY
+                )
+            new_resp = Response(
+                content=resp_bytes,
+                status_code=response.status_code,
+                headers={k: v for k, v in response.headers.items() if k.lower() not in ("content-length", "content-encoding")},
+                media_type=response.media_type,
+            )
+            new_resp.background = response.background
+            response = new_resp
+
         from modules.management.api_log_store import ApiLogStore
         ApiLogStore.get_instance().add(
             request.method, request.url.path, response.status_code,
             (time.monotonic() - t0) * 1000,
+            request_body=req_body,
+            response_body=resp_body,
         )
     except Exception:
         pass

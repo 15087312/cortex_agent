@@ -3,6 +3,7 @@
 - 持续记录、持久化到 data/api_log.db，可追溯历史
 - 内存积累 + 每 1s 定时批量 flush（不阻塞事件循环，性能开销极小）
 - 支持按 method/path/status/时间筛选、分页、统计
+- 记录请求/响应体（截断存储），供排查详细参数与返回值
 """
 import os
 import sqlite3
@@ -15,6 +16,10 @@ logger = setup_logger("api_log_store")
 
 _FLUSH_INTERVAL = 1.0
 _BATCH_SIZE = 200
+
+# 存储上限：请求体 / 响应体截断长度（避免撑爆数据库）
+_MAX_REQ_BODY = 4000
+_MAX_RESP_BODY = 8000
 
 
 def _db_path() -> str:
@@ -40,10 +45,18 @@ class ApiLogStore:
                 method TEXT NOT NULL,
                 path TEXT NOT NULL,
                 status INTEGER NOT NULL,
-                ms REAL NOT NULL DEFAULT 0
+                ms REAL NOT NULL DEFAULT 0,
+                request_body TEXT NOT NULL DEFAULT '',
+                response_body TEXT NOT NULL DEFAULT ''
             )"""
         )
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_api_requests_ts ON api_requests(ts)")
+        # 兼容旧库：缺列则 ALTER 补齐
+        cols = {r[1] for r in self._conn.execute("PRAGMA table_info(api_requests)")}
+        if "request_body" not in cols:
+            self._conn.execute("ALTER TABLE api_requests ADD COLUMN request_body TEXT NOT NULL DEFAULT ''")
+        if "response_body" not in cols:
+            self._conn.execute("ALTER TABLE api_requests ADD COLUMN response_body TEXT NOT NULL DEFAULT ''")
         self._conn.commit()
         self._stop = threading.Event()
         t = threading.Thread(target=self._flush_loop, daemon=True, name="api-log-flush")
@@ -59,9 +72,14 @@ class ApiLogStore:
 
     # ── 写入（内存积累）──
 
-    def add(self, method: str, path: str, status: int, duration_ms: float = 0.0) -> None:
+    def add(self, method: str, path: str, status: int, duration_ms: float = 0.0,
+            request_body: str = "", response_body: str = "") -> None:
         with self._qlock:
-            self._queue.append((time.time(), time.strftime("%H:%M:%S"), method, path, status, duration_ms))
+            self._queue.append((
+                time.time(), time.strftime("%H:%M:%S"), method, path, status, duration_ms,
+                (request_body or "")[:_MAX_REQ_BODY],
+                (response_body or "")[:_MAX_RESP_BODY],
+            ))
             if len(self._queue) >= _BATCH_SIZE:
                 self._flush_locked()
 
@@ -86,7 +104,7 @@ class ApiLogStore:
         self._queue = []
         try:
             self._conn.executemany(
-                "INSERT INTO api_requests(ts, time, method, path, status, ms) VALUES (?,?,?,?,?,?)",
+                "INSERT INTO api_requests(ts, time, method, path, status, ms, request_body, response_body) VALUES (?,?,?,?,?,?,?,?)",
                 batch,
             )
             self._conn.commit()
@@ -98,7 +116,8 @@ class ApiLogStore:
     # ── 查询 ──
 
     def query(self, method: str = "", path: str = "", status: int = 0,
-              limit: int = 50, offset: int = 0, since_hours: float = 0.0) -> list:
+              limit: int = 50, offset: int = 0, since_hours: float = 0.0,
+              include_body: bool = True) -> list:
         where, params = [], []
         if method:
             where.append("method=?"); params.append(method)
@@ -108,7 +127,8 @@ class ApiLogStore:
             where.append("CAST(status AS TEXT) LIKE ?"); params.append(f"{int(status)}%")
         if since_hours > 0:
             where.append("ts>=?"); params.append(time.time() - since_hours * 3600)
-        sql = "SELECT ts, time, method, path, status, ms FROM api_requests"
+        cols = "ts, time, method, path, status, ms" + (", request_body, response_body" if include_body else "")
+        sql = f"SELECT {cols} FROM api_requests"
         if where:
             sql += " WHERE " + " AND ".join(where)
         sql += " ORDER BY ts DESC LIMIT ? OFFSET ?"
@@ -118,10 +138,14 @@ class ApiLogStore:
             rows = conn.execute(sql, params).fetchall()
         finally:
             conn.close()
-        return [
-            {"time": r[1], "method": r[2], "path": r[3], "status": r[4], "ms": r[5]}
-            for r in rows
-        ]
+        out = []
+        for r in rows:
+            item = {"time": r[1], "method": r[2], "path": r[3], "status": r[4], "ms": r[5]}
+            if include_body:
+                item["request_body"] = r[6]
+                item["response_body"] = r[7]
+            out.append(item)
+        return out
 
     def count(self, method: str = "", path: str = "", status: int = 0, since_hours: float = 0.0) -> int:
         where, params = [], []
