@@ -280,3 +280,59 @@ def test_voice_listen_loop_wake_word(monkeypatch):
         assert ev.payload["text"] == "帮我看一下"
     finally:
         cfg_mod.settings = old
+
+
+def test_touchpoint_find_app_touchpoint_method(monkeypatch, tmp_path):
+    app = tmp_path / "Test.app"
+    app.mkdir()
+    (app / "Contents").mkdir()
+    (app / "Contents" / "Info.plist").write_bytes(b"x")
+    class W:
+        app = "Test"
+        pid = 123
+    class Tp:
+        @staticmethod
+        def windows():
+            return [W()]
+    import sys
+    monkeypatch.setitem(sys.modules, "touchpoint", Tp())
+    with patch("modules.perception.detectors.touchpoint_detector._IS_MAC", True):
+        with patch("subprocess.run") as run:
+            result = MagicMock()
+            result.returncode = 0
+            result.stdout = 'bundle path = "%s"' % str(app)
+            run.return_value = result
+            path = TouchpointDetector._find_app_path("Test")
+    assert path == str(app)
+
+
+def test_touchpoint_find_app_mdfind(monkeypatch, tmp_path):
+    import plistlib
+    app = tmp_path / "CodeEditor.app"
+    app.mkdir()
+    (app / "Contents").mkdir()
+    (app / "Contents" / "Info.plist").write_bytes(plistlib.dumps({"CFBundleName": "CodeEditor"}))
+    with patch("modules.perception.detectors.touchpoint_detector._IS_MAC", True):
+        with patch("subprocess.run") as run:
+            result = MagicMock()
+            result.returncode = 0
+            result.stdout = str(app) + "\n"
+            run.return_value = result
+            path = TouchpointDetector._find_app_path("CodeEditor")
+    assert path == str(app)
+
+
+def test_touchpoint_find_app_scan(monkeypatch, tmp_path):
+    app = tmp_path / "Helper.app"
+    app.mkdir()
+    with patch("modules.perception.detectors.touchpoint_detector._IS_MAC", True):
+        with patch("subprocess.run") as run:
+            result = MagicMock()
+            result.returncode = 0
+            result.stdout = ""
+            run.return_value = result
+            with patch("os.path.isdir", lambda p: True):
+                with patch("os.listdir", lambda root: ["Helper.app"]):
+                    with patch("os.path.expanduser", lambda p: p):
+                        path = TouchpointDetector._find_app_path("helper")
+    assert path == "/Applications/Helper.app"

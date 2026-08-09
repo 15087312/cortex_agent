@@ -150,7 +150,7 @@ def _ct(**kw):
     ct = ContinuousThinker.__new__(ContinuousThinker)
     ct._task_context = kw.get("task_context", None)
     ct._model_id = kw.get("model_id", "large_primary")
-    ct._tier = "large"
+    ct._tier = kw.get("tier", "large")
     ct._session_id = kw.get("session_id", "s1")
     ct._pending_delegations = kw.get("pending", {})
     ct.history_thoughts = []
@@ -252,3 +252,70 @@ def test_notify_return_target_sends(monkeypatch):
     asyncio.run(ct._notify_return_target(ctx, "最终结果"))
     assert len(sent) == 1
     assert sent[0].content["result"] == "最终结果"
+
+
+def test_build_task_contract_section_no_ctx():
+    ct = _ct(task_context=None, tier="large")
+    assert ct._build_task_contract_section(None) == ""
+
+
+def test_build_task_contract_supervisor():
+    ctx = MagicMock()
+    ctx.task_id = "t1"
+    ctx.loop_goal = "目标"
+    ctx.origin_model_id = "large_x"
+    ctx.return_to_model_id = "large_x"
+    ct = _ct(task_context=ctx, tier="supervisor")
+    out = ct._build_task_contract_section(ctx)
+    assert "任务ID" in out
+    assert "delegate_task" in out
+
+
+def test_build_task_contract_expert():
+    ctx = MagicMock()
+    ctx.task_id = "t1"
+    ctx.loop_goal = "目标"
+    ctx.origin_model_id = ""
+    ctx.return_to_model_id = ""
+    ct = _ct(task_context=ctx, tier="expert")
+    out = ct._build_task_contract_section(ctx)
+    assert "continue_thinking" in out
+    assert "delegate_task" not in out
+
+
+def test_build_task_contract_large():
+    ctx = MagicMock()
+    ctx.task_id = "t1"
+    ctx.loop_goal = "目标"
+    ctx.origin_model_id = ""
+    ctx.return_to_model_id = ""
+    ct = _ct(task_context=ctx, tier="large")
+    out = ct._build_task_contract_section(ctx)
+    assert "自动推进" in out
+
+
+def test_build_expert_context_only_large():
+    ct = _ct(tier="large")
+    out = ct._build_expert_context_section()
+    assert "可用主管" in out
+    ct2 = _ct(tier="expert")
+    assert ct2._build_expert_context_section() == ""
+
+
+def test_build_delegation_status_section():
+    ct = _ct(pending={"d1": {"status": "pending", "round": 1, "role": "expert", "task": "任务"}})
+    out = ct._build_delegation_status_section()
+    assert "委托" in out
+
+
+def test_process_delegation_response_completes():
+    ct = _ct(pending={"d1": {"status": "pending", "role": "expert", "task": "任务"}})
+    ct._process_delegation_response("完成了", delegation_id="d1")
+    assert ct._pending_delegations["d1"]["status"] == "completed"
+    assert ct._pending_delegations["d1"]["response"] == "完成了"
+
+
+def test_process_delegation_response_no_id():
+    ct = _ct()
+    ct._process_delegation_response("x", delegation_id="")
+    assert "d1" not in ct._pending_delegations
