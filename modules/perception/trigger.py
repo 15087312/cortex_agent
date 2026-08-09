@@ -607,6 +607,24 @@ def _run_async(coro):
     return asyncio.run(_run_task_wrapped())
 
 
+def run_in_main_loop(coro, timeout: float = 120.0):
+    """提交协程到主事件循环执行（跨线程安全）。
+
+    模型 client 的 aiohttp session 池化绑定主 loop；在 daemon 线程里 asyncio.run
+    新建 loop 调用会报 'Event loop is closed'/'Timeout context manager should be
+    used inside a task'。统一提交到主 loop 执行可复用 session。
+    主 loop 不可用时回退独立线程执行。
+    """
+    try:
+        from modules.thinking.api_stream import connection_manager, _main_event_loop
+        loop = connection_manager._loop or _main_event_loop
+        if loop and not loop.is_closed():
+            return asyncio.run_coroutine_threadsafe(coro, loop).result(timeout=timeout)
+    except Exception:
+        pass
+    return _run_async(coro)
+
+
 async def call_outreach_llm(prompt: str, session_id: str = "", role: str = None, tier: str = "large") -> str:
     """调用大模型（与主动搭话同一逻辑：人格 + 时间/感知/记忆/内心独白上下文）
 

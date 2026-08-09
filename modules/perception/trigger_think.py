@@ -60,7 +60,10 @@ def _trigger(differences: List) -> None:
 
 def _run(desc: str) -> None:
     try:
-        asyncio.run(_think(desc))
+        # 必须提交到主事件循环：call_outreach_llm 的 aiohttp session 绑定主 loop，
+        # 在 daemon 线程 asyncio.run 新建 loop 会报 'Event loop is closed'
+        from modules.perception.trigger import run_in_main_loop
+        run_in_main_loop(_think(desc))
     except Exception as e:
         logger.debug(f"触发思考执行失败: {e}")
 

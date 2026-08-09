@@ -434,3 +434,47 @@ def test_outreach_enabled_no_rules_no_default(monkeypatch):
     tr = _outreach_sessions(monkeypatch, sessions, default={"enabled": False})
     result = tr._get_enabled_outreach_sessions()
     assert result["s1"] == {"enabled": True}
+
+
+def test_run_in_main_loop_uses_main_loop(monkeypatch):
+    """run_in_main_loop：有主 loop 时提交到主 loop（不新建，避免 Event loop is closed）"""
+    import asyncio
+    import modules.perception.trigger as mod
+    import modules.thinking.api_stream as stream_mod
+
+    loop = asyncio.new_event_loop()
+    cm = MagicMock()
+    cm._loop = loop
+    monkeypatch.setattr(stream_mod, "connection_manager", cm)
+
+    result = {}
+    async def coro():
+        result["ran"] = True
+        return "ok"
+    # 提交到主 loop 执行
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(1) as ex:
+        fut = ex.submit(lambda: mod.run_in_main_loop(coro()))
+        # 主 loop 需驱动 coroutine_threadsafe
+        import threading, time
+        threading.Timer(0.2, lambda: loop.call_soon_threadsafe(loop.stop)).start()
+        loop.run_forever()
+        assert fut.result(timeout=5) == "ok"
+    assert result["ran"] is True
+    loop.close()
+
+
+def test_run_in_main_loop_fallback(monkeypatch):
+    """无主 loop 时回退独立线程执行（不抛错）"""
+    import modules.perception.trigger as mod
+    import modules.thinking.api_stream as stream_mod
+    cm = MagicMock()
+    cm._loop = None
+    monkeypatch.setattr(stream_mod, "connection_manager", cm)
+    monkeypatch.setattr(stream_mod, "_main_event_loop", None)
+    result = {}
+    async def coro():
+        result["ran"] = True
+        return "ok"
+    assert mod.run_in_main_loop(coro()) == "ok"
+    assert result["ran"] is True
