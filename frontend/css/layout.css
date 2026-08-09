@@ -3,7 +3,7 @@
 
 .sidebar { width:var(--sidebar-width); background:var(--bg-secondary); border-right:1px solid var(--border); display:flex; flex-direction:column; flex-shrink:0; overflow-y:auto; }
 .sidebar-header { padding:16px 16px 12px; font-size:15px; font-weight:600; color:var(--accent); display:flex; align-items:center; gap:8px; border-bottom:1px solid var(--border); user-select:none; background: linear-gradient(135deg, var(--bg-secondary), var(--accent-bg)); }
-.sidebar-header .logo { width:28px; height:28px; background:linear-gradient(135deg,var(--accent),#0d9273); border-radius:8px; display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:700; color:white; box-shadow:0 2px 6px rgba(16,163,127,0.35); }
+.sidebar-header .logo { width:28px; height:28px; border-radius:8px; object-fit:cover; box-shadow:0 2px 6px rgba(16,163,127,0.35); }
 .sidebar-nav { flex:1; padding:8px; }
 .nav-item { display:flex; align-items:center; gap:10px; padding:8px 12px; border-radius:var(--radius); cursor:pointer; color:var(--text-secondary); font-size:13px; transition:all var(--transition); user-select:none; margin-bottom:2px; }
 .nav-item:hover { background:var(--bg-tertiary); color:var(--text-primary); }

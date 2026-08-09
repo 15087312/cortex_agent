@@ -20,7 +20,7 @@ const toast = useToastStore()
 
 <style scoped>
 .toast-container {
-  position: fixed; top: 16px; right: 16px; z-index: 9999;
+  position: fixed; top: 16px; right: 16px; z-index: var(--z-toast);
   display: flex; flex-direction: column; gap: 8px; pointer-events: none;
 }
 .toast-container .alert {

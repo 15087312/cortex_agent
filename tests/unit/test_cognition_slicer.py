@@ -1,6 +1,5 @@
 """thinking/cognition/context_slicer 测试（此前 46% 覆盖）：各 tier 切片"""
-from unittest.mock import MagicMock
-
+from modules.thinking.cognition.blackboard import CognitiveBlackboard, Delegation, Observation, ExpertFinding
 from modules.thinking.cognition.context_slicer import ContextSlicer
 
 
@@ -8,16 +7,19 @@ def _slicer():
     return ContextSlicer.__new__(ContextSlicer)
 
 
+def _obs(tier, content, metadata=None):
+    return Observation(observation_id=f"o_{len(content)}", tier=tier, content=content, metadata=metadata or {})
+
+
 def _bb(**kw):
-    bb = MagicMock()
-    bb.observations = []
+    bb = CognitiveBlackboard(session_id="s", turn_id="t")  # 真实黑板
     bb.goal = kw.get("goal", "")
     bb.current_plan = kw.get("current_plan", [])
     bb.risks = kw.get("risks", [])
-    bb.delegations = kw.get("delegations", {})
-    bb.expert_findings = kw.get("expert_findings", {})
     bb.runtime_state = kw.get("runtime_state", {})
-    bb.get_observations_since = lambda cursor: []
+    bb.observations = kw.get("observations", [])
+    bb.delegations = {k: (v if isinstance(v, Delegation) else Delegation(delegation_id=k, role=v.get("role", ""), task=v.get("task", ""), status=v.get("status", "pending"))) for k, v in (kw.get("delegations", {}) or {}).items()}
+    bb.expert_findings = {k: (v if isinstance(v, ExpertFinding) else ExpertFinding(finding_id=k, source_tier=v.get("source_tier", "expert"), role=v.get("role", ""), content=v.get("content", ""))) for k, v in (kw.get("expert_findings", {}) or {}).items()}
     return bb
 
 
@@ -74,9 +76,7 @@ def test_slice_for_supervisor_and_expert():
 
 def test_slice_for_supervisor_task():
     s = _slicer()
-    dlg = MagicMock()
-    dlg.task = "完成任务"
-    dlg.metadata = {"context": "背景"}
+    dlg = Delegation(delegation_id="d1", role="code_writer", task="完成任务", status="pending")
     bb = _bb(goal="目标", delegations={"d1": dlg}, runtime_state={"available_tools": {"tool_a": {}}})
     out = s.slice_for_supervisor(bb, delegation_id="d1")
     assert "完成任务" in out

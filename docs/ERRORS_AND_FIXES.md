@@ -516,6 +516,48 @@ API Key 明存 localStorage → 改内存；静默 catch → 各调用处加错�
 3. 给测试写 fixture 前，先 `grep` 生产模型定义确认字段名，别凭感觉。
 
 
+## 22. 全按钮审计方法论 + 启动快捷键 shortcut_keys 是摆设（前端/后端）
 
+**任务背景：** 用户要求"完整确认全部前端按钮都是有效果的"——重点抓"点了没反应 / 存了没人读"的摆设按钮。
 
+**审计方法（4 层，可直接复用）：**
 
+### 22.1 层 1：后端路由权威清单
+导入 FastAPI app 枚举全部路由（`for r in app.routes: (methods, r.path)`），得到 177 条真实端点，**不要靠 grep**（静态挂载/条件挂载会漏）。
+
+### 22.2 层 2：前端调用路径 → 后端路由匹配（抓死路由）
+脚本提取全部 `.vue/.js` 中的字符串路径（`'/api/xxx'`、`'/xxx'`、模板字符串），将具体段替换为 `{p}` 与后端模式匹配。**结果：25 个前端路径全部命中，0 死路由**——没有 404 按钮。
+
+### 22.3 层 3：消费方审计（抓"存了没人读"——摆设的核心）
+提取前端所有 `XxxCfg('KEY')` / `updateConfig('KEY')` / CK 映射表 key，对每个 key 统计**排除 tests/docs/frontend/cli_tui 后**的后端引用数：
+- 不在 `_MODIFIABLE_FIELDS` 白名单 → PUT /config 会 403（点了没反应）；
+- 引用数 ≤1（仅 settings.py 定义）→ 疑似摆设。
+- **注意陷阱：** 前端 CK 映射表用**小写** key（`allow_geolocation`/`shortcut_keys`/`launch_at_startup`），正则提取时容易漏掉——必须同时扫大写与小写。
+
+### 22.4 层 4：运行时实测（真后端 + 真前端）
+1. 后端用 `subprocess.Popen(start_new_session=True)` 启动（普通 nohup 会被 basher 会话清理杀掉）；
+2. 前端 vite 另起端口（5173 可能被别的应用占用——**本次 5173 被一个 React 营销页占用，前端真身是 Vue**）；
+3. 只读端点批量 curl 验证（28 个全 200）；
+4. 写操作链路用**临时会话**实测并清理（outreach-config/tasks/title/人设/工具权限/模型参数/记忆事件 全 ✓）；
+5. 浏览器 evaluate_script 端到端（改配置 → 派发 KeyboardEvent → 检查 `document.activeElement`）。
+
+### 22.5 审计结论
+- **52 个前端配置 key：51 个真实消费，1 个摆设**——`shortcut_keys`（启动快捷键）；
+- 摆设原因：Settings.vue 可编辑并保存到后端，但**前端 App.vue 的快捷键逻辑是硬编码 Cmd/Ctrl+K**，后端也仅有 settings.py 定义处 1 处引用，用户改的值零消费；
+- 用户实际已配置 `⌥ + X` 却从未生效——实锤摆设。
+
+### 22.6 修复（让快捷键真实生效）
+`App.vue`：
+1. 引入 `useConfigStore()`，keydown 时读取 `config.shortcut_keys || config.SHORTCUT_KEYS`；
+2. 新增 `parseShortcut()` 解析 `⌥ + X` / `Cmd+K` / `Ctrl+Shift+P`（支持 ⌘/⌥/⇧/⌃/Cmd/Alt/Option/Ctrl 等写法）；
+3. 新增 `shortcutMatches()` 精确匹配修饰键组合；
+4. 配置快捷键命中 → `_focusChat()`（跳转对话页 + 聚焦输入框）；内置 Cmd/Ctrl+K 作为兜底保留；
+5. Settings.vue 描述文案同步更新（"按下后聚焦对话输入框（实时生效）"）。
+
+**验证：** 解析逻辑 node 单测 8 项全过；浏览器端到端：设 `Ctrl+Alt+X` → 后端读回 ✓ → 派发键盘事件 → 焦点落在输入框 TEXTAREA ✓ → 恢复 `⌥ + X` ✓。
+
+**经验：**
+1. **"能编辑、能保存"≠"有效果"**——判断摆设要查"谁消费这个值"，前后端都要查（本次前端硬编码键盘、后端无引用，两头都不消费）；
+2. 审计配置类按钮必须**同时扫大/小写 key**，前端 CK 表常混用；
+3. 运行时实测优先用**后端真实响应 + 临时数据清理**，浏览器全量点击易受环境干扰，evaluate_script 是可靠的端到端手段；
+4. 启动测试后端要脱离会话（`start_new_session=True`），否则进程被清理；开发端口可能被其他应用占用，先 `lsof -i` 确认。
