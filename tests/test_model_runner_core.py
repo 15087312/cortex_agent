@@ -1,6 +1,6 @@
 """model_runner 纯方法测试（此前 18% 覆盖）"""
 import asyncio
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import modules.thinking.core.model_runner as mr_mod
 from modules.thinking.core.model_runner import ModelRunner
@@ -250,3 +250,92 @@ def test_get_runtime_expert_class(monkeypatch):
     fake = MagicMock()
     monkeypatch.setattr(re_mod, "get_runtime_expert_class", lambda role: fake)
     assert ModelRunner._get_runtime_expert_class("code_writer") is fake
+
+
+def test_think_loop_expert_single_round(monkeypatch):
+    r = _runner(tier="expert")
+    r._running = True
+    r._task_description = "任务"
+    r._task_id = "t1"
+    r._return_to_model_id = ""
+    r._return_to_session_id = "s1"
+    r.identity_key = "code_writer"
+    thinker = MagicMock()
+    thinker.continuous_think = AsyncMock(return_value=[])
+    thinker._pending_delegations = {}
+    thinker._running = False
+    CT = MagicMock(return_value=thinker)
+    import modules.thinking.core.continuous_thinker as ct_mod
+    monkeypatch.setattr(ct_mod, "ContinuousThinker", CT)
+    import modules.thinking.communication.interface as iface_mod
+    bus = MagicMock()
+    bus.subscribe = AsyncMock()
+    bus.unsubscribe = AsyncMock()
+    monkeypatch.setattr(iface_mod, "get_message_bus_port", lambda: bus)
+    r._write_final_result = AsyncMock()
+    r._notify_thinking_complete = AsyncMock()
+    import asyncio
+    asyncio.run(r._think_loop())
+    assert r._thinker is thinker
+    thinker.continuous_think.assert_awaited_once()
+    bus.subscribe.assert_awaited_once()
+    r._notify_thinking_complete.assert_awaited_once()
+
+
+def test_think_loop_large_with_pending_waits(monkeypatch):
+    r = _runner(tier="large")
+    r._running = True
+    r._task_description = "任务"
+    r._task_id = "t1"
+    r._return_to_model_id = ""
+    r._return_to_session_id = "s1"
+    r.identity_key = ""
+    thinker = MagicMock()
+    thinker.continuous_think = AsyncMock(return_value=[{"thought": "x"}])
+    thinker._pending_delegations = {"d1": {"status": "pending"}}
+    thinker._running = True
+    CT = MagicMock(return_value=thinker)
+    import modules.thinking.core.continuous_thinker as ct_mod
+    monkeypatch.setattr(ct_mod, "ContinuousThinker", CT)
+    import modules.thinking.communication.interface as iface_mod
+    bus = MagicMock()
+    bus.subscribe = AsyncMock()
+    bus.unsubscribe = AsyncMock()
+    monkeypatch.setattr(iface_mod, "get_message_bus_port", lambda: bus)
+    r._write_final_result = AsyncMock()
+    r._notify_thinking_complete = AsyncMock()
+    # _wait_for_wakeup_event 返回 None（无委托待处理后退出）
+    r._wait_for_wakeup_event = AsyncMock(return_value=None)
+    # 第一轮后无 pending → 退出（避免死循环）：模拟 continuous_think 一轮后 pending 清空
+    thinker._pending_delegations = {}
+    import asyncio
+    asyncio.run(r._think_loop())
+    r._notify_thinking_complete.assert_awaited_once()
+
+
+def test_think_loop_cancelled_saves(monkeypatch):
+    import asyncio as _aio
+    r = _runner(tier="expert")
+    r._running = True
+    r._task_description = "任务"
+    r._task_id = "t1"
+    r._return_to_model_id = ""
+    r._return_to_session_id = "s1"
+    r.identity_key = ""
+    thinker = MagicMock()
+    thinker.continuous_think = AsyncMock(side_effect=_aio.CancelledError())
+    thinker._running = True
+    CT = MagicMock(return_value=thinker)
+    import modules.thinking.core.continuous_thinker as ct_mod
+    monkeypatch.setattr(ct_mod, "ContinuousThinker", CT)
+    import modules.thinking.communication.interface as iface_mod
+    bus = MagicMock()
+    bus.subscribe = AsyncMock()
+    bus.unsubscribe = AsyncMock()
+    monkeypatch.setattr(iface_mod, "get_message_bus_port", lambda: bus)
+    r._write_final_result = AsyncMock()
+    r._notify_thinking_complete = AsyncMock()
+    r._save_partial_result = AsyncMock()
+    import asyncio
+    asyncio.run(r._think_loop())
+    r._save_partial_result.assert_awaited_once()

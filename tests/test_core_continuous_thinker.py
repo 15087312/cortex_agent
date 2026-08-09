@@ -2,7 +2,7 @@
 import asyncio
 
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import modules.thinking.core.continuous_thinker as ctc
 from modules.thinking.core.continuous_thinker import ContinuousThinker
@@ -408,3 +408,86 @@ def test_think_no_model_placeholder(monkeypatch):
     import asyncio
     result = asyncio.run(ct.think("问题"))
     assert "处理" in result["thought"]
+
+
+def _full_ct(**kw):
+    from modules.thinking.core.continuous_thinker import ContinuousThinker
+    ct = ContinuousThinker.__new__(ContinuousThinker)
+    ct.think_fn = kw.get("think_fn", MagicMock())
+    ct.max_rounds = kw.get("max_rounds", 3)
+    ct.min_rounds = 1
+    ct.interval = 0.0
+    ct._session_id = kw.get("session_id", "s1")
+    ct._model_id = kw.get("model_id", "large_primary")
+    ct._tier = kw.get("tier", "large")
+    ct._task_context = None
+    ct._pending_delegations = {}
+    ct._consecutive_new_delegation_rounds = 0
+    ct._last_sd_read_count = 0
+    ct._delegation_results = []
+    ct._last_control_data = None
+    ct._last_control_decision = None
+    ct._supervisor_strict_retries = 0
+    ct._running = False
+    ct.history_thoughts = []
+    ct.memory = None
+    ct.notebook = None
+    ct._blackboard = None
+    ct.logger = MagicMock()
+    ct._process_collector = MagicMock()
+    ct._process_collector.reset.return_value = None
+    ct._process_collector.record_step.return_value = None
+    ct._runner_ref = None
+    ct._normalize_think_result = lambda r: r
+    ct._build_prompt = AsyncMock(return_value="prompt")
+    ct._parse_wait_seconds = lambda t: 0.0
+    ct._finalize_thinking_results = AsyncMock(return_value="final")
+    return ct
+
+
+def test_continuous_think_no_think_fn():
+    ct = _full_ct(think_fn=None)
+    import asyncio
+    assert asyncio.run(ct.continuous_think("q")) == []
+
+
+def test_continuous_think_single_round(monkeypatch):
+    ct = _full_ct(max_rounds=1)
+    ct.think_once = AsyncMock(return_value={"thought": "思考结果", "duration_ms": 10})
+    import asyncio
+    results = asyncio.run(ct.continuous_think("问题"))
+    assert len(results) == 1
+    assert results[0]["thought"] == "思考结果"
+    ct._finalize_thinking_results.assert_awaited_once()
+
+
+def test_continuous_think_text_continue_false(monkeypatch):
+    ct = _full_ct(max_rounds=5)
+    ct.think_once = AsyncMock(return_value={"thought": '结果 "continue": false 结束', "duration_ms": 5})
+    import asyncio
+    results = asyncio.run(ct.continuous_think("问题"))
+    assert len(results) == 1  # 文本 continue:false 终止
+
+
+def test_continuous_think_delegation_stops(monkeypatch):
+    ct = _full_ct(max_rounds=5)
+    async def think_once_wrapper(prompt, question=""):
+        ct._delegation_results.append({"role": "expert", "task": "x", "success": True})
+        return {"thought": "已委托", "duration_ms": 5}
+    ct.think_once = think_once_wrapper
+    import asyncio
+    results = asyncio.run(ct.continuous_think("问题"))
+    assert len(results) == 1  # 委托后停止
+    assert ct._last_control_decision is not None
+    assert ct._last_control_decision.should_continue is False
+
+
+def test_continuous_think_control_decision_stops(monkeypatch):
+    ct = _full_ct(max_rounds=5)
+    async def think_once_wrapper(prompt, question=""):
+        ct._last_control_data = {"continue": False, "result_summary": "完成"}
+        return {"thought": "结果", "duration_ms": 5}
+    ct.think_once = think_once_wrapper
+    import asyncio
+    results = asyncio.run(ct.continuous_think("问题"))
+    assert len(results) == 1
