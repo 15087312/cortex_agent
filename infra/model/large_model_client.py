@@ -61,20 +61,26 @@ class LargeModelClient(BaseModelClient):
         # 默认兼容 DashScope（原有用户不受影响）
         return "dashscope"
     
-    async def generate(self, prompt: str, max_retries: int = 2, **kwargs) -> str:
-        """生成响应 - 支持 DashScope / OpenAI / Anthropic，带重试机制"""
-        try:
-            from config.prompts.composer import PromptComposer, PromptRequest
-            from config.settings import settings as _cfg
-            composer = PromptComposer()
-            system_prompt = composer.build_system(PromptRequest(
-                tier="large",
-                role="orchestrator",
-                mode=_cfg.effective_execution_mode,
-            ))
-        except Exception as e:
-            logger.error(f"System prompt 构建失败，raise 以避免模型在错误配置下运行: {e}")
-            raise
+    async def generate(self, prompt: str, max_retries: int = 2, system_prompt: str = None, **kwargs) -> str:
+        """生成响应 - 支持 DashScope / OpenAI / Anthropic，带重试机制
+
+        Args:
+            system_prompt: 自定义系统提示词（如记忆收纳等专用任务）。
+                非空时覆盖自动拼装的 agent system prompt（人格/工具/规则）。
+        """
+        if not system_prompt:
+            try:
+                from config.prompts.composer import PromptComposer, PromptRequest
+                from config.settings import settings as _cfg
+                composer = PromptComposer()
+                system_prompt = composer.build_system(PromptRequest(
+                    tier="large",
+                    role="orchestrator",
+                    mode=_cfg.effective_execution_mode,
+                ))
+            except Exception as e:
+                logger.error(f"System prompt 构建失败，raise 以避免模型在错误配置下运行: {e}")
+                raise
 
         if self._api_format == "anthropic":
             headers = {

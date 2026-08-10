@@ -88,3 +88,31 @@ def test_event_reducer_real_init():
     client = MagicMock()
     r.set_model(client)
     assert r._model_client is client
+
+
+def test_reduce_uses_dedicated_system_prompt():
+    """回归：记忆收纳必须用专用 system prompt，不能用主模型的 agent 人设。
+
+    曾用各模型客户端默认 system prompt（orchestrator/code_writer/code_supervisor）
+    与任务冲突；现通过 system_prompt 参数覆盖为 MEMORY_REDUCE_SYSTEM_PROMPT。
+    """
+    from modules.memory.event_reducer import (
+        EventReducer, MEMORY_REDUCE_SYSTEM_PROMPT, REDUCE_PROMPT_TEMPLATE,
+    )
+    client = MagicMock()
+    client.generate = AsyncMock(return_value=json.dumps({"events": []}))
+    r = EventReducer(model_client=client)
+
+    async def go():
+        return await r._call_llm("这是一段超过五十个字的对话内容，用于测试记忆提炼的提示词构造是否正确。")
+
+    import asyncio
+    asyncio.run(go())
+
+    kwargs = client.generate.call_args.kwargs
+    assert kwargs.get("system_prompt") == MEMORY_REDUCE_SYSTEM_PROMPT
+    assert kwargs.get("max_tokens") == 2048
+    # user 提示词仍基于 REDUCE_PROMPT_TEMPLATE 组装
+    assert kwargs.get("temperature") == 0.3
+    prompt = client.generate.call_args.args[0]
+    assert "你是一个记忆分析专家" in prompt

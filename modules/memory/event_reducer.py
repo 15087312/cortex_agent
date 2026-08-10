@@ -35,6 +35,19 @@ def _parse_importance(value) -> float:
     return 0.40
 
 
+# 记忆收纳专用 system prompt：取代各模型客户端默认的 agent 人设（orchestrator / code_writer / code_supervisor）。
+# 默认 system prompt 带完整人格/风格/工具表/安全规则/能力表/价值观，与"只做结构化提炼"的任务冲突且浪费 token。
+MEMORY_REDUCE_SYSTEM_PROMPT = """你是记忆分析与收纳专家，负责把对话内容提炼为结构化记忆事件和因果关系。
+
+工作规则：
+1. 只做分析归纳，不执行任何工具，不回复用户、不发起对话。
+2. 严格按用户消息中给出的 JSON 结构输出。
+3. 只输出一个 JSON 对象，不要 markdown 代码块、不要解释、不要多余文字。
+4. 保持客观：fact 用陈述句客观描述；thought 写你的分析判断；lesson 写可复用的经验教训。
+5. 对话中没有明确因果关系时，causal_nodes / causal_edges 返回空数组。
+6. keywords 用简短关键词，便于后续检索匹配。"""
+
+
 # LLM 提示词：将一段对话提炼为结构化记忆事件 + 因果关系
 REDUCE_PROMPT_TEMPLATE = """你是一个记忆分析专家。请分析以下对话，提炼出记忆事件和因果关系。
 
@@ -183,6 +196,7 @@ class EventReducer:
                 prompt,
                 max_tokens=2048,
                 temperature=0.3,
+                system_prompt=MEMORY_REDUCE_SYSTEM_PROMPT,
             )
             return self._parse_response(response)
         except Exception as e:

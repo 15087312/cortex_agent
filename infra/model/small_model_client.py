@@ -151,17 +151,23 @@ class SmallModelClient(BaseModelClient):
             usage={"prompt_tokens": data.get("usage", {}).get("prompt_tokens", 0), "completion_tokens": data.get("usage", {}).get("completion_tokens", 0)},
         )
 
-    async def generate(self, prompt: str, max_retries: int = 3, **kwargs) -> str:
-        """生成响应 - 使用 OpenAI / Anthropic 兼容 API，带重试机制"""
-        try:
-            from config.prompts.composer import PromptComposer, PromptRequest
-            from config.settings import settings as _cfg
-            sys_prompt = PromptComposer().build_system(PromptRequest(
-                tier="expert", role="code_writer", mode=_cfg.effective_execution_mode))
-            messages = [{"role": "system", "content": sys_prompt}, {"role": "user", "content": prompt}]
-        except Exception as e:
-            logger.error(f"构建系统提示词失败，raise 以避免对话上下文丢失: {e}")
-            raise
+    async def generate(self, prompt: str, max_retries: int = 3, system_prompt: str = None, **kwargs) -> str:
+        """生成响应 - 使用 OpenAI / Anthropic 兼容 API，带重试机制
+
+        Args:
+            system_prompt: 自定义系统提示词（如记忆收纳等专用任务）。
+                非空时覆盖自动拼装的 agent system prompt（人格/工具/规则）。
+        """
+        if not system_prompt:
+            try:
+                from config.prompts.composer import PromptComposer, PromptRequest
+                from config.settings import settings as _cfg
+                system_prompt = PromptComposer().build_system(PromptRequest(
+                    tier="expert", role="code_writer", mode=_cfg.effective_execution_mode))
+            except Exception as e:
+                logger.error(f"构建系统提示词失败，raise 以避免对话上下文丢失: {e}")
+                raise
+        messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt}]
 
         headers = self._build_headers(self._api_format)
         max_tokens = kwargs.get("max_tokens", self.max_tokens)

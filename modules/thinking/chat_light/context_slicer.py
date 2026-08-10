@@ -142,6 +142,18 @@ class ContextSlicer:
         if not chunk.strip():
             return ""
 
+        # 摘要任务是独立单次调用，不能复用大模型默认的 orchestrator 人设（带工具/人格），
+        # 否则会诱导模型按 agent 身份作答；用专用精简 system prompt。
+        system_prompt = (
+            "你是对话摘要助手，只做文本摘要归纳。\n"
+            "规则：\n"
+            "1. 不回复用户、不执行任何工具、不发起对话。\n"
+            "2. 用中文概括用户的核心问题和助手给出的重要信息/结论。\n"
+            "3. 总长度控制在 80 字以内，多个小话题可并列。\n"
+            "4. 不包含「用户说」「助手说」等元描述，直接表达信息。\n"
+            "5. 如果完全是闲聊，输出「闲聊」。"
+        )
+
         prompt = (
             "你是一个对话摘要助手。请阅读以下对话片段，提取最关键的信息。\n\n"
             "要求：\n"
@@ -157,7 +169,12 @@ class ContextSlicer:
         try:
             client = self._get_client()
             async with _SUMMARIZE_SEM:
-                summary = await client.generate(prompt, max_tokens=120, temperature=0.3)
+                summary = await client.generate(
+                    prompt,
+                    max_tokens=120,
+                    temperature=0.3,
+                    system_prompt=system_prompt,
+                )
             summary = summary.strip()
             if summary.startswith("摘要："):
                 summary = summary[3:].strip()

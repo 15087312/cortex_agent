@@ -369,7 +369,7 @@ def test_generate_retry_then_success(monkeypatch):
     monkeypatch.setattr("modules.thinking.frontend_channel.confirm_frontend_connection", lambda session_id=None: True)  # 模拟前端在线
     r = _gen_runner()
     client = MagicMock()
-    async def gen(prompt, max_tokens=4096):
+    async def gen(prompt, max_tokens=4096, system_prompt=None):
         if gen.n == 0:
             gen.n += 1
             raise RuntimeError("网络错误")
@@ -387,7 +387,7 @@ def test_generate_503_after_retries(monkeypatch):
     monkeypatch.setattr("modules.thinking.frontend_channel.confirm_frontend_connection", lambda session_id=None: True)  # 模拟前端在线
     r = _gen_runner()
     client = MagicMock()
-    async def gen(prompt, max_tokens=4096):
+    async def gen(prompt, max_tokens=4096, system_prompt=None):
         raise RuntimeError("503 Service Unavailable")
     client.generate = gen
     r.instance.client = client
@@ -401,7 +401,7 @@ def test_generate_failure_message(monkeypatch):
     monkeypatch.setattr("modules.thinking.frontend_channel.confirm_frontend_connection", lambda session_id=None: True)  # 模拟前端在线
     r = _gen_runner()
     client = MagicMock()
-    async def gen(prompt, max_tokens=4096):
+    async def gen(prompt, max_tokens=4096, system_prompt=None):
         raise RuntimeError("API 挂了")
     client.generate = gen
     r.instance.client = client

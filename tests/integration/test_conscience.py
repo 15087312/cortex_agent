@@ -250,7 +250,7 @@ def test_analyze_feedback_adjusts_confidence(clean_state, monkeypatch):
 
     class MC:
         """真实 LLM 接口实现（注入，返回确认 JSON）"""
-        async def generate(self, prompt, max_tokens=0, temperature=0):
+        async def generate(self, prompt, max_tokens=0, temperature=0, system_prompt=None):
             return '{"confirmed": ["%s"], "contradicted": []}' % nid
 
     reducer = EventReducer(model_client=MC())
@@ -271,7 +271,7 @@ def test_analyze_feedback_json_parse_fail(clean_state, monkeypatch):
     from modules.memory.event_reducer import EventReducer
 
     class MC:
-        async def generate(self, prompt, max_tokens=0, temperature=0):
+        async def generate(self, prompt, max_tokens=0, temperature=0, system_prompt=None):
             return "不是 JSON"
 
     reducer = EventReducer(model_client=MC())

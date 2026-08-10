@@ -1255,15 +1255,21 @@ class ModelRunner:
             last_error = None
             for attempt in range(self.GENERATE_RETRIES):
                 try:
-                    full_prompt = f"{system_prompt}\n\n{prompt}"
                     # Debug: log prompt for supervisor to verify tool section is present
                     if self.tier == "supervisor":
+                        _preview = f"{system_prompt}\n\n{prompt}"
                         logger.info(
                             f"[ModelRunner] {self.model_id} supervisor prompt preview (first 2000 chars):\n"
-                            f"{full_prompt[:2000]}\n"
-                            f"...(total {len(full_prompt)} chars)"
+                            f"{_preview[:2000]}\n"
+                            f"...(total {len(_preview)} chars)"
                         )
-                    result = await client.generate(full_prompt, max_tokens=4096)
+                    # 直接把 role 专属 system prompt 作为 system 消息，prompt 作为 user 消息；
+                    # 不能再拼进 user 消息（会造成 system 双份注入）。
+                    result = await client.generate(
+                        prompt,
+                        max_tokens=4096,
+                        system_prompt=system_prompt,
+                    )
                     return result if isinstance(result, str) else str(result)
                 except Exception as e:
                     last_error = e

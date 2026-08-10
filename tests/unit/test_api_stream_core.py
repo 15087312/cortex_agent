@@ -85,6 +85,23 @@ def test_send_json_from_thread_success():
     box["cm"]._loop.call_soon_threadsafe(box["cm"]._loop.stop)
 
 
+async def test_send_json_from_thread_on_loop_thread_not_blocked():
+    """回归：事件循环线程内调用 send_json_from_thread 不得阻塞/超时。
+
+    曾在对话中触发：模型推理推送 thinking 事件（_push_reasoning）在事件循环
+    线程内调用本方法，run_coroutine_threadsafe + future.result() 自锁，
+    阻塞循环 5s 后抛 TimeoutError（空错误消息）→ 对话报错。
+    """
+    cm = ConnectionManager()
+    ws = AsyncMock()
+    await cm.connect("s1", ws)
+    ok = cm.send_json_from_thread("s1", {"msg": "x"})
+    assert ok is True
+    await asyncio.sleep(0.05)
+    ws.send_json.assert_awaited_once_with({"msg": "x"})
+    await cm.disconnect("s1")
+
+
 async def test_broadcast():
     cm = ConnectionManager()
     ws1 = AsyncMock()

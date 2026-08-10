@@ -589,3 +589,78 @@ API Key 明存 localStorage → 改内存；静默 catch → 各调用处加错�
 2. **`vite build` 失败 = 用户永远在用旧版前端**——任何部署前先跑一次 build，CI/提交流程应包含构建校验；
 3. 排查重复属性等模板错误，用 grep 全项目扫描（`class="[^"]*" class=`）一次抓全；
 4. SPA 产物：index.html 必须 no-cache（server.py 已做），带 hash 资源可 immutable；但**已打开的页面不会自动刷新**，升级后需告知用户刷新/重启窗口。
+
+
+## 24. send_json_from_thread 事件循环线程内自锁 → 对话报错（后端）
+
+**报错（ERROR，错误消息为空）：**
+```
+2026-08-10 17:34:32 - stream_api - ERROR - [ConnectionManager] send_json_from_thread 失败:
+```
+冒号后**空消息**是关键特征——这是 `concurrent.futures.TimeoutError`（`future.result(timeout)` 超时抛出，`str()` 为空）。
+
+**现象：** 对话中（尤其 deepseek 推理模型返回 `reasoning_content` 时）后端日志刷该错误，思考事件推送被卡 5 秒。
+
+**根因：** `modules/thinking/api_stream.py` `ConnectionManager.send_json_from_thread()` 用
+`asyncio.run_coroutine_threadsafe(_send(), self._loop)` + `future.result(timeout=5.0)` 同步阻塞发送，
+设计目标是供**非事件循环线程**（daemon 线程）安全调用。但 `_push_reasoning`
+（`modules/thinking/core/model_runner.py:1204`，模型推理时推送 thinking 事件）在**事件循环线程内**调用它：
+
+- `run_coroutine_threadsafe` 把 `_send` 调度到事件循环；
+- `future.result(timeout=5)` **阻塞事件循环自身线程** → `_send` 永远没机会执行；
+- 5 秒后 `TimeoutError`，空错误消息，每次推送卡 5 秒。
+
+即"自己调度自己 + 自己阻塞自己"的自锁（`run_coroutine_threadsafe` 官方说明只能在非循环线程调用）。
+
+**为什么测试没抓到：**
+- `tests/unit/test_api_stream_core.py` 只测了三条路径：无事件循环、无连接、**独立工作线程**调用
+  （`test_send_json_from_thread_success` 恰好走的是能正常工作的跨线程路径）；
+- **事件循环线程内调用**这条路径没有测试——必须真实跑对话、模型带 `reasoning_content` 才会触发，
+  且是运行期时序问题（要真把循环卡 5s 才报错），单测/集成测试都构造不出。
+
+**修复：** `send_json_from_thread` 入口检测是否已运行在事件循环线程上（`asyncio.get_running_loop() is self._loop`）：
+- 是 → `asyncio.create_task(_fire_and_forget())` 异步调度发送，**不阻塞**，立即返回 True；
+- 否（后台线程）→ 保持原 `run_coroutine_threadsafe + future.result(timeout)` 语义。
+
+**验证：** 新增回归测试 `test_send_json_from_thread_on_loop_thread_not_blocked`
+（`tests/unit/test_api_stream_core.py`）——在 async 上下文（事件循环线程）内调用，断言立即返回 True
+且消息送达；相关 13 个用例全过，全量 1460 通过。
+
+**经验：**
+1. **凡是"跨线程安全"的同步入口，都要同时考虑"在事件循环线程内被调用"的分支**——`run_coroutine_threadsafe`/`loop.call_soon_threadsafe` 从循环线程调用自身就是死锁/超时；
+2. **空错误消息往往来自 `TimeoutError`/`CancelledError`**（`str()` 为空）——日志里"失败: "后面什么都没有时，优先怀疑同步等待超时；
+3. **测试要覆盖"生产里真实调用上下文"**——只测另一条线程的成功路径，会漏掉事件循环线程内的自锁场景。
+
+
+## 25. 工具型单次 LLM 调用被统一套上 agent 人设（后端）
+
+**现象：** 记忆收纳/对话摘要/安全审查/良知反思等**纯工具型**单次 LLM 调用，模型实际收到的 system prompt 是无关的 agent 人设（总指挥/代码专家），与任务要求的身份（记忆分析专家/摘要助手/安全专家）冲突，且白白消耗 token（人格+工具表+安全规则+能力表+价值观全带上）。
+
+**根因：** 三个模型客户端的 `generate()` 快捷方法**内部硬编码** system prompt：
+- `LargeModelClient.generate` → `PromptRequest(tier="large", role="orchestrator")`
+- `SmallModelClient.generate` → `tier="expert", role="code_writer"`
+- `MediumModelClient.generate` → `tier="supervisor", role="code_supervisor"`
+
+而调用方（`EventReducer._call_llm`、`context_slicer._summarize_chunk`、`tool_security_gate._check_llm_review`、`conscience.think/analyze_feedback`）只传了自足的任务 prompt，把 system prompt 留给客户端默认 → 每个工具任务都套上无关人设。
+
+**主对话流是正确的（非统一）：** `ModelRunner._build_system_prompt_for_mode()` → `PromptComposer.build_system(PromptRequest(tier=self.tier, role=self.identity.role))`，走 `chat()`/`chat_stream()` 时 system 消息按角色区分（总指挥/代码主管/各专家），`roles.yaml` 人格各不相同，支持设置页自定义人设——主模型提示词构造正常，问题只在通用 `generate()` 快捷路径。
+
+**修复：**
+1. 三个客户端 `generate()` 新增 `system_prompt: str = None` 参数——**非空时覆盖**自动人设，默认行为不变（向后兼容）；
+2. 各工具调用方传入专用精简 system prompt（各自"只做 X、不执行工具、只输出指定格式"）：
+   - `event_reducer` → `MEMORY_REDUCE_SYSTEM_PROMPT`（记忆收纳）
+   - `context_slicer` → 摘要助手专用（对话摘要）
+   - `tool_security_gate` → 安全审查专用
+   - `conscience` → `CONSCIENCE_SYSTEM_PROMPT`（良知/因果反馈）
+3. `model_runner._generate` 传统回退路径：原来把 `system_prompt + prompt` 拼成一个 user 字符串传给 `generate()`，会再被自动注入一份 system（**双份 system prompt**）——改为 `system_prompt=system_prompt` 分开传，消除重复。
+
+**为什么测试没抓到：**
+- 主对话流本就走 `chat()`（自带 role prompt），`generate()` 的硬编码人设只在工具型调用路径生效，测试大多断言"被调用/返回内容"，**不检查传入的 system prompt 内容**；
+- 新增参数后部分测试 mock 签名不兼容（`generate()` 不接收 `system_prompt`），被 `assert` 抓到并同步更新了 mock 签名（`test_toolgate.py`、`test_conscience.py`、`test_model_runner_core.py`）。
+
+**验证：** 新增 `test_reduce_uses_dedicated_system_prompt`（`tests/unit/test_event_reducer.py`）断言记忆收纳调用带专用 system prompt；全量 unit 1095 通过。
+
+**经验：**
+1. **"模型客户端通用方法"的人设默认值，只应服务主对话流**——凡把通用 `generate()` 当"单次 LLM 调用"用的工具任务，都必须显式传自己的 system prompt，否则会继承无关 agent 人设（身份冲突 + 浪费 token）；
+2. **给通用方法加新参数时，先 grep 所有 mock/调用方**——测试里的替身类 mock 常因签名不兼容直接抛 `unexpected keyword argument`；
+3. **断言"输出内容质量"比断言"被调用"更能抓 prompt 类问题**——§20 同款经验。

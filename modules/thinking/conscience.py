@@ -46,6 +46,15 @@ CONSCIENCE_PROMPT = """你是总指挥，正在回忆过去的经验。
 
 直接输出内心独白，不要任何前缀或说明。"""
 
+# 良知/反馈是独立单次调用，不能用模型客户端默认的 agent 人设（code_writer 等），
+# 否则会诱导模型按无关身份作答；用专用精简 system prompt。
+CONSCIENCE_SYSTEM_PROMPT = """你是系统核心角色的内部反思层（良知），负责分析过往经验并输出内心独白或因果判断。
+
+规则：
+1. 不执行任何工具，不回复用户，不发起对话。
+2. 严格按用户消息中给出的格式输出（内心独白文本，或 JSON 判断）。
+3. 只输出要求的内容，不要多余文字、不要标签。"""
+
 
 @dataclass
 class ConscienceGuidance:
@@ -234,7 +243,12 @@ class Conscience:
             )
 
             try:
-                text = await reducer._model_client.generate(prompt, max_tokens=500, temperature=0.1)
+                text = await reducer._model_client.generate(
+                    prompt,
+                    max_tokens=500,
+                    temperature=0.1,
+                    system_prompt=CONSCIENCE_SYSTEM_PROMPT,
+                )
             except Exception:
                 return
 
@@ -344,7 +358,12 @@ class Conscience:
             )
             
             try:
-                inner_thoughts = await self._model_client.generate(prompt, max_tokens=500, temperature=0.7)
+                inner_thoughts = await self._model_client.generate(
+                    prompt,
+                    max_tokens=500,
+                    temperature=0.7,
+                    system_prompt=CONSCIENCE_SYSTEM_PROMPT,
+                )
                 inner_thoughts = inner_thoughts.strip()
                 if inner_thoughts:
                     logger.info(f"[Conscience] 生成内心独白：{inner_thoughts[:100]}...")

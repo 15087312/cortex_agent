@@ -525,7 +525,19 @@ class ToolSecurityGate:
                 tool_name, tool_params, caller_tier, caller_model_id, dialog_context
             )
             result = await self._lite_model.generate(
-                prompt, max_tokens=512, temperature=0.1
+                prompt,
+                max_tokens=512,
+                temperature=0.1,
+                # 安全审查是独立单次调用，不能用小模型默认的 code_writer 人设（会诱导
+                # 模型按代码专家身份作答）；用专用安全审查 system prompt。
+                system_prompt=(
+                    "你是工具调用安全审查专家，只做风险评估。\n"
+                    "规则：\n"
+                    "1. 不执行任何工具，不回复用户，不发起对话。\n"
+                    "2. 只评估用户消息中给出的工具调用请求。\n"
+                    "3. 严格按用户消息中要求的 JSON 格式输出判断结果。\n"
+                    "4. 只输出要求的内容，不要多余文字。"
+                ),
             )
             return self._parse_review_result(result, tool_name)
         except Exception as e:

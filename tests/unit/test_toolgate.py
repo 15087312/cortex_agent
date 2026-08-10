@@ -33,7 +33,7 @@ class _FixedLiteModel:
     def __init__(self, response='{"approved": true, "reason": "安全", "guidance": ""}'):
         self._response = response
 
-    async def generate(self, prompt, max_tokens=0, temperature=0):
+    async def generate(self, prompt, max_tokens=0, temperature=0, system_prompt=None):
         return self._response
 
     def set_response(self, response):

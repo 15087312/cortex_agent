@@ -82,6 +82,24 @@ class ConnectionManager:
                         return False
             return False
 
+        # 已在事件循环线程上调用（如模型流式推理内 _push_reasoning）：不能再走
+        # run_coroutine_threadsafe + future.result() 同步阻塞——否则会阻塞事件循环自身，
+        # _send 永远无法被调度执行，5s 后超时（TimeoutError，空消息），对话即报错。
+        # 改为调度到循环异步执行（fire-and-forget），不阻塞当前协程。
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            current_loop = None
+
+        if current_loop is not None and current_loop is self._loop:
+            async def _fire_and_forget():
+                try:
+                    await _send()
+                except BaseException:
+                    pass
+            asyncio.create_task(_fire_and_forget())
+            return True
+
         try:
             future = asyncio.run_coroutine_threadsafe(_send(), self._loop)
             return future.result(timeout=timeout)
