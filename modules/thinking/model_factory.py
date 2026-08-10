@@ -329,6 +329,21 @@ class ModelInstanceFactory:
         for model_id in list(self._instances.keys()):
             self.destroy(model_id)
 
+    async def reload_from_config(self) -> None:
+        """按最新配置重建默认三件套实例（模型 API Key/URL/名称变更后调用）。
+
+        模型客户端在构造时读取 settings.LARGE/MEDIUM/SMALL_MODEL_*，
+        配置变更后关闭旧实例（含 aiohttp 会话）并按新配置重建 large/supervisor/expert，
+        保证智能体模式后续对话立即使用新配置，无需重启后端。
+        在途请求持有的旧 client 引用不会崩溃（close 不中断既有请求）。
+        """
+        await self.close_all()
+        try:
+            self.ensure_ready()
+            logger.info("[工厂] 配置变更，已按最新配置重建默认实例")
+        except Exception as e:
+            logger.error(f"[工厂] 配置变更后重建实例失败: {e}")
+
 
 # ---------------------------------------------------------------------------
 # 全局工厂单例

@@ -237,7 +237,9 @@ class TestCaptureScreen:
                         assert result is None or isinstance(result, np.ndarray)
 
     def test_returns_none_on_failure(self):
-        with patch("subprocess.run") as mock_run:
+        # daemon 不可用（取帧返回 None）→ 回退本地 screencapture，本地也失败 → None
+        with patch("subprocess.run") as mock_run, \
+             patch("utils.screen_capture_daemon_client.get_frame_bytes", return_value=None):
             mock_run.side_effect = Exception("no display")
             from infra.mcp.servers.screen_monitor_server import _capture_screen
             result = _capture_screen()

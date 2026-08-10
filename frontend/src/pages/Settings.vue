@@ -229,14 +229,101 @@ async function openFolder(folder) {
   } catch (e) { toast.show('打开失败', 'error') }
 }
 
+const installingDeps = ref(false)
+const installResult = ref(null)
+
+async function installVoiceDeps() {
+  installingDeps.value = true
+  installResult.value = null
+  try {
+    const r = await endpoints.installVoiceDeps()
+    if (r.success) {
+      installResult.value = r.data
+      toast.show(r.data.message, 'success')
+    } else {
+      installResult.value = r.data
+      toast.show('安装失败: ' + (r.data?.message || ''), 'error')
+    }
+  } catch (e) {
+    toast.show('安装失败: ' + (e.message || ''), 'error')
+  } finally {
+    installingDeps.value = false
+  }
+}
+
+/* ── 主模型配置（大/中/小三层，持久化到 ~/.cortex/settings.json）── */
+const modelTiers = [
+  { key: 'LARGE', label: '大模型', hint: '主对话 / 编排' },
+  { key: 'MEDIUM', label: '中模型', hint: '主管' },
+  { key: 'SMALL', label: '小模型', hint: '专家 / 轻量' },
+]
+const modelForm = ref({
+  LARGE: { API_KEY: '', API_URL: '', NAME: '', API_FORMAT: '' },
+  MEDIUM: { API_KEY: '', API_URL: '', NAME: '' },
+  SMALL: { API_KEY: '', API_URL: '', NAME: '' },
+})
+const modelSaving = ref(false)
+
+function loadModelForm() {
+  const c = configStore.config
+  for (const t of modelTiers) {
+    modelForm.value[t.key].API_KEY = _str(c[t.key + '_MODEL_API_KEY'], '')
+    modelForm.value[t.key].API_URL = _str(c[t.key + '_MODEL_API_URL'], '')
+    modelForm.value[t.key].NAME = _str(c[t.key + '_MODEL_NAME'], '')
+    if (t.key === 'LARGE') modelForm.value[t.key].API_FORMAT = _str(c.LARGE_MODEL_API_FORMAT, '')
+  }
+}
+
+async function saveModelForm() {
+  const c = configStore.config
+  modelSaving.value = true
+  try {
+    const updates = []
+    for (const t of modelTiers) {
+      const suffixes = ['API_KEY', 'API_URL', 'NAME']
+      if (t.key === 'LARGE') suffixes.push('API_FORMAT')
+      for (const suffix of suffixes) {
+        const key = t.key + '_MODEL_' + suffix
+        const val = (modelForm.value[t.key][suffix] || '').trim()
+        const old = _str(c[t.key + '_MODEL_' + suffix], '')
+        if (val !== old) updates.push([key, val])
+      }
+    }
+    if (updates.length === 0) { toast.show('主模型配置无变化', 'info'); return }
+    // 串行保存：每个 PUT 触发后端重建模型实例，并发会交错导致竞态
+    for (const [k, v] of updates) {
+      await configStore.updateConfig(k, v)
+    }
+    toast.show('主模型配置已保存（智能体模式立即生效，纯对话新会话生效）', 'success')
+    loadModelForm()
+  } catch (e) { toast.show('保存失败: ' + (e.body?.error?.message || e.status), 'error') }
+  finally { modelSaving.value = false }
+}
+
 /* ── 视觉模型 ── */
-const visionBackend = segCfg('VISION_BACKEND', 'auto')
+const visionBackend = segCfg('VISION_BACKEND', 'local')
 const visionApiUrl = txtCfg('VISION_API_URL', '')
 const visionApiKey = txtCfg('VISION_API_KEY', '')
 const visionApiModel = txtCfg('VISION_API_MODEL', '')
 const visionApiFormat = txtCfg('VISION_API_FORMAT', '')
 const visionLocalModel = txtCfg('VISION_LOCAL_MODEL', '')
-const visionMlxModel = txtCfg('VISION_MLX_MODEL', 'mlx-community/Qwen2.5-VL-3B-Instruct-4bit')
+const visionMlxModel = txtCfg('VISION_MLX_MODEL', '')
+
+// 本地模型文件夹扫描
+const visionModelList = ref([])
+const visionModelDir = ref('')
+async function loadVisionModels() {
+  try {
+    const r = await endpoints.visionModels()
+    if (r.success) {
+      visionModelList.value = r.data.models || []
+      visionModelDir.value = r.data.dir || ''
+    }
+  } catch {}
+}
+function onVisionBackendChange() {
+  if (visionBackend.value === 'local') loadVisionModels()
+}
 
 /* ── 通用设置 computed（原有） ── */
 const launchAtStartup = computed({
@@ -313,8 +400,10 @@ async function editConfig(k, v) {
 /* ── Init ── */
 onMounted(async () => {
   loadMemoryLibs()
+  loadVisionModels()
   await configStore.loadConfig()
   await configStore.loadModelStatus()
+  loadModelForm()
   const cfgPath = _str(configStore.config[CK.storagePath], '')
   if (cfgPath) { storagePath.value = cfgPath; return }
   try { const info = await endpoints.systemInfo(); storagePath.value = info?.data?.storage_path || info?.storage_path || '' } catch {}
@@ -348,7 +437,7 @@ onMounted(async () => {
           <div class="settings-group-title">用户称呼</div>
           <div class="setting-row">
             <div class="lbl"><div class="t">用户称呼</div><div class="d">例如你的名字或昵称</div></div>
-            <div class="setting-ctl"><input class="input" v-model="userName" style="width:200px" /></div>
+            <div class="setting-ctl"><input class="input w-200" v-model="userName" /></div>
           </div>
         </div>
         <div class="settings-divider"></div>
@@ -379,6 +468,33 @@ onMounted(async () => {
                 <button :class="{ on: execMode === 'control' }" @click="execMode = 'control'" title="MEDIUM+ 工具需单独确认">完全控制</button>
               </div>
             </div>
+          </div>
+        </div>
+        <div class="settings-divider"></div>
+        <div class="settings-group">
+          <div class="settings-group-title">主模型配置</div>
+          <p class="settings-hint">大/中/小三层模型的 API Key、接口地址与模型名。保存后写入 <code>~/.cortex/settings.json</code>，智能体模式立即生效，纯对话模式新会话生效（无需重启）。</p>
+          <div v-for="t in modelTiers" :key="t.key" class="model-tier-block">
+            <div class="model-tier-title">{{ t.label }}<span class="setting-group-title-hint"> —— {{ t.hint }}</span></div>
+            <div class="setting-row">
+              <div class="lbl"><div class="t">API Key</div></div>
+              <div class="setting-ctl"><input class="input w-280" type="password" v-model="modelForm[t.key].API_KEY" placeholder="sk-..." autocomplete="off" /></div>
+            </div>
+            <div class="setting-row">
+              <div class="lbl"><div class="t">API URL</div></div>
+              <div class="setting-ctl"><input class="input w-360" v-model="modelForm[t.key].API_URL" placeholder="https://api.deepseek.com/v1/chat/completions" /></div>
+            </div>
+            <div class="setting-row">
+              <div class="lbl"><div class="t">模型名</div></div>
+              <div class="setting-ctl"><input class="input w-220" v-model="modelForm[t.key].NAME" placeholder="deepseek-v4-flash" /></div>
+            </div>
+            <div v-if="t.key === 'LARGE'" class="setting-row">
+              <div class="lbl"><div class="t">API 格式</div><div class="d">openai / dashscope / anthropic，留空自动检测</div></div>
+              <div class="setting-ctl"><input class="input w-200" v-model="modelForm.LARGE.API_FORMAT" placeholder="openai" /></div>
+            </div>
+          </div>
+          <div class="text-right">
+            <button class="btn btn-sm btn-primary" :disabled="modelSaving" @click="saveModelForm">{{ modelSaving ? '保存中…' : '保存主模型配置' }}</button>
           </div>
         </div>
       </div>
@@ -428,9 +544,9 @@ onMounted(async () => {
               <div class="setting-ctl ctl-flex">
                 <label class="toggle-switch"><input type="checkbox" v-model="globalDefault.scheduleOn" /><span class="toggle-slider"></span></label>
                 <span class="text-muted">时间</span>
-                <input class="input" v-model="globalDefault.scheduleTime" style="width:80px" placeholder="14:00" :disabled="!globalDefault.scheduleOn" title="触发时刻，24小时制 HH:MM，如 14:00" />
+                <input class="input w-80" v-model="globalDefault.scheduleTime" placeholder="14:00" :disabled="!globalDefault.scheduleOn" title="触发时刻，24小时制 HH:MM，如 14:00" />
                 <span class="text-muted">± 误差</span>
-                <input class="input" type="number" v-model.number="globalDefault.scheduleJitter" style="width:60px" :disabled="!globalDefault.scheduleOn" title="到点前后误差窗口（分钟），避免精确到秒的偶发" />
+                <input class="input w-60" type="number" v-model.number="globalDefault.scheduleJitter" :disabled="!globalDefault.scheduleOn" title="到点前后误差窗口（分钟），避免精确到秒的偶发" />
                 <span class="text-muted">min</span>
               </div>
             </div>
@@ -438,13 +554,13 @@ onMounted(async () => {
               <div class="lbl"><div class="t">屏幕触发</div><div class="d">屏幕变化比例达到阈值、且随机概率命中时触发</div></div>
               <div class="setting-ctl ctl-flex">
                 <label class="toggle-switch"><input type="checkbox" v-model="globalDefault.screenOn" /><span class="toggle-slider"></span></label>
-                <input class="input" type="number" v-model.number="globalDefault.screenRatio" style="width:50px" :disabled="!globalDefault.screenOn" title="变化阈值（0-1）：屏幕变化比例达到该值才可能触发" />
+                <input class="input w-50" type="number" v-model.number="globalDefault.screenRatio" :disabled="!globalDefault.screenOn" title="变化阈值（0-1）：屏幕变化比例达到该值才可能触发" />
                 <span class="text-muted">阈值</span>
-                <input class="input" type="number" v-model.number="globalDefault.screenProb" style="width:50px" :disabled="!globalDefault.screenOn" title="触发概率（0-1）：条件满足后随机命中的概率" />
+                <input class="input w-50" type="number" v-model.number="globalDefault.screenProb" :disabled="!globalDefault.screenOn" title="触发概率（0-1）：条件满足后随机命中的概率" />
                 <span class="text-muted">概率</span>
-                <input class="input" type="number" v-model.number="globalDefault.screenInterval" style="width:50px" :disabled="!globalDefault.screenOn" title="判定间隔（秒）：两次屏幕规则判定的最小间隔" />
+                <input class="input w-50" type="number" v-model.number="globalDefault.screenInterval" :disabled="!globalDefault.screenOn" title="判定间隔（秒）：两次屏幕规则判定的最小间隔" />
                 <span class="text-muted">间隔</span>
-                <input class="input" type="number" v-model.number="globalDefault.screenCooldown" style="width:50px" :disabled="!globalDefault.screenOn" title="冷却（分钟）：屏幕规则触发后该规则的额外冷却" />
+                <input class="input w-50" type="number" v-model.number="globalDefault.screenCooldown" :disabled="!globalDefault.screenOn" title="冷却（分钟）：屏幕规则触发后该规则的额外冷却" />
                 <span class="text-muted">冷却</span>
               </div>
             </div>
@@ -452,11 +568,11 @@ onMounted(async () => {
               <div class="lbl"><div class="t">空闲触发</div><div class="d">用户空闲超过设定时长、且随机概率命中时触发</div></div>
               <div class="setting-ctl ctl-flex">
                 <label class="toggle-switch"><input type="checkbox" v-model="globalDefault.idleOn" /><span class="toggle-slider"></span></label>
-                <input class="input" type="number" v-model.number="globalDefault.idleMinutes" style="width:50px" :disabled="!globalDefault.idleOn" title="空闲时长（分钟）：用户无操作达到该时长才可能触发" />
+                <input class="input w-50" type="number" v-model.number="globalDefault.idleMinutes" :disabled="!globalDefault.idleOn" title="空闲时长（分钟）：用户无操作达到该时长才可能触发" />
                 <span class="text-muted">空闲</span>
-                <input class="input" type="number" v-model.number="globalDefault.idleProb" style="width:50px" :disabled="!globalDefault.idleOn" title="触发概率（0-1）：满足空闲后随机命中的概率" />
+                <input class="input w-50" type="number" v-model.number="globalDefault.idleProb" :disabled="!globalDefault.idleOn" title="触发概率（0-1）：满足空闲后随机命中的概率" />
                 <span class="text-muted">概率</span>
-                <input class="input" type="number" v-model.number="globalDefault.idleInterval" style="width:50px" :disabled="!globalDefault.idleOn" title="判定间隔（秒）：两次空闲规则判定的最小间隔" />
+                <input class="input w-50" type="number" v-model.number="globalDefault.idleInterval" :disabled="!globalDefault.idleOn" title="判定间隔（秒）：两次空闲规则判定的最小间隔" />
                 <span class="text-muted">间隔</span>
               </div>
             </div>
@@ -464,7 +580,7 @@ onMounted(async () => {
               <div class="lbl"><div class="t">时段触发</div><div class="d">处于设定时段内、且随机概率命中时触发；跨午夜（如 22:00-02:00）也支持</div></div>
               <div class="setting-ctl ctl-flex">
                 <label class="toggle-switch"><input type="checkbox" v-model="globalDefault.windowsOn" /><span class="toggle-slider"></span></label>
-                <input class="input" v-model="globalDefault.timeWindowsText" style="flex:1;min-width:220px" placeholder="09:00-12:00@0.5,14:00-18:00@0.8" :disabled="!globalDefault.windowsOn" title="格式：开始-结束@概率，多个用逗号分隔。概率省略默认 1.0" />
+                <input class="input w-flex-220" v-model="globalDefault.timeWindowsText" placeholder="09:00-12:00@0.5,14:00-18:00@0.8" :disabled="!globalDefault.windowsOn" title="格式：开始-结束@概率，多个用逗号分隔。概率省略默认 1.0" />
               </div>
             </div>
             <div class="text-right">
@@ -508,11 +624,11 @@ onMounted(async () => {
           </div>
           <div class="setting-row">
             <div class="lbl"><div class="t">触发冷却(秒)</div></div>
-            <div class="setting-ctl"><input class="input" type="number" v-model.number="triggerCooldown" style="width:110px;text-align:right" /></div>
+            <div class="setting-ctl"><input class="input w-110" type="number" v-model.number="triggerCooldown" /></div>
           </div>
           <div class="setting-row">
             <div class="lbl"><div class="t">最小变化强度</div></div>
-            <div class="setting-ctl"><input class="input" type="number" v-model.number="triggerMinIntensity" style="width:110px;text-align:right" /></div>
+            <div class="setting-ctl"><input class="input w-110" type="number" v-model.number="triggerMinIntensity" /></div>
           </div>
           <div class="setting-row">
             <div class="lbl"><div class="t">空间增强</div><div class="d">心理活动额外输出当前空间位置/动作序列</div></div>
@@ -547,31 +663,31 @@ onMounted(async () => {
           </div>
           <div class="setting-row">
             <div class="lbl"><div class="t">热键</div></div>
-            <div class="setting-ctl"><input class="input" v-model="voiceHotkey" style="width:120px" /></div>
+            <div class="setting-ctl"><input class="input w-120" v-model="voiceHotkey" /></div>
           </div>
           <div class="setting-row">
             <div class="lbl"><div class="t">唤醒词</div><div class="d">说话以唤醒词开头</div></div>
-            <div class="setting-ctl"><input class="input" v-model="voiceWakePrefix" style="width:120px" /></div>
+            <div class="setting-ctl"><input class="input w-120" v-model="voiceWakePrefix" /></div>
           </div>
           <div class="setting-row">
             <div class="lbl"><div class="t">结束词</div><div class="d">说话以结束词结尾</div></div>
-            <div class="setting-ctl"><input class="input" v-model="voiceWakeSuffix" style="width:120px" /></div>
+            <div class="setting-ctl"><input class="input w-120" v-model="voiceWakeSuffix" /></div>
           </div>
           <div class="setting-row">
             <div class="lbl"><div class="t">语言</div></div>
-            <div class="setting-ctl"><input class="input" v-model="voiceLanguage" style="width:120px" /></div>
+            <div class="setting-ctl"><input class="input w-120" v-model="voiceLanguage" /></div>
           </div>
           <div class="setting-row">
             <div class="lbl"><div class="t">能量阈值</div></div>
-            <div class="setting-ctl"><input class="input" type="number" v-model.number="voiceEnergy" style="width:110px;text-align:right" /></div>
+            <div class="setting-ctl"><input class="input w-110" type="number" v-model.number="voiceEnergy" /></div>
           </div>
           <div class="setting-row">
             <div class="lbl"><div class="t">超时(秒)</div></div>
-            <div class="setting-ctl"><input class="input" type="number" v-model.number="voiceTimeout" style="width:110px;text-align:right" /></div>
+            <div class="setting-ctl"><input class="input w-110" type="number" v-model.number="voiceTimeout" /></div>
           </div>
           <div class="setting-row">
             <div class="lbl"><div class="t">最长录音(秒)</div></div>
-            <div class="setting-ctl"><input class="input" type="number" v-model.number="voiceMaxDuration" style="width:110px;text-align:right" /></div>
+            <div class="setting-ctl"><input class="input w-110" type="number" v-model.number="voiceMaxDuration" /></div>
           </div>
           <div class="setting-row">
             <div class="lbl"><div class="t">检测到结束词停止</div></div>
@@ -589,20 +705,39 @@ onMounted(async () => {
           <template v-if="voiceBackend === 'api'">
             <div class="setting-row">
               <div class="lbl"><div class="t">API Key</div></div>
-              <div class="setting-ctl"><input class="input" v-model="voiceApiKey" type="password" style="width:240px" placeholder="OpenAI 兼容 /audio/transcriptions" /></div>
+              <div class="setting-ctl"><input class="input w-240" v-model="voiceApiKey" type="password" placeholder="OpenAI 兼容 /audio/transcriptions" /></div>
             </div>
             <div class="setting-row">
               <div class="lbl"><div class="t">API URL</div><div class="d">留空用 OpenAI</div></div>
-              <div class="setting-ctl"><input class="input" v-model="voiceApiUrl" style="width:240px" placeholder="https://api.openai.com/v1/audio/transcriptions" /></div>
+              <div class="setting-ctl"><input class="input w-240" v-model="voiceApiUrl" placeholder="https://api.openai.com/v1/audio/transcriptions" /></div>
             </div>
             <div class="setting-row">
               <div class="lbl"><div class="t">模型名</div><div class="d">留空用 whisper-1</div></div>
-              <div class="setting-ctl"><input class="input" v-model="voiceApiModel" style="width:200px" /></div>
+              <div class="setting-ctl"><input class="input w-200" v-model="voiceApiModel" /></div>
             </div>
           </template>
           <div class="setting-row">
             <div class="lbl"><div class="t">语音模型文件夹</div></div>
-            <div class="setting-ctl"><button class="btn btn-sm" @click="openFolder('voice')">打开文件夹</button></div>
+            <div class="setting-ctl flex-gap-8">
+              <button class="btn btn-sm" @click="openFolder('voice')">打开文件夹</button>
+              <button class="btn btn-sm btn-accent" @click="installVoiceDeps" :disabled="installingDeps">
+                {{ installingDeps ? '安装中...' : '一键安装依赖' }}
+              </button>
+            </div>
+          </div>
+          <div v-if="installResult" class="setting-row">
+            <div class="lbl"></div>
+            <div class="setting-ctl">
+              <div class="install-result" :class="installResult.success ? 'success' : 'error'">
+                <div v-for="(r, i) in installResult.results" :key="i" class="install-item">
+                  <span class="pkg-name">{{ r.package }}</span>
+                  <span class="pkg-status" :class="r.status">
+                    {{ r.status === 'already_installed' ? '✓ 已安装' : r.status === 'installed' ? '✓ 已安装' : '✗ 失败' }}
+                  </span>
+                </div>
+                <div class="install-msg">{{ installResult.message }}</div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -610,42 +745,62 @@ onMounted(async () => {
 
         <div class="settings-group">
           <div class="settings-group-title">视觉模型</div>
+          <p class="settings-hint">切换模型后需重启应用才能生效</p>
           <div class="setting-row">
             <div class="lbl"><div class="t">后端</div></div>
             <div class="setting-ctl">
               <div class="seg">
-                <button :class="{ on: visionBackend === 'auto' }" @click="visionBackend = 'auto'" title="自动选择">自动</button>
-                <button :class="{ on: visionBackend === 'api' }" @click="visionBackend = 'api'" title="OpenAI 兼容 API">API</button>
-                <button :class="{ on: visionBackend === 'mlx' }" @click="visionBackend = 'mlx'" title="Apple Silicon MLX 本地">MLX</button>
-                <button :class="{ on: visionBackend === 'transformers' }" @click="visionBackend = 'transformers'" title="Transformers 本地">本地</button>
-                <button :class="{ on: visionBackend === 'mock' }" @click="visionBackend = 'mock'" title="测试">Mock</button>
+                <button :class="{ on: visionBackend === 'api' }" @click="visionBackend = 'api'; onVisionBackendChange()" title="OpenAI 兼容 API">API</button>
+                <button :class="{ on: visionBackend === 'local' }" @click="visionBackend = 'local'; onVisionBackendChange()" title="本地模型（自动检测）">本地</button>
               </div>
             </div>
           </div>
-          <div class="setting-row">
-            <div class="lbl"><div class="t">API URL</div></div>
-            <div class="setting-ctl"><input class="input" v-model="visionApiUrl" style="width:240px" placeholder="https://..." /></div>
-          </div>
-          <div class="setting-row">
-            <div class="lbl"><div class="t">API Key</div></div>
-            <div class="setting-ctl"><input class="input" v-model="visionApiKey" type="password" style="width:240px" /></div>
-          </div>
-          <div class="setting-row">
-            <div class="lbl"><div class="t">API 模型名</div></div>
-            <div class="setting-ctl"><input class="input" v-model="visionApiModel" style="width:200px" /></div>
-          </div>
-          <div class="setting-row">
-            <div class="lbl"><div class="t">API 格式</div></div>
-            <div class="setting-ctl"><input class="input" v-model="visionApiFormat" style="width:160px" placeholder="openai / dashscope" /></div>
-          </div>
-          <div class="setting-row">
-            <div class="lbl"><div class="t">本地模型名</div></div>
-            <div class="setting-ctl"><input class="input" v-model="visionLocalModel" style="width:240px" /></div>
-          </div>
-          <div class="setting-row">
-            <div class="lbl"><div class="t">MLX 模型</div></div>
-            <div class="setting-ctl"><input class="input" v-model="visionMlxModel" style="width:280px" /></div>
-          </div>
+          <!-- API 模式 -->
+          <template v-if="visionBackend === 'api'">
+            <div class="setting-row">
+              <div class="lbl"><div class="t">API URL</div><div class="d">留空用 OpenAI</div></div>
+              <div class="setting-ctl"><input class="input w-280" v-model="visionApiUrl" placeholder="https://api.openai.com/v1/chat/completions" /></div>
+            </div>
+            <div class="setting-row">
+              <div class="lbl"><div class="t">API Key</div></div>
+              <div class="setting-ctl"><input class="input w-280" v-model="visionApiKey" type="password" placeholder="sk-..." /></div>
+            </div>
+            <div class="setting-row">
+              <div class="lbl"><div class="t">模型名</div><div class="d">如 gpt-4o, qwen-vl-max</div></div>
+              <div class="setting-ctl"><input class="input w-240" v-model="visionApiModel" /></div>
+            </div>
+            <div class="setting-row">
+              <div class="lbl"><div class="t">API 格式</div><div class="d">openai / dashscope，留空自动检测</div></div>
+              <div class="setting-ctl"><input class="input w-160" v-model="visionApiFormat" placeholder="openai" /></div>
+            </div>
+          </template>
+          <!-- 本地模式 -->
+          <template v-if="visionBackend === 'local'">
+            <div class="setting-row">
+              <div class="lbl"><div class="t">模型文件夹</div><div class="d">将模型文件夹放入此目录，自动检测</div></div>
+              <div class="setting-ctl flex-gap-8">
+                <button class="btn btn-sm" @click="openFolder('vision')">打开文件夹</button>
+                <button class="btn btn-sm" @click="loadVisionModels" title="刷新模型列表"><Icon name="refresh" :size="14" /></button>
+              </div>
+            </div>
+            <div v-if="visionModelDir" class="setting-row">
+              <div class="lbl"><div class="t">路径</div></div>
+              <div class="setting-ctl"><code class="text-xs text-muted">{{ visionModelDir }}</code></div>
+            </div>
+            <div v-if="visionModelList.length" class="setting-row">
+              <div class="lbl"><div class="t">选择模型</div><div class="d">检测到 {{ visionModelList.length }} 个模型</div></div>
+              <div class="setting-ctl">
+                <select class="input w-280" v-model="visionLocalModel">
+                  <option value="">自动选择</option>
+                  <option v-for="m in visionModelList" :key="m.path" :value="m.path">{{ m.name }}{{ m.model_type ? ' (' + m.model_type + ')' : '' }}</option>
+                </select>
+              </div>
+            </div>
+            <div v-if="visionModelList.length === 0" class="setting-row">
+              <div class="lbl"><div class="t">状态</div></div>
+              <div class="setting-ctl"><span class="text-muted text-sm">未检测到模型 — 请将模型文件夹放入上方目录</span></div>
+            </div>
+          </template>
         </div>
 
         <div class="settings-divider"></div>
@@ -658,7 +813,7 @@ onMounted(async () => {
           </div>
           <div class="setting-row">
             <div class="lbl"><div class="t">主会话 ID</div><div class="d">桌宠对话记忆，永不删除</div></div>
-            <div class="setting-ctl"><input class="input" v-model="petSessionId" style="width:160px" /></div>
+            <div class="setting-ctl"><input class="input w-160" v-model="petSessionId" /></div>
           </div>
           <div class="setting-row">
             <div class="lbl"><div class="t">当前状态</div><div class="d">互动影响状态，随时间衰减</div></div>
@@ -689,7 +844,7 @@ onMounted(async () => {
           <div class="settings-group-title">记忆库</div>
           <p class="settings-hint">事件记忆按记忆库隔离存储，可命名多个库并切换当前使用的库。切换即时生效。</p>
           <div class="flex-start-gap">
-            <input class="input" v-model="newLibName" style="flex:1;max-width:260px" placeholder="新记忆库名称" @keydown.enter="createLib" />
+            <input class="input w-flex-260" v-model="newLibName" placeholder="新记忆库名称" @keydown.enter="createLib" />
             <button class="btn btn-sm btn-primary" @click="createLib">新建记忆库</button>
             <button class="btn btn-sm" @click="loadMemoryLibs" title="刷新记忆库列表"><Icon name="refresh" :size="14" /> 刷新</button>
           </div>
@@ -729,19 +884,19 @@ onMounted(async () => {
           <template v-if="ttsBackend === 'api'">
             <div class="setting-row">
               <div class="lbl"><div class="t">API Key</div></div>
-              <div class="setting-ctl"><input class="input" v-model="ttsApiKey" type="password" style="width:240px" placeholder="OpenAI 兼容 /audio/speech" /></div>
+              <div class="setting-ctl"><input class="input w-240" v-model="ttsApiKey" type="password" placeholder="OpenAI 兼容 /audio/speech" /></div>
             </div>
             <div class="setting-row">
               <div class="lbl"><div class="t">API URL</div><div class="d">留空用 OpenAI</div></div>
-              <div class="setting-ctl"><input class="input" v-model="ttsApiUrl" style="width:240px" placeholder="https://api.openai.com/v1/audio/speech" /></div>
+              <div class="setting-ctl"><input class="input w-240" v-model="ttsApiUrl" placeholder="https://api.openai.com/v1/audio/speech" /></div>
             </div>
             <div class="setting-row">
               <div class="lbl"><div class="t">模型名</div><div class="d">留空用 tts-1</div></div>
-              <div class="setting-ctl"><input class="input" v-model="ttsApiModel" style="width:200px" /></div>
+              <div class="setting-ctl"><input class="input w-200" v-model="ttsApiModel" /></div>
             </div>
             <div class="setting-row">
               <div class="lbl"><div class="t">音色</div><div class="d">alloy/echo/fable/onyx/nova/shimmer</div></div>
-              <div class="setting-ctl"><input class="input" v-model="ttsApiVoice" style="width:200px" /></div>
+              <div class="setting-ctl"><input class="input w-200" v-model="ttsApiVoice" /></div>
             </div>
           </template>
         </div>
@@ -766,7 +921,7 @@ onMounted(async () => {
           </div>
           <div class="setting-row">
             <div class="lbl"><div class="t">最大工作线程</div><div class="d">重启后生效</div></div>
-            <div class="setting-ctl"><input class="input" type="number" v-model.number="maxWorkers" style="width:110px;text-align:right" /></div>
+            <div class="setting-ctl"><input class="input w-110" type="number" v-model.number="maxWorkers" /></div>
           </div>
         </div>
       </div>
@@ -943,10 +1098,38 @@ onMounted(async () => {
 .mono-sm { font-family: var(--font-mono); font-size: 12px; }
 .flex-1 { flex: 1; }
 .setting-hint-inline { font-size: 12px; color: var(--text-secondary); }
+.model-tier-block { margin: 4px 0 14px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-inset); }
+.model-tier-title { font-size: 13px; font-weight: 600; color: var(--text-primary); margin-bottom: 8px; }
 .muted-sm { font-size: 12px; color: var(--text-muted); }
 .ml-2 { margin-left: 8px; }
 .flex-1-muted { flex: 1; font-size: 12px; color: var(--text-muted); }
 .key-input { flex: 1; }
 .key-status { margin-top: 8px; font-size: 12px; }
 .key-unconfigured { color: var(--text-muted); }
+
+.w-50 { width: 50px; }
+.w-60 { width: 60px; }
+.w-80 { width: 80px; }
+.w-110 { width: 110px; text-align: right; }
+.w-120 { width: 120px; }
+.w-160 { width: 160px; }
+.w-200 { width: 200px; }
+.w-220 { width: 220px; }
+.w-240 { width: 240px; }
+.w-280 { width: 280px; }
+.w-360 { width: 360px; }
+.w-flex-260 { flex: 1; max-width: 260px; }
+.w-flex-220 { flex: 1; min-width: 220px; }
+.flex-gap-8 { display: flex; gap: 8px; align-items: center; }
+
+/* 依赖安装结果 */
+.install-result { display: flex; flex-direction: column; gap: 4px; padding: 8px 12px; border-radius: 6px; font-size: 12px; }
+.install-result.success { background: rgba(88,166,255,.08); border: 1px solid rgba(88,166,255,.2); }
+.install-result.error { background: rgba(255,88,88,.08); border: 1px solid rgba(255,88,88,.2); }
+.install-item { display: flex; justify-content: space-between; gap: 12px; }
+.pkg-name { color: var(--text-primary); }
+.pkg-status { font-weight: 500; }
+.pkg-status.already_installed, .pkg-status.installed { color: #4ade80; }
+.pkg-status.install_failed, .pkg-status.error { color: #f87171; }
+.install-msg { margin-top: 4px; color: var(--text-secondary); font-style: italic; }
 </style>

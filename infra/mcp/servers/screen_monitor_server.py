@@ -24,6 +24,9 @@ _available = True
 _cv2 = None
 _ocr = None
 
+# 分析图像最大宽度：超宽的 Retina 全分辨率图进入轮廓检测会极慢/卡死（曾 444% CPU）
+_MAX_ANALYZE_WIDTH = 1280
+
 
 def _log_warn(msg: str):
     sys.stderr.write(f"[screen_monitor_server] {msg}\n")
@@ -160,7 +163,14 @@ def _capture_screen():
 
         img_data = np.frombuffer(open(tmp_path, "rb").read(), dtype=np.uint8)
         os.unlink(tmp_path)
-        return _cv2.imdecode(img_data, _cv2.IMREAD_COLOR)
+        img = _cv2.imdecode(img_data, _cv2.IMREAD_COLOR)
+        # 回退路径必须缩放：全分辨率 Retina 图进入轮廓检测会极慢（曾导致 444% CPU 卡死）
+        if img is not None:
+            h, w = img.shape[:2]
+            if w > _MAX_ANALYZE_WIDTH:
+                ratio = _MAX_ANALYZE_WIDTH / w
+                img = _cv2.resize(img, (_MAX_ANALYZE_WIDTH, int(h * ratio)), interpolation=_cv2.INTER_AREA)
+        return img
     except Exception:
         _log_warn("本地 screencapture 异常")
         return None
@@ -169,6 +179,12 @@ def _capture_screen():
 def _detect_elements(img, detect_buttons=True, extract_text=True, confidence=0.3):
     """检测屏幕中的 UI 元素"""
     elements = []
+
+    # 防御：超大图先缩放到分析宽度上限，避免 OCR/轮廓检测在 Retina 全分辨率上卡死
+    h, w = img.shape[:2]
+    if w > _MAX_ANALYZE_WIDTH:
+        ratio = _MAX_ANALYZE_WIDTH / w
+        img = _cv2.resize(img, (_MAX_ANALYZE_WIDTH, max(1, int(h * ratio))), interpolation=_cv2.INTER_AREA)
     height, width = img.shape[:2]
 
     # 1. OCR 文字区域检测（应用 CLAHE 增强对比度）
@@ -223,8 +239,11 @@ def _detect_elements(img, detect_buttons=True, extract_text=True, confidence=0.3
         _, binary = _cv2.threshold(gray, 200, 255, _cv2.THRESH_BINARY_INV)
         contours, _ = _cv2.findContours(binary, _cv2.RETR_EXTERNAL, _cv2.CHAIN_APPROX_SIMPLE)
 
-        for contour in contours:
-            x, y, w, h = _cv2.boundingRect(contour)
+        # 轮廓按包围盒面积降序，再截取前 200：findContours 返回顺序是扫描序而非面积序，
+        # 直接 [:200] 会漏掉排在后面的真实按钮（前 200 可能是小噪点）
+        _boxes = [(_cv2.boundingRect(c), _cv2.contourArea(c)) for c in contours]
+        _boxes.sort(key=lambda b: b[1], reverse=True)
+        for (x, y, w, h), _area in _boxes[:200]:
             if w < 30 or h < 15 or w > width * 0.8 or h > height * 0.8:
                 continue
             aspect_ratio = w / h

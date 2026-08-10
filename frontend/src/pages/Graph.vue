@@ -106,9 +106,9 @@ onMounted(loadSessions)
     </div>
     <div class="page-body" v-if="!loading">
       <div class="card">
-        <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
-          <span>多 Agent 会话执行图谱（谁呼唤谁 / 谁回复谁）</span>
-          <select v-model="selected" class="input" style="width:240px;font-size:13px" @change="onSessionChange">
+          <div class="card-header card-header-between">
+            <span>多 Agent 会话执行图谱（谁呼唤谁 / 谁回复谁）</span>
+            <select v-model="selected" class="input w-240 text-sm" @change="onSessionChange">
             <option v-for="s in sessions" :key="s.session_id" :value="s.session_id">{{ s.title || s.session_id.slice(0, 16) }}</option>
           </select>
         </div>
@@ -157,32 +157,32 @@ onMounted(loadSessions)
           </div>
 
           <!-- 空态 -->
-          <div v-if="!graph.nodes.length" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--text-muted)">该会话暂无执行图谱（对话触发多 Agent 协作后自动生成）</div>
+          <div v-if="!graph.nodes.length" class="graph-empty">该会话暂无执行图谱（对话触发多 Agent 协作后自动生成）</div>
         </div>
-        <div v-else style="text-align:center;padding:60px;color:var(--text-muted)">加载中...</div>
+        <div v-else class="graph-loading">加载中...</div>
 
         <!-- 图例 -->
-        <div style="display:flex;gap:20px;margin-top:12px;font-size:12px;color:var(--text-muted);align-items:center">
+        <div class="graph-legend">
           <span><span class="lg-call"></span> 呼唤（上级委托下级执行）</span>
           <span><span class="lg-reply"></span> 回复（结果反馈）</span>
-          <span v-for="t in TIERS" :key="t.tier" style="display:flex;align-items:center;gap:4px"><span class="lg-dot" :style="{ background: t.color }"></span>{{ t.label }}</span>
+          <span v-for="t in TIERS" :key="t.tier" class="graph-legend-tier"><span class="lg-dot" :style="{ background: t.color }"></span>{{ t.label }}</span>
         </div>
       </div>
     </div>
-    <div class="page-body" v-else style="text-align:center;padding:60px;color:var(--text-muted)">加载中...</div>
+    <div class="page-body graph-loading" v-else>加载中...</div>
   </div>
 </template>
 
 <style scoped>
 .graph-flow { position: relative; height: 490px; overflow: hidden; }
 .graph-svg { position: absolute; inset: 0; width: 100%; height: 100%; }
-.edge-call { stroke: #3b82f6; stroke-width: 1.6; }
-.edge-reply { stroke: #22c55e; stroke-width: 1.6; stroke-dasharray: 6 4; }
+.edge-call { stroke: var(--blue); stroke-width: 1.6; }
+.edge-reply { stroke: var(--green); stroke-width: 1.6; stroke-dasharray: 6 4; }
 .edge-label { font-size: 11px; font-weight: 600; }
 .edge-call:hover, .edge-reply:hover { stroke-width: 3; }
 .g-node {
   position: absolute; width: 168px; padding: 8px; border-radius: 12px;
-  background: var(--bg-secondary); border: 1.5px solid #8b5cf6;
+  background: var(--bg-secondary); border: 1.5px solid var(--purple);
   box-shadow: 0 6px 18px rgba(0,0,0,.12); text-align: center; z-index: 2;
 }
 .g-icon {
@@ -192,7 +192,12 @@ onMounted(loadSessions)
 }
 .g-name { font-size: 13px; font-weight: 600; color: var(--text-primary); }
 .g-sub { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
-.lg-call { display: inline-block; width: 22px; height: 0; border-top: 2px solid #3b82f6; vertical-align: middle; margin-right: 4px; }
-.lg-reply { display: inline-block; width: 22px; height: 0; border-top: 2px dashed #22c55e; vertical-align: middle; margin-right: 4px; }
+.lg-call { display: inline-block; width: 22px; height: 0; border-top: 2px solid var(--blue); vertical-align: middle; margin-right: 4px; }
+.lg-reply { display: inline-block; width: 22px; height: 0; border-top: 2px dashed var(--green); vertical-align: middle; margin-right: 4px; }
 .lg-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; }
+.card-header-between { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+.graph-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--text-muted); }
+.graph-loading { text-align: center; padding: 60px; color: var(--text-muted); }
+.graph-legend { display: flex; gap: 20px; margin-top: 12px; font-size: 12px; color: var(--text-muted); align-items: center; }
+.graph-legend-tier { display: flex; align-items: center; gap: 4px; }
 </style>

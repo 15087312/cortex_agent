@@ -150,6 +150,8 @@ export const endpoints = {
     return request('POST', '/management/memory/events?' + p.toString(), undefined, signal)
   },
   deleteMemoryEvent: (id, signal) => request('DELETE', '/management/memory/events/' + encodeURIComponent(id), undefined, signal),
+  installVoiceDeps: () => request('POST', '/management/install-voice-deps'),
+  visionModels: (signal) => request('GET', '/management/vision-models', undefined, signal),
   clearMemory: (signal) => request('POST', '/management/memory/clear', undefined, signal),
 
   causalGraph: (t, signal) => request('GET', '/management/causal-graph' + (t ? '?time_window=' + encodeURIComponent(t) : ''), undefined, signal),

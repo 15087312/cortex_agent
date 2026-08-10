@@ -444,11 +444,18 @@ class CausalGraph:
         return [CausalNode.from_dict(dict(r)) for r in rows]
 
     def find_anchor_nodes(self, query: str, top_k: int = 5) -> List[Tuple[CausalNode, float]]:
-        """根据关键词找到锚点节点（用于深度回忆入口定位）"""
+        """根据关键词和语义相似度找到锚点节点（用于深度回忆入口定位）
+
+        融合策略：
+        - 关键词匹配得分（精确匹配）
+        - 语义相似度得分（向量余弦相似度）
+        - 加权融合：0.6 * 关键词 + 0.4 * 语义
+        """
         keywords = self._extract_keywords(query)
         if not keywords:
             return []
-        # 也尝试拆分多词中文短语（如"为什么项目延期"→"项目延期"）
+
+        # ── 1. 关键词匹配（原有逻辑）──
         import re as _re
         split_keywords = set()
         for kw in keywords:
@@ -459,12 +466,13 @@ class CausalGraph:
                 p = p.strip()
                 if len(p) >= 2:
                     split_keywords.add(p)
-            # 对中文长词按 2-char 滑动窗口拆（"技术问题"→"技术","问题"）
+            # 对中文长词按 2-char 滑动窗口拆
             if _re.search(r'[\u4e00-\u9fff]', kw):
                 for i in range(len(kw) - 1):
                     bigram = kw[i:i+2]
                     if _re.match(r'[\u4e00-\u9fff]{2}', bigram):
                         split_keywords.add(bigram)
+
         scored: Dict[str, Tuple[CausalNode, float]] = {}
         conn = self._get_conn()
         for kw in split_keywords:
@@ -477,7 +485,60 @@ class CausalGraph:
                 if node.id not in scored:
                     scored[node.id] = (node, 0.0)
                 scored[node.id] = (node, scored[node.id][1] + 1.0)
-        sorted_nodes = sorted(scored.values(), key=lambda x: x[1], reverse=True)
+
+        # ── 2. 语义相似度（新增）──
+        semantic_scores: Dict[str, float] = {}
+        try:
+            from modules.memory.embedding import EmbeddingEngine
+            embedder = EmbeddingEngine.get_instance()
+
+            # 获取所有节点（用于批量向量化）
+            all_rows = conn.execute("SELECT * FROM nodes").fetchall()
+            if all_rows:
+                # 构建节点文本列表
+                node_texts = []
+                for r in all_rows:
+                    node = CausalNode.from_dict(dict(r))
+                    node_texts.append(f"{node.label} {' '.join(node.keywords)} {node.description}".strip())
+
+                # 批量向量化
+                query_vec = embedder.embed(query)
+                node_vecs = embedder.embed_batch(node_texts)
+
+                if query_vec and node_vecs:
+                    import numpy as np
+                    query_arr = np.array(query_vec, dtype=np.float32)
+                    for i, vec in enumerate(node_vecs):
+                        if vec is None:
+                            continue
+                        node = CausalNode.from_dict(dict(all_rows[i]))
+                        node_arr = np.array(vec, dtype=np.float32)
+                        # 余弦相似度
+                        sim = float(np.dot(query_arr, node_arr))
+                        semantic_scores[node.id] = sim
+                        # 合并到 scored
+                        if node.id not in scored:
+                            scored[node.id] = (node, 0.0)
+        except Exception as e:
+            logger.debug(f"[CausalGraph] 语义相似度计算失败，降级到关键词匹配: {e}")
+
+        # ── 3. 加权融合 ──
+        # 归一化关键词得分
+        max_kw_score = max((s for _, s in scored.values()), default=1.0) or 1.0
+        # 归一化语义得分
+        max_sem_score = max(semantic_scores.values(), default=1.0) or 1.0
+
+        final_scores: Dict[str, float] = {}
+        for node_id, (node, kw_score) in scored.items():
+            # 归一化
+            norm_kw = kw_score / max_kw_score
+            norm_sem = semantic_scores.get(node_id, 0.0) / max_sem_score if max_sem_score > 0 else 0.0
+            # 加权融合：关键词 60% + 语义 40%
+            final_score = 0.6 * norm_kw + 0.4 * norm_sem
+            final_scores[node_id] = (node, final_score)
+
+        # 按最终得分排序
+        sorted_nodes = sorted(final_scores.values(), key=lambda x: x[1], reverse=True)
         return sorted_nodes[:top_k]
 
     @staticmethod

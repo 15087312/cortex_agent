@@ -40,6 +40,7 @@ class ScreenMonitorSource:
         self._reader_thread: Optional[threading.Thread] = None
         self._resp_queue: Queue = Queue()
         self._proc_restarts = 0
+        self._consecutive_timeouts = 0  # 连续超时计数：>=2 才强制重启，避免误杀健康进程
 
     @staticmethod
     def _find_server_script() -> str:
@@ -123,6 +124,10 @@ class ScreenMonitorSource:
                     except Exception:
                         pass
                 self._proc = None
+        # 等待旧 reader 线程退出，避免重启后新旧线程竞争读新进程 stdout
+        if self._reader_thread:
+            self._reader_thread.join(timeout=3)
+            self._reader_thread = None
         while not self._resp_queue.empty():
             try:
                 self._resp_queue.get_nowait()
@@ -155,7 +160,14 @@ class ScreenMonitorSource:
                         return self._parse_ui_elements(text)
                     return {"text": text}
         else:
-            logger.error(f"[{tool_name}] 无响应 (超时 {_RESPONSE_TIMEOUT}s, 实际等待 {elapsed:.1f}s)")
+            # 连续超时达到阈值才强制重启：单次超时可能是慢但健康（如 OCR 对复杂画面），
+            # 连续超时说明子进程已卡死（如 OCR/轮廓检测死循环）——kill 后由 _run_loop 下轮 _ensure_process 拉起新进程
+            self._consecutive_timeouts += 1
+            if self._consecutive_timeouts >= 2:
+                logger.error(f"[{tool_name}] 连续 {self._consecutive_timeouts} 次无响应 (超时 {_RESPONSE_TIMEOUT}s, 实际等待 {elapsed:.1f}s)，强制重启子进程")
+                self._close_process()
+            else:
+                logger.error(f"[{tool_name}] 无响应 (超时 {_RESPONSE_TIMEOUT}s, 实际等待 {elapsed:.1f}s)")
         return None
 
     def _read_response(self, timeout: float = 5.0) -> Optional[dict]:
@@ -189,7 +201,12 @@ class ScreenMonitorSource:
                     continue
                 result = self._call_mcp_tool("analyze_ui_elements")
                 if result and result.get("elements"):
+                    self._consecutive_timeouts = 0  # 正常响应后重置连续超时计数
                     self._publish_to_event_bus(result["elements"])
+                else:
+                    # 有响应但结果为空（如截图失败）也视为正常——只有真正无响应才算超时
+                    if result is not None:
+                        self._consecutive_timeouts = 0
             except Exception as e:
                 logger.debug(f"屏幕内容分析失败: {e}")
             time.sleep(self._interval)

@@ -27,6 +27,9 @@ import numpy as np
 _available = True
 _cv2 = None
 
+# 分析图像最大宽度：回退本地截图可能拿到全分辨率 Retina 图，处理前需缩放防卡死
+_MAX_ANALYZE_WIDTH = 1280
+
 
 def _log_warn(msg: str):
     sys.stderr.write(f"[screen_diff_server] {msg}\n")
@@ -89,13 +92,21 @@ def _capture_screen() -> np.ndarray | None:
         if result.returncode == 0 and os.path.exists(tmp_path):
             img_data = np.frombuffer(open(tmp_path, "rb").read(), dtype=np.uint8)
             os.unlink(tmp_path)
+            img = None
             if _cv2:
-                return _cv2.imdecode(img_data, _cv2.IMREAD_COLOR)
+                img = _cv2.imdecode(img_data, _cv2.IMREAD_COLOR)
             else:
                 # numpy-only: 用 PIL 兜底
                 from PIL import Image
                 pil_img = Image.open(io.BytesIO(img_data.tobytes()))
-                return np.array(pil_img)[:, :, ::-1]  # RGB → BGR
+                img = np.array(pil_img)[:, :, ::-1]  # RGB → BGR
+            # 回退路径必须缩放：全分辨率 Retina 图进入帧差/轮廓处理会极慢（曾导致卡死超时）
+            if img is not None and _cv2:
+                h, w = img.shape[:2]
+                if w > _MAX_ANALYZE_WIDTH:
+                    ratio = _MAX_ANALYZE_WIDTH / w
+                    img = _cv2.resize(img, (_MAX_ANALYZE_WIDTH, max(1, int(h * ratio))), interpolation=_cv2.INTER_AREA)
+            return img
         _log_warn("本地 screencapture 失败（可能屏幕录制权限未授权）")
     except Exception:
         _log_warn("本地 screencapture 异常")

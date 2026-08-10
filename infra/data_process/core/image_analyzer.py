@@ -96,43 +96,82 @@ class ImageAnalyzer:
         logger.info(f"图像分析器初始化完成 (类型: {self.model_type})")
 
     def _detect_available_model(self) -> str:
-        """根据配置和平台自动选择视觉后端（优先本地模型，无则用云端API）"""
+        """根据配置选择视觉后端（api / local）"""
         from config.settings import settings
 
         backend = settings.VISION_BACKEND.lower().strip()
 
-        # 用户显式指定后端
-        if backend and backend != "auto":
-            if backend == "api":
-                if settings.effective_vision_api_key:
-                    return "openai"
-                logger.error("VISION_BACKEND=api 但无 API Key")
-                return "unavailable"
-            elif backend == "mlx":
-                return "mlx_vlm"
-            elif backend == "transformers":
-                return "qwen_vl"
-            elif backend == "mock":
-                return "mock"
-            else:
-                logger.error(f"未知 VISION_BACKEND: {backend}")
-                return "unavailable"
+        if backend == "api":
+            if settings.effective_vision_api_key:
+                return "openai"
+            logger.error("VISION_BACKEND=api 但无 API Key")
+            return "unavailable"
 
-        # auto 模式: 优先本地模型 > 云端 API (改为本地优先)
+        # local 模式: 根据用户选择的模型决定加载器
+        local_model = settings.effective_vision_local_model
+
+        # 如果用户指定了模型路径，检查其 config.json 确定格式
+        if local_model:
+            from pathlib import Path
+            cfg_path = Path(local_model) / "config.json"
+            if cfg_path.exists():
+                try:
+                    import json
+                    with open(cfg_path) as f:
+                        cfg = json.load(f)
+                    arch = cfg.get("architectures", [""])[0] if cfg.get("architectures") else ""
+                    model_type = cfg.get("model_type", "")
+
+                    # MLX 模型通常有 mlx_vlm 相关字段
+                    if "mlx" in local_model.lower() or "mlx" in model_type:
+                        if _IS_APPLE_SILICON:
+                            try:
+                                from mlx_vlm import generate, load  # noqa: F401
+                                return "mlx_vlm"
+                            except ImportError:
+                                pass
+
+                    # Qwen2-VL / Qwen-VL 系列
+                    if "qwen" in model_type.lower() or "Qwen2VL" in arch:
+                        try:
+                            from transformers import Qwen2VLForConditionalGeneration  # noqa: F401
+                            from qwen_vl_utils import process_vision_info  # noqa: F401
+                            return "qwen_vl"
+                        except ImportError:
+                            pass
+
+                    # LLaVA 系列
+                    if "llava" in model_type.lower():
+                        try:
+                            import llava  # noqa: F401
+                            return "llava"
+                        except ImportError:
+                            pass
+
+                    # 通用 transformers 模型 — 尝试 AutoModel
+                    try:
+                        from transformers import AutoModelForCausalLM, AutoProcessor  # noqa: F401
+                        return "qwen_vl"  # 用 qwen_vl 路径加载通用模型
+                    except ImportError:
+                        pass
+                except Exception as e:
+                    logger.debug(f"解析模型 config.json 失败: {e}")
+
+        # 无指定模型或解析失败，按库可用性自动检测
         # 1) Apple Silicon: mlx-vlm
         if _IS_APPLE_SILICON:
             try:
                 from mlx_vlm import generate, load  # noqa: F401
-                logger.info("视觉后端: MLX-VLM (Apple Silicon - 本地优先)")
+                logger.info("视觉后端: MLX-VLM (Apple Silicon)")
                 return "mlx_vlm"
             except ImportError:
-                logger.debug("mlx-vlm 未安装，尝试 transformers")
+                pass
 
-        # 2) transformers + Qwen2-VL (CUDA/MPS/CPU - 本地优先)
+        # 2) transformers + Qwen2-VL
         try:
             from transformers import Qwen2VLForConditionalGeneration  # noqa: F401
             from qwen_vl_utils import process_vision_info  # noqa: F401
-            logger.info("视觉后端: transformers (本地模型 - 优先)")
+            logger.info("视觉后端: transformers (本地模型)")
             return "qwen_vl"
         except ImportError:
             pass
@@ -161,7 +200,7 @@ class ImageAnalyzer:
             from mlx_vlm import load, generate
             from config.settings import settings
 
-            model_name = self.local_model or settings.effective_vision_mlx_model
+            model_name = self.local_model or settings.effective_vision_local_model or settings.effective_vision_mlx_model
 
             # 检查缓存
             if _MODEL_CACHE.get("mlx_vlm") and _MODEL_CACHE["mlx_vlm"].get("name") == model_name:

@@ -132,36 +132,36 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
           <div v-if="s._open" class="outreach-body">
             <div class="outreach-row outreach-row-align">
               <span class="outreach-lbl">综合冷却</span>
-              <input class="input" type="number" v-model.number="s.cooldownMin" style="width:64px;text-align:right" title="同一会话两次主动搭话的最小间隔（分钟）" /> <span class="outreach-unit">min</span>
+              <input class="input w-64" type="number" v-model.number="s.cooldownMin" title="同一会话两次主动搭话的最小间隔（分钟）" /> <span class="outreach-unit">min</span>
               <span class="outreach-hint-text">两次搭话的最小间隔</span>
             </div>
             <div class="outreach-row">
               <span class="outreach-lbl">定点发送</span>
               <label class="toggle-switch" @click.stop><input type="checkbox" v-model="s.scheduleOn" /><span class="toggle-slider"></span></label>
               <span class="outreach-unit" :class="{ off: !s.scheduleOn }">时间</span>
-              <input class="input" v-model="s.scheduleTime" style="width:80px" placeholder="14:00" :disabled="!s.scheduleOn" title="触发时刻，24小时制 HH:MM，如 14:00" />
+              <input class="input w-80" v-model="s.scheduleTime" placeholder="14:00" :disabled="!s.scheduleOn" title="触发时刻，24小时制 HH:MM，如 14:00" />
               <span class="outreach-unit" :class="{ off: !s.scheduleOn }">± 误差</span>
-              <input class="input" type="number" v-model.number="s.scheduleJitter" style="width:56px;text-align:right" title="到点前后误差窗口（分钟），避免精确到秒的偶发" :disabled="!s.scheduleOn" /> <span class="outreach-unit" :class="{ off: !s.scheduleOn }">min</span>
+              <input class="input w-56" type="number" v-model.number="s.scheduleJitter" title="到点前后误差窗口（分钟），避免精确到秒的偶发" :disabled="!s.scheduleOn" /> <span class="outreach-unit" :class="{ off: !s.scheduleOn }">min</span>
             </div>
             <div class="outreach-row">
               <span class="outreach-lbl">屏幕触发</span>
               <label class="toggle-switch" @click.stop><input type="checkbox" v-model="s.screenOn" /><span class="toggle-slider"></span></label>
-              <input class="input" type="number" v-model.number="s.screenRatio" style="width:52px;text-align:right" title="变化阈值（0-1）：屏幕变化比例达到该值才可能触发" :disabled="!s.screenOn" /> <span class="outreach-unit" :class="{ off: !s.screenOn }">阈值</span>
-              <input class="input" type="number" v-model.number="s.screenProb" style="width:52px;text-align:right" title="触发概率（0-1）：条件满足后随机命中的概率" :disabled="!s.screenOn" /> <span class="outreach-unit" :class="{ off: !s.screenOn }">概率</span>
-              <input class="input" type="number" v-model.number="s.screenInterval" style="width:52px;text-align:right" title="判定间隔（秒）：两次屏幕规则判定的最小间隔" :disabled="!s.screenOn" /> <span class="outreach-unit" :class="{ off: !s.screenOn }">间隔 s</span>
-              <input class="input" type="number" v-model.number="s.screenCooldown" style="width:52px;text-align:right" title="冷却（分钟）：屏幕规则触发后该规则的额外冷却" :disabled="!s.screenOn" /> <span class="outreach-unit" :class="{ off: !s.screenOn }">冷却 min</span>
+              <input class="input w-52" type="number" v-model.number="s.screenRatio" title="变化阈值（0-1）：屏幕变化比例达到该值才可能触发" :disabled="!s.screenOn" /> <span class="outreach-unit" :class="{ off: !s.screenOn }">阈值</span>
+              <input class="input w-52" type="number" v-model.number="s.screenProb" title="触发概率（0-1）：条件满足后随机命中的概率" :disabled="!s.screenOn" /> <span class="outreach-unit" :class="{ off: !s.screenOn }">概率</span>
+              <input class="input w-52" type="number" v-model.number="s.screenInterval" title="判定间隔（秒）：两次屏幕规则判定的最小间隔" :disabled="!s.screenOn" /> <span class="outreach-unit" :class="{ off: !s.screenOn }">间隔 s</span>
+              <input class="input w-52" type="number" v-model.number="s.screenCooldown" title="冷却（分钟）：屏幕规则触发后该规则的额外冷却" :disabled="!s.screenOn" /> <span class="outreach-unit" :class="{ off: !s.screenOn }">冷却 min</span>
             </div>
             <div class="outreach-row">
               <span class="outreach-lbl">空闲触发</span>
               <label class="toggle-switch" @click.stop><input type="checkbox" v-model="s.idleOn" /><span class="toggle-slider"></span></label>
-              <input class="input" type="number" v-model.number="s.idleMinutes" style="width:52px;text-align:right" title="空闲时长（分钟）：用户无操作达到该时长才可能触发" :disabled="!s.idleOn" /> <span class="outreach-unit" :class="{ off: !s.idleOn }">空闲 min</span>
-              <input class="input" type="number" v-model.number="s.idleProb" style="width:52px;text-align:right" title="触发概率（0-1）：满足空闲后随机命中的概率" :disabled="!s.idleOn" /> <span class="outreach-unit" :class="{ off: !s.idleOn }">概率</span>
-              <input class="input" type="number" v-model.number="s.idleInterval" style="width:52px;text-align:right" title="判定间隔（秒）：两次空闲规则判定的最小间隔" :disabled="!s.idleOn" /> <span class="outreach-unit" :class="{ off: !s.idleOn }">间隔 s</span>
+              <input class="input w-52" type="number" v-model.number="s.idleMinutes" title="空闲时长（分钟）：用户无操作达到该时长才可能触发" :disabled="!s.idleOn" /> <span class="outreach-unit" :class="{ off: !s.idleOn }">空闲 min</span>
+              <input class="input w-52" type="number" v-model.number="s.idleProb" title="触发概率（0-1）：满足空闲后随机命中的概率" :disabled="!s.idleOn" /> <span class="outreach-unit" :class="{ off: !s.idleOn }">概率</span>
+              <input class="input w-52" type="number" v-model.number="s.idleInterval" title="判定间隔（秒）：两次空闲规则判定的最小间隔" :disabled="!s.idleOn" /> <span class="outreach-unit" :class="{ off: !s.idleOn }">间隔 s</span>
             </div>
             <div class="outreach-row outreach-row-wrap">
               <span class="outreach-lbl">时段触发</span>
               <label class="toggle-switch" @click.stop><input type="checkbox" v-model="s.windowsOn" /><span class="toggle-slider"></span></label>
-              <input class="input" v-model="s.timeWindowsText" style="flex:1;min-width:200px" placeholder="09:00-12:00@0.5,14:00-18:00@0.8" :disabled="!s.windowsOn" title="格式：开始-结束@概率，多个用逗号分隔。概率省略默认 1.0，跨午夜（如 22:00-02:00）也支持" />
+              <input class="input w-flex-200" v-model="s.timeWindowsText" placeholder="09:00-12:00@0.5,14:00-18:00@0.8" :disabled="!s.windowsOn" title="格式：开始-结束@概率，多个用逗号分隔。概率省略默认 1.0，跨午夜（如 22:00-02:00）也支持" />
             </div>
             <div class="outreach-hint-mt">时段格式：<code>开始-结束@概率</code>，逗号分隔多项，如 <code>09:00-12:00@0.5,14:00-18:00@0.8</code>（概率省略默认 1.0，跨午夜也支持）</div>
             <div class="outreach-save">

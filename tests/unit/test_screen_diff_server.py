@@ -257,14 +257,18 @@ class TestCaptureScreen:
 
     def test_screencapture_failure(self):
         from infra.mcp.servers.screen_diff_server import _capture_screen
-        with patch("subprocess.run") as mock_run:
+        # daemon 不可用（取帧返回 None）→ 回退本地 screencapture，本地也失败 → None
+        with patch("subprocess.run") as mock_run, \
+             patch("utils.screen_capture_daemon_client.get_frame_bytes", return_value=None):
             mock_run.return_value.returncode = 1
             result = _capture_screen()
             assert result is None
 
     def test_screencapture_timeout(self):
         from infra.mcp.servers.screen_diff_server import _capture_screen
-        with patch("subprocess.run") as mock_run:
+        # daemon 不可用 → 回退本地 screencapture，本地超时 → None
+        with patch("subprocess.run") as mock_run, \
+             patch("utils.screen_capture_daemon_client.get_frame_bytes", return_value=None):
             mock_run.side_effect = TimeoutError("timeout")
             result = _capture_screen()
         assert result is None

@@ -76,6 +76,7 @@ class ScreenDiffSource(DifferenceSource):
         self._last_activity_time = 0.0
         self._proc_restarts = 0
         self._last_event_publish_time = 0.0
+        self._consecutive_timeouts = 0  # 连续超时计数：>=2 才强制重启，避免误杀健康进程
 
         # 定位 server 脚本
         self._server_script = server_script or self._find_server_script()
@@ -240,6 +241,10 @@ class ScreenDiffSource(DifferenceSource):
                     except Exception:
                         pass
                 self._proc = None
+        # 等待旧 reader 线程退出，避免重启后新旧线程竞争读新进程 stdout
+        if self._reader_thread:
+            self._reader_thread.join(timeout=3)
+            self._reader_thread = None
         # 清空响应队列
         while not self._resp_queue.empty():
             try:
@@ -276,7 +281,14 @@ class ScreenDiffSource(DifferenceSource):
         if elapsed > 5:
             logger.debug(f"[{tool_name}] {elapsed:.1f}s (慢)")
         if resp is None:
-            logger.warning(f"[{tool_name}] 无响应 (超时 10s, 等待 {elapsed:.1f}s)")
+            # 连续超时达到阈值才强制重启：单次超时可能是慢但健康，
+            # 连续超时说明子进程已卡死（如截图/帧差处理死循环）——kill 后由 _run_loop 下轮 _ensure_process 拉起新进程
+            self._consecutive_timeouts += 1
+            if self._consecutive_timeouts >= 2:
+                logger.warning(f"[{tool_name}] 连续 {self._consecutive_timeouts} 次无响应 (超时 10s, 等待 {elapsed:.1f}s)，强制重启子进程")
+                self._close_process()
+            else:
+                logger.warning(f"[{tool_name}] 无响应 (超时 10s, 等待 {elapsed:.1f}s)")
             return None
         if resp and "result" in resp:
             content = resp["result"].get("content", [])
@@ -371,6 +383,7 @@ class ScreenDiffSource(DifferenceSource):
         if not data:
             return
 
+        self._consecutive_timeouts = 0  # 正常响应后重置连续超时计数
         self._scan_count += 1
         changed = data.get("changed", False)
         change_ratio = data.get("change_ratio", 0.0)

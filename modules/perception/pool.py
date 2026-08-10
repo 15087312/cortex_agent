@@ -64,7 +64,7 @@ class PerceptionPool:
                 priority=5,
             )
 
-        sections: Dict[str, List[str]] = {"windows": [], "text": [], "files": [], "changes": []}
+        sections: Dict[str, List[str]] = {"windows": [], "text": [], "files": [], "changes": [], "speech": []}
         for item in recent:
             et = item["event_type"]
             desc = item["description"]
@@ -79,6 +79,8 @@ class PerceptionPool:
                 intensity = payload.get("intensity", 0)
                 if intensity >= 0.3:
                     sections["changes"].append(desc)
+            elif "speech" in et:
+                sections["speech"].append(desc)
 
         parts = []
         if sections["windows"]:
@@ -89,6 +91,8 @@ class PerceptionPool:
             parts.append("【文件变化】\n" + "\n".join(sections["files"]))
         if sections["changes"]:
             parts.append("【屏幕变化】\n" + "\n".join(sections["changes"]))
+        if sections["speech"]:
+            parts.append("【语音指令】\n" + "\n".join(sections["speech"]))
 
         if not parts:
             return ContextFragment(

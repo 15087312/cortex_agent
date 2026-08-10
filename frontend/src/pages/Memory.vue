@@ -102,10 +102,10 @@ function starRating(v) { const s = Math.round(v * 5); return '★'.repeat(s) + '
       </div>
       <Modal v-if="showCreate" title="新建记忆" @close="showCreate = false">
         <div class="modal-form">
-          <div><label class="form-label">类型</label><select class="input" v-model="newEvent.event_type" style="width:100%"><option value="fact">fact</option><option value="thought">thought</option><option value="strategy">strategy</option><option value="emotion">emotion</option></select></div>
-          <div><label class="form-label">内容 *</label><textarea class="input" v-model="newEvent.fact" style="width:100%;min-height:60px"></textarea></div>
-          <div><label class="form-label">关键词</label><input class="input" v-model="newEvent.keywords" style="width:100%" /></div>
-          <div><label class="form-label">重要性 0-1</label><input class="input" v-model.number="newEvent.importance" type="number" min="0" max="1" step="0.1" style="width:100%" /></div>
+          <div><label class="form-label w-full">类型</label><select class="input" v-model="newEvent.event_type" ><option value="fact">fact</option><option value="thought">thought</option><option value="strategy">strategy</option><option value="emotion">emotion</option></select></div>
+          <div><label class="form-label w-full min-h-60">内容 *</label><textarea class="input" v-model="newEvent.fact" ></textarea></div>
+          <div><label class="form-label w-full">关键词</label><input class="input" v-model="newEvent.keywords"  /></div>
+          <div><label class="form-label w-full">重要性 0-1</label><input class="input" v-model.number="newEvent.importance" type="number" min="0" max="1" step="0.1"  /></div>
         </div>
         <template #actions><button class="btn" @click="showCreate = false">取消</button><button class="btn btn-primary btn-sm" @click="handleCreate">创建</button></template>
       </Modal>

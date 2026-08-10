@@ -599,3 +599,18 @@ textarea.input { resize: vertical; min-height: 60px; font-family: var(--font-mon
 /* ── 会话批量管理 ── */
 .session-manage-bar { display:flex; align-items:center; gap:8px; padding:4px 6px; margin-bottom:6px; background:var(--bg-tertiary); border-radius:var(--radius-sm); }
 .session-item.manage-checked { background: var(--accent-bg); border-color: var(--accent); }
+
+/* ── 宽度/尺寸工具类 ── */
+.w-full { width: 100%; }
+.w-90 { width: 90px; }
+.w-160 { width: 160px; }
+.w-200 { width: 200px; }
+.w-240 { width: 240px; }
+.max-w-240 { max-width: 240px; }
+.max-w-320 { max-width: 320px; }
+.min-w-220 { min-width: 220px; }
+.min-h-60 { min-height: 60px; }
+.text-xs { font-size: 12px; }
+.text-sm { font-size: 13px; }
+.ml-6 { margin-left: 6px; }
+.grid-3-fixed { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }

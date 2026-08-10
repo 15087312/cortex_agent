@@ -287,16 +287,16 @@ function copyApiBody(s) {
         <div class="card-header dash-card-header-wrap">
           <span>API 请求日志 ({{ apiReq.total }})</span>
           <div class="dash-filter-bar">
-            <select v-model="apiReqFilter.method" @change="applyApiFilter" class="input" style="width:90px">
+            <select v-model="apiReqFilter.method" @change="applyApiFilter" class="input w-90">
               <option value="">全部方法</option><option value="POST">POST</option><option value="GET">GET</option>
             </select>
-            <select v-model="apiReqFilter.status" @change="applyApiFilter" class="input" style="width:100px">
+            <select v-model="apiReqFilter.status" @change="applyApiFilter" class="input w-100">
               <option value="">全部状态</option><option value="2">2xx</option><option value="3">3xx</option><option value="4">4xx</option><option value="5">5xx</option>
             </select>
-            <select v-model="apiReqFilter.since_hours" @change="applyApiFilter" class="input" style="width:100px">
+            <select v-model="apiReqFilter.since_hours" @change="applyApiFilter" class="input w-100">
               <option :value="0">全部时间</option><option :value="1">最近1小时</option><option :value="24">最近24小时</option><option :value="168">最近7天</option>
             </select>
-            <input v-model="apiReqFilter.path" @keydown.enter="applyApiFilter" placeholder="路径筛选" class="input" style="width:140px" />
+            <input v-model="apiReqFilter.path" @keydown.enter="applyApiFilter" placeholder="路径筛选" class="input w-140" />
             <button class="btn btn-sm" @click="applyApiFilter"><Icon name="search" :size="13" /> 筛选</button>
             <button class="btn btn-sm" @click="applyApiFilter"><Icon name="refresh" :size="13" /> 刷新</button>
           </div>

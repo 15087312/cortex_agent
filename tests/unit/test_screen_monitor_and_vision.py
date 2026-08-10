@@ -72,6 +72,7 @@ def _source(monkeypatch):
     s._reader_thread = None
     s._resp_queue = __import__("queue").Queue()
     s._proc_restarts = 0
+    s._consecutive_timeouts = 0
     return s
 
 

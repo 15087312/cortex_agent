@@ -40,10 +40,13 @@ _pet_proc = None
 # ── App Icon ──────────────────────────────────────────────
 
 def _make_app_icon():
-    # 优先使用前端 logo（favicon.jpg，页面左上角鹿图）
-    icon_path = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "public", "favicon.jpg"
-    )
+    # 优先使用前端 logo（icon.png，透明背景 + 去水印）
+    base = os.path.dirname(os.path.abspath(__file__))
+    icon_path = os.path.join(base, "public", "icon.png")
+    if os.path.isfile(icon_path):
+        return QIcon(icon_path)
+    # 回退: 旧版 JPEG (无透明, 有白边)
+    icon_path = os.path.join(base, "public", "favicon.jpg")
     if os.path.isfile(icon_path):
         return QIcon(icon_path)
     # 回退：程序化绘制蓝色 "C" 图标

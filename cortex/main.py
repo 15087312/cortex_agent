@@ -207,7 +207,7 @@ def main():
     else:
         print("✗ 后端启动超时（120s）。请检查：")
         print("   1. 后端是否异常退出（查看上方日志）")
-        print("   2. 视觉模型加载是否过慢（可在 ~/.cortex/settings.json 设 VISION_BACKEND=mock 跳过）")
+        print("   2. 视觉模型加载是否过慢（可切换到 API 后端或设 VISION_BACKEND=api）")
         backend_proc.terminate()
         sys.exit(1)
 

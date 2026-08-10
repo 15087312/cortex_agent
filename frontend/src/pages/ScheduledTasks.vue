@@ -109,7 +109,7 @@ onMounted(loadSessions)
     <div class="page-body">
       <div class="card" v-if="!loading">
         <div class="card-header">选择会话（每会话定时任务独立）</div>
-        <select v-model="selected" class="input" style="max-width:320px" @change="loadTasks">
+        <select v-model="selected" class="input max-w-320" @change="loadTasks">
           <option v-for="s in sessions" :key="s.session_id" :value="s.session_id">{{ s.title || s.session_id.slice(0, 16) }}</option>
         </select>
       </div>
@@ -123,32 +123,32 @@ onMounted(loadSessions)
         <div v-if="tasks.length">
           <div v-for="(task, i) in tasks" :key="task.id" class="task-row">
             <div class="task-controls">
-              <select v-model="task.type" class="input" style="width:110px" @change="onTypeChange(task)">
+              <select v-model="task.type" class="input w-110" @change="onTypeChange(task)">
                 <option v-for="t in TASK_TYPES" :key="t.value" :value="t.value">{{ t.label }}</option>
               </select>
 
               <template v-if="task.type === 'daily'">
-                <input v-model="task.time" class="input" style="width:90px" placeholder="HH:MM" @change="task.schedule = task.time" />
+                <input v-model="task.time" class="input w-90" placeholder="HH:MM" @change="task.schedule = task.time" />
               </template>
               <template v-else-if="task.type === 'interval'">
-                <input v-model.number="task.every_minutes" type="number" min="1" class="input" style="width:80px" @change="task.schedule = { kind: 'interval', every_minutes: task.every_minutes }" />
+                <input v-model.number="task.every_minutes" type="number" min="1" class="input w-80" @change="task.schedule = { kind: 'interval', every_minutes: task.every_minutes }" />
                 <span class="task-hint">分钟</span>
               </template>
               <template v-else-if="task.type === 'once'">
-                <input v-model="task.at" class="input" style="width:90px" placeholder="HH:MM" @change="task.schedule = { kind: 'once', at: task.at }" />
+                <input v-model="task.at" class="input w-90" placeholder="HH:MM" @change="task.schedule = { kind: 'once', at: task.at }" />
               </template>
               <template v-else>
-                <input v-model="task.expr" class="input" style="width:130px" placeholder="分 时 日 月 周" @change="task.schedule = { kind: 'cron', expr: task.expr }" />
+                <input v-model="task.expr" class="input w-130" placeholder="分 时 日 月 周" @change="task.schedule = { kind: 'cron', expr: task.expr }" />
               </template>
 
               <label class="toggle-switch" title="启用">
                 <input type="checkbox" v-model="task.enabled" /><span class="toggle-slider"></span>
               </label>
               <span class="task-hint">启用</span>
-              <select v-model="task.action" class="input" style="width:120px" title="触发的逻辑">
+              <select v-model="task.action" class="input w-120" title="触发的逻辑">
                 <option value="chat">chat（大模型）</option>
               </select>
-              <select v-model="task.agent_type" class="input" style="width:140px" title="使用的角色人格">
+              <select v-model="task.agent_type" class="input w-140" title="使用的角色人格">
                 <option value="">总指挥（默认）</option>
                 <option v-for="a in agents" :key="a.role" :value="a.role">{{ a.name }}（{{ a.role }}）</option>
               </select>

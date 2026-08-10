@@ -108,7 +108,7 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
       <button class="btn btn-sm" @click="loadData"><Icon name="refresh" :size="14" /> 刷新</button>
     </div>
     <div class="page-body">
-      <div class="stat-grid" style="grid-template-columns:repeat(3,1fr)">
+      <div class="stat-grid grid-3-fixed">
         <div class="stat-card"><div class="stat-icon stat-icon-blue"><Icon name="wrench" :size="18" /></div><div class="stat-value">{{ tools.length }}</div><div class="stat-label">总工具</div></div>
         <div class="stat-card"><div class="stat-icon stat-icon-purple"><Icon name="layers" :size="18" /></div><div class="stat-value">{{ bySource }}</div><div class="stat-label">来源分类</div></div>
         <div class="stat-card"><div class="stat-icon stat-icon-green"><Icon name="activity" :size="18" /></div><div class="stat-value">{{ events.length }}</div><div class="stat-label">最近调用</div></div>
@@ -117,7 +117,7 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
       <div class="dash-grid">
         <div class="card card-scroll">
           <div class="card-header">工具列表 ({{ tools.length }})</div>
-          <div class="tool-search"><input class="input" v-model="query" placeholder="搜索工具..." style="width:100%" /></div>
+          <div class="tool-search"><input class="input w-full" v-model="query" placeholder="搜索工具..." /></div>
           <div v-if="filteredTools.length === 0" class="empty-state tool-empty"><p class="empty-text">工具注册后自动出现于此</p></div>
           <div v-else v-for="t in filteredTools" :key="t.name" class="tool-item" :class="{ selected: selected === t.name }" @click="handleSelect(t.name)">
             <div class="tool-name">{{ t.name }}</div>
@@ -142,9 +142,9 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
               <div v-if="formFields.length && !showJson" class="tool-form-mt">
                 <div v-for="f in formFields" :key="f.key" class="tool-param-row">
                   <span class="detail-label">{{ f.key }}<template v-if="f.required"> *</template></span>
-                  <input v-if="f.type === 'number'" class="input" type="number" v-model="formValues[f.key]" style="width:100%;max-width:240px" />
+                  <input v-if="f.type === 'number'" class="input w-full max-w-240" type="number" v-model="formValues[f.key]" />
                   <label v-else-if="f.type === 'boolean'" class="toggle-switch tool-toggle"><input type="checkbox" v-model="formValues[f.key]" /><span class="toggle-slider"></span></label>
-                  <input v-else class="input" v-model="formValues[f.key]" style="width:100%;max-width:240px" />
+                  <input v-else class="input w-full max-w-240" v-model="formValues[f.key]" />
                 </div>
               </div>
               <!-- JSON 参数（复杂/无 schema） -->
