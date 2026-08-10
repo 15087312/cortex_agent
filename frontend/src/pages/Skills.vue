@@ -2,9 +2,11 @@
 import { ref, onMounted, computed } from 'vue'
 import { endpoints } from '@/api.js'
 import { useToastStore } from '@/stores/toast.js'
+import { useConfirm } from '@/composables/useDialog.js'
 import Icon from '@/components/Icon.vue'
 
 const toast = useToastStore()
+const confirm = useConfirm()
 const props = defineProps({ compact: { type: Boolean, default: false } })
 const skills = ref([])
 const agents = ref([])
@@ -185,7 +187,7 @@ async function toggleEnabled(s) {
 }
 
 async function removeSkill(s) {
-  if (!confirm('确定删除技能「' + s.name + '」？')) return
+  if (!(await confirm('确定删除技能「' + s.name + '」？'))) return
   try {
     const r = await fetch('/api/management/skills/' + encodeURIComponent(s.id), { method: 'DELETE' })
     const d = await r.json()
@@ -223,7 +225,7 @@ onMounted(loadData)
           <span v-if="forcedSkill" class="forced-status">当前强制：<b>{{ forcedName }}</b>（{{ forcedSkill }}）</span>
         </div>
         <div class="filter-bar">
-          <select v-model="forcedSel" class="input" style="min-width:220px;font-size:13px">
+          <select v-model="forcedSel" class="input min-w-220 text-sm">
             <option value="">选择要强制使用的技能…</option>
             <option v-for="s in skills.filter(x => x.enabled)" :key="s.id" :value="s.id">{{ s.name }}（{{ s.id }}）</option>
           </select>
@@ -307,7 +309,7 @@ onMounted(loadData)
             <div class="card-header card-header-wrap">
               <span>角色技能白名单（角色可见的技能）</span>
               <div class="btn-group">
-                <select v-model="roleSel" class="input" style="width:160px;font-size:12px" @change="loadRoleSkills">
+                <select v-model="roleSel" class="input w-160 text-xs" @change="loadRoleSkills">
                   <option value="">选择角色</option>
                   <option v-for="a in agents" :key="a.role" :value="a.role">{{ a.name }}（{{ a.role }}）</option>
                 </select>

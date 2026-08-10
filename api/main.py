@@ -282,6 +282,13 @@ async def lifespan(app: FastAPI):
 
 _MODIFIABLE_CONFIG_KEYS = settings._MODIFIABLE_FIELDS
 
+# 主模型配置键：变更后需重建模型实例（客户端在构造时读取配置）
+_MODEL_CONFIG_KEYS = {
+    "LARGE_MODEL_API_KEY", "LARGE_MODEL_API_URL", "LARGE_MODEL_NAME", "LARGE_MODEL_API_FORMAT",
+    "MEDIUM_MODEL_API_KEY", "MEDIUM_MODEL_API_URL", "MEDIUM_MODEL_NAME",
+    "SMALL_MODEL_API_KEY", "SMALL_MODEL_API_URL", "SMALL_MODEL_NAME",
+}
+
 
 app = FastAPI(
     title="Humanoid AGI",
@@ -369,7 +376,9 @@ _AUTH_WHITELIST_PREFIXES = ("/management/causal-graph", "/management/memory",
                                "/management/sessions/", "/config/",
                                "/management/api-requests",
                                "/management/open-folder",
+                               "/management/vision-models",
                                "/management/orchestration",
+                               "/management/persona-presets",
                                "/management/skills",
                                "/management/config/",
                                "/management/todos",
@@ -379,8 +388,15 @@ _AUTH_WHITELIST_PREFIXES = ("/management/causal-graph", "/management/memory",
 
 @app.middleware("http")
 async def api_key_middleware(request: Request, call_next):
+    # 敏感配置写入（模型 API Key/URL/名称）不走 /config/ 前缀豁免，必须认证：
+    # 否则任何能访问后端的人可把模型 Key/URL 改成自己控制的地址（密钥外泄/DoS）
+    _sensitive_config_write = (
+        request.method == "PUT"
+        and request.url.path.startswith("/config/")
+        and (request.url.path[len("/config/"):] or "").split("/")[0].upper() in _MODEL_CONFIG_KEYS
+    )
     # 白名单路径跳过
-    if request.url.path in _AUTH_WHITELIST or request.url.path.startswith("/docs") or request.url.path.startswith("/redoc") or any(request.url.path.startswith(p) for p in _AUTH_WHITELIST_PREFIXES):
+    if not _sensitive_config_write and (request.url.path in _AUTH_WHITELIST or request.url.path.startswith("/docs") or request.url.path.startswith("/redoc") or any(request.url.path.startswith(p) for p in _AUTH_WHITELIST_PREFIXES)):
         return await call_next(request)
     # 未配置 API Key 时跳过认证（开发模式）
     if not _SIMPLE_API_KEY:
@@ -888,6 +904,112 @@ async def update_model_params(role: str, body: dict = None):
     return {"success": True, "data": {"role": role, "params": settings.get_model_params(role)}}
 
 
+# ── 自定义 Agent 管理 ──
+
+@app.post("/management/orchestration/agents")
+async def create_custom_agent(body: dict = None):
+    """新增自定义 agent（存入 personas.yaml）"""
+    body = body or {}
+    role = (body.get("role") or "").strip()
+    name = (body.get("name") or "").strip()
+    tier = (body.get("tier") or "").strip()
+    if not role or not name or not tier:
+        return JSONResponse(status_code=422, content={"success": False,
+                            "error": {"code": "VALIDATION_ERROR", "message": "role/name/tier 不能为空"}})
+    if tier not in ("large", "supervisor", "expert"):
+        return JSONResponse(status_code=422, content={"success": False,
+                            "error": {"code": "VALIDATION_ERROR", "message": "tier 必须是 large/supervisor/expert"}})
+    # 检查 role 是否与内置 agent 冲突
+    from config.prompts.loader import get_loader
+    builtin_roles = ((get_loader().load("roles") or {}).get("roles") or {}).keys()
+    if role in builtin_roles:
+        return JSONResponse(status_code=409, content={"success": False,
+                            "error": {"code": "CONFLICT", "message": f"角色 {role} 与内置 agent 冲突"}})
+    # 检查是否已存在
+    if settings.get_custom_agent(role):
+        return JSONResponse(status_code=409, content={"success": False,
+                            "error": {"code": "CONFLICT", "message": f"角色 {role} 已存在"}})
+    agent_data = {
+        "role": role,
+        "name": name,
+        "tier": tier,
+        "personality": body.get("personality", ""),
+        "speaking_style": body.get("speaking_style", ""),
+        "expertise": body.get("expertise", ""),
+        "model_id": body.get("model_id", ""),
+    }
+    settings.set_custom_agent(role, agent_data)
+    logger.info(f"自定义 agent 已创建: {role}")
+    return {"success": True, "data": {"agent": agent_data}}
+
+
+@app.delete("/management/orchestration/agents/{role}")
+async def delete_custom_agent(role: str):
+    """删除自定义 agent"""
+    if settings.delete_custom_agent(role):
+        # 同时清理该角色的 persona/override/tools/params
+        settings.set_persona(role, "")
+        settings.set_system_override(role, "")
+        settings.set_role_tools(role, {})
+        settings.set_model_params(role, {})
+        logger.info(f"自定义 agent 已删除: {role}")
+        return {"success": True}
+    return JSONResponse(status_code=404, content={"success": False,
+                        "error": {"code": "NOT_FOUND", "message": f"未找到自定义 agent: {role}"}})
+
+
+# ── 人设预设管理 ──
+
+@app.get("/management/persona-presets")
+async def list_persona_presets():
+    """列出所有人设预设"""
+    return {"success": True, "data": {"presets": settings.get_persona_presets()}}
+
+
+@app.post("/management/persona-presets")
+async def save_persona_preset(body: dict = None):
+    """保存人设预设（将当前所有人设存为预设）"""
+    body = body or {}
+    name = (body.get("name") or "").strip()
+    if not name:
+        return JSONResponse(status_code=422, content={"success": False,
+                            "error": {"code": "VALIDATION_ERROR", "message": "预设名不能为空"}})
+    import uuid
+    preset_id = body.get("id") or str(uuid.uuid4())[:8]
+    personas = body.get("personas") or {}
+    if not personas:
+        # 读取当前所有角色的人设
+        from config.prompts.loader import get_loader
+        roles = (get_loader().load("roles") or {}).get("roles") or {}
+        for key in list(roles.keys()) + [ca["role"] for ca in settings.get_custom_agents()]:
+            p = settings.get_persona(key)
+            if p:
+                personas[key] = p
+    preset = settings.save_persona_preset(preset_id, name, personas)
+    logger.info(f"人设预设已保存: {name} ({preset_id})")
+    return {"success": True, "data": {"preset": preset}}
+
+
+@app.delete("/management/persona-presets/{preset_id}")
+async def delete_persona_preset(preset_id: str):
+    """删除人设预设"""
+    if settings.delete_persona_preset(preset_id):
+        logger.info(f"人设预设已删除: {preset_id}")
+        return {"success": True}
+    return JSONResponse(status_code=404, content={"success": False,
+                        "error": {"code": "NOT_FOUND", "message": f"未找到预设: {preset_id}"}})
+
+
+@app.put("/management/persona-presets/{preset_id}/apply")
+async def apply_persona_preset(preset_id: str):
+    """应用人设预设（将预设人设写入当前生效值）"""
+    if settings.apply_persona_preset(preset_id):
+        logger.info(f"人设预设已应用: {preset_id}")
+        return {"success": True}
+    return JSONResponse(status_code=404, content={"success": False,
+                        "error": {"code": "NOT_FOUND", "message": f"未找到预设: {preset_id}"}})
+
+
 @app.get("/config/api-key")
 async def get_api_key(request: Request):
     """返回 API key 配置状态（供前端自动注入，免手动录入）。
@@ -944,6 +1066,14 @@ async def update_config(key: str, body: PutConfigRequest):
         # 实时持久化到 ~/.cortex/settings.json（原子写），重启后仍生效
         if not settings.save_user_config([actual]):
             logger.warning(f"配置 {actual} 已更新但持久化失败（重启后将丢失）")
+        # 主模型配置变更 → 重建模型实例（新 API Key/URL/模型名立即生效，无需重启）
+        if key_upper in _MODEL_CONFIG_KEYS:
+            try:
+                from modules.thinking.model_factory import get_model_factory
+                await get_model_factory().reload_from_config()
+                logger.info(f"模型配置已变更，重建模型实例: {key_upper}")
+            except Exception as _reload_err:
+                logger.warning(f"模型实例重建失败（可手动重启后端）: {_reload_err}")
         # 系统级配置：变更时立即生效（防休眠 caffeinate / 开机启动 LaunchAgent）
         try:
             if key_upper == "PREVENT_SLEEP":

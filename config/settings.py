@@ -26,6 +26,11 @@ class Settings(BaseSettings):
         "EXECUTION_MODE",
         "CORTEX_MODE",   # 对话模式: agent(智能体) / chatonly(纯对话)
         "USER_NAME",     # 用户称呼（大模型如何称呼用户）
+
+        # ── 主模型配置（大/中/小三层，持久化到 ~/.cortex/settings.json）──
+        "LARGE_MODEL_API_KEY", "LARGE_MODEL_API_URL", "LARGE_MODEL_NAME", "LARGE_MODEL_API_FORMAT",
+        "MEDIUM_MODEL_API_KEY", "MEDIUM_MODEL_API_URL", "MEDIUM_MODEL_NAME",
+        "SMALL_MODEL_API_KEY", "SMALL_MODEL_API_URL", "SMALL_MODEL_NAME",
         "PERSONA_PROMPTS",# 自定义人设提示词（JSON: {role: prompt}）
         "SYSTEM_PROMPT_OVERRIDES",  # 完整系统提示词覆盖（JSON: {role: prompt}，高级设置）
         "OUTPUT_TTS_ENABLED",    # TTS 语音输出总开关
@@ -89,19 +94,16 @@ class Settings(BaseSettings):
 
 
     # 视觉模型配置
-    # VISION_BACKEND: 后端选择 — api / mlx / transformers / mock / auto
-    #   auto:          按优先级自动检测（api > mlx > transformers > mock）
+    # VISION_BACKEND: 后端选择 — api / local
     #   api:           云端 API（OpenAI / DashScope / 兼容接口）
-    #   mlx:           Apple Silicon 本地 MLX-VLM（4-bit 量化）
-    #   transformers:  本地 transformers + CUDA/MPS/CPU
-    #   mock:          模拟模式
-    VISION_BACKEND: str = "auto"
+    #   local:         本地模型（从 data/models/vision/ 自动检测）
+    VISION_BACKEND: str = "local"
     VISION_API_URL: str = ""                       # 视觉 API 地址（留空则复用 OPENAI_API_BASE_URL）
     VISION_API_KEY: str = ""                       # 视觉 API Key（留空则复用 OPENAI_API_KEY）
     VISION_API_FORMAT: str = ""                    # API 格式: openai / dashscope / 留空自动检测
     VISION_API_MODEL: str = ""                     # 云端视觉模型名（如 gpt-4o, qwen-vl-max）
-    VISION_LOCAL_MODEL: str = ""                   # 本地 transformers 模型名（留空用默认）
-    VISION_MLX_MODEL: str = ""                     # MLX 模型名（留空用默认）
+    VISION_LOCAL_MODEL: str = ""                   # 本地模型路径（留空自动检测）
+    VISION_MLX_MODEL: str = ""                     # MLX 模型名（保留兼容，不再使用）
 
     # 默认模型名（不建议修改，优先用上面的 VISION_* 配置）
     IMAGE_MODEL_NAME: str = ""
@@ -335,6 +337,91 @@ class Settings(BaseSettings):
             data.pop("forced_skill", None)
         self._save_personas_yaml(data)
         return data.get("forced_skill", "")
+
+    # ── 自定义 Agent 管理（用户在前端新增的 agent，存 personas.yaml）──
+
+    def get_custom_agents(self) -> list:
+        """获取所有自定义 agent 列表"""
+        data = self._load_personas_yaml()
+        agents = data.get("custom_agents", {})
+        if isinstance(agents, dict):
+            return list(agents.values())
+        return []
+
+    def get_custom_agent(self, role: str) -> dict:
+        """获取指定自定义 agent"""
+        data = self._load_personas_yaml()
+        agent = data.get("custom_agents", {}).get(role)
+        return agent if isinstance(agent, dict) else None
+
+    def set_custom_agent(self, role: str, agent_data: dict) -> dict:
+        """新增或更新自定义 agent"""
+        data = self._load_personas_yaml()
+        custom = data.setdefault("custom_agents", {})
+        agent_data["role"] = role
+        custom[role] = agent_data
+        self._save_personas_yaml(data)
+        return custom[role]
+
+    def delete_custom_agent(self, role: str) -> bool:
+        """删除自定义 agent（内置 agent 不可删）"""
+        data = self._load_personas_yaml()
+        custom = data.get("custom_agents", {})
+        if role in custom:
+            del custom[role]
+            self._save_personas_yaml(data)
+            return True
+        return False
+
+    # ── 人设预设管理（保存/加载/删除预设）──
+
+    def get_persona_presets(self) -> list:
+        """获取所有人设预设列表"""
+        data = self._load_personas_yaml()
+        presets = data.get("persona_presets", {})
+        if isinstance(presets, dict):
+            return [{"id": k, **v} for k, v in presets.values()] if presets else []
+        return []
+
+    def get_persona_preset(self, preset_id: str) -> dict:
+        """获取指定人设预设"""
+        data = self._load_personas_yaml()
+        preset = data.get("persona_presets", {}).get(preset_id)
+        return preset if isinstance(preset, dict) else None
+
+    def save_persona_preset(self, preset_id: str, name: str, personas: dict) -> dict:
+        """保存人设预设（覆盖同 id）"""
+        data = self._load_personas_yaml()
+        presets = data.setdefault("persona_presets", {})
+        preset_data = {"id": preset_id, "name": name, "personas": personas}
+        presets[preset_id] = preset_data
+        self._save_personas_yaml(data)
+        return preset_data
+
+    def delete_persona_preset(self, preset_id: str) -> bool:
+        """删除人设预设"""
+        data = self._load_personas_yaml()
+        presets = data.get("persona_presets", {})
+        if preset_id in presets:
+            del presets[preset_id]
+            self._save_personas_yaml(data)
+            return True
+        return False
+
+    def apply_persona_preset(self, preset_id: str) -> bool:
+        """应用人设预设（将预设中的所有人设写入 personas）"""
+        preset = self.get_persona_preset(preset_id)
+        if not preset:
+            return False
+        data = self._load_personas_yaml()
+        personas = data.setdefault("personas", {})
+        for role, prompt in (preset.get("personas") or {}).items():
+            if prompt:
+                personas[role] = prompt
+            else:
+                personas.pop(role, None)
+        self._save_personas_yaml(data)
+        return True
 
 
     @property

@@ -2,12 +2,14 @@
 import { ref, computed, onMounted } from 'vue'
 import { endpoints } from '@/api.js'
 import { useToastStore } from '@/stores/toast.js'
+import { useConfirm } from '@/composables/useDialog.js'
 import Icon from '@/components/Icon.vue'
 import SkillsView from '@/pages/Skills.vue'
 import GraphView from '@/pages/Graph.vue'
 import ToolsView from '@/pages/Tools.vue'
 
 const toast = useToastStore()
+const confirm = useConfirm()
 const agents = ref([])
 const tools = ref([])
 const drafts = ref({})
@@ -270,7 +272,7 @@ async function submitAiForm() {
 }
 
 async function deleteAiTool(name) {
-  if (!confirm('确定删除 AI 工具 ' + name + '？')) return
+  if (!(await confirm('确定删除 AI 工具 ' + name + '？'))) return
   try {
     const r = await fetch('/api/tools/ai/' + encodeURIComponent(name), { method: 'DELETE' })
     const d = await r.json()
@@ -279,7 +281,104 @@ async function deleteAiTool(name) {
   } catch (e) { toast.show('失败', 'error') }
 }
 
-onMounted(loadData)
+// ── 自定义 Agent 管理 ──
+const showAgentForm = ref(false)
+const agentForm = ref({ role: '', name: '', tier: 'expert', personality: '', speaking_style: '', expertise: '', model_id: '' })
+
+function openAgentForm(tier) {
+  agentForm.value = { role: '', name: '', tier: tier || 'expert', personality: '', speaking_style: '', expertise: '', model_id: '' }
+  showAgentForm.value = true
+}
+
+async function submitAgentForm() {
+  const f = agentForm.value
+  if (!f.role || !f.name) { toast.show('角色 ID 和名称不能为空', 'error'); return }
+  try {
+    const r = await fetch('/api/management/orchestration/agents', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(f),
+    })
+    const d = await r.json()
+    if (d.success) {
+      toast.show('Agent 已创建: ' + f.name, 'success')
+      showAgentForm.value = false
+      await loadData()
+    } else toast.show('创建失败: ' + (d.error?.message || ''), 'error')
+  } catch (e) { toast.show('创建失败', 'error') }
+}
+
+async function deleteAgent(agent) {
+  if (!(await confirm('确定删除 Agent「' + agent.name + '」？相关人设/权限配置将一并清除。'))) return
+  try {
+    const r = await fetch('/api/management/orchestration/agents/' + encodeURIComponent(agent.role), { method: 'DELETE' })
+    const d = await r.json()
+    if (d.success) {
+      toast.show('Agent 已删除: ' + agent.name, 'success')
+      await loadData()
+    } else toast.show('删除失败: ' + (d.error?.message || ''), 'error')
+  } catch (e) { toast.show('删除失败', 'error') }
+}
+
+// ── 人设预设管理 ──
+const personaPresets = ref([])
+const showPresetSave = ref(false)
+const presetName = ref('')
+const selectedPreset = ref('')
+
+async function loadPresets() {
+  try {
+    const r = await fetch('/api/management/persona-presets', { headers: { Accept: 'application/json' } })
+    const d = await r.json()
+    personaPresets.value = d?.data?.presets || []
+  } catch {}
+}
+
+async function saveCurrentAsPreset() {
+  if (!presetName.value.trim()) { toast.show('请输入预设名称', 'error'); return }
+  try {
+    const personas = {}
+    agents.value.forEach((a) => {
+      const p = drafts.value[a.role]
+      if (p) personas[a.role] = p
+    })
+    const r = await fetch('/api/management/persona-presets', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: presetName.value.trim(), personas }),
+    })
+    const d = await r.json()
+    if (d.success) {
+      toast.show('预设已保存: ' + presetName.value, 'success')
+      showPresetSave.value = false
+      presetName.value = ''
+      await loadPresets()
+    } else toast.show('保存失败', 'error')
+  } catch (e) { toast.show('保存失败', 'error') }
+}
+
+async function applyPreset(presetId) {
+  try {
+    const r = await fetch('/api/management/persona-presets/' + encodeURIComponent(presetId) + '/apply', { method: 'PUT' })
+    const d = await r.json()
+    if (d.success) {
+      toast.show('预设已应用', 'success')
+      await loadData()
+    } else toast.show('应用失败', 'error')
+  } catch (e) { toast.show('应用失败', 'error') }
+}
+
+async function deletePreset(presetId) {
+  if (!(await confirm('确定删除此预设？'))) return
+  try {
+    const r = await fetch('/api/management/persona-presets/' + encodeURIComponent(presetId), { method: 'DELETE' })
+    const d = await r.json()
+    if (d.success) { toast.show('预设已删除', 'success'); await loadPresets() }
+    else toast.show('删除失败', 'error')
+  } catch (e) { toast.show('删除失败', 'error') }
+}
+
+onMounted(() => { loadData(); loadPresets() })
 </script>
 
 <template>
@@ -309,9 +408,27 @@ onMounted(loadData)
 
       <!-- Agent 定义 -->
       <div v-if="activeTab === 'agents'" v-show="!loading">
+        <!-- 人设预设工具栏 -->
+        <div class="flex-between mt-3 mb-3">
+          <div class="flex gap-2">
+            <button class="btn btn-sm" @click="showPresetSave = true"><Icon name="save" :size="13" /> 保存当前人设为预设</button>
+          </div>
+          <div v-if="personaPresets.length" class="flex gap-2 items-center">
+            <span class="text-xs text-muted">加载预设：</span>
+            <select class="input w-160 text-xs" v-model="selectedPreset">
+              <option value="">选择预设...</option>
+              <option v-for="p in personaPresets" :key="p.id" :value="p.id">{{ p.name }}</option>
+            </select>
+            <button class="btn btn-sm btn-primary" :disabled="!selectedPreset" @click="applyPreset(selectedPreset)">应用</button>
+            <button class="btn btn-sm danger" :disabled="!selectedPreset" @click="deletePreset(selectedPreset)">删除</button>
+          </div>
+        </div>
         <div v-for="tier in ['large', 'supervisor', 'expert']" :key="tier">
           <div class="card mt-3">
-            <div class="card-header">{{ TIER_LABEL[tier] }}（{{ grouped[tier]?.length || 0 }}）</div>
+            <div class="card-header flex-between">
+              <span>{{ TIER_LABEL[tier] }}（{{ grouped[tier]?.length || 0 }}）</span>
+              <button class="btn btn-sm" @click="openAgentForm(tier)"><Icon name="plus" :size="13" /> 新增</button>
+            </div>
             <div v-if="grouped[tier]?.length">
               <div v-for="agent in grouped[tier]" :key="agent.role" class="agent-row">
                 <div class="flex-between flex-wrap">
@@ -323,9 +440,11 @@ onMounted(loadData)
                     <span v-if="agent.system_override" class="badge badge-green badge-sm">完整覆盖</span>
                     <span v-if="agent.role_tools?.whitelist?.length || agent.role_tools?.blacklist?.length" class="badge badge-green badge-sm">工具权限</span>
                     <span v-if="Object.keys(agent.model_params || {}).length" class="badge badge-green badge-sm">模型参数</span>
+                    <span v-if="agent.is_custom" class="badge badge-purple badge-sm">自定义</span>
                   </div>
                   <div class="flex gap-2">
                     <button class="btn btn-sm" @click="previewPrompt(agent)"><Icon name="eye" :size="13" /> 预览提示词</button>
+                    <button v-if="agent.is_custom" class="btn btn-sm danger" @click="deleteAgent(agent)"><Icon name="trash-2" :size="13" /></button>
                     <button class="btn btn-sm" @click="expanded[agent.role] = !expanded[agent.role]">
                       {{ expanded[agent.role] ? '收起' : '更多设置' }}
                     </button>
@@ -371,10 +490,10 @@ onMounted(loadData)
                   </div>
                   <div class="flex gap-4 items-center">
                     <label class="text-xs">温度 temperature
-                      <input v-model="modelParams[agent.role].temperature" type="number" step="0.1" min="0" max="2" class="input" style="width:90px;margin-left:6px" />
+                      <input v-model="modelParams[agent.role].temperature" type="number" step="0.1" min="0" max="2" class="input w-90 ml-6" />
                     </label>
                     <label class="text-xs">最大 tokens
-                      <input v-model="modelParams[agent.role].max_tokens" type="number" step="256" min="0" class="input" style="width:110px;margin-left:6px" />
+                      <input v-model="modelParams[agent.role].max_tokens" type="number" step="256" min="0" class="input w-110 ml-6" />
                     </label>
                   </div>
 
@@ -426,7 +545,7 @@ onMounted(loadData)
           <div class="card-header flex-between flex-wrap">
             <span>角色工具权限（每角色分别配置可用工具）</span>
             <div class="flex gap-2">
-              <select v-model="roleToolSel" class="input" style="width:200px;font-size:12px" @change="onRoleSel">
+              <select v-model="roleToolSel" class="input w-200 text-xs" @change="onRoleSel">
                 <option value="">选择角色</option>
                 <option v-for="a in agents" :key="a.role" :value="a.role">{{ a.name }}（{{ a.role }}）</option>
               </select>
@@ -517,6 +636,76 @@ onMounted(loadData)
 
       <div v-else class="empty-state loading-state">加载中...</div>
     </div>
+
+    <!-- 新增 Agent 弹窗 -->
+    <div v-if="showAgentForm" class="modal-overlay" @click.self="showAgentForm = false">
+      <div class="modal" style="width:480px">
+        <div class="modal-header">
+          <span>新增 {{ TIER_LABEL[agentForm.tier] || 'Agent' }}</span>
+          <button class="btn btn-sm" @click="showAgentForm = false"><Icon name="x" :size="14" /></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-2">
+            <label class="text-xs font-semibold">角色 ID *</label>
+            <input v-model="agentForm.role" class="input mt-1" placeholder="如 code_expert_2" />
+            <div class="text-xs text-muted mt-1">唯一标识，不可修改</div>
+          </div>
+          <div class="mb-2">
+            <label class="text-xs font-semibold">名称 *</label>
+            <input v-model="agentForm.name" class="input mt-1" placeholder="如 高级代码专家" />
+          </div>
+          <div class="mb-2">
+            <label class="text-xs font-semibold">层级</label>
+            <div class="seg mt-1">
+              <button :class="{ on: agentForm.tier === 'large' }" @click="agentForm.tier = 'large'">总指挥</button>
+              <button :class="{ on: agentForm.tier === 'supervisor' }" @click="agentForm.tier = 'supervisor'">主管</button>
+              <button :class="{ on: agentForm.tier === 'expert' }" @click="agentForm.tier = 'expert'">专家</button>
+            </div>
+          </div>
+          <div class="mb-2">
+            <label class="text-xs font-semibold">人设描述</label>
+            <textarea v-model="agentForm.personality" rows="3" class="input mt-1" placeholder="角色的性格和工作方式"></textarea>
+          </div>
+          <div class="mb-2">
+            <label class="text-xs font-semibold">说话风格</label>
+            <input v-model="agentForm.speaking_style" class="input mt-1" placeholder="如 精确、简洁、技术化" />
+          </div>
+          <div class="mb-2">
+            <label class="text-xs font-semibold">专长（逗号分隔）</label>
+            <input v-model="agentForm.expertise" class="input mt-1" placeholder="如 代码实现, 算法设计" />
+          </div>
+          <div class="mb-2">
+            <label class="text-xs font-semibold">模型 ID</label>
+            <input v-model="agentForm.model_id" class="input mt-1" placeholder="留空用默认模型" />
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-sm" @click="showAgentForm = false">取消</button>
+          <button class="btn btn-sm btn-primary" @click="submitAgentForm">创建</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 保存人设预设弹窗 -->
+    <div v-if="showPresetSave" class="modal-overlay" @click.self="showPresetSave = false">
+      <div class="modal" style="width:380px">
+        <div class="modal-header">
+          <span>保存人设预设</span>
+          <button class="btn btn-sm" @click="showPresetSave = false"><Icon name="x" :size="14" /></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-2">
+            <label class="text-xs font-semibold">预设名称</label>
+            <input v-model="presetName" class="input mt-1" placeholder="如 日常助手人设" @keydown.enter="saveCurrentAsPreset" />
+            <div class="text-xs text-muted mt-1">将保存当前所有角色的人设文本</div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-sm" @click="showPresetSave = false">取消</button>
+          <button class="btn btn-sm btn-primary" @click="saveCurrentAsPreset">保存</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -565,6 +754,12 @@ onMounted(loadData)
 .ai-tool-row { padding: 10px 0; border-bottom: 1px solid var(--border); }
 .tool-card { padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 12px; cursor: pointer; }
 .tool-card:hover { border-color: var(--accent); }
+.badge-purple { background: rgba(139, 92, 246, 0.12); color: var(--purple); }
+.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 1000; display: flex; align-items: center; justify-content: center; }
+.modal { background: var(--bg-secondary, #fff); border: 1px solid var(--border); border-radius: 12px; display: flex; flex-direction: column; max-height: 88vh; }
+.modal-header { display: flex; justify-content: space-between; align-items: center; padding: 14px 18px; border-bottom: 1px solid var(--border); font-weight: 600; }
+.modal-body { padding: 18px; overflow-y: auto; flex: 1; }
+.modal-footer { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--border); }
 .src-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 1000; display: flex; align-items: center; justify-content: center; }
 .src-panel { width: 640px; max-width: 92vw; max-height: 88vh; overflow: hidden; background: var(--bg,#161b22); border: 1px solid var(--border); border-radius: 12px; padding: 14px 18px; display: flex; flex-direction: column; }
 .src-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }

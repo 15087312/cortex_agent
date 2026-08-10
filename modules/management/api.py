@@ -167,11 +167,12 @@ async def get_module_detail(
 
 @router.get("/orchestration")
 async def get_orchestration():
-    """编排界面数据：Agent 定义（人设/模型/工具/覆盖）——借鉴 DeterminFlow Agent 编排"""
+    """编排界面数据：Agent 定义（人设/模型/工具/覆盖）——合并内置 + 自定义 agent"""
     from config.prompts.loader import get_loader
     from config.settings import settings
     roles = (get_loader().load("roles") or {}).get("roles") or {}
     agents = []
+    # 内置 agent（roles.yaml）
     for key, data in roles.items():
         agents.append({
             "role": key,
@@ -185,7 +186,18 @@ async def get_orchestration():
             "system_override": settings.get_system_override(key),
             "role_tools": settings.get_role_tools(key),
             "model_params": settings.get_model_params(key),
+            "is_custom": False,
         })
+    # 自定义 agent（personas.yaml）
+    for ca in settings.get_custom_agents():
+        role = ca.get("role", "")
+        if role:
+            ca["custom_persona"] = settings.get_persona(role)
+            ca["system_override"] = settings.get_system_override(role)
+            ca["role_tools"] = settings.get_role_tools(role)
+            ca["model_params"] = settings.get_model_params(role)
+            ca["is_custom"] = True
+            agents.append(ca)
     agents.sort(key=lambda a: {"large": 0, "supervisor": 1, "expert": 2}.get(a["tier"], 9))
     return {"success": True, "data": {"agents": agents}}
 
@@ -389,6 +401,7 @@ async def open_folder(body: dict = None):
     paths = {
         "pet": root / "frontend" / "pet" / "models",
         "voice": Path.home() / ".cache" / "whisper",
+        "vision": root / "data" / "models" / "vision",
         "data": root / "data",
     }
     target = paths.get(folder)
@@ -400,6 +413,102 @@ async def open_folder(body: dict = None):
         return {"success": True, "data": {"folder": str(target)}}
     except Exception as e:
         return {"success": False, "error": {"code": "OPEN_FAILED", "message": str(e)}}
+
+
+@router.get("/vision-models")
+async def list_vision_models():
+    """扫描本地视觉模型文件夹，返回可用模型列表"""
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[2]
+    vision_dir = root / "data" / "models" / "vision"
+    vision_dir.mkdir(parents=True, exist_ok=True)
+
+    models = []
+    for item in sorted(vision_dir.iterdir()):
+        if not item.is_dir():
+            continue
+        # 检查是否是有效的模型目录（包含 config.json 或 preprocessor_config.json）
+        cfg = item / "config.json"
+        pre_cfg = item / "preprocessor_config.json"
+        if cfg.exists() or pre_cfg.exists():
+            # 尝试读取模型类型信息
+            model_type = ""
+            if cfg.exists():
+                try:
+                    import json
+                    with open(cfg) as f:
+                        c = json.load(f)
+                    model_type = c.get("model_type", "")
+                except Exception:
+                    pass
+            models.append({
+                "name": item.name,
+                "path": str(item),
+                "model_type": model_type,
+            })
+
+    return {"success": True, "data": {"models": models, "dir": str(vision_dir)}}
+
+
+@router.post("/install-voice-deps")
+async def install_voice_deps():
+    """一键安装语音识别依赖
+
+    安装：SpeechRecognition, pyaudio, openai-whisper, pynput
+    返回安装状态和输出信息
+    """
+    import subprocess
+    import sys
+
+    packages = [
+        ("SpeechRecognition", "speech_recognition"),
+        ("pyaudio", "pyaudio"),
+        ("openai-whisper", "whisper"),
+        ("pynput", "pynput"),
+    ]
+
+    results = []
+    all_success = True
+
+    for pkg_name, import_name in packages:
+        try:
+            # 先检查是否已安装
+            __import__(import_name)
+            results.append({"package": pkg_name, "status": "already_installed"})
+            continue
+        except ImportError:
+            pass
+
+        # 尝试安装
+        try:
+            proc = subprocess.run(
+                [sys.executable, "-m", "pip", "install", pkg_name, "-q"],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            if proc.returncode == 0:
+                # 验证安装
+                try:
+                    __import__(import_name)
+                    results.append({"package": pkg_name, "status": "installed"})
+                except ImportError:
+                    results.append({"package": pkg_name, "status": "install_failed", "reason": "import 失败"})
+                    all_success = False
+            else:
+                results.append({"package": pkg_name, "status": "install_failed", "reason": proc.stderr[:200]})
+                all_success = False
+        except Exception as e:
+            results.append({"package": pkg_name, "status": "error", "reason": str(e)})
+            all_success = False
+
+    return {
+        "success": all_success,
+        "data": {
+            "results": results,
+            "message": "所有依赖安装成功" if all_success else "部分依赖安装失败，请查看日志"
+        }
+    }
 
 
 @router.post("/modules/{module_name}/refresh")
