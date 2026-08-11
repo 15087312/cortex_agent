@@ -21,6 +21,7 @@ const saving = ref('')
 const loading = ref(true)
 const expanded = ref({})
 const preview = ref({ role: '', text: '', loading: false })
+const promptPreview = ref({ open: false, agentName: '', text: '', loading: false })
 
 const TIER_LABEL = { large: '总指挥', supervisor: '主管', expert: '专家' }
 
@@ -129,8 +130,7 @@ async function saveModelParams(agent) {
 }
 
 async function previewPrompt(agent) {
-  expanded.value[agent.role] = true
-  preview.value = { role: agent.role, text: '', loading: true }
+  promptPreview.value = { open: true, agentName: agent.name, text: '', loading: true }
   try {
     const r = await fetch('/api/management/orchestration/preview', {
       method: 'POST',
@@ -138,8 +138,8 @@ async function previewPrompt(agent) {
       body: JSON.stringify({ role: agent.role, tier: agent.tier }),
     })
     const d = await r.json()
-    preview.value.text = d?.data?.prompt || ''
-  } catch {} finally { preview.value.loading = false }
+    promptPreview.value.text = d?.data?.prompt || ''
+  } catch { promptPreview.value.text = '获取失败' } finally { promptPreview.value.loading = false }
 }
 
 async function toggleTool(tool) {
@@ -153,6 +153,22 @@ async function toggleTool(tool) {
     const d = await r.json()
     if (d.success) tool.enabled = next
     else toast.show('操作失败: ' + (d.error?.message || ''), 'error')
+  } catch (e) { toast.show('操作失败', 'error') }
+}
+
+async function toggleAgentActive(agent) {
+  const next = !agent.active
+  try {
+    const r = await fetch('/api/management/orchestration/agents/' + encodeURIComponent(agent.role) + '/active', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ active: next }),
+    })
+    const d = await r.json()
+    if (d.success) {
+      // 重新加载数据以同步同层其他 agent 状态（总指挥层互斥）
+      await loadData()
+    } else toast.show('操作失败: ' + (d.error?.message || ''), 'error')
   } catch (e) { toast.show('操作失败', 'error') }
 }
 
@@ -433,6 +449,14 @@ onMounted(() => { loadData(); loadPresets() })
               <div v-for="agent in grouped[tier]" :key="agent.role" class="agent-row">
                 <div class="flex-between flex-wrap">
                   <div class="flex-center">
+                    <label v-if="tier === 'large'" class="toggle-label mr-2">
+                      <input type="radio" :name="'tier-' + tier" :checked="agent.active !== false" @change="toggleAgentActive(agent)" />
+                      <span class="toggle-switch"></span>
+                    </label>
+                    <label v-else class="toggle-label mr-2">
+                      <input type="checkbox" :checked="agent.active !== false" @change="toggleAgentActive(agent)" />
+                      <span class="toggle-switch"></span>
+                    </label>
                     <strong>{{ agent.name }}</strong>
                     <span class="badge badge-gray badge-mono">{{ agent.role }}</span>
                     <span class="badge badge-blue badge-sm">{{ agent.model_id || '默认模型' }}</span>
@@ -444,7 +468,7 @@ onMounted(() => { loadData(); loadPresets() })
                   </div>
                   <div class="flex gap-2">
                     <button class="btn btn-sm" @click="previewPrompt(agent)"><Icon name="eye" :size="13" /> 预览提示词</button>
-                    <button v-if="agent.is_custom" class="btn btn-sm danger" @click="deleteAgent(agent)"><Icon name="trash-2" :size="13" /></button>
+                    <button v-if="agent.is_custom" class="btn btn-sm danger" @click="deleteAgent(agent)"><Icon name="trash" :size="13" /></button>
                     <button class="btn btn-sm" @click="expanded[agent.role] = !expanded[agent.role]">
                       {{ expanded[agent.role] ? '收起' : '更多设置' }}
                     </button>
@@ -526,11 +550,6 @@ onMounted(() => { loadData(); loadPresets() })
                     </div>
                   </div>
 
-                  <!-- 预览 -->
-                  <div v-if="preview.role === agent.role && preview.text" class="mt-3">
-                    <div class="section-subheading">System Prompt 预览（已应用人设/覆盖）</div>
-                    <pre class="code-preview">{{ preview.text }}</pre>
-                  </div>
                 </div>
               </div>
             </div>
@@ -706,6 +725,23 @@ onMounted(() => { loadData(); loadPresets() })
         </div>
       </div>
     </div>
+
+    <!-- 预览提示词弹窗 -->
+    <div v-if="promptPreview.open" class="modal-overlay" @click.self="promptPreview.open = false">
+      <div class="modal" style="width:640px">
+        <div class="modal-header">
+          <span>{{ promptPreview.agentName }} — System Prompt 预览</span>
+          <button class="btn btn-sm" @click="promptPreview.open = false"><Icon name="x" :size="14" /></button>
+        </div>
+        <div class="modal-body">
+          <div v-if="promptPreview.loading" class="empty-state">加载中...</div>
+          <pre v-else class="code-preview">{{ promptPreview.text }}</pre>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-sm" @click="promptPreview.open = false">关闭</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -764,4 +800,11 @@ onMounted(() => { loadData(); loadPresets() })
 .src-panel { width: 640px; max-width: 92vw; max-height: 88vh; overflow: hidden; background: var(--bg,#161b22); border: 1px solid var(--border); border-radius: 12px; padding: 14px 18px; display: flex; flex-direction: column; }
 .src-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
 .src-text { white-space: pre-wrap; word-break: break-word; font-size: 12px; line-height: 1.6; overflow-y: auto; max-height: calc(88vh - 80px); margin: 0; padding: 12px; background: var(--bg-secondary, rgba(255,255,255,0.02)); border: 1px solid var(--border); border-radius: 8px; }
+.toggle-label { display: inline-flex; align-items: center; cursor: pointer; position: relative; }
+.toggle-label input { position: absolute; opacity: 0; width: 0; height: 0; }
+.toggle-switch { width: 32px; height: 18px; background: var(--border); border-radius: 9px; transition: background 0.2s; position: relative; }
+.toggle-switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; background: #fff; border-radius: 50%; transition: transform 0.2s; }
+.toggle-label input:checked + .toggle-switch { background: var(--accent); }
+.toggle-label input:checked + .toggle-switch::after { transform: translateX(14px); }
+.mr-2 { margin-right: 8px; }
 </style>

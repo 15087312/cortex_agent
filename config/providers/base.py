@@ -32,6 +32,7 @@ class ProviderBase(ABC):
         tools: Optional[List[Dict]] = None,
         tool_choice: Optional[Any] = None,
         stream: bool = False,
+        top_p: Optional[float] = None,
     ) -> Dict[str, Any]:
         """构建请求体"""
 

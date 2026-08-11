@@ -45,6 +45,14 @@ class PromptComposer:
             from config.settings import settings as main_settings
             persona_override = main_settings.get_system_override("orchestrator")
             custom_persona = main_settings.get_persona("orchestrator")
+            if not custom_persona:
+                # 纯对话是单人格：orchestrator 无自定义人设时，
+                # 回退到用户自定义的 large-tier 总指挥 agent 人设（编排页建的自定义总指挥）
+                for ca in main_settings.get_custom_agents():
+                    if ca.get("tier") == "large" and ca.get("role"):
+                        custom_persona = main_settings.get_persona(ca["role"])
+                        if custom_persona:
+                            break
         except Exception:
             pass
         if persona_override:

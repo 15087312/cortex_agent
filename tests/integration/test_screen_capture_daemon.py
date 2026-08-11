@@ -277,10 +277,6 @@ def test_daemon_run_ignores_dev_null_stdin(monkeypatch):
     t.start()
     time.sleep(0.3)
 
-    import stat as _stat
-    with patch.object(daemon_mod.os.path, "exists", lambda p: p == sock_path):
-        pass
-
     with patch.object(client_mod, "SOCKET_PATH", sock_path):
         assert client_mod.ping(timeout=2.0) is True
 

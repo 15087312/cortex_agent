@@ -32,6 +32,13 @@ from utils.suspension import Suspension, pausable_wait_for, effective_elapsed_si
 
 logger = setup_logger("runtime_expert")
 
+# 专家单次 LLM 调用的中立 system prompt：身份/任务/工具规则全部内嵌在 user prompt，
+# 显式传一个与任务无关的中立指令，避免 generate() 默认注入 orchestrator 人设造成身份冲突
+_NEUTRAL_SYSTEM_PROMPT = (
+    "你是一个自动化执行 Agent。你的角色身份、任务与可用工具均由用户消息给出，"
+    "请严格按用户消息中的身份与要求执行，只做必要的推理与工具调用，不要自作主张改变身份。"
+)
+
 
 class RuntimeExpert(ABC):
     """常驻型专家基类 — 生命周期: init → start → run_cli_mode → stop
@@ -653,9 +660,12 @@ class RuntimeExpert(ABC):
 
         try:
             # 使用模型的 generate() 方法
+            # system_prompt 传中立指令：专家身份/任务已内嵌在 prompt 里，
+            # 不能依赖 generate() 默认注入的 orchestrator 人设（§25 同款坑）
             response = await self.model_instance.generate(
                 prompt=prompt,
                 stream=False,
+                system_prompt=_NEUTRAL_SYSTEM_PROMPT,
             )
             return response if response else ""
         except Exception as e:

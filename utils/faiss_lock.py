@@ -10,6 +10,10 @@ import contextlib
 import os
 import threading
 
+# 解释器关闭/GC 阶段 builtins 可能已被清空（EventStore.__del__ 落盘会走这里），
+# open 等内建查找会抛 NameError。在模块加载时绑定到模块级全局，避免解析 builtins。
+_open = open
+
 try:
     import fcntl
 except ImportError:  # Windows 等无 fcntl 平台退化为仅线程锁
@@ -35,7 +39,7 @@ class _PathLock:
             if self._depth == 0:
                 os.makedirs(os.path.dirname(self.lock_path) or ".", exist_ok=True)
                 # 追加模式打开（不截断）；锁文件内容无关紧要，仅用于 flock
-                fd = open(self.lock_path, "a+")
+                fd = _open(self.lock_path, "a+")
                 if fcntl is not None:
                     try:
                         fcntl.flock(fd.fileno(), fcntl.LOCK_EX)

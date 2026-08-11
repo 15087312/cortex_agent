@@ -7,6 +7,13 @@ from pydantic import field_validator
 from typing import Optional, List
 import os
 
+# macOS 双 libomp 兜底：
+# faiss 与 torch 各捆绑一份 libomp.dylib，同一进程两套 OpenMP 会 abort（OMP: Error #15）。
+# 根因修复是 scripts/fix_macos_libomp.py 将 faiss 的 libomp 依赖指向 torch 的绝对路径
+# （dyld 按规范化路径去重 → 单一 OpenMP 运行时）。此变量仅作兜底：
+# 若环境未跑过该脚本（升级 faiss/torch 后），KMP 容忍双份不 abort（但不保证稳定）。
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+
 # 记忆库切换互斥锁（模块级，避免作为类属性参与 pydantic pickle）
 _MEMORY_SWITCH_LOCK = __import__("threading").RLock()
 
@@ -123,6 +130,9 @@ class Settings(BaseSettings):
     MEMORY_DB_PATH: str = str(Path(__file__).resolve().parents[1] / "data" / "memory.db")
     MEMORY_FAISS_INDEX: str = str(Path(__file__).resolve().parents[1] / "data" / "events_faiss.index")
     MEMORY_ID_MAP: str = str(Path(__file__).resolve().parents[1] / "data" / "events_id_map.json")
+    # 后台向量化 worker：保存事件后延迟 2s 在后台线程加载 embedding 模型并向量化。
+    # 与主线程并发加载/推理 torch 有竞态（macOS 段错误），测试置 false 关闭。
+    EMBEDDING_BACKGROUND_WORKER: bool = True
 
     MCP_SERVERS: str = ""  # JSON object: {"server": {"command": "...", "args": []}}
 
@@ -361,6 +371,7 @@ class Settings(BaseSettings):
         agent_data["role"] = role
         custom[role] = agent_data
         self._save_personas_yaml(data)
+        self._invalidate_identity_cache()
         return custom[role]
 
     def delete_custom_agent(self, role: str) -> bool:
@@ -370,8 +381,45 @@ class Settings(BaseSettings):
         if role in custom:
             del custom[role]
             self._save_personas_yaml(data)
+            self._invalidate_identity_cache()
             return True
         return False
+
+    @staticmethod
+    def _invalidate_identity_cache():
+        """身份表缓存失效（自定义 agent 变更后 get_identities 需反映最新合并）"""
+        try:
+            import modules.thinking.identity as _ident
+            _ident._merged_identities = None
+        except Exception:
+            pass
+
+    def set_agent_active(self, role: str, active: bool) -> None:
+        """设置 agent 启用/禁用状态"""
+        data = self._load_personas_yaml()
+        active_map = data.setdefault("agent_active", {})
+        active_map[role] = active
+        self._save_personas_yaml(data)
+
+    def deactivate_same_tier(self, role: str, tier: str, builtin_roles: dict) -> None:
+        """同层只保留一个激活：停用同层其他 agent（总指挥层专用）"""
+        data = self._load_personas_yaml()
+        active_map = data.setdefault("agent_active", {})
+        # 内置 agent
+        for key, info in builtin_roles.items():
+            if key != role and info.get("tier") == tier:
+                active_map[key] = False
+        # 自定义 agent
+        for ca in self.get_custom_agents():
+            if ca.get("role") != role and ca.get("tier") == tier:
+                active_map[ca["role"]] = False
+        self._save_personas_yaml(data)
+
+    def get_agent_active(self, role: str) -> bool:
+        """获取 agent 启用状态（默认 True）"""
+        data = self._load_personas_yaml()
+        active_map = data.get("agent_active", {})
+        return active_map.get(role, True)
 
     # ── 人设预设管理（保存/加载/删除预设）──
 
@@ -380,7 +428,8 @@ class Settings(BaseSettings):
         data = self._load_personas_yaml()
         presets = data.get("persona_presets", {})
         if isinstance(presets, dict):
-            return [{"id": k, **v} for k, v in presets.values()] if presets else []
+            # presets = {id: {name, personas, ...}}；按 key 迭代（旧代码对 values() 的 dict 解包会 500）
+            return [{"id": pid, **preset} for pid, preset in presets.items()] if presets else []
         return []
 
     def get_persona_preset(self, preset_id: str) -> dict:

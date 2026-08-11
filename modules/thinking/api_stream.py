@@ -1256,6 +1256,20 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
                 if user_content or attachments:
                     # 附件（图片→视觉描述 / 文件→内容）注入上下文
                     if attachments:
+                        from modules.thinking.attachment_handler import validate_attachments
+                        att_err = validate_attachments(attachments)
+                        if att_err:
+                            await connection_manager.send_json(
+                                session_id,
+                                _build_event(
+                                    session_id=session_id,
+                                    msg_type="error",
+                                    event="attachment_error",
+                                    content=f"附件格式错误: {att_err}",
+                                    role="system",
+                                ),
+                            )
+                            continue
                         try:
                             from modules.thinking.attachment_handler import parse_attachments
                             att_text = await parse_attachments(attachments)

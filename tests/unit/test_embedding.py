@@ -92,6 +92,8 @@ def test_rebuild_faiss_dim_same(monkeypatch):
     e = EmbeddingEngine()
     e.dim = 384
     monkeypatch.setattr("os.path.exists", lambda p: True)
+    removed = []
+    monkeypatch.setattr("os.remove", lambda p: removed.append(p))
     class FakeFaiss:
         @staticmethod
         def read_index(p):
@@ -101,6 +103,7 @@ def test_rebuild_faiss_dim_same(monkeypatch):
     import sys
     monkeypatch.setitem(sys.modules, "faiss", FakeFaiss())
     e._rebuild_faiss_if_needed()  # 维度一致不重建
+    assert removed == [], "维度一致不应删除旧索引（不重建）"
 
 
 def test_rebuild_faiss_dim_mismatch(monkeypatch):
@@ -108,7 +111,8 @@ def test_rebuild_faiss_dim_mismatch(monkeypatch):
     e = EmbeddingEngine()
     e.dim = 384
     monkeypatch.setattr("os.path.exists", lambda p: True)
-    monkeypatch.setattr("os.remove", lambda p: None)
+    removed = []
+    monkeypatch.setattr("os.remove", lambda p: removed.append(p))
     class FakeFaiss:
         @staticmethod
         def read_index(p):
@@ -120,3 +124,4 @@ def test_rebuild_faiss_dim_mismatch(monkeypatch):
     import modules.memory.event_store as es_mod
     monkeypatch.setattr(es_mod.EventStore, "get_instance", classmethod(lambda cls: (_ for _ in ()).throw(RuntimeError("no store"))))
     e._rebuild_faiss_if_needed()  # 重建过程 EventStore 异常 → 安全返回
+    assert removed != [], "维度不一致应触发重建（删除旧索引）"

@@ -1,5 +1,6 @@
 """chat_light/continuous_thinker 测试（此前 26% 覆盖）：单模型思考循环"""
 import asyncio
+import math
 import threading
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -38,10 +39,22 @@ def mem_store(tmp_path, monkeypatch):
     eng._attempted = True
     eng.dim = 16
 
+    # 词袋式确定性嵌入：同词同向量，异词正交。
+    # 事件自动向量化文本含 keywords（"过去的事件 事件"），查询"事件"可稳定命中。
+    _vocab = {}
+
     def _embed(text):
-        import hashlib
-        h = hashlib.md5(text.encode()).digest()
-        return [((b - 128) / 128.0) for b in h][:16]
+        import re
+        tokens = re.findall(r'[\u4e00-\u9fff]{2,}|[a-zA-Z0-9_]+', text or "") or [text or ""]
+        vec = [0.0] * 16
+        for t in tokens:
+            if t not in _vocab:
+                _vocab[t] = len(_vocab) % 16
+            vec[_vocab[t]] += 1.0
+        norm = math.sqrt(sum(x * x for x in vec))
+        if norm < 1e-12:
+            return [0.0] * 16
+        return [x / norm for x in vec]
     eng.embed = _embed
     eng.embed_batch = lambda texts: [_embed(t) for t in texts]
     monkeypatch.setattr(EmbeddingEngine, "get_instance", classmethod(lambda cls: eng))

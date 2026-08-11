@@ -79,6 +79,13 @@ _EXTREME_DANGER_PATTERNS_RAW = [
 ]
 _EXTREME_DANGER_RE = [_re.compile(p, _re.IGNORECASE) for p in _EXTREME_DANGER_PATTERNS_RAW]
 
+# pipe-to-shell（下载并执行）是经典攻击向量；_DANGEROUS_PATTERNS 里的 "curl.*|.*sh"
+# 是正则写法但被当子串匹配，无法命中真实命令（如 `curl http://x | sh`），此处用正则补漏
+_DANGEROUS_REGEX = [
+    _re.compile(r'curl\s+\S+.*\|\s*(?:ba|z|k)?sh\b', _re.IGNORECASE),
+    _re.compile(r'wget\s+\S+.*\|\s*(?:ba|z|k)?sh\b', _re.IGNORECASE),
+]
+
 
 def _detect_dangerous_command(command: str) -> List[str]:
     """检测命令中的危险模式，返回匹配的警告列表"""
@@ -87,6 +94,10 @@ def _detect_dangerous_command(command: str) -> List[str]:
     for pattern in _DANGEROUS_PATTERNS:
         if pattern.lower() in cmd_lower:
             warnings.append(f"检测到危险模式: '{pattern}'")
+    # pipe-to-shell 正则补漏（curl/wget | sh，子串匹配命不中真实命令）
+    for r in _DANGEROUS_REGEX:
+        if r.search(command):
+            warnings.append("检测到危险模式: 'curl/wget | sh'（下载并执行）")
     # 检测链式命令（; && || |）中的危险操作
     if any(op in command for op in [";", "&&", "||", "|"]):
         parts = []

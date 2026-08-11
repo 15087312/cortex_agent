@@ -958,6 +958,33 @@ async def delete_custom_agent(role: str):
                         "error": {"code": "NOT_FOUND", "message": f"未找到自定义 agent: {role}"}})
 
 
+@app.put("/management/orchestration/agents/{role}/active")
+async def toggle_agent_active(role: str, body: dict = None):
+    """切换 agent 启用/禁用状态"""
+    body = body or {}
+    active = body.get("active", True)
+    # 检查 agent 是否存在（内置或自定义）
+    from config.prompts.loader import get_loader
+    builtin_roles = (get_loader().load("roles") or {}).get("roles") or {}
+    is_builtin = role in builtin_roles
+    is_custom = settings.get_custom_agent(role) is not None
+    if not is_builtin and not is_custom:
+        return JSONResponse(status_code=404, content={"success": False,
+                            "error": {"code": "NOT_FOUND", "message": f"未找到 agent: {role}"}})
+    # 获取该 agent 的 tier
+    agent_tier = None
+    if role in builtin_roles:
+        agent_tier = builtin_roles[role].get("tier", "")
+    elif is_custom:
+        agent_tier = settings.get_custom_agent(role).get("tier", "")
+    # 总指挥层(large)只能有一个激活：激活时自动停用同层其他
+    if active and agent_tier == "large":
+        settings.deactivate_same_tier(role, agent_tier, builtin_roles)
+    settings.set_agent_active(role, active)
+    logger.info(f"Agent {role} active={active}")
+    return {"success": True, "data": {"role": role, "active": active}}
+
+
 # ── 人设预设管理 ──
 
 @app.get("/management/persona-presets")

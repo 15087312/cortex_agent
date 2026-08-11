@@ -14,7 +14,8 @@ def api_log(tmp_path, monkeypatch):
     from modules.management.api_log_store import ApiLogStore
     store = ApiLogStore(path=str(tmp_path / "api_log.db"))
     monkeypatch.setattr(ApiLogStore, "get_instance", classmethod(lambda cls: store))
-    return store
+    yield store
+    store.stop()  # 停止后台 flush 线程，防 pytest 退出卡住
 
 
 def _fake_collector():

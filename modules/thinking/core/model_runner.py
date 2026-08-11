@@ -2439,6 +2439,17 @@ class ModelRunnerManager:
             # 创建 ModelIdentity（先获取模板权限）
             identity = ModelIdentity.from_template(identity_key)
 
+            # ── 激活开关：编排页禁用（agent_active=False）的 agent 拒绝启动 ──
+            try:
+                from config.settings import settings as _active_cfg
+                if _active_cfg.get_agent_active(identity_key) is False:
+                    logger.warning(
+                        f"[ModelRunnerManager] {identity_key} 已被禁用（编排页激活开关），拒绝启动"
+                    )
+                    return None
+            except Exception:
+                pass
+
             # ── 多实例支持：为 model_id 生成唯一后缀 ──
             # 剥离模板的 _001 后缀，按相同 base 计数分配
             import re as _re

@@ -40,9 +40,10 @@ def test_format_tools_empty():
 
 def test_slice_for_large_basic(monkeypatch):
     s = _slicer()
-    # 基本输入不崩
-    try:
-        result = s.slice_for_large("用户输入", {}, {}, {}, {})
-        assert isinstance(result, str)
-    except (AttributeError, TypeError):
-        pass  # 依赖缺失时验证核心可调用
+    # 此前用旧签名调用（传 5 参）导致 TypeError 被 except pass 掩盖（假测试）
+    from modules.thinking.cognition.blackboard import CognitiveBlackboard
+    bb = CognitiveBlackboard(session_id="s1", turn_id="t1")
+    bb.goal = "测试目标"
+    result = s.slice_for_large(bb)
+    assert isinstance(result, str)
+    assert "测试目标" in result

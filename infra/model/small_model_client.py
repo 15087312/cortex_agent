@@ -44,6 +44,10 @@ class SmallModelClient(BaseModelClient):
         self.logger = setup_logger("small_model_client")
         self.supports_native_tools = True
         self._api_format = self.detect_api_format(self.api_url)
+        # 接线 config.providers 格式层（headers/请求体/URL 归一化统一由 Provider 负责）
+        from config.providers.registry import get_provider
+        self._provider = get_provider(self.model_name, key, url, self._api_format)
+        self._chat_url = self._provider.chat_url()
 
     @classmethod
     def from_config(cls) -> 'SmallModelClient':
@@ -63,51 +67,44 @@ class SmallModelClient(BaseModelClient):
         **kwargs,
     ) -> ChatResponse:
         """带原生工具调用的对话生成 (OpenAI / Anthropic 双格式)"""
-        headers = self._build_headers(self._api_format)
+        # 格式层统一由 Provider 构建（headers/请求体；anthropic system 提取内含）
+        headers = self._provider.build_headers()
         model = kwargs.get("model", self.model_name)
         max_tokens = kwargs.get("max_tokens", self.max_tokens)
         temperature = kwargs.get("temperature", self.temperature)
         tool_choice = kwargs.get("tool_choice")
 
-        if self._api_format == "anthropic":
-            system_text, api_messages = self._messages_to_anthropic(messages)
-            payload = {"model": model, "max_tokens": max_tokens, "messages": api_messages}
-            if system_text:
-                payload["system"] = system_text
-            if tools:
-                payload["tools"] = self._tools_to_anthropic(tools)
-            if tool_choice:
-                if isinstance(tool_choice, dict) and "function" in tool_choice:
-                    payload["tool_choice"] = {"type": "tool", "name": tool_choice["function"].get("name", "")}
-                elif tool_choice == "required":
-                    payload["tool_choice"] = {"type": "any"}
-                elif tool_choice == "auto":
-                    payload["tool_choice"] = {"type": "auto"}
-        else:
-            api_messages = []
-            for msg in messages:
-                d = {"role": msg.role, "content": msg.content or ""}
-                if msg.tool_calls:
-                    d["tool_calls"] = [
-                        {"id": tc.id, "type": "function", "function": {"name": tc.name, "arguments": tc.arguments}}
-                        for tc in msg.tool_calls
-                    ]
-                if msg.tool_call_id:
-                    d["tool_call_id"] = msg.tool_call_id
-                api_messages.append(d)
-            payload = {"model": model, "messages": api_messages, "max_tokens": max_tokens, "temperature": temperature}
-            if tools:
-                payload["tools"] = tools
-            if tool_choice:
-                payload["tool_choice"] = tool_choice
+        # api_messages 序列化保留客户端（tool_calls/tool_call_id 转换是客户端特有）
+        api_messages = []
+        for msg in messages:
+            d = {"role": msg.role, "content": msg.content or ""}
+            if msg.tool_calls:
+                d["tool_calls"] = [
+                    {"id": tc.id, "type": "function", "function": {"name": tc.name, "arguments": tc.arguments}}
+                    for tc in msg.tool_calls
+                ]
+            if msg.tool_call_id:
+                d["tool_call_id"] = msg.tool_call_id
+            api_messages.append(d)
+
+        if model != self._provider.model_name:
+            self._provider.model_name = model
+        payload = self._provider.build_request(
+            api_messages,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            tools=tools,
+            tool_choice=tool_choice,
+            top_p=kwargs.get("top_p"),
+        )
 
         max_retries = kwargs.get("max_retries", 3)
         last_error = None
         for attempt in range(1, max_retries + 1):
             try:
                 session = await self._get_session()
-                self._log_request("POST", self.api_url, len(json.dumps(payload)))
-                async with session.post(self.api_url, headers=headers, json=payload, timeout=self.timeout) as response:
+                self._log_request("POST", self._chat_url, len(json.dumps(payload)))
+                async with session.post(self._chat_url, headers=headers, json=payload, timeout=self.timeout) as response:
                     if response.status == 200:
                         data = await response.json()
                         break
@@ -131,78 +128,50 @@ class SmallModelClient(BaseModelClient):
                     continue
                 raise
 
-        if self._api_format == "anthropic":
-            return self._parse_anthropic_response(data)
-
-        choices = data.get("choices", [])
-        if not choices:
+        # 响应解析统一由 Provider 负责（openai/anthropic；保留原"空 choices 抛错"语义）
+        if self._api_format != "anthropic" and not data.get("choices"):
             raise Exception(f"Empty choices in small model response: {list(data.keys())}")
-        choice = choices[0]
-        message = choice.get("message", {})
-        content = message.get("content", "") or ""
-        raw_tool_calls = message.get("tool_calls")
-        tool_calls = []
+        parsed = self._provider.parse_response(data)
+        raw_tool_calls = parsed.get("tool_calls")
+        tool_calls = None
         if raw_tool_calls:
-            for tc in raw_tool_calls:
-                func = tc.get("function", {})
-                tool_calls.append(ToolCall(id=tc.get("id", ""), name=func.get("name", ""), arguments=func.get("arguments", "{}")))
+            tool_calls = [
+                ToolCall(id=tc.get("id", ""), name=tc.get("name", ""), arguments=tc.get("arguments", "{}"))
+                for tc in raw_tool_calls
+            ]
         return ChatResponse(
-            message=ChatMessage(role="assistant", content=content, tool_calls=tool_calls if tool_calls else None),
+            message=ChatMessage(role="assistant", content=parsed.get("content"), tool_calls=tool_calls),
             usage={"prompt_tokens": data.get("usage", {}).get("prompt_tokens", 0), "completion_tokens": data.get("usage", {}).get("completion_tokens", 0)},
         )
 
-    async def generate(self, prompt: str, max_retries: int = 3, system_prompt: str = None, **kwargs) -> str:
+    async def generate(self, prompt: str, *, system_prompt: str, max_retries: int = 3, **kwargs) -> str:
         """生成响应 - 使用 OpenAI / Anthropic 兼容 API，带重试机制
 
         Args:
-            system_prompt: 自定义系统提示词（如记忆收纳等专用任务）。
-                非空时覆盖自动拼装的 agent system prompt（人格/工具/规则）。
+            system_prompt: 系统提示词（必填）。单次调用不注入默认 agent 人设，
+                调用方必须显式给出本次任务的身份/指令；缺失时抛 TypeError。
         """
         if not system_prompt:
-            try:
-                from config.prompts.composer import PromptComposer, PromptRequest
-                from config.settings import settings as _cfg
-                system_prompt = PromptComposer().build_system(PromptRequest(
-                    tier="expert", role="code_writer", mode=_cfg.effective_execution_mode))
-            except Exception as e:
-                logger.error(f"构建系统提示词失败，raise 以避免对话上下文丢失: {e}")
-                raise
+            raise TypeError("generate() 的 system_prompt 为必填参数，不能为空")
         messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt}]
 
-        headers = self._build_headers(self._api_format)
+        # 格式层统一由 Provider 构建（top_p 合并进 Provider 接口，openai 生效）
+        headers = self._provider.build_headers()
         max_tokens = kwargs.get("max_tokens", self.max_tokens)
         temp = kwargs.get("temperature", self.temperature)
-
-        if self._api_format == "anthropic":
-            system_text = ""
-            user_msgs = []
-            for m in messages:
-                if m["role"] == "system":
-                    system_text = m["content"]
-                else:
-                    user_msgs.append(m)
-            payload = {
-                "model": self.model_name,
-                "max_tokens": max_tokens,
-                "messages": user_msgs,
-            }
-            if system_text:
-                payload["system"] = system_text
-        else:
-            payload = {
-                "model": self.model_name,
-                "messages": messages,
-                "max_tokens": max_tokens,
-                "temperature": temp,
-                "top_p": kwargs.get("top_p", 0.9),
-            }
+        payload = self._provider.build_request(
+            messages,
+            max_tokens=max_tokens,
+            temperature=temp,
+            top_p=kwargs.get("top_p", 0.9),
+        )
 
         last_error = None
         for attempt in range(1, max_retries + 1):
             try:
                 session = await self._get_session()
-                self._log_request("POST", self.api_url, len(json.dumps(payload)))
-                async with session.post(self.api_url, headers=headers, json=payload, timeout=self.timeout) as response:
+                self._log_request("POST", self._chat_url, len(json.dumps(payload)))
+                async with session.post(self._chat_url, headers=headers, json=payload, timeout=self.timeout) as response:
                     if response.status == 200:
                         data = await response.json()
                         if self._api_format == "anthropic":
@@ -250,7 +219,11 @@ class SmallModelClient(BaseModelClient):
     async def health_check(self) -> bool:
         """健康检查"""
         try:
-            response = await self.generate("hi", max_tokens=5)
+            response = await self.generate(
+                "hi",
+                system_prompt="你是健康检查助手，收到后请回复任意单词确认模型可用。",
+                max_tokens=5,
+            )
             return len(response) > 0
         except Exception as e:
             logger.warning(f"小模型健康检查失败: {e}")

@@ -528,6 +528,11 @@ class ImageAnalyzer:
 
         api_key = settings.effective_vision_api_key
         api_url = settings.effective_vision_api_url
+        # 去除 base_url 尾部 /chat/completions，避免 openai SDK 再拼接导致双重路径 404
+        # （与 config/providers/openai.py:76-78 的处理保持一致）
+        api_url = api_url.rstrip("/")
+        if api_url.endswith("/chat/completions"):
+            api_url = api_url.rsplit("/chat/completions", 1)[0]
         model = settings.effective_vision_api_model
 
         # 创建自定义 httpx client，避免 openai 库的 proxies 参数错误
@@ -713,9 +718,14 @@ class ImageAnalyzer:
 
         # 创建自定义 httpx client，避免 openai 库的 proxies 参数错误
         http_client = httpx.AsyncClient(timeout=30.0, trust_env=True)
+        api_url = settings.OPENAI_API_BASE_URL
+        # 去除 base_url 尾部 /chat/completions，避免 openai SDK 再拼接导致双重路径 404
+        api_url = api_url.rstrip("/")
+        if api_url.endswith("/chat/completions"):
+            api_url = api_url.rsplit("/chat/completions", 1)[0]
         client = openai.AsyncOpenAI(
             api_key=settings.OPENAI_API_KEY,
-            base_url=settings.OPENAI_API_BASE_URL,
+            base_url=api_url,
             http_client=http_client,
         )
 

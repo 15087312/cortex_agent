@@ -64,16 +64,31 @@ def test_think_once_retries_on_error(monkeypatch):
     assert "思考异常" in result["thought"] or result["thought"] == ""
 
 
-def test_build_system_prompt_contains_role(monkeypatch):
+def test_build_prompt_contains_question(monkeypatch):
+    """真实 _build_prompt：断言 prompt 包含初始问题（原假测试只 try/except pass；
+    role 人设由 system prompt 负责，不在 _build_prompt 输出内）"""
     ct = _make_ct(monkeypatch)
-    ct.identity = MagicMock()
-    ct.identity.role = "orchestrator"
-    ct.identity.tier = "large"
-    # 简单验证能构建（不崩溃）
-    try:
-        _run(ct._build_prompt("用户输入", "初始问题"))
-    except (AttributeError, TypeError):
-        pass  # 依赖缺失时不应让测试崩，验证核心路径可调用
+    ct._role = "orchestrator"
+    ct.notebook = None
+    ct._memory_focus = ""
+    ct._session_id = "s1"
+    ct._external_prompt_builder = None
+    ct._runner_ref = None
+    ct._consume_external_guidance = lambda: ""
+    ct._build_delegation_status_section = lambda: ""
+    # 感知上下文 mock 为空（避免真实感知）
+    import modules.thinking.context.sources.perception_source as ps_mod
+    monkeypatch.setattr(
+        ps_mod, "PerceptionSource",
+        lambda: type("P", (), {"collect": lambda: type("F", (), {"content": ""})()})(),
+    )
+    # 技能建议 mock 不匹配（get_forced_skill 不存在 → 生产代码 except 兜底为空）
+    import modules.thinking.skills as sk_mod
+    monkeypatch.setattr(sk_mod.skill_manager, "match_skill", lambda q: None)
+
+    prompt = _run(ct._build_prompt("为什么项目延期"))
+    assert "为什么项目延期" in prompt, "prompt 必须包含初始问题"
+    assert prompt.strip() != ""
 
 
 def test_jaccard_similarity():

@@ -186,6 +186,7 @@ async def get_orchestration():
             "system_override": settings.get_system_override(key),
             "role_tools": settings.get_role_tools(key),
             "model_params": settings.get_model_params(key),
+            "active": settings.get_agent_active(key),
             "is_custom": False,
         })
     # 自定义 agent（personas.yaml）
@@ -196,6 +197,7 @@ async def get_orchestration():
             ca["system_override"] = settings.get_system_override(role)
             ca["role_tools"] = settings.get_role_tools(role)
             ca["model_params"] = settings.get_model_params(role)
+            ca["active"] = settings.get_agent_active(role)
             ca["is_custom"] = True
             agents.append(ca)
     agents.sort(key=lambda a: {"large": 0, "supervisor": 1, "expert": 2}.get(a["tier"], 9))

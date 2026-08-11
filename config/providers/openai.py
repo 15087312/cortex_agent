@@ -26,6 +26,7 @@ class OpenAIProvider(ProviderBase):
         tools: Optional[List[Dict]] = None,
         tool_choice: Optional[Any] = None,
         stream: bool = False,
+        top_p: Optional[float] = None,
     ) -> Dict[str, Any]:
         payload: Dict[str, Any] = {
             "model": self.model_name,
@@ -33,6 +34,8 @@ class OpenAIProvider(ProviderBase):
             "max_tokens": max_tokens,
             "temperature": temperature,
         }
+        if top_p is not None:
+            payload["top_p"] = top_p
         if stream:
             payload["stream"] = True
         if tools:
@@ -51,6 +54,8 @@ class OpenAIProvider(ProviderBase):
         content = message.get("content", "")
         finish_reason = choice.get("finish_reason", "stop")
         tool_calls_raw = message.get("tool_calls")
+        # thinking 模式推理内容（客户端展示思考区需要，与 infra/model 行为一致）
+        reasoning_content = message.get("reasoning_content")
 
         tool_calls = None
         if tool_calls_raw:
@@ -70,6 +75,7 @@ class OpenAIProvider(ProviderBase):
             "tool_calls": tool_calls,
             "finish_reason": finish_reason,
             "usage": usage,
+            "reasoning_content": reasoning_content,
         }
 
     def chat_url(self) -> str:

@@ -33,10 +33,13 @@ def _allow_outreach(monkeypatch):
 
 
 class _Diff:
+    """与真实 Difference 模型字段保持一致（无 description，用 category+payload）"""
+
     def __init__(self, intensity=80):
         self.intensity = intensity
         self.source_type = "screen"
-        self.description = "变化"
+        self.category = "screen_changed"
+        self.payload = {"target": "主窗口", "change_type": "changed"}
 
 
 def test_intensity_threshold(monkeypatch):
@@ -188,3 +191,48 @@ def test_trigger_diff_no_payload(monkeypatch):
 
     tt._trigger([D()])
     assert fired == ["file_modified"]
+
+
+def test_think_forwards_real_desc_to_llm(monkeypatch):
+    """真实 _think 链路：prompt 必须包含真实差异描述（§27.4 回归，防 desc 空转）"""
+    captured = {}
+
+    async def fake_generate_and_push(connection_filter, gen_fn, **kw):
+        captured["prompt"] = await gen_fn()
+        captured["kw"] = kw
+
+    import modules.thinking.frontend_channel as fc_mod
+    monkeypatch.setattr(fc_mod, "generate_and_push", fake_generate_and_push)
+    import modules.perception.trigger as trig_mod
+
+    async def fake_llm(prompt, ctx):
+        return prompt
+    monkeypatch.setattr(trig_mod, "call_outreach_llm", fake_llm)
+
+    import asyncio
+    asyncio.run(tt._think("screen_changed:主窗口:亮度变化"))
+
+    assert "screen_changed:主窗口:亮度变化" in captured["prompt"]
+    assert "检测到环境高强度变化" in captured["prompt"]
+    assert captured["kw"]["msg_type"] == "proactive"
+    assert captured["kw"]["event"] == "trigger_think"
+
+
+def test_think_empty_desc_still_formats(monkeypatch):
+    """desc 为空时 prompt 仍可构造（不因空描述崩溃）"""
+    captured = {}
+
+    async def fake_generate_and_push(connection_filter, gen_fn, **kw):
+        captured["prompt"] = await gen_fn()
+
+    import modules.thinking.frontend_channel as fc_mod
+    monkeypatch.setattr(fc_mod, "generate_and_push", fake_generate_and_push)
+    import modules.perception.trigger as trig_mod
+
+    async def fake_llm(prompt, ctx):
+        return prompt
+    monkeypatch.setattr(trig_mod, "call_outreach_llm", fake_llm)
+
+    import asyncio
+    asyncio.run(tt._think(""))
+    assert "检测到环境高强度变化" in captured["prompt"]

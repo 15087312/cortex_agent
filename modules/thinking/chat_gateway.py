@@ -385,6 +385,20 @@ async def _chatonly_ws(websocket: WebSocket, session_id: str) -> None:
                 if not content and not attachments:
                     continue
                 if attachments:
+                    from modules.thinking.attachment_handler import validate_attachments
+                    att_err = validate_attachments(attachments)
+                    if att_err:
+                        await _safe_ws_send(
+                            websocket,
+                            _envelope(
+                                session_id,
+                                "error",
+                                "error",
+                                f"附件格式错误: {att_err}",
+                                "system",
+                            ),
+                        )
+                        continue
                     try:
                         from modules.thinking.attachment_handler import parse_attachments
                         att_text = await parse_attachments(attachments)

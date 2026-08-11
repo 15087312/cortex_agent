@@ -52,3 +52,50 @@ def test_prompt_composer_real_init_loads_identity():
     from modules.thinking.chat_light.prompt_composer import PromptComposer
     c = PromptComposer()  # 真实 __init__（不 mock）
     assert isinstance(c._identity, str)
+
+
+# ── 纯对话人设回退：orchestrator 无自定义时用 large-tier 自定义 agent ──────
+
+def test_build_system_falls_back_to_large_custom_agent(monkeypatch):
+    """orchestrator 无人设 → 回退到自定义 large-tier 总指挥 agent 的人设（修复设置无效）"""
+    from config.settings import settings
+    from modules.thinking.chat_light.prompt_composer import PromptComposer
+
+    def fake_get_persona(self, role):
+        if role == "custom_boss":
+            return "【自定义总指挥】我是自定义人格。"
+        return ""
+
+    def fake_get_custom_agents(self):
+        return [{"role": "custom_boss", "name": "自定义总指挥", "tier": "large"}]
+
+    monkeypatch.setattr(type(settings), "get_persona", fake_get_persona)
+    monkeypatch.setattr(type(settings), "get_custom_agents", fake_get_custom_agents)
+    monkeypatch.setattr(type(settings), "get_system_override", lambda self, role: "")
+
+    sp = PromptComposer().build_system("")
+    assert "【自定义总指挥】" in sp
+
+
+def test_build_system_orchestrator_persona_priority(monkeypatch):
+    """orchestrator 有自定义人设时优先，不回退"""
+    from config.settings import settings
+    from modules.thinking.chat_light.prompt_composer import PromptComposer
+
+    def fake_get_persona(self, role):
+        if role == "orchestrator":
+            return "【总指挥人设】官方总指挥。"
+        if role == "custom_boss":
+            return "【自定义】不该被用。"
+        return ""
+
+    def fake_get_custom_agents(self):
+        return [{"role": "custom_boss", "name": "x", "tier": "large"}]
+
+    monkeypatch.setattr(type(settings), "get_persona", fake_get_persona)
+    monkeypatch.setattr(type(settings), "get_custom_agents", fake_get_custom_agents)
+    monkeypatch.setattr(type(settings), "get_system_override", lambda self, role: "")
+
+    sp = PromptComposer().build_system("")
+    assert "【总指挥人设】" in sp
+    assert "【自定义】" not in sp

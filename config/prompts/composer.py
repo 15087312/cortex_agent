@@ -104,6 +104,19 @@ class PromptComposer:
     def _get_role(self, role_key: str) -> RoleInfo:
         roles = self._roles.get("roles", {})
         data = roles.get(role_key, roles.get("orchestrator", {}))
+        # 自定义 agent（personas.yaml 编排页创建）不在 roles.yaml → 从 get_identities() 取，
+        # 否则自定义角色的人设/人格/擅长永不进入 system prompt（§27.18 连带缺口）
+        if role_key not in roles:
+            try:
+                from modules.thinking.identity import get_identities
+                custom = get_identities().get(role_key)
+                if custom:
+                    data = custom
+            except Exception:
+                pass
+        expertise = data.get("expertise", []) or []
+        if isinstance(expertise, str):
+            expertise = [s.strip() for s in expertise.split(",") if s.strip()]
         return RoleInfo(
             key=role_key,
             name=data.get("name", "助手"),
@@ -111,9 +124,9 @@ class PromptComposer:
             model_id=data.get("model_id", ""),
             personality=data.get("personality", ""),
             speaking_style=data.get("speaking_style", ""),
-            expertise=data.get("expertise", []),
-            weaknesses=data.get("weaknesses", []),
-            tool_whitelist=data.get("tool_whitelist", []),
+            expertise=expertise,
+            weaknesses=data.get("weaknesses", []) or [],
+            tool_whitelist=data.get("tool_whitelist", []) or [],
         )
 
     def _build_identity(self, role: RoleInfo) -> str:

@@ -75,7 +75,7 @@ def _configure_third_party_loggers():
 
 def setup_logger(
     name: str,
-    log_level: str = "INFO",
+    log_level: str = None,
     log_dir: str = None
 ) -> logging.Logger:
     """设置日志器 — 带 console + file handler。
@@ -83,6 +83,9 @@ def setup_logger(
     注意：同一 name 第二次调用会清空 handlers 重建。
     推荐使用 get_logger(name) 来自动缓存。
     """
+    if log_level is None:
+        # 设置页的 LOG_LEVEL 配置生效（此前硬编码 "INFO"，改动无效 = §22 摆设）
+        log_level = getattr(_settings, "LOG_LEVEL", "") or "INFO"
     if log_dir is None:
         log_dir = str(PROJECT_ROOT / "data" / "logs")
 

@@ -54,14 +54,22 @@ class MockSession:
 # ── 辅助函数 ──
 
 async def _capture_generate(client_cls, api_url, tier: str, role: str) -> dict:
-    """创建一个客户端，注入 mock session，调用 generate()，返回捕获的 POST 数据"""
+    """创建一个客户端，注入 mock session，调用 generate()，返回捕获的 POST 数据
+
+    人设由调用方用 PromptComposer 显式构建后传入（generate() 不再自动注入默认人设，
+    仅原样发送调用方提供的 system_prompt）。
+    """
     from config.settings import settings
+    from config.prompts.composer import PromptComposer, PromptRequest
 
     client = client_cls(api_key=settings.LARGE_MODEL_API_KEY, api_url=api_url)
 
     session = MockSession()
     client._session = session
-    await client.generate("写一个 hello world")
+    system_prompt = PromptComposer().build_system(
+        PromptRequest(tier=tier, role=role, mode=settings.effective_execution_mode)
+    )
+    await client.generate("写一个 hello world", system_prompt=system_prompt)
 
     # 返回第一个捕获的 POST
     for url, data in session.captured.items():

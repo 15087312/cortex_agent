@@ -24,8 +24,9 @@ onUnmounted(() => window.removeEventListener('cortex-focus-input', _onFocusReque
 function handleSend() {
   if (props.processing) return
   const text = input.value.trim()
-  if (!text) return
-  emit('send', { text, attachments: attachments.value.map(a => a.data) })
+  const atts = attachments.value
+  if (!text && atts.length === 0) return
+  emit('send', { text, attachments: atts.map(a => ({ type: a.type, name: a.name, data: a.data })) })
   input.value = ''
   attachments.value = []
 }
@@ -47,7 +48,7 @@ function handleFiles(fileList) {
     }
     const reader = new FileReader()
     reader.onload = (e) => {
-      attachments.value.push({ type: isImage ? 'image' : 'file', data: e.target.result, name: file.name })
+      attachments.value.push({ type: file.type || (isImage ? 'image/*' : 'application/octet-stream'), data: e.target.result, name: file.name })
     }
     reader.readAsDataURL(file)
   }
@@ -100,7 +101,7 @@ function removeAttachment(i) {
   >
     <div v-if="attachments.length > 0" class="chat-attachments">
       <div v-for="(att, i) in attachments" :key="i" class="chat-attachment-item">
-        <img v-if="att.type === 'image'" :src="att.data" class="chat-attachment-thumb" />
+        <img v-if="att.type && att.type.startsWith('image/')" :src="att.data" class="chat-attachment-thumb" />
         <span v-else class="chat-attachment-file"><Icon name="file" :size="12" /> {{ att.name }}</span>
         <button class="chat-attachment-remove" @click="removeAttachment(i)">✕</button>
       </div>

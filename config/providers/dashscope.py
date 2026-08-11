@@ -23,6 +23,7 @@ class DashScopeProvider(ProviderBase):
         tools: Optional[List[Dict]] = None,
         tool_choice: Optional[Any] = None,
         stream: bool = False,
+        top_p: Optional[float] = None,  # DashScope 不支持 top_p，接受但忽略
     ) -> Dict[str, Any]:
         payload: Dict[str, Any] = {
             "model": self.model_name,

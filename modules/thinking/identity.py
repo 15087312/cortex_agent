@@ -35,17 +35,42 @@ def get_identities() -> Dict[str, dict]:
 
 
 def _load_from_yaml() -> Dict[str, dict]:
-    """从 config/prompts/roles.yaml 加载角色模板"""
+    """从 config/prompts/roles.yaml 加载角色模板，并合并 personas.yaml 的自定义 agent"""
     try:
         from config.prompts.loader import get_loader
         loader = get_loader()
         data = loader.load("roles") or {}
-        roles = data.get("roles", {})
-        if roles:
-            return roles
+        # 浅拷贝：不能直接改 loader 缓存的共享 dict（自定义 agent 会污染后续加载）
+        roles = dict(data.get("roles", {}) or {})
     except Exception as e:
         logger.warning(f"[Identity] 从 YAML 加载角色失败，使用空配置: {e}")
-    return {}
+        roles = {}
+    # 合并编排页创建的自定义 agent（personas.yaml）→ 身份模板结构，
+    # 使 agent 模式调度（ModelRunnerManager.start_runner）能启动自定义角色
+    try:
+        from config.settings import settings as _settings
+        for ca in _settings.get_custom_agents():
+            role = (ca.get("role") or "").strip()
+            if not role or role in roles:
+                continue
+            name = ca.get("name") or role
+            expertise = ca.get("expertise") or []
+            if isinstance(expertise, str):
+                expertise = [s.strip() for s in expertise.split(",") if s.strip()]
+            roles[role] = {
+                "name": name,
+                "tier": ca.get("tier") or "expert",
+                "role": role,
+                "model_id": (ca.get("model_id") or "").strip() or f"{role}_001",
+                "personality": ca.get("personality") or f"你是{name}。",
+                "speaking_style": ca.get("speaking_style") or "自然",
+                "expertise": expertise,
+                "weaknesses": [],
+                "tool_whitelist": [],
+            }
+    except Exception as e:
+        logger.debug(f"[Identity] 合并自定义 agent 失败（非致命）: {e}")
+    return roles
 
 
 def load_external_identities(directory: str = None) -> Dict[str, dict]:

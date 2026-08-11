@@ -9,6 +9,7 @@ EventStore — 事件记忆的持久化存储
 import json
 import os
 import sqlite3
+import sys
 import threading
 import uuid
 from dataclasses import dataclass, field, asdict
@@ -20,6 +21,9 @@ from utils.faiss_lock import faiss_file_lock
 from utils.logger import setup_logger
 
 logger = setup_logger("event_store")
+
+# 解释器关闭期 builtins 可能已被清空，open 查找会抛 NameError（__del__ 落盘链路上）
+_open = open
 
 
 @dataclass
@@ -254,6 +258,10 @@ class EventStore:
 
     def _start_embedding_worker(self):
         """启动后台向量化线程（处理待向量化的事件）"""
+        if not getattr(settings, "EMBEDDING_BACKGROUND_WORKER", True):
+            # 测试/受限环境关闭后台 worker：避免与主线程并发加载 embedding 模型
+            # 触发 macOS libomp/段错误竞态（见 docs/ERRORS_AND_FIXES.md §27）
+            return
         if self._embedding_worker_started or not self._pending_embeddings:
             return
         self._embedding_worker_started = True
@@ -413,7 +421,7 @@ class EventStore:
             try:
                 import faiss
                 faiss.write_index(self._faiss_index, self._faiss_index_path)
-                with open(self._id_map_path, "w") as f:
+                with _open(self._id_map_path, "w") as f:
                     json.dump(self._id_map, f)
             except Exception as e:
                 self.logger.warning(f"[EventStore] 保存 FAISS 索引失败: {e}")
@@ -495,6 +503,24 @@ class EventStore:
             self.logger.warning(f"[EventStore] 向量搜索失败: {e}")
             return []
 
+    def get_embedding(self, event_id: str) -> Optional[List[float]]:
+        """取回某事件的 FAISS 向量（用于计算候选事件的真实余弦相似度）"""
+        self._load_faiss()
+        if self._faiss_index is None or not self._id_map:
+            return None
+        with self._write_lock:
+            try:
+                import numpy as np
+                if event_id not in self._id_map:
+                    return None
+                idx = self._id_map.index(event_id)
+                vec = np.zeros((1, self._faiss_index.d), dtype=np.float32)
+                self._faiss_index.reconstruct(idx, vec[0])
+                return vec[0].tolist()
+            except Exception as e:
+                self.logger.warning(f"[EventStore] 取回向量失败: {e}")
+                return None
+
     # ------------------------------------------------------------------
     # 关键词检索（SQLite json_each）
     # ------------------------------------------------------------------
@@ -548,4 +574,11 @@ class EventStore:
         self._save_faiss()
 
     def __del__(self):
-        self.close()
+        # 解释器关闭/GC 期 builtins 可能已被清空（open 等查找抛 NameError），
+        # 进程即将退出时跳过落盘，避免 __del__ 里做重活抛异常刷屏
+        if sys.is_finalizing():
+            return
+        try:
+            self.close()
+        except Exception:
+            pass

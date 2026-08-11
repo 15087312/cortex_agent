@@ -103,7 +103,20 @@ class BaseModelClient(ABC):
             (m.content for m in reversed(messages) if m.content),
             "",
         )
-        text = await self.generate(last_content, **kwargs)
+        # generate() 的 system_prompt 为必填参数（不做人设兜底）：
+        # 优先取调用方显式传入的，否则从 messages 的 system 消息提取；都没有则报错。
+        system_prompt = kwargs.pop("system_prompt", None)
+        if system_prompt is None:
+            system_prompt = next(
+                (m.content for m in messages if m.role == "system" and m.content),
+                None,
+            )
+        if system_prompt is None:
+            raise TypeError(
+                "chat() 兜底调用 generate() 需要 system_prompt："
+                "请显式传入，或为 messages 提供 system 消息"
+            )
+        text = await self.generate(last_content, system_prompt=system_prompt, **kwargs)
         return ChatResponse(
             message=ChatMessage(role="assistant", content=text),
         )

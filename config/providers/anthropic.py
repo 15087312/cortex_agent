@@ -24,6 +24,7 @@ class AnthropicProvider(ProviderBase):
         tools: Optional[List[Dict]] = None,
         tool_choice: Optional[Any] = None,
         stream: bool = False,
+        top_p: Optional[float] = None,  # Anthropic 无 top_p，接受但忽略
     ) -> Dict[str, Any]:
         system_text = ""
         user_messages = []

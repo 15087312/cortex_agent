@@ -16,6 +16,13 @@ _URL_CHECKS = [
 
 _DEFAULT = OpenAIProvider
 
+# 显式格式名 → Provider 类（尊重客户端配置的 _api_format；URL 推断见 get_provider_class）
+_FORMAT_MAP = {
+    "openai": OpenAIProvider,
+    "anthropic": AnthropicProvider,
+    "dashscope": DashScopeProvider,
+}
+
 
 class ProviderRegistry:
     """根据 base_url 推断 API 格式，返回对应的 Provider"""
@@ -26,13 +33,28 @@ class ProviderRegistry:
                 return provider_cls
         return _DEFAULT
 
-    def create(self, model_id: str, api_key: str, base_url: str = "") -> ProviderBase:
-        cls = self.get_provider_class(base_url)
+    def get_provider_class_by_format(self, fmt: str) -> Type[ProviderBase]:
+        """按显式格式名取 Provider 类（空/未知回退 URL 推断）"""
+        return _FORMAT_MAP.get((fmt or "").lower().strip())
+
+    def create(
+        self,
+        model_id: str,
+        api_key: str,
+        base_url: str = "",
+        api_format: str = "",
+    ) -> ProviderBase:
+        cls = self.get_provider_class_by_format(api_format) or self.get_provider_class(base_url)
         return cls(api_key=api_key, base_url=base_url, model_name=model_id)
 
 
 registry = ProviderRegistry()
 
 
-def get_provider(model_id: str, api_key: str, base_url: str = "") -> ProviderBase:
-    return registry.create(model_id, api_key, base_url)
+def get_provider(
+    model_id: str,
+    api_key: str,
+    base_url: str = "",
+    api_format: str = "",
+) -> ProviderBase:
+    return registry.create(model_id, api_key, base_url, api_format)

@@ -183,7 +183,12 @@ function submitIntent() {
           <div v-if="isUser && petAction" class="pet-interaction" :title="petAction.label">
             <span class="pet-interaction-ic"><Icon :name="petAction.icon" :size="22" /></span>
           </div>
-          <div v-else-if="isUser" v-html="userHtml"></div>
+          <div v-else-if="isUser">
+            <div v-if="message.images && message.images.length" class="user-attachments">
+              <img v-for="(src, i) in message.images" :key="i" :src="src" class="user-attachment-img" />
+            </div>
+            <div v-if="message.content" v-html="userHtml"></div>
+          </div>
 
           <!-- AI 消息打字中：纯文本逐字揭示 -->
           <template v-else-if="typing">

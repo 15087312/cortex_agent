@@ -30,6 +30,9 @@ const todos = ref([])
 const showTodos = ref(false)
 let todoTimer = null
 const todoDone = computed(() => todos.value.filter((t) => t.status === 'completed').length)
+// 上下文窗口占用（估算 token，由 thinking_progress 状态事件填充）
+const contextTokens = ref(0)
+const contextWindowSize = ref(0)
 
 // 当前激活技能：从 thinking_progress 的 large 模型 runner 提取（后端 active_skill 字段）
 const activeSkill = computed(() => {
@@ -212,6 +215,9 @@ const _onError = (d) => {
 const _onStatus = (d) => {
   if (!_isCurrent(d)) return
   chat.elapsed = d.data?.elapsed_s || 0
+  // 上下文窗口占用（估算 token，用于显示上下文占比）
+  contextTokens.value = d.data?.context_tokens || 0
+  contextWindowSize.value = d.data?.context_window_size || 0
   // 解析 thinking_progress → 在线模型状态（大循环 指挥/主管/专家 层级）
   const list = []
   const add = (r, tier, sup) => { if (r && r.model_id) list.push({ ...r, tier, supervisor: sup || '' }) }
@@ -306,7 +312,10 @@ onUnmounted(() => {
 function handleSend({ text, attachments }) {
   if (chat.processing) return
   chat.sendMessage(text, attachments)
-  chat.addMessage({ role: 'user', content: text })
+  const images = (attachments || [])
+    .filter(a => a && String(a.type || '').startsWith('image/'))
+    .map(a => a.data)
+  chat.addMessage({ role: 'user', content: text, images })
   chat.processing = true
   chat.hint = '思考中...'
   scrollBottom()
@@ -474,7 +483,7 @@ function handleAnswerIntent(requestId, answer) {
         </div>
 
         <!-- 思考循环状态面板：大循环（指挥→主管→专家）/ 连续思考 / 工具循环 -->
-        <ThinkingStatusPanel v-if="chat.processing && chat.runners.length" :runners="chat.runners" :elapsed="chat.elapsed" />
+        <ThinkingStatusPanel v-if="chat.processing && chat.runners.length" :runners="chat.runners" :elapsed="chat.elapsed" :context-tokens="contextTokens" :context-window-size="contextWindowSize" />
 
         <!-- 其他会话正在思考中（切走后仍显示横幅 + 停止按钮，可停止处理中的会话） -->
         <div v-if="chat.processing && chat.processingSid && chat.processingSid !== session.sessionId" class="chat-other-processing">

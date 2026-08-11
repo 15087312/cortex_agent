@@ -22,7 +22,7 @@ class MockModelInstance:
         self.call_count = 0
         self.tool_calls = []
 
-    async def generate(self, prompt: str, stream: bool = False) -> str:
+    async def generate(self, prompt: str, stream: bool = False, **kwargs) -> str:
         """返回预定义的响应"""
         if self.call_count < len(self.responses):
             response = self.responses[self.call_count]
@@ -143,7 +143,7 @@ arguments: {"query": "test"}
     prompts = []
     original_generate = model.generate
 
-    async def capture_generate(prompt, stream=False):
+    async def capture_generate(prompt, stream=False, **kwargs):
         prompts.append(prompt)
         return await original_generate(prompt, stream)
 

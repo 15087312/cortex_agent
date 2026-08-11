@@ -251,8 +251,18 @@ class ToolSecurityGate:
                 except Exception:
                     pass
                 return False, perm_reason
-        except Exception:
-            pass
+        except Exception as perm_err:
+            # fail-closed：角色类别权限检查异常必须拒绝，不能让工具绕过安全拦截。
+            # 原为 `except Exception: pass`（静默放行 = 权限系统故障时所有工具绕过校验）。
+            logger.error(f"[安全门控] 角色类别权限检查异常，安全拒绝: {perm_err}")
+            try:
+                _emit_security_event(
+                    "权限检查异常", tool_name, caller_model_id, False,
+                    f"权限检查异常，安全拒绝: {perm_err}",
+                )
+            except Exception:
+                pass
+            return False, f"权限检查异常，安全拒绝: {perm_err}"
 
         # ── 安全最高指示：Blackboard 有安全拦截信号时，拒绝所有写操作 ──
         if tool_name in _get_mutation_tools():
@@ -268,8 +278,18 @@ class ToolSecurityGate:
                     )
                     _emit_security_event("安全拦截", tool_name, caller_model_id, False, reason)
                     return False, reason
-            except Exception as audit_err:
-                logger.error(f'[审计] 写入失败: {audit_err}')
+            except Exception as block_err:
+                # fail-closed：安全拦截检查异常时拒绝写操作，不能绕过最高安全指示
+                logger.error(f"[安全门控] 安全拦截检查异常，拒绝写操作: {block_err}")
+                try:
+                    self._audit.log(
+                        event_type="tool_blocked", level="CRITICAL",
+                        content=tool_name, result=False,
+                        metadata={"caller_model_id": caller_model_id, "reason": f"安全拦截检查异常: {block_err}"},
+                    )
+                except Exception:
+                    pass
+                return False, f"安全拦截检查异常，安全拒绝: {block_err}"
 
         # ── plan 模式：所有写操作直接拒绝 ──
         if exec_mode == "plan" and tool_name in _get_mutation_tools():

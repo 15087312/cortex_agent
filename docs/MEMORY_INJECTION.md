@@ -55,14 +55,13 @@ backend/chat/continuous_thinker._extract_memory (line 157)
 **`EventRetrieval.retrieve(query, ...)`**（`modules/memory/event_retrieval.py`）：
 
 ```
-1. 向量语义搜索   FAISS, top_k = max_results*3
-2. 关键词搜索     补充候选
-3. 因果图扩散     通过边关系找关联事件
-4. 合并打分：
-   score = (0.35*semantic + 0.20*importance + 0.20*recency
-            + 0.15*utility + 0.10*frequency) * content_bonus
-   └─ semantic < MIN_SEMANTIC_SIMILARITY(0.20) → 剔除
-5. 归一化 → 阈值(默认0.06) → 排序 → 截断 max_results
+1. 向量语义搜索   FAISS, top_k = max_results*3（唯一召回通路）
+2. 因果图扩散     候选事件同样用真实余弦相似度过滤（无硬编码过关分）
+3. 合并打分：
+   score = (0.60*semantic + 0.15*importance + 0.10*recency
+            + 0.08*utility + 0.07*frequency) * content_bonus
+   └─ semantic < MIN_SEMANTIC_SIMILARITY(0.30) → 剔除
+4. 绝对归一化 → 阈值(默认0.06) → 排序 → 截断 max_results
 ```
 
 其他检索入口：
@@ -70,8 +69,9 @@ backend/chat/continuous_thinker._extract_memory (line 157)
 - 显式工具：`event_query`（`infra/tool_manager/tools/event_query.py`）、`memory_match`/`memory_score`/`memory_batch_filter`（`memory_matcher.py`）— 模型主动调用时用
 - `depth_recall` — 深度因果回忆（`modules/memory/depth_recall.py`，`should_trigger_deep_recall` 触发）
 
-> ⚠ 注意：关键词命中的事件若未出现在向量结果里，会被赋 `semantic=0.1`，
-> 低于 0.20 阈值被过滤 → **纯关键词命中实际永远被淘汰**（潜在问题）。
+> ⚠ 关键词搜索通路已移除（`_keyword_search` / `_extract_keywords` 已删）：所有候选
+> （含因果图扩散出的）都必须通过真实语义余弦相似度 ≥ 0.30 的门槛，防止"纯关键词命中
+> 但语义无关"的事件被召回。
 
 ---
 

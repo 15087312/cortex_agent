@@ -60,7 +60,25 @@ class ApiLogStore:
         self._conn.commit()
         self._stop = threading.Event()
         t = threading.Thread(target=self._flush_loop, daemon=True, name="api-log-flush")
+        self._thread = t
         t.start()
+
+    def stop(self) -> None:
+        """停止后台 flush 线程并关闭连接（测试 teardown / 关闭时清理资源，防线程泄漏）"""
+        self._stop.set()
+        t = getattr(self, "_thread", None)
+        if t and t.is_alive():
+            t.join(timeout=2)
+        try:
+            if self._conn:
+                try:
+                    self.flush()
+                except Exception:
+                    pass
+                self._conn.close()
+        except Exception:
+            pass
+        self._conn = None
 
     @classmethod
     def get_instance(cls) -> "ApiLogStore":

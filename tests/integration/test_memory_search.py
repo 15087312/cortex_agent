@@ -86,6 +86,44 @@ def _mock_embedder(dim=768):
     return _DeterministicEmbedder(dim=dim)
 
 
+class _BOWEmbedder:
+    """词袋嵌入器：同 token 同向量（cos=1），异 token 正交（cos=0），确定性可控
+
+    用于断言"纯关键词命中但向量不相似的事件不会被召回"。
+    """
+
+    def __init__(self, dim=64):
+        self.dim = dim
+        self._loaded = True
+        self._attempted = True
+        self._vectors = {}
+
+    def _token_vec(self, token):
+        if token not in self._vectors:
+            idx = len(self._vectors) % self.dim
+            v = [0.0] * self.dim
+            v[idx] = 1.0
+            self._vectors[token] = v
+        return self._vectors[token]
+
+    def _tokens(self, text):
+        import re
+        return re.findall(r'[\u4e00-\u9fff]{2,}|[a-zA-Z0-9_]+', text or "") or [text or ""]
+
+    def embed(self, text):
+        vec = [0.0] * self.dim
+        for t in self._tokens(text):
+            tv = self._token_vec(t)
+            vec = [a + b for a, b in zip(vec, tv)]
+        norm = math.sqrt(sum(x * x for x in vec))
+        if norm < 1e-12:
+            return [0.0] * self.dim
+        return [x / norm for x in vec]
+
+    def embed_batch(self, texts):
+        return [self.embed(t) for t in texts]
+
+
 # ===========================================================================
 # 1. EventStore CRUD
 # ===========================================================================
@@ -335,7 +373,7 @@ class TestScoringFormula:
         now = datetime.now(timezone.utc)
 
         scored = self.retrieval._calculate_all_scores(
-            [(ev_with, 0.8), (ev_without, 0.8)], [], now
+            [(ev_with, 0.8), (ev_without, 0.8)], now
         )
         scores = {ev.fact: s for ev, s in scored}
         # 有 lesson 的应该更高
@@ -348,7 +386,7 @@ class TestScoringFormula:
         now = datetime.now(timezone.utc)
 
         scored = self.retrieval._calculate_all_scores(
-            [(ev_short, 0.5), (ev_long, 0.5)], [], now
+            [(ev_short, 0.5), (ev_long, 0.5)], now
         )
         scores = {ev.fact[:2]: s for ev, s in scored}
         # 长文本应该得分更高（fact_len bonus）
@@ -361,7 +399,7 @@ class TestScoringFormula:
         now = datetime.now(timezone.utc)
 
         scored = self.retrieval._calculate_all_scores(
-            [(ev_high, 0.5), (ev_low, 0.5)], [], now
+            [(ev_high, 0.5), (ev_low, 0.5)], now
         )
         high_score = next(s for ev, s in scored if ev.fact == "重要")
         low_score = next(s for ev, s in scored if ev.fact == "不重要")
@@ -380,7 +418,7 @@ class TestScoringFormula:
         )
 
         scored = self.retrieval._calculate_all_scores(
-            [(ev_recent, 0.5), (ev_old, 0.5)], [], now
+            [(ev_recent, 0.5), (ev_old, 0.5)], now
         )
         recent_score = next(s for ev, s in scored if ev.fact == "最近")
         old_score = next(s for ev, s in scored if ev.fact == "很久前")
@@ -393,7 +431,7 @@ class TestScoringFormula:
         ev_rare = _make_event(fact="很少检索", access_count=0, importance=0.5)
 
         scored = self.retrieval._calculate_all_scores(
-            [(ev_frequent, 0.5), (ev_rare, 0.5)], [], now
+            [(ev_frequent, 0.5), (ev_rare, 0.5)], now
         )
         freq_score = next(s for ev, s in scored if ev.fact == "常检索")
         rare_score = next(s for ev, s in scored if ev.fact == "很少检索")
@@ -406,7 +444,7 @@ class TestScoringFormula:
         ev_cold = _make_event(fact="冷门话题", mention_count=1, importance=0.5)
 
         scored = self.retrieval._calculate_all_scores(
-            [(ev_hot, 0.5), (ev_cold, 0.5)], [], now
+            [(ev_hot, 0.5), (ev_cold, 0.5)], now
         )
         hot_score = next(s for ev, s in scored if ev.fact == "热门话题")
         cold_score = next(s for ev, s in scored if ev.fact == "冷门话题")
@@ -471,7 +509,7 @@ class TestDecayLambda:
 
         # 刚访问 → recency ≈ 1.0
         ev_just = _make_event(fact="刚访问", type="fact", last_accessed=now.isoformat())
-        scored = EventRetrieval()._calculate_all_scores([(ev_just, 0.5)], [], now)
+        scored = EventRetrieval()._calculate_all_scores([(ev_just, 0.5)], now)
         _, score_just = scored[0]
 
         # 30天前访问
@@ -479,7 +517,7 @@ class TestDecayLambda:
             fact="旧的", type="fact",
             last_accessed=(now - timedelta(days=30)).isoformat()
         )
-        scored_old = EventRetrieval()._calculate_all_scores([(ev_old, 0.5)], [], now)
+        scored_old = EventRetrieval()._calculate_all_scores([(ev_old, 0.5)], now)
         _, score_old = scored_old[0]
 
         # 同等条件下，刚访问的应该更高
@@ -487,34 +525,56 @@ class TestDecayLambda:
 
 
 # ===========================================================================
-# 9. 关键词提取
+# 9. 关键词通路已移除（回归）
 # ===========================================================================
 
-class TestKeywordExtraction:
-    def test_extract_english(self):
-        from modules.memory.event_retrieval import EventRetrieval
-        kws = EventRetrieval._extract_keywords("I love Python programming")
-        assert "python" in kws
-        assert "programming" in kws
-        # "I" 太短被过滤
-        assert "i" not in kws
+class TestKeywordPathRemoved:
+    """回归测试：关键词搜索通路已砍掉，纯关键词命中不再自动进入结果"""
 
-    def test_extract_chinese(self):
+    def setup_method(self):
         from modules.memory.event_retrieval import EventRetrieval
-        kws = EventRetrieval._extract_keywords("用户学习了Python编程技术")
-        # [\u4e00-\u9fff]{2,} 匹配连续中文字符片段
-        assert len(kws) > 0
-        assert any("用户" in k or "编程" in k or "技术" in k for k in kws)
+        self.store, self.tmpdir = _make_store()
+        self.store._embedding_dim = 64
+        self.embedder = _BOWEmbedder(dim=64)
+        # 隔离全局 EmbeddingEngine：禁用 save_event 自动向量化
+        from modules.memory.embedding import EmbeddingEngine
+        _em = EmbeddingEngine()
+        _em._loaded = False
+        _em._attempted = True
+        self._emb_patch = patch.object(EmbeddingEngine, "get_instance", return_value=_em)
+        self._emb_patch.start()
+        self.retrieval = EventRetrieval()
+        self.retrieval._store = self.store
+        self.retrieval._embedder = self.embedder
 
-    def test_extract_mixed(self):
-        from modules.memory.event_retrieval import EventRetrieval
-        kws = EventRetrieval._extract_keywords("Python编程很有趣")
-        assert len(kws) > 0
+    def teardown_method(self):
+        self._emb_patch.stop()
+        self.store.clear_all()
+        self.store.close()
 
-    def test_empty_input(self):
+    def test_keyword_match_alone_does_not_retrieve(self):
+        """事件仅在 keywords 字段命中查询词、向量不相似 → 不应被召回"""
+        ev = _make_event(fact="量子计算前沿", keywords=["春天"])
+        eid = self.store.save_event(ev)
+        self.store.add_embedding(eid, self.embedder.embed("量子计算前沿"))
+
+        # "春天" 与 "量子计算前沿" 词袋正交（cos=0）→ 不会过 0.30 门槛
+        r = asyncio.run(self.retrieval.retrieve("春天", max_results=5, threshold=0.0))
+        assert r == []
+
+    def test_vector_match_still_retrieved(self):
+        """向量相似的事件仍正常召回"""
+        ev = _make_event(fact="量子计算前沿")
+        eid = self.store.save_event(ev)
+        self.store.add_embedding(eid, self.embedder.embed("量子计算前沿"))
+
+        r = asyncio.run(self.retrieval.retrieve("量子计算前沿", max_results=5, threshold=0.0))
+        assert [e.id for e in r] == [eid]
+
+    def test_keyword_method_removed(self):
         from modules.memory.event_retrieval import EventRetrieval
-        assert EventRetrieval._extract_keywords("") == []
-        assert EventRetrieval._extract_keywords(None) == []
+        assert not hasattr(EventRetrieval, "_keyword_search")
+        assert not hasattr(EventRetrieval, "_extract_keywords")
 
 
 # ===========================================================================
@@ -854,11 +914,18 @@ class TestTimeSearch:
         """retrieve 带时间过滤：真实 store 存事件，只返回范围内事件"""
         from modules.memory.event_retrieval import EventRetrieval
         self.store.clear_all()
-        self.store.save_event(_make_event(fact="7月事件A", time="2026-07-15T10:00:00", keywords=["七月"]))
-        self.store.save_event(_make_event(fact="6月事件C", time="2026-06-20T18:00:00", keywords=["六月"]))
+        self.store._embedding_dim = 64
+        self.embedder = _BOWEmbedder(dim=64)
+        ev1 = _make_event(fact="七月事件甲乙", time="2026-07-15T10:00:00", keywords=["七月"])
+        eid1 = self.store.save_event(ev1)
+        self.store.add_embedding(eid1, self.embedder.embed("七月事件甲乙"))
+        ev2 = _make_event(fact="六月事件丙丁", time="2026-06-20T18:00:00", keywords=["六月"])
+        eid2 = self.store.save_event(ev2)
+        self.store.add_embedding(eid2, self.embedder.embed("六月事件丙丁"))
         ret = EventRetrieval()  # 真实构造（__init__ 只设属性，安全）
         ret._store = self.store
-        r = asyncio.run(ret.retrieve("七月", max_results=5, start_time="2026-07-01"))
-        assert [e.fact for e in r] == ["7月事件A"]
-        r = asyncio.run(ret.retrieve("六月", max_results=5, end_time="2026-06-30"))
-        assert [e.fact for e in r] == ["6月事件C"]
+        ret._embedder = self.embedder
+        r = asyncio.run(ret.retrieve("七月事件甲乙", max_results=5, start_time="2026-07-01"))
+        assert [e.fact for e in r] == ["七月事件甲乙"]
+        r = asyncio.run(ret.retrieve("六月事件丙丁", max_results=5, end_time="2026-06-30"))
+        assert [e.fact for e in r] == ["六月事件丙丁"]

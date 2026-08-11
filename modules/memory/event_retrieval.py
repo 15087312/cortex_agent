@@ -1,28 +1,31 @@
 """
-EventRetrieval — 事件检索（RAG 混合检索）
+EventRetrieval — 事件检索（纯向量语义检索 + 因果图扩散）
+
+召回通路（全部候选都必须过真实语义门槛，无硬编码过关分）:
+  1. FAISS 向量语义搜索（唯一主通路）
+  2. 因果图扩散出的候选事件，同样用真实余弦相似度过滤
 
 评分公式（加权和 × 内容加成）:
-  raw = 0.35*semantic + 0.20*importance + 0.20*recency + 0.15*utility + 0.10*frequency
+  raw = 0.60*semantic + 0.15*importance + 0.10*recency + 0.08*utility + 0.07*frequency
   score = raw * content_bonus
 
 因子说明:
-  semantic   - FAISS 向量相似度（内积，0~1）
+  semantic   - 真实余弦相似度（内积，0~1），低于 MIN_SEMANTIC_SIMILARITY 直接过滤
   importance - 离散等级: critical=1.0, high=0.70, medium=0.40, low=0.15, trivial=0.03
   recency    - exp(-λ * days)，按 type 不同衰减速率
   utility    - log(access_count + 3) / log(13)，检索次数越多越高
   frequency  - log(mention_count + 3) / log(13)，话题被提及越多越高
 
 排序与过滤:
-  1. 批内 min-max 归一化到 0~1
-  2. 淘汰 score < threshold 的
+  1. 绝对归一化（除以理论最大分，避免"矮子里拔将军"）
+  2. 淘汰 normalized score < threshold 的
   3. 降序排列
   4. 截取前 max_results 条
 """
 import math
-import re
 import threading
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from modules.memory.event_store import EventStore, MemoryEvent
 from modules.memory.embedding import EmbeddingEngine
@@ -105,39 +108,33 @@ class EventRetrieval:
             end_time: 可选，只返回该时间之前的事件（同上，含当天）
 
         流程:
-        1. 向量语义搜索
-        2. 关键词搜索
-        3. 因果图扩散（通过边关系找关联事件）
-        4. 合并 + 打分 + 排序
+        1. 向量语义搜索（唯一召回通路）
+        2. 因果图扩散：候选事件同样过真实语义门槛
+        3. 合并 + 打分 + 排序
         """
-        # 1. 向量语义搜索
-        vector_results = await self._vector_search(query, top_k=max_results * 3)
+        # 0. 向量化查询（一次，向量搜索与因果扩散共用）
+        query_embedding = self._get_embedder().embed(query)
+        if query_embedding is None:
+            return []
 
-        # 2. 关键词搜索（补充候选）
-        query_keywords = self._extract_keywords(query)
-        keyword_results = self._keyword_search(query_keywords)
+        # 1. 向量语义搜索（唯一召回通路）
+        vector_results = await self._vector_search(query_embedding, top_k=max_results * 3)
 
-        # 3. 因果图扩散：通过边关系找关联事件
-        causal_results = self._causal_search(query)
+        # 2. 因果图扩散：候选事件同样过真实语义门槛（不再硬编码 0.3 过关分）
+        causal_events = self._causal_search(query)
+        causal_results = self._compute_similarities(query_embedding, causal_events)
 
-        # 4. 合并去重 + 打分
+        # 3. 合并去重（同事件取较高语义分）
+        merged: Dict[str, Tuple[MemoryEvent, float]] = {}
+        for ev, semantic in list(vector_results) + causal_results:
+            if ev.id not in merged or semantic > merged[ev.id][1]:
+                merged[ev.id] = (ev, semantic)
+
+        # 4. 逐条打分
         now = datetime.now(timezone.utc)
-        scored = self._calculate_all_scores(vector_results, keyword_results, now)
+        scored = self._calculate_all_scores(list(merged.values()), now)
 
-        # 将因果检索结果注入评分（已有则取 max，没有则新增）
-        seen_ids = {ev.id for ev, _ in scored}
-        for ev, causal_score in causal_results:
-            if ev.id not in seen_ids:
-                scored.append((ev, causal_score))
-                seen_ids.add(ev.id)
-            else:
-                # 已有：取向量分和因果分的较高值
-                for i, (existing_ev, existing_score) in enumerate(scored):
-                    if existing_ev.id == ev.id:
-                        scored[i] = (existing_ev, max(existing_score, causal_score))
-                        break
-
-        # 4. type 过滤 + 重要性过滤
+        # 5. type 过滤 + 重要性过滤
         if types:
             types_set = set(t.lower() for t in types)
             scored = [(ev, s) for ev, s in scored if ev.type in types_set]
@@ -153,7 +150,7 @@ class EventRetrieval:
         if owner_id and not owner_id.startswith("large"):
             scored = [(ev, s) for ev, s in scored if ev.owner_id == owner_id]
 
-        # 5. 归一化 + 阈值 + 排序 + 截断
+        # 6. 归一化 + 阈值 + 排序 + 截断
         top_events = self._rank_and_filter(scored, threshold, max_results)
 
         return top_events
@@ -175,16 +172,19 @@ class EventRetrieval:
             return []
         norm = {k: v / total for k, v in mix.items()}
 
+        embedder = self._get_embedder()
         all_scored: Dict[str, Tuple[MemoryEvent, float]] = {}
         now = datetime.now(timezone.utc)
 
         for topic, weight in norm.items():
             if not topic.strip():
                 continue
+            query_embedding = embedder.embed(topic)
+            if query_embedding is None:
+                continue
             topic_top_k = max(3, round(max_results * weight * 3))
-            vector_results = await self._vector_search(topic, top_k=topic_top_k)
-            kw_results = self._keyword_search(self._extract_keywords(topic))
-            scored = self._calculate_all_scores(vector_results, kw_results, now)
+            vector_results = await self._vector_search(query_embedding, top_k=topic_top_k)
+            scored = self._calculate_all_scores(vector_results, now)
 
             if types:
                 ts = set(t.lower() for t in types)
@@ -209,27 +209,16 @@ class EventRetrieval:
 
     def _calculate_all_scores(
         self,
-        vector_results: List[Tuple[MemoryEvent, float]],
-        keyword_results: List[Tuple[MemoryEvent, float]],
+        candidates: List[Tuple[MemoryEvent, float]],
         now: datetime,
     ) -> List[Tuple[MemoryEvent, float]]:
-        """逐条计算最终评分"""
-        seen: Dict[str, Dict[str, Any]] = {}
+        """逐条计算最终评分
 
-        for ev, sim in vector_results:
-            seen[ev.id] = {"event": ev, "semantic": sim}
-
-        for ev, _ in keyword_results:
-            if ev.id not in seen:
-                # 关键词匹配的基础语义分：须 >= MIN_SEMANTIC_SIMILARITY 才能过门槛，
-                # 但低于向量命中，避免"纯关键词巧合"的无关事件排到语义相关前面
-                seen[ev.id] = {"event": ev, "semantic": 0.35}
-
+        candidates: 已带真实语义相似度的候选 [(event, semantic)]。
+        低于 MIN_SEMANTIC_SIMILARITY 的事件直接过滤——不再有硬编码过关分。
+        """
         scored = []
-        for sid, data in seen.items():
-            ev = data["event"]
-            semantic = data["semantic"]
-
+        for ev, semantic in candidates:
             # 原始语义相似度过滤：去除无关事件
             if semantic < MIN_SEMANTIC_SIMILARITY:
                 continue
@@ -290,12 +279,9 @@ class EventRetrieval:
     # 各维度检索
     # ------------------------------------------------------------------
 
-    async def _vector_search(self, query: str, top_k: int = 15) -> List[Tuple[MemoryEvent, float]]:
-        embedder = self._get_embedder()
+    async def _vector_search(self, query_embedding: List[float], top_k: int = 15) -> List[Tuple[MemoryEvent, float]]:
+        """向量语义搜索（唯一召回通路）"""
         store = self._get_store()
-        query_embedding = embedder.embed(query)
-        if query_embedding is None:
-            return []
         results = store.search_by_vector(query_embedding, top_k=top_k)
         if not results:
             return []
@@ -306,15 +292,28 @@ class EventRetrieval:
                 output.append((event, score))
         return output
 
-    def _keyword_search(self, keywords: List[str]) -> List[Tuple[MemoryEvent, float]]:
-        if not keywords:
+    def _compute_similarities(
+        self, query_embedding: List[float], events: List[MemoryEvent]
+    ) -> List[Tuple[MemoryEvent, float]]:
+        """对候选事件计算与查询的真实余弦相似度（从 FAISS 取事件向量）
+
+        与向量通路共用同一 0.30 语义门槛，避免因果关联事件被硬编码分带进结果。
+        """
+        if not events:
             return []
         store = self._get_store()
-        events = store.search_by_keywords(keywords, limit=20)
-        return [(ev, 0.0) for ev in events]
+        results = []
+        for ev in events:
+            vec = store.get_embedding(ev.id)
+            if vec is None:
+                continue
+            sim = sum(q * v for q, v in zip(query_embedding, vec))
+            if sim >= MIN_SEMANTIC_SIMILARITY:
+                results.append((ev, sim))
+        return results
 
-    def _causal_search(self, query: str) -> List[Tuple[MemoryEvent, float]]:
-        """因果关系检索：通过因果图的边关系找关联事件"""
+    def _causal_search(self, query: str) -> List[MemoryEvent]:
+        """因果关系检索：通过因果图的边关系找候选事件（仅召回，仍需过语义门槛）"""
         try:
             from modules.memory.causal_graph import CausalGraph
             graph = CausalGraph.get_instance()
@@ -333,15 +332,14 @@ class EventRetrieval:
                 for n, _, _ in neighbors:
                     node_ids.add(n.id)
 
-            # 通过因果节点 ID 找关联事件
+            # 通过因果节点 ID 找候选事件
             all_events = store.list_events(limit=500)
-            results = []
+            candidates = []
             for ev in all_events:
                 if ev.causal_node_ids and set(ev.causal_node_ids) & node_ids:
-                    # 因果关联分数：0.3（低于向量但高于关键词）
-                    results.append((ev, 0.3))
+                    candidates.append(ev)
 
-            return results
+            return candidates
         except Exception as e:
             self.logger.debug(f"[因果检索] 失败: {e}")
             return []
@@ -400,24 +398,6 @@ class EventRetrieval:
             return max(0.0, delta.total_seconds() / SECONDS_PER_DAY)
         except (ValueError, TypeError):
             return 0.0
-
-    @staticmethod
-    def _extract_keywords(text: str) -> List[str]:
-        if not text:
-            return []
-        keywords = set()
-        eng_words = re.findall(r'[a-zA-Z_][a-zA-Z0-9_]{1,}', text)
-        keywords.update(w.lower() for w in eng_words if len(w) >= 2)
-        chn_parts = re.findall(r'[\u4e00-\u9fff]{2,}', text)
-        keywords.update(chn_parts)
-        # 对中文词取关键部分（4字及以上拆 bigram，与 Conscience 保持一致）
-        for kw in list(chn_parts):
-            if len(kw) >= 4:
-                for i in range(len(kw) - 1):
-                    bigram = kw[i:i+2]
-                    if bigram not in keywords:
-                        keywords.add(bigram)
-        return list(keywords)
 
     def _get_store(self) -> EventStore:
         if self._store is None:

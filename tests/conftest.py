@@ -1,9 +1,19 @@
 """
 共享测试 fixtures
 """
+import os
+
+# macOS 双 libomp 兜底（OMP: Error #15）：根因修复见 scripts/fix_macos_libomp.py，
+# 此变量仅兜底未跑脚本的环境。必须在任何重库导入前设置。
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+
+# 测试关闭后台向量化 worker：EventStore 保存事件后会在后台线程延迟加载 embedding
+# 模型并推理，与主线程并发触发双 libomp 段错误（见 docs/ERRORS_AND_FIXES.md §27）。
+# 测试用按需加载即可，不需要后台异步向量化。
+os.environ.setdefault("EMBEDDING_BACKGROUND_WORKER", "false")
+
 import pytest
 import sys
-import os
 
 # 确保项目根目录在 path 中
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

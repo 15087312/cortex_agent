@@ -9,14 +9,25 @@ from unittest.mock import MagicMock
 
 from modules.memory.causal_graph import CausalGraph, CausalNode, CausalEdge
 from modules.memory.event_store import EventStore, MemoryEvent
+from modules.memory.event_retrieval import EventRetrieval
 from modules.thinking.conscience import Conscience
+
+# 首次 _get_causal_knowledge 会加载 embedding 模型（MiniLM）+ FAISS 检索，
+# 超过 pytest 全局 --timeout=10，本模块放宽到 60s（超时是上限，不影响快用例）
+pytestmark = pytest.mark.timeout(60)
 
 
 @pytest.fixture
 def clean_state():
-    """每次测试前重置所有单例 + 临时 DB"""
+    """每次测试前重置所有单例 + 全临时 DB（SQLite/FAISS/id_map 全部在临时目录）
+
+    绝不触碰生产 data/ 目录：只传 db_path 会回退到 settings 里的生产路径
+    （如 data/events_faiss_<USER_NAME>.index），必须连 faiss/id_map 一起指到临时目录。
+    """
     tmp_dir = tempfile.mkdtemp()
     db_path = os.path.join(tmp_dir, "test.db")
+    faiss_path = os.path.join(tmp_dir, "events_faiss.index")
+    id_map_path = os.path.join(tmp_dir, "events_id_map.json")
     causal_db = os.path.join(tmp_dir, "causal.db")
 
     # 重置单例
@@ -24,10 +35,16 @@ def clean_state():
     CausalGraph._lock = threading.Lock()
     EventStore._instance = None
     EventStore._lock = threading.Lock()
+    # EventRetrieval 缓存了 _store 引用，必须一并重置，否则下个用例仍指向已删的临时库
+    EventRetrieval._instance = None
 
     # 必须通过 get_instance() 创建，Conscience 内部也用 get_instance()
     CausalGraph._instance = CausalGraph(db_path=causal_db)
-    EventStore._instance = EventStore(db_path=db_path)
+    EventStore._instance = EventStore(
+        db_path=db_path,
+        faiss_index_path=faiss_path,
+        id_map_path=id_map_path,
+    )
     graph = CausalGraph._instance
     store = EventStore._instance
 
@@ -38,6 +55,7 @@ def clean_state():
     shutil.rmtree(tmp_dir, ignore_errors=True)
     CausalGraph._instance = None
     EventStore._instance = None
+    EventRetrieval._instance = None
 
 
 def test_get_causal_knowledge_finds_nodes_from_events(clean_state):

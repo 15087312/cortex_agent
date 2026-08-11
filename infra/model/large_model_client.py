@@ -37,8 +37,14 @@ class LargeModelClient(BaseModelClient):
         if not self._api_format:
             self._api_format = self._detect_api_format(self.api_url)
         self.supports_native_tools = True
+        # 接线 config.providers 格式层（headers/请求体/URL 归一化统一由 Provider 负责；
+        # 响应/流式解析保留客户端特有能力，见 config/providers/registry.py）
+        from config.providers.registry import get_provider
+        self._provider = get_provider(self.model_name, key, url, self._api_format)
+        # chat_url() 做 /v1、/chat/completions、/messages 归一化，消除"配 /v1 直接 404"
+        self._chat_url = self._provider.chat_url()
         logger.info(
-            f"[LargeModelClient] API 格式: {self._api_format}, URL: {self.api_url[:60]}..."
+            f"[LargeModelClient] API 格式: {self._api_format}, URL: {self._chat_url[:60]}..."
         )
 
     @classmethod
@@ -61,63 +67,36 @@ class LargeModelClient(BaseModelClient):
         # 默认兼容 DashScope（原有用户不受影响）
         return "dashscope"
     
-    async def generate(self, prompt: str, max_retries: int = 2, system_prompt: str = None, **kwargs) -> str:
+    async def generate(self, prompt: str, *, system_prompt: str, max_retries: int = 2, **kwargs) -> str:
         """生成响应 - 支持 DashScope / OpenAI / Anthropic，带重试机制
 
         Args:
-            system_prompt: 自定义系统提示词（如记忆收纳等专用任务）。
-                非空时覆盖自动拼装的 agent system prompt（人格/工具/规则）。
+            system_prompt: 系统提示词（必填）。单次调用不注入默认 agent 人设，
+                调用方必须显式给出本次任务的身份/指令；缺失时抛 TypeError。
         """
         if not system_prompt:
-            try:
-                from config.prompts.composer import PromptComposer, PromptRequest
-                from config.settings import settings as _cfg
-                composer = PromptComposer()
-                system_prompt = composer.build_system(PromptRequest(
-                    tier="large",
-                    role="orchestrator",
-                    mode=_cfg.effective_execution_mode,
-                ))
-            except Exception as e:
-                logger.error(f"System prompt 构建失败，raise 以避免模型在错误配置下运行: {e}")
-                raise
+            raise TypeError("generate() 的 system_prompt 为必填参数，不能为空")
 
-        if self._api_format == "anthropic":
-            headers = {
-                "x-api-key": self.api_key,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            }
-            payload = {
-                "model": self.model_name,
-                "max_tokens": kwargs.get("max_tokens", self.max_tokens),
-                "system": system_prompt,
-                "messages": [{"role": "user", "content": prompt}],
-            }
-        else:
-            headers = {
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json"
-            }
-            payload = {
-                "model": self.model_name,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt},
-                ],
-                "max_tokens": kwargs.get("max_tokens", self.max_tokens),
-                "temperature": kwargs.get("temperature", self.temperature),
-            }
+        # 格式层统一由 Provider 构建（anthropic system 提取 / openai messages / dashscope input）
+        headers = self._provider.build_headers()
+        payload = self._provider.build_request(
+            [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=kwargs.get("max_tokens", self.max_tokens),
+            temperature=kwargs.get("temperature", self.temperature),
+        )
 
         last_error = None
         for attempt in range(1, max_retries + 1):
             try:
                 # RES-1: Reuse pooled session instead of creating new one per request
                 session = await self._get_session()
-                self._log_request("POST", self.api_url, len(json.dumps(payload)))
+                self._log_request("POST", self._chat_url, len(json.dumps(payload)))
                 self._log_payload(payload)
                 async with session.post(
-                    self.api_url,
+                    self._chat_url,
                     headers=headers,
                     json=payload,
                     timeout=self.timeout
@@ -249,91 +228,24 @@ class LargeModelClient(BaseModelClient):
         Returns:
             ChatResponse
         """
-        # ── 按 API 格式构建 headers ──
-        if self._api_format == "anthropic":
-            headers = {
-                "x-api-key": self.api_key,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            }
-        else:
-            headers = {
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            }
-
+        # ── 格式层统一由 Provider 构建（headers/请求体；anthropic system 提取、dashscope input 均内含）──
         api_messages = self._messages_to_api(messages)
         model = kwargs.get("model", self.model_name)
         max_tokens = kwargs.get("max_tokens", self.max_tokens)
         temperature = kwargs.get("temperature", self.temperature)
-
-        # ── 按 API 格式构建请求 ──
         tool_choice = kwargs.get("tool_choice")
-        if self._api_format == "anthropic":
-            # Anthropic: system 是顶层参数，不在 messages 里
-            system_text = ""
-            user_messages = []
-            for m in api_messages:
-                if m.get("role") == "system":
-                    system_text = m.get("content", "")
-                else:
-                    user_messages.append(m)
-            payload: Dict[str, Any] = {
-                "model": model,
-                "max_tokens": max_tokens,
-                "messages": user_messages,
-            }
-            if system_text:
-                payload["system"] = system_text
-            if tools:
-                # Anthropic 工具格式: name + description + input_schema
-                anthropic_tools = []
-                for t in tools:
-                    func = t.get("function", t)
-                    anthropic_tools.append({
-                        "name": func.get("name", ""),
-                        "description": func.get("description", ""),
-                        "input_schema": func.get("parameters", func.get("input_schema", {})),
-                    })
-                payload["tools"] = anthropic_tools
-            if tool_choice:
-                if isinstance(tool_choice, dict) and "function" in tool_choice:
-                    payload["tool_choice"] = {"type": "tool", "name": tool_choice["function"].get("name", "")}
-                elif tool_choice == "required":
-                    payload["tool_choice"] = {"type": "any"}
-                elif tool_choice == "auto":
-                    payload["tool_choice"] = {"type": "auto"}
-        elif self._api_format == "openai":
-            payload: Dict[str, Any] = {
-                "model": model,
-                "messages": api_messages,
-                "max_tokens": max_tokens,
-                "temperature": temperature,
-            }
-            if tools:
-                payload["tools"] = tools
-            if tool_choice:
-                payload["tool_choice"] = tool_choice
-        else:  # dashscope
-            payload = {
-                "model": model,
-                "input": {"messages": api_messages},
-                "parameters": {
-                    "max_tokens": max_tokens,
-                    "temperature": temperature,
-                },
-            }
-            if tools:
-                payload["tools"] = tools
-                # Try DashScope format: tool_choice as string "required" or object
-                if tool_choice:
-                    if isinstance(tool_choice, dict) and "function" in tool_choice:
-                        # Convert OpenAI format to DashScope format if needed
-                        func_name = tool_choice["function"].get("name")
-                        if func_name:
-                            payload["parameters"]["tool_choice"] = {"type": "function", "function": {"name": func_name}}
-                    else:
-                        payload["parameters"]["tool_choice"] = tool_choice
+
+        headers = self._provider.build_headers()
+        if model != self._provider.model_name:
+            # 保留"调用方显式覆盖模型名"的功能
+            self._provider.model_name = model
+        payload = self._provider.build_request(
+            api_messages,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            tools=tools,
+            tool_choice=tool_choice,
+        )
 
         max_retries = kwargs.get("max_retries", 2)
         last_error = None
@@ -342,11 +254,11 @@ class LargeModelClient(BaseModelClient):
             try:
                 # RES-1: Reuse pooled session instead of creating new one per request
                 session = await self._get_session()
-                self._log_request("POST", self.api_url, len(json.dumps(payload)))
+                self._log_request("POST", self._chat_url, len(json.dumps(payload)))
                 self._log_payload(payload)
                 request_start = time.time()
                 async with session.post(
-                    self.api_url,
+                    self._chat_url,
                     headers=headers,
                     json=payload,
                     timeout=self.timeout,
@@ -414,87 +326,24 @@ class LargeModelClient(BaseModelClient):
         支持 OpenAI / Anthropic / DashScope 三种流式格式。
         工具调用通过 SSE delta 累积，最终返回完整 ChatResponse。
         """
-        # ── 构建 headers ──
-        if self._api_format == "anthropic":
-            headers = {
-                "x-api-key": self.api_key,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            }
-        else:
-            headers = {
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            }
-
+        # ── 格式层统一由 Provider 构建（headers/请求体，stream 由 build_request 处理）──
         api_messages = self._messages_to_api(messages)
         model = kwargs.get("model", self.model_name)
         max_tokens = kwargs.get("max_tokens", self.max_tokens)
         temperature = kwargs.get("temperature", self.temperature)
         tool_choice = kwargs.get("tool_choice")
 
-        # ── 构建 payload（与 chat() 相同，加 stream: True）──
-        if self._api_format == "anthropic":
-            system_text = ""
-            user_messages = []
-            for m in api_messages:
-                if m.get("role") == "system":
-                    system_text = m.get("content", "")
-                else:
-                    user_messages.append(m)
-            payload: Dict[str, Any] = {
-                "model": model,
-                "max_tokens": max_tokens,
-                "messages": user_messages,
-                "stream": True,
-            }
-            if system_text:
-                payload["system"] = system_text
-            if tools:
-                anthropic_tools = []
-                for t in tools:
-                    func = t.get("function", t)
-                    anthropic_tools.append({
-                        "name": func.get("name", ""),
-                        "description": func.get("description", ""),
-                        "input_schema": func.get("parameters", func.get("input_schema", {})),
-                    })
-                payload["tools"] = anthropic_tools
-            if tool_choice:
-                if isinstance(tool_choice, dict) and "function" in tool_choice:
-                    payload["tool_choice"] = {"type": "tool", "name": tool_choice["function"].get("name", "")}
-                elif tool_choice == "required":
-                    payload["tool_choice"] = {"type": "any"}
-                elif tool_choice == "auto":
-                    payload["tool_choice"] = {"type": "auto"}
-        elif self._api_format == "openai":
-            payload = {
-                "model": model,
-                "messages": api_messages,
-                "max_tokens": max_tokens,
-                "temperature": temperature,
-                "stream": True,
-            }
-            if tools:
-                payload["tools"] = tools
-            if tool_choice:
-                payload["tool_choice"] = tool_choice
-        else:  # dashscope
-            payload = {
-                "model": model,
-                "input": {"messages": api_messages},
-                "parameters": {"max_tokens": max_tokens, "temperature": temperature},
-                "stream": True,
-            }
-            if tools:
-                payload["tools"] = tools
-                if tool_choice:
-                    if isinstance(tool_choice, dict) and "function" in tool_choice:
-                        func_name = tool_choice["function"].get("name")
-                        if func_name:
-                            payload["parameters"]["tool_choice"] = {"type": "function", "function": {"name": func_name}}
-                    else:
-                        payload["parameters"]["tool_choice"] = tool_choice
+        headers = self._provider.build_headers()
+        if model != self._provider.model_name:
+            self._provider.model_name = model
+        payload = self._provider.build_request(
+            api_messages,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            tools=tools,
+            tool_choice=tool_choice,
+            stream=True,
+        )
 
         # ── 发起流式请求并解析 SSE ──
         max_retries = kwargs.get("max_retries", 2)
@@ -503,10 +352,10 @@ class LargeModelClient(BaseModelClient):
         for attempt in range(1, max_retries + 1):
             try:
                 session = await self._get_session()
-                self._log_request("POST", self.api_url, len(json.dumps(payload)))
+                self._log_request("POST", self._chat_url, len(json.dumps(payload)))
                 self._log_payload(payload)
                 async with session.post(
-                    self.api_url, headers=headers, json=payload,
+                    self._chat_url, headers=headers, json=payload,
                     timeout=aiohttp.ClientTimeout(total=self.timeout, sock_read=30)
                 ) as response:
                     if response.status != 200:
@@ -819,85 +668,39 @@ class LargeModelClient(BaseModelClient):
         return result
 
     def _parse_chat_response(self, data: Dict, tools: Optional[List[Dict]] = None) -> ChatResponse:
-        """解析 API 响应为 ChatResponse (DashScope / OpenAI / Anthropic 兼容)"""
+        """解析 API 响应为 ChatResponse。
+
+        openai/anthropic 由 Provider.parse_response 统一解析（含 reasoning_content/usage）；
+        dashscope 保留客户端实现（含 legacy output.text 文本工具调用解析，Provider 不具备）。
+        """
         fmt = self._api_format
 
-        # ── Anthropic 格式: data.content[] ──
-        if fmt == "anthropic":
-            content_blocks = data.get("content", [])
-            stop_reason = data.get("stop_reason", "end_turn")
-            usage = data.get("usage")
-
-            text_parts = []
+        # ── OpenAI / Anthropic 格式：由 Provider 统一解析 ──
+        if fmt in ("openai", "anthropic"):
+            parsed = self._provider.parse_response(data)
+            tool_calls_raw = parsed.get("tool_calls")
             tool_calls = None
-            for block in content_blocks:
-                if block.get("type") == "text":
-                    text_parts.append(block.get("text", ""))
-                elif block.get("type") == "tool_use":
-                    if tool_calls is None:
-                        tool_calls = []
-                    tool_calls.append(ToolCall(
-                        id=block.get("id", ""),
-                        name=block.get("name", ""),
-                        arguments=json.dumps(block.get("input", {}), ensure_ascii=False),
-                    ))
-
-            finish_reason = "stop"
-            if stop_reason == "tool_use":
-                finish_reason = "tool_calls"
-            elif stop_reason == "max_tokens":
-                finish_reason = "length"
-
+            if tool_calls_raw:
+                tool_calls = [
+                    ToolCall(
+                        id=tc.get("id", f"call_{i}"),
+                        name=tc.get("name", ""),
+                        arguments=tc.get("arguments", "{}"),
+                    )
+                    for i, tc in enumerate(tool_calls_raw)
+                ]
             return ChatResponse(
                 message=ChatMessage(
                     role="assistant",
-                    content="\n".join(text_parts) if text_parts else None,
+                    content=parsed.get("content"),
                     tool_calls=tool_calls,
+                    reasoning_content=parsed.get("reasoning_content"),  # thinking模式
                 ),
-                finish_reason=finish_reason,
-                usage={
-                    "prompt_tokens": usage.get("input_tokens", 0) if usage else 0,
-                    "completion_tokens": usage.get("output_tokens", 0) if usage else 0,
-                } if usage else None,
+                finish_reason=parsed.get("finish_reason", "stop"),
+                usage=parsed.get("usage"),
             )
 
-        # ── OpenAI 格式: data.choices[].message ──
-        if fmt == "openai":
-            choices = data.get("choices", [])
-            if choices:
-                choice = choices[0]
-                msg = choice.get("message", {})
-                finish_reason = choice.get("finish_reason", "stop")
-                content = msg.get("content")
-                reasoning_content = msg.get("reasoning_content")  # thinking模式
-                tool_calls_raw = msg.get("tool_calls", [])
-                usage = data.get("usage")
-
-                tool_calls = None
-                if tool_calls_raw:
-                    tool_calls = [
-                        ToolCall(
-                            id=tc.get("id", f"call_{i}"),
-                            name=tc.get("function", {}).get("name", ""),
-                            arguments=tc.get("function", {}).get("arguments", "{}"),
-                        )
-                        for i, tc in enumerate(tool_calls_raw)
-                    ]
-
-                return ChatResponse(
-                    message=ChatMessage(
-                        role=msg.get("role", "assistant"),
-                        content=content,
-                        tool_calls=tool_calls,
-                        reasoning_content=reasoning_content,  # 保存thinking内容
-                    ),
-                    finish_reason=finish_reason,
-                    usage=usage,
-                )
-
-            return ChatResponse(message=ChatMessage(role="assistant", content=""))
-
-        # ── DashScope 格式 ──
+        # ── DashScope 格式（保留客户端实现：legacy 文本工具调用解析）──
         output = data.get("output", {})
 
         # 优先 choices 格式 (工具调用时必用)
@@ -1027,11 +830,11 @@ class LargeModelClient(BaseModelClient):
         try:
             # RES-1: Reuse pooled session instead of creating new one per request
             session = await self._get_session()
-            self._log_request("POST", self.api_url, len(json.dumps(payload)))
+            self._log_request("POST", self._chat_url, len(json.dumps(payload)))
             self._log_payload(payload)
             time.time()
             async with session.post(
-                self.api_url,
+                self._chat_url,
                 headers=headers,
                 json=payload,
                 timeout=self.timeout,
@@ -1056,8 +859,12 @@ class LargeModelClient(BaseModelClient):
     async def health_check(self) -> bool:
         """健康检查 - 简单检查 API 连通性"""
         try:
-            # 使用一个简单的请求测试 API
-            test_response = await self.generate("你好", max_tokens=5)
+            # 使用一个简单的请求测试 API（system_prompt 必填，健康检查显式传参）
+            test_response = await self.generate(
+                "你好",
+                system_prompt="你是健康检查助手，收到后请回复任意单词确认模型可用。",
+                max_tokens=5,
+            )
             return len(test_response) > 0
         except Exception as e:
             logger.warning(f"大模型健康检查失败: {e}")

@@ -15,6 +15,7 @@ from modules.security_system.tool_security_gate import (
     _emit_security_event,
     set_security_event_callback,
 )
+from utils.suspension import Suspension
 
 
 # =========================================================================
@@ -505,3 +506,138 @@ class TestSecurityEventCallback:
     def test_no_callback_no_error(self):
         set_security_event_callback(None)
         _emit_security_event("x", "y", "z", True)  # 不应抛异常
+
+
+# =========================================================================
+# 8. fail-closed 回归：权限/安全拦截检查异常必须拒绝（不得静默放行）
+# =========================================================================
+
+class TestFailClosedOnCheckExceptions:
+    @pytest.mark.asyncio
+    async def test_perm_check_exception_rejects(self, gate_no_llm, monkeypatch):
+        """角色类别权限检查抛异常 → 必须拒绝（fail-closed），不能放行工具"""
+        import modules.security_system.tool_permission_controller as tpc
+        ctrl = MagicMock()
+        ctrl.check_execution_permission.side_effect = RuntimeError("db down")
+        monkeypatch.setattr(tpc, "get_tool_permission_controller", lambda: ctrl)
+        allowed, reason = await gate_no_llm.check("read_file", {"path": "/tmp/x"}, "expert", "m1")
+        assert allowed is False
+        assert "安全拒绝" in reason
+
+    @pytest.mark.asyncio
+    async def test_security_block_check_exception_rejects_write(self, gate_no_llm, monkeypatch):
+        """写操作的安全拦截检查抛异常 → 必须拒绝（fail-closed），不能绕过最高安全指示"""
+        import modules.security_system.tool_permission_controller as tpc
+        ctrl = MagicMock()
+        ctrl.check_execution_permission.return_value = (True, "ok")
+        monkeypatch.setattr(tpc, "get_tool_permission_controller", lambda: ctrl)
+        bb = MagicMock()
+        bb.has_security_block.side_effect = RuntimeError("boom")
+        gate_no_llm.set_active_blackboard(bb)
+        allowed, reason = await gate_no_llm.check("git_add", {"path": "/tmp/x"}, "large", "m1")
+        assert allowed is False
+        assert "安全拒绝" in reason
+
+
+# =========================================================================
+# 9. _check_user_review 真实实现（此前全被 patch，见 §27.4）
+# =========================================================================
+
+class TestCheckUserReviewReal:
+    """真实审批路径：future 等待 + resolve_review 回填 + 防重叠 + Suspension 恢复"""
+
+    @pytest.mark.asyncio
+    async def test_approve_flow(self, gate_no_llm):
+        ToolSecurityGate._pending_reviews.clear()
+        gate = gate_no_llm
+
+        async def run_review():
+            return await gate._check_user_review("run_script", {"code": "echo hi"}, "expert", "m1")
+
+        task = asyncio.create_task(run_review())
+        await asyncio.sleep(0.05)  # 让任务进入 future 等待
+        rid = next(iter(ToolSecurityGate._pending_reviews))
+        assert rid.startswith("review_run_script_")
+
+        ToolSecurityGate.resolve_review(rid, True, "用户批准: 好的")
+        allowed, reason = await asyncio.wait_for(task, timeout=2)
+        assert allowed is True
+        assert "用户批准" in reason
+        assert rid not in ToolSecurityGate._pending_reviews
+        assert not Suspension.is_suspended()  # finally 必须恢复挂起
+
+    @pytest.mark.asyncio
+    async def test_reject_flow(self, gate_no_llm):
+        ToolSecurityGate._pending_reviews.clear()
+        gate = gate_no_llm
+
+        async def run_review():
+            return await gate._check_user_review("run_script", {"code": "echo hi"}, "expert", "m1")
+
+        task = asyncio.create_task(run_review())
+        await asyncio.sleep(0.05)
+        rid = next(iter(ToolSecurityGate._pending_reviews))
+        ToolSecurityGate.resolve_review(rid, False, "用户拒绝: 不行")
+        allowed, reason = await asyncio.wait_for(task, timeout=2)
+        assert allowed is False
+        assert "用户拒绝" in reason
+        assert rid not in ToolSecurityGate._pending_reviews
+        assert not Suspension.is_suspended()
+
+    @pytest.mark.asyncio
+    async def test_overlap_returns_waiting(self, gate_no_llm):
+        """同一工具已有待审批 → 返回等待提示，不创建重复审批"""
+        ToolSecurityGate._pending_reviews.clear()
+        gate = gate_no_llm
+
+        async def run_review():
+            return await gate._check_user_review("run_script", {"code": "echo hi"}, "expert", "m1")
+
+        task = asyncio.create_task(run_review())
+        await asyncio.sleep(0.05)
+        pending_before = len(ToolSecurityGate._pending_reviews)
+        allowed, reason = await gate._check_user_review("run_script", {"code": "echo hi"}, "expert", "m1")
+        assert allowed is True
+        assert "已在审批中" in reason or "待审批" in reason
+        assert len(ToolSecurityGate._pending_reviews) == pending_before  # 未新增
+
+        # 清理
+        rid = next(iter(ToolSecurityGate._pending_reviews))
+        ToolSecurityGate.resolve_review(rid, False, "用户拒绝")
+        await asyncio.wait_for(task, timeout=2)
+        assert not Suspension.is_suspended()
+
+    def test_resolve_unknown_id_no_error(self):
+        ToolSecurityGate.resolve_review("review_nonexistent_xxx", True)  # 不抛
+
+
+# =========================================================================
+# 10. 权限控制器 fail-closed：权限查询异常必须拒绝（§27.4 同款）
+# =========================================================================
+
+class TestPermissionControllerFailClosed:
+    def test_permission_query_exception_rejects(self, monkeypatch):
+        """model_factory 抛异常 → _get_caller_permissions 返回空权限 → 工具被拒绝"""
+        from modules.security_system.tool_permission_controller import ToolPermissionController
+        import modules.thinking.model_factory as mf_mod
+
+        class BoomFactory:
+            def get(self, *a):
+                raise RuntimeError("boom")
+            def list_by_tier(self, *a):
+                raise RuntimeError("boom")
+
+        monkeypatch.setattr(mf_mod, "get_model_factory", lambda: BoomFactory())
+        ctrl = ToolPermissionController()
+        allowed, reason = ctrl.check_execution_permission("git_add", "expert", "m1")
+        assert allowed is False
+        assert "无权" in reason or "权限" in reason
+
+    def test_permissions_none_still_allows_control_tools(self, monkeypatch):
+        """未在 registry 的控制工具（None 权限语义）保持默认允许——只收紧异常路径"""
+        from modules.security_system.tool_permission_controller import ToolPermissionController
+        from infra.tool_manager import tool_registry as tr_mod
+        monkeypatch.setattr(tr_mod, "ToolRegistry", type("TR", (), {"get_tool": staticmethod(lambda name: None)}))
+        ctrl = ToolPermissionController()
+        allowed, _ = ctrl.check_execution_permission("delegate_task", "expert", "m1")
+        assert allowed is True

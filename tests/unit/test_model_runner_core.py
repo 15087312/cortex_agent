@@ -143,6 +143,15 @@ def test_emit_streaming_content(monkeypatch):
     asyncio.set_event_loop(loop)
     loop.run_until_complete(loop.create_task(_emit(r)))
     loop.close()
+    # 断言广播消息真实携带流式增量内容（此前只收集未断言）
+    assert sent, "流式增量必须被广播"
+    msg = sent[0]
+    c = msg.content
+    assert c["entry_type"] == "streaming_delta"
+    assert c["content"] == "增量"
+    assert c["tier"] == r.tier
+    assert c["round"] == 1
+    assert msg.metadata.get("streaming") is True
 
 
 async def _emit(r):
@@ -595,7 +604,12 @@ def test_write_final_result_supervisor(monkeypatch):
     r.blackboard = bb
     import asyncio
     asyncio.run(r._write_final_result())
-    bb.write_expert_finding.assert_called_once()
+    bb.write_expert_finding.assert_called_once_with(
+        source_tier="supervisor",
+        role=r.identity.name,
+        content="发现",
+        status="completed",
+    )
 
 
 def test_write_final_result_expert(monkeypatch):
@@ -612,7 +626,11 @@ def test_write_final_result_expert(monkeypatch):
     monkeypatch.setattr(stream_mod, "_post_task_extraction_helper", AsyncMock())
     import asyncio
     asyncio.run(r._write_final_result())
-    bb.add_observation.assert_called_once()
+    bb.add_observation.assert_called_once_with(
+        tier="expert",
+        content="观察内容",
+        metadata={"role": r.identity.name},
+    )
 
 
 def test_notify_thinking_complete(monkeypatch):

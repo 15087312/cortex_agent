@@ -281,8 +281,9 @@ class ToolPermissionController:
                                 return ModelPermissions(allowed_tool_categories=cats)
                             if caller_tier and idata.get("tier") == caller_tier:
                                 return ModelPermissions(allowed_tool_categories=cats)
-            except Exception:
-                pass
+            except Exception as yaml_err:
+                # 单层 YAML 解析失败不致命（外层还有 template_key 回退），但必须留痕
+                logger.debug(f"[权限] YAML 身份权限解析失败: {yaml_err}")
 
             # 最后回退: 通过 template_key 查找 DEFAULT_PERMISSIONS
             if caller_role:
@@ -295,8 +296,13 @@ class ToolPermissionController:
                 if permissions.allowed_tool_categories:
                     return permissions
 
-        except Exception:
-            pass
+        except Exception as perm_err:
+            # fail-closed：权限查询异常时返回"空权限（拒绝全部）"，而不是返回 None。
+            # 原 `except: pass` → return None → check_execution_permission 对 None 放行，
+            # 即权限系统故障时所有工具绕过类别校验（fail-open）。
+            logger.error(f"[权限] 权限查询异常，按空权限（拒绝全部）处理: {perm_err}")
+            from modules.thinking.identity import ModelPermissions
+            return ModelPermissions(allowed_tool_categories=[])
         return None
 
     # ── 控制工具可见性 ──────────────────────────────────────────────────

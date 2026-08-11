@@ -8,6 +8,10 @@ import tempfile
 import os
 from datetime import datetime, timezone
 
+# find_anchor_nodes 等语义查询会真实加载 embedding 模型（BERT），
+# 超过 pytest 全局 --timeout=10（与 conscience/image_analyzer 同款）
+pytestmark = pytest.mark.timeout(60)
+
 
 class TestCausalGraphStorage:
     """测试因果图存储功能"""
