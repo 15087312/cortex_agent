@@ -40,8 +40,11 @@ export function useWakeLock() {
     }
   }
 
+  // supported 必须在 setup 阶段判定：watch 是 immediate:true，若推迟到 onMounted
+  // 才赋值，启动时 prevent_sleep 已开启的场景会因 supported=false 跳过获取（真实 bug）。
+  supported.value = 'wakeLock' in navigator
+
   onMounted(() => {
-    supported.value = 'wakeLock' in navigator
     document.addEventListener('visibilitychange', _onVisibilityChange)
   })
 

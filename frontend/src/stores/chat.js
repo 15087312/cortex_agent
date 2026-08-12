@@ -184,9 +184,12 @@ export const useChatStore = defineStore('chat', () => {
 
   async function _ensureConnected() {
     if (ws.wsClient.connected && _connectedSid.value === session.sessionId) return true
-    // WS 连接的不是当前会话（切走后原会话连接残留）→ 重连当前会话
+    // WS 连接的不是当前会话（切走后原会话连接残留）→ 重连当前会话。
+    // 注意：sendMessage 刚设置 _processingSid = 当前会话，不能清空；
+    // 只有旧会话（非当前）的处理中状态才需要在此清除（当前会话发消息意味着旧会话处理已结束）。
+    const processingThis = _processingSid.value === session.sessionId
     _connectedSid.value = session.sessionId
-    _processingSid.value = null
+    if (!processingThis) _processingSid.value = null
     try {
       await Promise.race([ws.wsClient.connect(session.sessionId), new Promise(r => setTimeout(r, 8000))])
     } catch {}

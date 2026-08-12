@@ -8,8 +8,6 @@ const BASE = '/api'
 let _memKey = null
 let _initialized = false
 
-const KEY_STORE = 'cortex_api_key'
-
 // 链路追踪：每次请求附带 X-Trace-Id / X-Request-Seq（与 js/api.js 对齐）
 let _traceId = (typeof crypto !== 'undefined' && crypto.randomUUID)
   ? crypto.randomUUID()
@@ -19,8 +17,10 @@ let _traceSeq = 0
 function _init() {
   if (_initialized) return
   _initialized = true
-  // localStorage 持久化（关浏览器不丢）；兼容旧 sessionStorage 缓存
-  try { _memKey = localStorage.getItem(KEY_STORE) || sessionStorage.getItem(KEY_STORE) || null } catch { _memKey = null }
+  // API Key 仅存内存，不落 localStorage/sessionStorage（安全：避免 XSS 窃取持久化密钥）。
+  // 刷新/重启后由 autoDetectApiKey() 从 /config/api-key 自动拉取（开发环境明文、生产仅回环）。
+  // 注意：不重置 _memKey——若调用方已通过 setApiKey 设置过 key（如启动时），
+  // 首次惰性初始化不得覆盖它。
 }
 
 function _headers() {
@@ -104,16 +104,8 @@ export function getApiKey() {
 }
 
 export function setApiKey(k) {
+  // 仅内存持有；刷新页面后由 autoDetectApiKey() 自动恢复，无需持久化
   _memKey = k || null
-  try {
-    if (k) {
-      localStorage.setItem(KEY_STORE, k)
-      sessionStorage.setItem(KEY_STORE, k)
-    } else {
-      localStorage.removeItem(KEY_STORE)
-      sessionStorage.removeItem(KEY_STORE)
-    }
-  } catch {}
 }
 
 // ═══════════════════════════════════════════

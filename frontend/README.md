@@ -1,6 +1,6 @@
 # Cortex Agent — Web UI
 
-Cortex Agent 的 Web 控制台，包含 12 个功能页面，通过 WebSocket 连接后端。
+Cortex Agent 的 Web 控制台，包含 15 个功能页面（聊天/编排/设置/仪表盘/记忆/技能/工具/定时任务/主动搭话/感知/安全/系统/图谱/因果图/模块），通过 WebSocket 连接后端。
 
 ## 启动方式
 

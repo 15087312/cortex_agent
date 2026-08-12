@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { getApiKey, setApiKey, endpoints } from '@/api.js'
 import { useConfigStore } from '@/stores/config.js'
 import { useToastStore } from '@/stores/toast.js'
@@ -179,7 +179,13 @@ async function resetPetState() {
     if (d?.data?.values) { petState.value = d.data.values; toast.show('桌宠状态已重置', 'success') }
   } catch (e) { toast.show('重置失败', 'error') }
 }
-onMounted(() => { loadPetState(); setInterval(loadPetState, 5000); loadGlobalDefault() })
+let petPollTimer = null
+onMounted(() => {
+  loadPetState()
+  petPollTimer = setInterval(loadPetState, 5000)
+  loadGlobalDefault()
+})
+onUnmounted(() => { if (petPollTimer) { clearInterval(petPollTimer); petPollTimer = null } })
 const debugEnabled = boolCfg('DEBUG', false)
 const loggingEnabled = boolCfg('LOGGING_ENABLED', true)
 const logLevel = segCfg('LOG_LEVEL', 'INFO')

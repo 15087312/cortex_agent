@@ -1,3 +1,5 @@
+import { getApiKey } from '@/api.js'
+
 const MAX_RETRY = 3
 
 // 链路追踪：每次发送注入 trace_id / trace_seq（与 js/ws.js 对齐，供后端关联审计）
@@ -38,8 +40,11 @@ class WsClient {
 
   _doConnect(sid) {
     if (this._conn) { this._conn.onclose = null; this._conn.onerror = null; this._conn.onmessage = null; try { this._conn.close() } catch {}; this._conn = null }
+    // 浏览器 WebSocket 无法设置自定义 header，API Key 走 ?api_key= 查询参数（后端 WS 握手校验）
+    const key = getApiKey ? getApiKey() : ''
+    const auth = key ? `?api_key=${encodeURIComponent(key)}` : ''
     try {
-      this._conn = new WebSocket(`ws://${this._host()}/stream/ws/${sid}`)
+      this._conn = new WebSocket(`ws://${this._host()}/stream/ws/${sid}${auth}`)
     } catch (e) {
       this._reject?.(e)
       this._scheduleRetry(sid)
@@ -98,3 +103,4 @@ class WsClient {
 }
 
 export const wsClient = new WsClient()
+export { WsClient }

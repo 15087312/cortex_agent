@@ -45,8 +45,10 @@ async function loadGraph() {
 // ── 动态分层布局：用户 | 总指挥 | 主管 | 实现专家 ──
 const layout = computed(() => {
   const nodes = graph.value.nodes
+  const knownTiers = new Set(TIERS.map((c) => c.tier))
+  const isUnknownTier = (n) => !knownTiers.has(n.tier || '')
   const known = TIERS.filter((c) => nodes.some((n) => (n.tier || '') === c.tier))
-  const hasUnknown = nodes.some((n) => !TIERS.some((c) => c.tier === (n.tier || '')))
+  const hasUnknown = nodes.some(isUnknownTier)
   const cols = known.concat(hasUnknown ? [{ tier: '', label: '未知', icon: 'bot', color: '#8b949e' }] : [])
   const W = 1120
   const colW = cols.length ? W / cols.length : W
@@ -56,7 +58,10 @@ const layout = computed(() => {
   const areaH = 430
   const pos = {}
   cols.forEach((col, ci) => {
-    const colNodes = nodes.filter((n) => (n.tier || '') === col.tier)
+    // 未知列收纳所有不在 TIERS 中的节点；已知列按 tier 精确匹配
+    const colNodes = col.tier === ''
+      ? nodes.filter(isUnknownTier)
+      : nodes.filter((n) => (n.tier || '') === col.tier)
     colNodes.forEach((n, i) => {
       const cx = ci * colW + colW / 2
       const cy = colNodes.length <= 1
