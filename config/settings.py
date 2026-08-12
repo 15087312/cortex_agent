@@ -64,6 +64,7 @@ class Settings(BaseSettings):
         # ── 视觉模型 ──
         "VISION_BACKEND", "VISION_API_FORMAT", "VISION_API_URL", "VISION_API_KEY",
         "VISION_API_MODEL", "VISION_LOCAL_MODEL", "VISION_MLX_MODEL",
+        "CHAT_IMAGE_MODE",
 
         # ── 桌面宠物 ──
         "DESKTOP_PET_ENABLED", "DESKTOP_PET_SESSION_ID",
@@ -111,6 +112,11 @@ class Settings(BaseSettings):
     VISION_API_MODEL: str = ""                     # 云端视觉模型名（如 gpt-4o, qwen-vl-max）
     VISION_LOCAL_MODEL: str = ""                   # 本地模型路径（留空自动检测）
     VISION_MLX_MODEL: str = ""                     # MLX 模型名（保留兼容，不再使用）
+
+    # 对话图片处理模式:
+    #   "describe": 用独立视觉模型（ImageAnalyzer）把图片转成文字描述注入上下文（默认）
+    #   "direct":   图片直接附给大模型（要求总指挥 LARGE_MODEL 本身是多模态模型）
+    CHAT_IMAGE_MODE: str = "describe"
 
     # 默认模型名（不建议修改，优先用上面的 VISION_* 配置）
     IMAGE_MODEL_NAME: str = ""

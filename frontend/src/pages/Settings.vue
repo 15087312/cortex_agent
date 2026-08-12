@@ -308,6 +308,7 @@ const visionApiModel = txtCfg('VISION_API_MODEL', '')
 const visionApiFormat = txtCfg('VISION_API_FORMAT', '')
 const visionLocalModel = txtCfg('VISION_LOCAL_MODEL', '')
 const visionMlxModel = txtCfg('VISION_MLX_MODEL', '')
+const chatImageMode = segCfg('CHAT_IMAGE_MODE', 'describe')
 
 // 本地模型文件夹扫描
 const visionModelList = ref([])
@@ -746,6 +747,15 @@ onMounted(async () => {
         <div class="settings-group">
           <div class="settings-group-title">视觉模型</div>
           <p class="settings-hint">切换模型后需重启应用才能生效</p>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">对话图片模式</div><div class="d">直连模式需总指挥模型支持多模态（如 gpt-4o / qwen-vl）</div></div>
+            <div class="setting-ctl">
+              <div class="seg">
+                <button :class="{ on: chatImageMode === 'describe' }" @click="chatImageMode = 'describe'" title="用独立视觉模型把图片转成文字描述">描述（独立视觉模型）</button>
+                <button :class="{ on: chatImageMode === 'direct' }" @click="chatImageMode = 'direct'" title="图片直接附给总指挥大模型">直连（总指挥多模态）</button>
+              </div>
+            </div>
+          </div>
           <div class="setting-row">
             <div class="lbl"><div class="t">后端</div></div>
             <div class="setting-ctl">

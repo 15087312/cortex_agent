@@ -604,6 +604,17 @@ class LargeModelClient(BaseModelClient):
         """将内部 ChatMessage 列表转为目标 API 消息格式"""
         fmt = self._api_format
         result = []
+
+        # ── 当前回合用户图片（直连多模态）：取一次并清除，避免 ReAct 循环重复附图 ──
+        turn_images = None
+        try:
+            from modules.thinking.turn_images import get_turn_images, clear_turn_images
+            turn_images = get_turn_images()
+            if turn_images:
+                clear_turn_images()
+        except Exception:
+            turn_images = None
+
         for m in messages:
             # Anthropic: tool 结果用 user + tool_result block
             if m.role == "tool" and fmt == "anthropic":
@@ -665,7 +676,50 @@ class LargeModelClient(BaseModelClient):
                     if m.name:
                         msg["name"] = m.name
             result.append(msg)
+
+        # ── 把当前回合图片挂到最后一个"纯文本 user 消息"上 ──
+        # 跳过 content 为 list 的（Anthropic tool_result）消息，避免把图附到工具结果上。
+        if turn_images:
+            for msg in reversed(result):
+                if msg.get("role") != "user":
+                    continue
+                content = msg.get("content")
+                if content is not None and not isinstance(content, str):
+                    continue
+                if fmt == "anthropic":
+                    blocks = []
+                    if content:
+                        blocks.append({"type": "text", "text": content})
+                    for img in turn_images:
+                        media, b64 = self._parse_image_dataurl(img)
+                        blocks.append({
+                            "type": "image",
+                            "source": {"type": "base64", "media_type": media, "data": b64},
+                        })
+                    msg["content"] = blocks
+                else:
+                    # OpenAI / DashScope 兼容格式：image_url content blocks
+                    blocks = []
+                    if content:
+                        blocks.append({"type": "text", "text": content})
+                    for img in turn_images:
+                        blocks.append({"type": "image_url", "image_url": {"url": img}})
+                    msg["content"] = blocks
+                break
+
         return result
+
+    @staticmethod
+    def _parse_image_dataurl(dataurl: str) -> tuple:
+        """把 dataURL 拆成 (media_type, base64)；非 dataURL 视为裸 base64。"""
+        if isinstance(dataurl, str) and dataurl.startswith("data:"):
+            try:
+                head, b64 = dataurl.split(",", 1)
+                media_type = head[5:].split(";", 1)[0] or "image/jpeg"
+                return media_type, b64
+            except Exception:
+                return "image/jpeg", dataurl
+        return "image/jpeg", dataurl
 
     def _parse_chat_response(self, data: Dict, tools: Optional[List[Dict]] = None) -> ChatResponse:
         """解析 API 响应为 ChatResponse。

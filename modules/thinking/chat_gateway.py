@@ -400,12 +400,23 @@ async def _chatonly_ws(websocket: WebSocket, session_id: str) -> None:
                         )
                         continue
                     try:
-                        from modules.thinking.attachment_handler import parse_attachments
-                        att_text = await parse_attachments(attachments)
+                        from modules.thinking.attachment_handler import (
+                            parse_attachments, extract_images, summarize_attachments,
+                        )
+                        from config.settings import settings
+                        # 直连模式：图片直接附给大模型（不调独立视觉模型）
+                        if str(getattr(settings, "CHAT_IMAGE_MODE", "describe") or "describe").lower() == "direct":
+                            att_images = extract_images(attachments)
+                            att_text = summarize_attachments(attachments)
+                        else:
+                            att_images = []
+                            att_text = await parse_attachments(attachments)
                         if att_text:
                             content = (content + "\n\n" + att_text) if content else att_text
                     except Exception:
-                        pass
+                        att_images = []
+                else:
+                    att_images = []
                 if not content:
                     continue
                 # 新消息打断上一轮（简单路线同一时刻只处理一条）：
@@ -416,6 +427,9 @@ async def _chatonly_ws(websocket: WebSocket, session_id: str) -> None:
                         await active_task
                     except asyncio.CancelledError:
                         pass
+                # 当前回合图片（直连多模态）：透传给本轮大模型请求
+                from modules.thinking.turn_images import set_turn_images
+                set_turn_images(att_images or None)
                 active_task = asyncio.create_task(
                     _consume_turn(websocket, session_id, repo, _get_chat_thinker(), content)
                 )

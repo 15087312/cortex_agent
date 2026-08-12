@@ -1271,24 +1271,30 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
                             )
                             continue
                         try:
-                            from modules.thinking.attachment_handler import parse_attachments
-                            att_text = await parse_attachments(attachments)
+                            from modules.thinking.attachment_handler import (
+                                parse_attachments, extract_images, summarize_attachments,
+                            )
+                            from config.settings import settings
+                            # 直连模式：图片直接附给大模型（不调独立视觉模型）
+                            if str(getattr(settings, "CHAT_IMAGE_MODE", "describe") or "describe").lower() == "direct":
+                                att_images = extract_images(attachments)
+                                att_text = summarize_attachments(attachments)
+                            else:
+                                att_images = []
+                                att_text = await parse_attachments(attachments)
                             if att_text:
                                 user_content = (user_content + "\n\n" + att_text) if user_content else att_text
                         except Exception as e:
                             logger.warning(f"附件解析失败: {e}")
-                    # 如果消息中带了执行模式，同步设置
-                    exec_mode = msg_data.get("execution_mode", "")
-                    if exec_mode in ("plan", "edit", "yolo", "control"):
-                        try:
-                            from config.settings import settings
-                            if settings.EXECUTION_MODE != exec_mode:
-                                object.__setattr__(settings, "EXECUTION_MODE", exec_mode)
-                                from modules.thinking.context.controller import get_context_controller
-                                get_context_controller().set_mode(exec_mode)
-                                logger.info(f"[API] WebSocket 消息设置模式: {exec_mode}")
-                        except Exception as e:
-                            logger.warning(f"WebSocket 消息设置执行模式 '{exec_mode}' 失败: {e}")
+                            att_images = []
+                    else:
+                        att_images = []
+                    # 执行模式禁止经 WS 注入（无鉴权旁路会绕过 PUT /config 的认证）。
+                    # 模式切换必须走 PUT /config/EXECUTION_MODE（CLI 的 _set_execution_mode 已按此实现）。
+
+                    # 当前回合图片（直连多模态）：透传给本轮大模型请求
+                    from modules.thinking.turn_images import set_turn_images
+                    set_turn_images(att_images or None)
 
                     asyncio.create_task(_safe_think(system, session_id, user_content))
 

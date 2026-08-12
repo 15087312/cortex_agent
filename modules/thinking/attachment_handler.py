@@ -4,6 +4,7 @@
 """
 import base64
 import re
+from typing import List
 
 from pydantic import BaseModel
 
@@ -47,7 +48,10 @@ def validate_attachments(value) -> str:
 
 
 async def parse_attachments(attachments) -> str:
-    """解析附件列表为文本描述（追加到用户消息）"""
+    """解析附件列表为文本描述（追加到用户消息）
+
+    图片 → 视觉后端（ImageAnalyzer）生成描述；其他文件 → 标注文件名。
+    """
     if not attachments:
         return ""
     parts = []
@@ -71,6 +75,51 @@ async def parse_attachments(attachments) -> str:
                 parts.append(f"[用户上传图片: {name or atype}]（图片解析失败: {e}）")
         else:
             # 非图片文件：尝试当文本读取，否则仅标注文件名
+            try:
+                if data.startswith("data:text/"):
+                    m = re.match(r"data:text/[^;]+;base64,(.*)", data, re.S)
+                    if m:
+                        text = base64.b64decode(m.group(1)).decode("utf-8", errors="replace")
+                        parts.append(f"[用户上传文件: {name or atype}] 内容：\n{text[:2000]}")
+                        continue
+            except Exception:
+                pass
+            parts.append(f"[用户上传文件: {name or atype}]")
+    return "\n".join(parts)
+
+
+def extract_images(attachments) -> List[str]:
+    """提取图片附件为 dataURL 列表（直连多模态模式用，不调用视觉模型）"""
+    if not attachments:
+        return []
+    images = []
+    for att in attachments:
+        if not isinstance(att, dict):
+            continue
+        atype = str(att.get("type") or "")
+        data = str(att.get("data") or "")
+        if atype.startswith("image/") and data:
+            images.append(data)
+    return images
+
+
+def summarize_attachments(attachments) -> str:
+    """不调视觉模型的轻量标注（直连多模态模式用）
+
+    图片只标文件名（原图由 extract_images 直接附给大模型）；文本文件读内容。
+    """
+    if not attachments:
+        return ""
+    parts = []
+    for att in attachments:
+        if not isinstance(att, dict):
+            continue
+        data = str(att.get("data") or "")
+        name = str(att.get("name") or "")
+        atype = str(att.get("type") or "")
+        if atype.startswith("image/"):
+            parts.append(f"[用户上传图片: {name or atype}]")
+        else:
             try:
                 if data.startswith("data:text/"):
                     m = re.match(r"data:text/[^;]+;base64,(.*)", data, re.S)
