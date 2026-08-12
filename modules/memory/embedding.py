@@ -2,6 +2,7 @@
 Embedding 工具 — 向量化文本
 复用项目已有的 SentenceTransformer 模式，提供延迟加载和缓存。
 """
+import os
 import threading
 from typing import List, Optional
 import numpy as np
@@ -50,17 +51,16 @@ class EmbeddingEngine:
             try:
                 model_name = getattr(settings, "EMBEDDING_MODEL", "paraphrase-multilingual-MiniLM-L12-v2")
                 cache_folder = getattr(settings, "EMBEDDING_CACHE_FOLDER", None)
+                local_only = bool(getattr(settings, "EMBEDDING_LOCAL_FILES_ONLY", False))
 
                 # 本地模式时彻底禁止联网
-                if getattr(settings, "EMBEDDING_LOCAL_FILES_ONLY", False):
-                    import os
+                if local_only:
                     os.environ["HF_HUB_OFFLINE"] = "1"
                     os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
                 # 支持 HuggingFace 镜像（国内环境：https://hf-mirror.com）
                 hf_mirror = getattr(settings, "HF_MIRROR", "")
                 if hf_mirror:
-                    import os
                     os.environ["HF_ENDPOINT"] = hf_mirror
 
                 # 直接用 transformers 加载（比 SentenceTransformer 轻量，无 post-init 卡死问题）
@@ -69,8 +69,20 @@ class EmbeddingEngine:
                 repo_id = f"sentence-transformers/{model_name}"
                 cache_dir = str(os.path.abspath(cache_folder)) if cache_folder else None
 
-                self._model = AutoModel.from_pretrained(repo_id, cache_dir=cache_dir, local_files_only=True)
-                self._tokenizer = AutoTokenizer.from_pretrained(repo_id, cache_dir=cache_dir, local_files_only=True)
+                # 先本地加载（缓存存在时快速离线，不触发网络）；缓存缺失时（全新部署）
+                # 才联网下载。EMBEDDING_LOCAL_FILES_ONLY=True 时只允许本地。
+                last_err = None
+                for allow_download in ((False,) if local_only else (False, True)):
+                    try:
+                        self._model = AutoModel.from_pretrained(
+                            repo_id, cache_dir=cache_dir, local_files_only=not allow_download)
+                        self._tokenizer = AutoTokenizer.from_pretrained(
+                            repo_id, cache_dir=cache_dir, local_files_only=not allow_download)
+                        break
+                    except Exception as e:  # noqa: PERF203
+                        last_err = e
+                else:
+                    raise last_err or RuntimeError(f"模型加载失败: {repo_id}")
 
                 self.dim = self._model.config.hidden_size
                 self._loaded = True
