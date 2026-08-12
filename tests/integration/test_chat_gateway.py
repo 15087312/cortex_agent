@@ -160,6 +160,10 @@ def gw_app(fake_thinker, tmp_repo, monkeypatch):
 @pytest.fixture(autouse=True)
 def chatonly_mode(monkeypatch):
     monkeypatch.setenv("CORTEX_MODE", "chatonly")
+    # 本机开发环境可能真实配置了 SIMPLE_API_KEY → WS 鉴权会拦截无 key 的协议测试连接。
+    # 协议级测试统一模拟开发模式（无 key 放行）；鉴权本身的拒绝/放行由下方
+    # test_ws_rejects_* / test_ws_allows_with_valid_query_key 单独覆盖。
+    monkeypatch.setattr(settings, "SIMPLE_API_KEY", "")
     # 测试环境无主事件循环，connection_manager._loop 为 None 导致握手返回 False；
     # 模拟前端在线，让对话链路正常走（握手行为由 frontend_channel 单测覆盖）。
     monkeypatch.setattr(
@@ -300,6 +304,59 @@ def test_ws_heartbeat_during_silence(gw_app, monkeypatch):
     assert any(e["event"] == "thinking_progress" for e in events)
     assert any(e["event"] == "thinking_step" for e in events)
     assert events[-1]["event"] == "done"
+
+
+# ---------------------------------------------------------------------------
+# WS 鉴权（HIGH-1 安全修复）：配置 SIMPLE_API_KEY 后无 key 连接被拒
+# ---------------------------------------------------------------------------
+
+def _set_simple_key(value: str) -> str:
+    """临时设置 SIMPLE_API_KEY（pydantic 需 object.__setattr__），返回旧值"""
+    old = settings.SIMPLE_API_KEY
+    object.__setattr__(settings, "SIMPLE_API_KEY", value)
+    return old
+
+
+def test_ws_rejects_without_key_when_auth_enabled(gw_app):
+    """配置了 SIMPLE_API_KEY 后，无 key 的 WS 连接被拒绝（4401 关闭，未 accept）"""
+    app, _, _ = gw_app
+    old = _set_simple_key("test-secret")
+    try:
+        with TestClient(app) as client:
+            with pytest.raises(Exception):
+                with client.websocket_connect("/stream/ws/ses_auth_reject"):
+                    pass
+    finally:
+        _set_simple_key(old)
+
+
+def test_ws_rejects_with_wrong_key(gw_app):
+    """错误 key 的 WS 连接被拒绝"""
+    app, _, _ = gw_app
+    old = _set_simple_key("test-secret")
+    try:
+        with TestClient(app) as client:
+            with pytest.raises(Exception):
+                with client.websocket_connect("/stream/ws/ses_auth_wrong?api_key=wrong"):
+                    pass
+    finally:
+        _set_simple_key(old)
+
+
+def test_ws_allows_with_valid_query_key(gw_app):
+    """带正确 ?api_key= 的 WS 连接通过鉴权并可正常收发"""
+    app, _, _ = gw_app
+    old = _set_simple_key("test-secret")
+    try:
+        with TestClient(app) as client:
+            with client.websocket_connect("/stream/ws/ses_auth_ok?api_key=test-secret") as ws:
+                ev = ws.receive_json()
+                assert ev["event"] == "session_ready"
+                ws.send_json({"type": "ping"})
+                ev = ws.receive_json()
+                assert ev["event"] == "pong"
+    finally:
+        _set_simple_key(old)
 
 
 # ---------------------------------------------------------------------------

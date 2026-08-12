@@ -9,6 +9,8 @@ services:
       - PYTHONUNBUFFERED=1
       - APP_ENV=production
       - LOG_LEVEL=INFO
+      # 容器内必须监听 0.0.0.0（docker-proxy 从容器 eth0 转发）；宿主机已用 127.0.0.1 限制外部访问
+      - SERVER_HOST=0.0.0.0
       # API keys — override via .env or set here
       - LARGE_MODEL_API_KEY=${LARGE_MODEL_API_KEY:-}
       - LARGE_MODEL_API_URL=https://api.deepseek.com/v1/chat/completions

@@ -163,6 +163,8 @@ class ToolSecurityGate:
 
     # 类级别 pending_reviews，供 @classmethod resolve_review 访问
     _pending_reviews: Dict[str, asyncio.Future] = {}
+    # request_id → session_id：前端断开时按会话批量拒绝待审批（防止 future 永久挂起）
+    _pending_review_sessions: Dict[str, str] = {}
 
     def __init__(self, lite_model=None):
         self._lite_model = lite_model
@@ -195,15 +197,21 @@ class ToolSecurityGate:
         caller_model_id: str,
         dialog_context: str = "",
         caller_role: str = "",
+        session_id: str = "",
     ) -> Tuple[bool, str]:
-        """审查工具调用请求（带相同调用缓存）"""
+        """审查工具调用请求（带相同调用缓存）
+
+        session_id: 关联审批请求到所属会话，前端断开时可批量拒绝（reject_session_reviews）。
+        """
         # 相同调用缓存：完全相同的 tool_name + params + 执行模式 跳过重复审批
         cache_key = f"{self._execution_mode}|{tool_name}|{json.dumps(tool_params, sort_keys=True, ensure_ascii=False)}"
         cached = self._check_cache.get(cache_key)
         if cached is not None:
             return cached
 
-        result = await self._check_impl(tool_name, tool_params, caller_tier, caller_model_id, dialog_context, caller_role)
+        result = await self._check_impl(
+            tool_name, tool_params, caller_tier, caller_model_id, dialog_context, caller_role, session_id,
+        )
         self._check_cache[cache_key] = result
         return result
 
@@ -215,6 +223,7 @@ class ToolSecurityGate:
         caller_model_id: str,
         dialog_context: str = "",
         caller_role: str = "",
+        session_id: str = "",
     ) -> Tuple[bool, str]:
         """审查工具调用请求（实际实现，不带缓存）"""
         exec_mode = self._execution_mode
@@ -323,7 +332,7 @@ class ToolSecurityGate:
             if tool_name in _get_high_risk_tools() or tool_name in _get_medium_risk_tools():
                 _emit_security_event("等待用户审批", tool_name, caller_model_id, True, "control 模式，需用户确认")
                 allowed, reason = await self._check_user_review(
-                    tool_name, tool_params, caller_tier, caller_model_id
+                    tool_name, tool_params, caller_tier, caller_model_id, session_id
                 )
                 try:
                     self._audit.log(
@@ -354,7 +363,7 @@ class ToolSecurityGate:
             _emit_security_event("审查中", tool_name, caller_model_id, True, "HIGH 风险，评估中...")
             start = time.time()
             allowed, reason = await self._check_high_risk(
-                tool_name, tool_params, caller_tier, caller_model_id, dialog_context
+                tool_name, tool_params, caller_tier, caller_model_id, dialog_context, session_id
             )
             duration_ms = int((time.time() - start) * 1000)
             _emit_security_event(
@@ -384,7 +393,7 @@ class ToolSecurityGate:
                     elif exec_mode == "edit":
                         # edit 模式：LLM 通过后再用户确认
                         allowed, reason = await self._check_user_review(
-                            tool_name, tool_params, caller_tier, caller_model_id
+                            tool_name, tool_params, caller_tier, caller_model_id, session_id
                         )
                     else:
                         # yolo 模式：LLM 通过即可
@@ -393,7 +402,7 @@ class ToolSecurityGate:
                     # LLM 不可用：edit 降级为用户确认，yolo 放行
                     if exec_mode == "edit":
                         allowed, reason = await self._check_user_review(
-                            tool_name, tool_params, caller_tier, caller_model_id
+                            tool_name, tool_params, caller_tier, caller_model_id, session_id
                         )
                     else:
                         allowed, reason = True, "MEDIUM 风险工具，LLM 不可用，yolo 放行"
@@ -430,6 +439,7 @@ class ToolSecurityGate:
         caller_tier: str,
         caller_model_id: str,
         dialog_context: str,
+        session_id: str = "",
     ) -> Tuple[bool, str]:
         """HIGH 风险工具 — 根据执行模式选择审批方式"""
         exec_mode = self._execution_mode
@@ -453,7 +463,7 @@ class ToolSecurityGate:
                     return False, llm_reason  # LLM 拒绝直接拦截，不进用户审批
             # LLM 通过（或不可用）后，必须用户确认
             return await self._check_user_review(
-                tool_name, tool_params, caller_tier, caller_model_id
+                tool_name, tool_params, caller_tier, caller_model_id, session_id
             )
 
         # 兜底（非 yolo/edit/plan）：LLM 可用则 LLM 审批，不可用拒绝
@@ -470,10 +480,12 @@ class ToolSecurityGate:
         tool_params: Dict[str, Any],
         caller_tier: str,
         caller_model_id: str,
+        session_id: str = "",
     ) -> Tuple[bool, str]:
         """用户审查模式 — 推送到 CLI，等待用户审批
 
         防重叠：如果同一工具已有待审批，返回等待提示而非创建新审批。
+        session_id: 记录审批归属会话，前端断开时由 reject_session_reviews 批量拒绝。
         """
         # 检查是否已有待审批
         for rid, fut in list(self._pending_reviews.items()):
@@ -486,6 +498,8 @@ class ToolSecurityGate:
         loop = asyncio.get_running_loop()
         future: asyncio.Future = loop.create_future()
         self._pending_reviews[request_id] = future
+        if session_id:
+            self._pending_review_sessions[request_id] = session_id
 
         params_summary = ", ".join(f"{k}={repr(v)[:100]}" for k, v in tool_params.items())
         if len(params_summary) > 300:
@@ -526,6 +540,7 @@ class ToolSecurityGate:
         finally:
             Suspension.resume()
             self._pending_reviews.pop(request_id, None)
+            self._pending_review_sessions.pop(request_id, None)
 
     async def _check_llm_review(
         self,
@@ -570,6 +585,30 @@ class ToolSecurityGate:
         future = cls._pending_reviews.get(request_id)
         if future and not future.done():
             future.set_result({"approved": approved, "reason": reason or ("用户批准" if approved else "用户拒绝")})
+
+    @classmethod
+    def reject_session_reviews(cls, session_id: str, reason: str = "前端连接已断开，审批已自动拒绝") -> int:
+        """前端断开时批量拒绝该会话所有待审批（工具审批 + 模式切换审批）。
+
+        解决：用户关闭/刷新前端后，_check_user_review 的 future 永远无人 resolve，
+        asyncio.wait_for(future, timeout=None) 永久挂起，且 Suspension 全局计时器被
+        suspend 后永远不 resume → 整个系统计时冻结。断开即拒绝让思考流程继续。
+        """
+        if not session_id:
+            return 0
+        rejected = 0
+        for rid, sid in list(cls._pending_review_sessions.items()):
+            if sid != session_id:
+                continue
+            future = cls._pending_reviews.get(rid)
+            if future and not future.done():
+                future.set_result({"approved": False, "reason": reason})
+                rejected += 1
+        if rejected:
+            logger.warning(
+                f"[安全门控] 会话 {session_id[:8]} 断开，自动拒绝 {rejected} 个待审批"
+            )
+        return rejected
 
     @staticmethod
     def _build_review_prompt(

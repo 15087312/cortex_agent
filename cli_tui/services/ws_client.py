@@ -253,12 +253,17 @@ class WSClient:
         except asyncio.CancelledError:
             pass
 
-    async def send_input(self, content: str, execution_mode: str = "edit") -> bool:
-        """发送用户输入（附带当前执行模式）"""
+    async def send_input(self, content: str) -> bool:
+        """发送用户输入。
+
+        注意：不再携带 execution_mode —— 后端已禁止经 WS 注入执行模式
+        （无鉴权旁路，安全修复）。模式切换走 PUT /config/EXECUTION_MODE
+        （repl._set_execution_mode 已按此实现）。
+        """
         if not self._ws or self._ws.closed:
             return False
         try:
-            msg = {"type": "input", "content": content, "execution_mode": execution_mode}
+            msg = {"type": "input", "content": content}
             await self._ws.send_json(msg)
             return True
         except Exception as e:
@@ -599,10 +604,9 @@ class WSClient:
 
         while True:  # 外层重试循环
             # ── 发送 ──
-            mode = state.execution_mode if state else "edit"
-            if not await self.send_input(user_input, mode):
+            if not await self.send_input(user_input):
                 if await self.connect():
-                    if not await self.send_input(user_input, mode):
+                    if not await self.send_input(user_input):
                         await self._emit({"type": "error", "content": "发送失败"})
                         return
                 else:

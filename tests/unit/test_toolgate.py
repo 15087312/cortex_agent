@@ -162,7 +162,7 @@ class TestEditMode:
     async def test_high_no_llm_requires_user(self, gate_no_llm):
         """无 LLM 时 HIGH 工具降级为用户确认（模拟用户批准）"""
         _set_mode(gate_no_llm, "edit")
-        async def _fake_user_review(self, tool_name, tool_params, caller_tier, caller_model_id):
+        async def _fake_user_review(self, tool_name, tool_params, caller_tier, caller_model_id, session_id=""):
             return (True, "用户批准")
         with patch.object(ToolSecurityGate, '_check_user_review', new=_fake_user_review):
             allowed, reason = await gate_no_llm.check(
@@ -187,7 +187,7 @@ class TestEditMode:
         """LLM 通过 → 用户确认"""
         _set_mode(gate_with_llm, "edit")
         gate_with_llm._lite_model.set_response('{"approved": true, "reason": "安全", "guidance": ""}')
-        async def _fake_user_review(self, tool_name, tool_params, caller_tier, caller_model_id):
+        async def _fake_user_review(self, tool_name, tool_params, caller_tier, caller_model_id, session_id=""):
             return (True, "用户批准")
         with patch.object(ToolSecurityGate, '_check_user_review', new=_fake_user_review):
             allowed, _ = await gate_with_llm.check(
@@ -200,7 +200,7 @@ class TestEditMode:
         """MEDIUM 写操作在 edit 模式也需要 LLM + 用户"""
         _set_mode(gate_with_llm, "edit")
         gate_with_llm._lite_model.set_response('{"approved": true, "reason": "安全", "guidance": ""}')
-        async def _fake_user_review(self, tool_name, tool_params, caller_tier, caller_model_id):
+        async def _fake_user_review(self, tool_name, tool_params, caller_tier, caller_model_id, session_id=""):
             return (True, "用户批准")
         with patch.object(ToolSecurityGate, '_check_user_review', new=_fake_user_review):
             allowed, _ = await gate_with_llm.check(
@@ -265,7 +265,7 @@ class TestControlMode:
     @pytest.mark.asyncio
     async def test_high_needs_user(self, gate_no_llm):
         _set_mode(gate_no_llm, "control")
-        async def _fake_user_review(self, tool_name, tool_params, caller_tier, caller_model_id):
+        async def _fake_user_review(self, tool_name, tool_params, caller_tier, caller_model_id, session_id=""):
             return (True, "用户批准")
         with patch.object(ToolSecurityGate, '_check_user_review', new=_fake_user_review):
             allowed, _ = await gate_no_llm.check(
@@ -276,7 +276,7 @@ class TestControlMode:
     @pytest.mark.asyncio
     async def test_medium_needs_user(self, gate_no_llm):
         _set_mode(gate_no_llm, "control")
-        async def _fake_reject(self, tool_name, tool_params, caller_tier, caller_model_id):
+        async def _fake_reject(self, tool_name, tool_params, caller_tier, caller_model_id, session_id=""):
             return (False, "用户拒绝")
         with patch.object(ToolSecurityGate, '_check_user_review', new=_fake_reject):
             allowed, _ = await gate_no_llm.check(
@@ -609,6 +609,76 @@ class TestCheckUserReviewReal:
 
     def test_resolve_unknown_id_no_error(self):
         ToolSecurityGate.resolve_review("review_nonexistent_xxx", True)  # 不抛
+
+
+# 9.1 会话断开 → 批量拒绝待审批（MEDIUM-1 泄漏/全局冻结修复）
+# =========================================================================
+
+class TestRejectSessionReviews:
+    """前端断开时 reject_session_reviews 只拒绝该会话审批，不误伤其他会话"""
+
+    @pytest.mark.asyncio
+    async def test_reject_only_that_session(self, gate_no_llm):
+        ToolSecurityGate._pending_reviews.clear()
+        ToolSecurityGate._pending_review_sessions.clear()
+        gate = gate_no_llm
+
+        async def run_review(tool, sid):
+            return await gate._check_user_review(tool, {"code": "echo hi"}, "expert", "m1", sid)
+
+        task_a = asyncio.create_task(run_review("run_script", "ses_A"))
+        task_b = asyncio.create_task(run_review("exec_command", "ses_B"))
+        await asyncio.sleep(0.05)  # 两个审批都进入 future 等待
+
+        rejected = ToolSecurityGate.reject_session_reviews("ses_A")
+        assert rejected == 1  # 只拒绝 ses_A
+
+        allowed_a, reason_a = await asyncio.wait_for(task_a, timeout=2)
+        assert allowed_a is False
+        assert "已断开" in reason_a
+        assert not Suspension.is_suspended()  # finally 恢复挂起
+
+        # ses_B 的审批仍在等待，可正常批准
+        assert len(ToolSecurityGate._pending_reviews) == 1
+        rid_b = next(iter(ToolSecurityGate._pending_reviews))
+        ToolSecurityGate.resolve_review(rid_b, True, "用户批准")
+        allowed_b, _ = await asyncio.wait_for(task_b, timeout=2)
+        assert allowed_b is True
+        assert not Suspension.is_suspended()
+        assert not ToolSecurityGate._pending_reviews
+        assert not ToolSecurityGate._pending_review_sessions
+
+    @pytest.mark.asyncio
+    async def test_check_tags_session_and_reject(self, gate_no_llm):
+        """gate.check(session_id=...) 把审批关联到会话，断开可批量拒绝"""
+        ToolSecurityGate._pending_reviews.clear()
+        ToolSecurityGate._pending_review_sessions.clear()
+        gate = gate_no_llm
+
+        async def run_check():
+            return await gate.check(
+                "run_script", {"code": "echo hi"}, "large", "m1",
+                caller_role="orchestrator",
+                session_id="ses_X",
+            )
+
+        task = asyncio.create_task(run_check())
+        await asyncio.sleep(0.05)
+        rid = next(iter(ToolSecurityGate._pending_reviews))
+        assert ToolSecurityGate._pending_review_sessions.get(rid) == "ses_X"
+
+        assert ToolSecurityGate.reject_session_reviews("ses_X") == 1
+        allowed, reason = await asyncio.wait_for(task, timeout=2)
+        assert allowed is False
+        assert "已断开" in reason
+        assert not Suspension.is_suspended()
+        assert not ToolSecurityGate._pending_review_sessions
+
+    def test_reject_unknown_session_noop(self):
+        ToolSecurityGate._pending_reviews.clear()
+        ToolSecurityGate._pending_review_sessions.clear()
+        assert ToolSecurityGate.reject_session_reviews("ses_nonexistent") == 0
+        assert ToolSecurityGate.reject_session_reviews("") == 0
 
 
 # =========================================================================

@@ -38,8 +38,28 @@ class ConnectionManager:
     async def connect(self, session_id: str, websocket: WebSocket):
         await websocket.accept()
         async with self._lock:
+            # 同 session 已有连接（重复连接/会话接管）：先关闭旧连接，
+            # 避免"顶掉原连接"后旧连接仍能继续收发消息（会话劫持残留）
+            old = self.active_connections.get(session_id)
+            if old is not None and old is not websocket:
+                # fire-and-forget 关闭：不在锁内 await（starlette close 会等待对端确认，
+                # 旧客户端不响应会永久阻塞锁 → 整个连接管理器瘫痪）
+                try:
+                    asyncio.create_task(self._close_old_connection(old))
+                except Exception:
+                    pass
             self.active_connections[session_id] = websocket
             self._loop = asyncio.get_running_loop()
+
+    async def _close_old_connection(self, old: WebSocket):
+        """关闭被接管的旧连接（带超时，fire-and-forget）"""
+        try:
+            await asyncio.wait_for(
+                old.close(code=4000, reason="session 已被新连接接管"),
+                timeout=2.0,
+            )
+        except Exception:
+            pass
 
     async def disconnect(self, session_id: str):
         async with self._lock:
@@ -113,6 +133,33 @@ class ConnectionManager:
 
 
 connection_manager = ConnectionManager()
+
+
+def _ws_auth_ok(websocket: WebSocket) -> bool:
+    """WebSocket 握手鉴权（与 HTTP 中间件 api_key_middleware 行为一致）。
+
+    - SIMPLE_API_KEY 未配置（开发模式）→ 放行
+    - 已配置 → 校验 X-API-Key header 或 ?api_key= 查询参数（hmac 常量时间比较）
+
+    浏览器原生 WebSocket 无法设置自定义 header，故前端走 query 参数；
+    CLI（aiohttp）带 X-API-Key header。
+    """
+    try:
+        from config.settings import settings as _cfg
+        expected = getattr(_cfg, "SIMPLE_API_KEY", "") or ""
+    except Exception:
+        expected = ""
+    if not expected:
+        return True
+    import hmac
+    header_key = websocket.headers.get("x-api-key") or ""
+    query_key = websocket.query_params.get("api_key") or ""
+    if header_key and hmac.compare_digest(header_key, expected):
+        return True
+    if query_key and hmac.compare_digest(query_key, expected):
+        return True
+    return False
+
 
 # ── model_id 到显示名称的解析缓存 ──
 _identity_name_cache: Dict[str, str] = {}
@@ -1222,7 +1269,13 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
 
     客户端发送：{"type":"input","content":"..."}
     服务端返回：统一 envelope
+
+    鉴权：与 HTTP 中间件一致（X-API-Key header 或 ?api_key= 查询参数，
+    未配置 SIMPLE_API_KEY 的开发模式放行）。
     """
+    if not _ws_auth_ok(websocket):
+        await websocket.close(code=4401, reason="未授权访问：缺少或无效的 API Key")
+        return
     await connection_manager.connect(session_id, websocket)
 
     system = get_thinking_system()
@@ -1369,6 +1422,18 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
         logger.info(f"WebSocket 断开: {session_id}")
     finally:
         await connection_manager.disconnect(session_id)
+        # 前端断开 → 自动拒绝该会话所有待审批（工具审批/模式切换）与待交互
+        # （ask_user_intent）：防止审批 future 永久挂起 + Suspension 全局计时冻结
+        try:
+            from modules.security_system.tool_security_gate import ToolSecurityGate
+            ToolSecurityGate.reject_session_reviews(session_id)
+        except Exception as e:
+            logger.debug(f"[WS] 清理待审批失败 (非致命): {e}")
+        try:
+            from modules.thinking.core.model_runner import reject_session_user_responses
+            reject_session_user_responses(session_id)
+        except Exception as e:
+            logger.debug(f"[WS] 清理待交互失败 (非致命): {e}")
 
 
 async def _stream_sse(session_id: str, question: str):

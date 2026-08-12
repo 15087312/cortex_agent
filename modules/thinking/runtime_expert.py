@@ -729,6 +729,7 @@ class RuntimeExpert(ABC):
                 caller_tier=self.identity.tier,
                 caller_model_id=self.model_id,
                 caller_role=self.identity.role,
+                session_id=self.session_id,
             )
             if not allowed:
                 return f"[安全门控拦截] {reason}"

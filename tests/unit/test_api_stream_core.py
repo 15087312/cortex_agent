@@ -1,6 +1,8 @@
 """api_stream 核心工具补测：ConnectionManager / 事件构建 / 名称解析"""
 import asyncio
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 import modules.thinking.api_stream as stream_mod
 from modules.thinking.api_stream import (
@@ -137,3 +139,91 @@ def test_resolve_identity_name_not_found(monkeypatch):
 
 def test_global_connection_manager():
     assert isinstance(connection_manager, ConnectionManager)
+
+
+# ── _ws_auth_ok / _resolve_identity_name / _post_task_extraction ────────────
+
+def test_ws_auth_ok_no_key():
+    from modules.thinking import api_stream as ap
+    import types
+    class WS:
+        headers = {}
+        query_params = {}
+    ws = WS()
+    # 开发模式（无 SIMPLE_API_KEY）→ 放行
+    from config.settings import settings as _cfg
+    with patch.object(_cfg, "SIMPLE_API_KEY", ""):
+        assert ap._ws_auth_ok(ws) is True
+
+
+def test_ws_auth_ok_header(monkeypatch):
+    from modules.thinking import api_stream as ap
+    import types
+    from config.settings import settings as _cfg
+    monkeypatch.setattr(_cfg, "SIMPLE_API_KEY", "secret")
+    class WS:
+        headers = {"x-api-key": "secret"}
+        query_params = {}
+    assert ap._ws_auth_ok(WS()) is True
+    class WS2:
+        headers = {"x-api-key": "wrong"}
+        query_params = {}
+    assert ap._ws_auth_ok(WS2()) is False
+
+
+def test_ws_auth_ok_query(monkeypatch):
+    from modules.thinking import api_stream as ap
+    from config.settings import settings as _cfg
+    monkeypatch.setattr(_cfg, "SIMPLE_API_KEY", "secret")
+    class WS:
+        headers = {}
+        query_params = {"api_key": "secret"}
+    assert ap._ws_auth_ok(WS()) is True
+
+
+def test_resolve_identity_name(monkeypatch):
+    from modules.thinking import api_stream as ap
+    ap._identity_name_cache = {}
+    import modules.thinking.identity as ident
+    monkeypatch.setattr(ident, "get_identities", lambda: {
+        "supervisor_code": {"name": "代码主管"}})
+    assert ap._resolve_identity_name("supervisor_code_001") == "代码主管"
+    assert ap._resolve_identity_name("") == ""
+
+
+@pytest.mark.asyncio
+async def test_post_task_extraction(monkeypatch):
+    from modules.thinking import api_stream as ap
+    import modules.memory.event_reducer as er_mod
+    import modules.memory.event_store as es_mod
+    import modules.memory.embedding as emb_mod
+
+    reducer = AsyncMock()
+    reducer.reduce.return_value = {"events": []}
+    monkeypatch.setattr(er_mod, "EventReducer", lambda **kw: reducer)
+    monkeypatch.setattr(es_mod.EventStore, "get_instance", classmethod(lambda cls: MagicMock()))
+    monkeypatch.setattr(emb_mod.EmbeddingEngine, "get_instance", classmethod(lambda cls: MagicMock()))
+    monkeypatch.setattr(ap, "asyncio", __import__("asyncio"))
+    # 避免 sleep(30)：传 owner_id 后 sleep(0)
+    sys = ap.StreamThinkingSystem.__new__(ap.StreamThinkingSystem)
+    sys.sessions = {"s1": {"messages": [
+        {"role": "user", "content": "你好，请帮我分析一下项目的整体架构设计思路"},
+        {"role": "assistant::large_primary", "content": "好的，我来分析一下项目的架构，这是一个相对复杂的系统设计。"},
+    ], "_processed_hashes": set()}}
+    sys.logger = __import__("utils.logger", fromlist=["setup_logger"]).setup_logger("test")
+    await sys._post_task_extraction("s1", "user", "resp", owner_id="large::large_primary")
+    reducer.reduce.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_post_task_extraction_short_text(monkeypatch):
+    """对话过短（<50 字符）→ 不提取"""
+    from modules.thinking import api_stream as ap
+    import modules.memory.event_reducer as er_mod
+    reducer = AsyncMock()
+    monkeypatch.setattr(er_mod, "EventReducer", lambda **kw: reducer)
+    sys = ap.StreamThinkingSystem.__new__(ap.StreamThinkingSystem)
+    sys.sessions = {"s1": {"messages": [{"role": "user", "content": "短"}]}}
+    sys.logger = MagicMock()
+    await sys._post_task_extraction("s1", "short", "resp", owner_id="x")
+    reducer.reduce.assert_not_called()

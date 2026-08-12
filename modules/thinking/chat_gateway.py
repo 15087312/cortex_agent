@@ -602,6 +602,12 @@ async def create_session():
 
 @router.websocket("/ws/{session_id}")
 async def websocket_chat(websocket: WebSocket, session_id: str):
+    # WS 鉴权（与 HTTP 中间件一致）：X-API-Key header 或 ?api_key= 查询参数。
+    # HTTP 中间件不覆盖 WebSocket，必须在此显式校验（未配置 SIMPLE_API_KEY 的开发模式放行）。
+    from modules.thinking.api_stream import _ws_auth_ok
+    if not _ws_auth_ok(websocket):
+        await websocket.close(code=4401, reason="未授权访问：缺少或无效的 API Key")
+        return
     if _resolve_mode() == "chatonly":
         await _chatonly_ws(websocket, session_id)
         return

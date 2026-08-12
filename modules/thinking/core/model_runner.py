@@ -1079,6 +1079,8 @@ class ModelRunner:
         loop = asyncio.get_running_loop()
         future: asyncio.Future = loop.create_future()
         ToolSecurityGate._pending_reviews[request_id] = future
+        # 关联审批到会话：前端断开时由 ToolSecurityGate.reject_session_reviews 批量拒绝
+        ToolSecurityGate._pending_review_sessions[request_id] = self.session_id
         _emit_security_event(
             "等待用户审批", "request_mode_change", self.model_id, True,
             f"请求将执行模式切换为「{suggested_mode}」\n原因: {reason or '(未说明)'}",
@@ -1094,6 +1096,7 @@ class ModelRunner:
         finally:
             Suspension.resume()
             ToolSecurityGate._pending_reviews.pop(request_id, None)
+            ToolSecurityGate._pending_review_sessions.pop(request_id, None)
 
         if approved:
             target_mode = result.get("mode") or suggested_mode
@@ -1115,6 +1118,8 @@ class ModelRunner:
         })
         if result.get("timeout"):
             return f"【用户意图】用户未响应（超时）。问题：{question}"
+        if result.get("cancelled"):
+            return f"【用户意图】用户未响应（前端连接已断开）。问题：{question}"
         answer = result.get("answer", "")
         return f"【用户意图】用户的回答：{answer}"
 
@@ -2127,6 +2132,7 @@ class ModelRunner:
                                             caller_model_id=self.model_id,
                                             dialog_context=dialog_ctx,
                                             caller_role=getattr(self.identity, "role", ""),
+                                            session_id=self.session_id,
                                         )
                                     except Exception as gate_err:
                                         # Gate 异常 → 硬停，报错到 TUI
@@ -2951,3 +2957,33 @@ async def remove_runner_manager(session_id: str) -> None:
             await mgr.shutdown()
         except Exception as e:
             logger.warning(f"[remove_runner_manager] shutdown 异常: {e}")
+
+
+def reject_session_user_responses(session_id: str, reason: str = "前端连接已断开，交互已自动取消") -> int:
+    """前端断开时取消该会话所有等待中的用户交互（ask_user_intent 等）。
+
+    与 ToolSecurityGate.reject_session_reviews 配套：
+    _wait_for_user_response 的 future 若无人 resolve 会永久挂起，且
+    Suspension 全局计时器 suspend 后永不 resume → 系统计时冻结。
+    断开即返回取消结果，让思考流程继续。
+    """
+    if not session_id:
+        return 0
+    count = 0
+    try:
+        with _runner_managers_lock:
+            mgr = _runner_managers.get(session_id)
+            runners = list(getattr(mgr, "_runners", {}).values()) if mgr else []
+        for runner in runners:
+            pending = getattr(runner, "_pending_user_responses", None)
+            if not pending:
+                continue
+            for rid, fut in list(pending.items()):
+                if fut and not fut.done():
+                    fut.set_result({"response": reason, "error": reason, "cancelled": True})
+                    count += 1
+    except Exception as e:
+        logger.debug(f"[ModelRunner] 清理会话交互失败 (非致命): {e}")
+    if count:
+        logger.warning(f"[ModelRunner] 会话 {session_id[:8]} 断开，取消 {count} 个待交互")
+    return count

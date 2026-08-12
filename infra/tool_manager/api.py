@@ -23,6 +23,8 @@ async def _security_gate_check(tool_name: str, params: Dict[str, Any], caller_ro
         caller_tier=caller_role,
         caller_model_id=f"api:{caller_role}",
         caller_role=caller_role,
+        # 无会话上下文：该路径触发的用户审批不会被 WS 断开清理（reject_session_reviews）
+        # 自动拒绝——HTTP API 已要求 X-API-Key 认证，属可接受边界。
     )
     if not allowed:
         logger.warning(f"[ToolAPI] 安全门控拦截: tool={tool_name} role={caller_role} reason={reason}")
