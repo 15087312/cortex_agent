@@ -1175,3 +1175,54 @@ mouse_keyboard/perception_tools/cdp_scanner（外部硬件依赖）。高危需�
 **覆盖率：** 61%（api_stream 35% → 39%）。累计 57% → 61%，全量 1721 → 1901（+180 项）。
 剩余低覆盖：`model_runner`（45%，1590 行）、`ai_tools`/`output_system`/`management` 深路径、tools 剩余
 分支——需重型 mock（完整运行链路）或真实环境。
+
+### 27.23 后端测试补全（续）：model_runner/output_system/ai_tools
+
+**新增测试（全量 1901 → 1922 全绿）：**
+- `test_model_runner_methods.py` 追加 5 项——`_supports_native_tool_chat`（静态判断）、
+  `_build_time_context`（时间/对象）、`_push_reasoning`（思考推送/空不推）
+- `test_output_system.py`（7 项）——text/speech（TTS 成功/禁用）/mouse/键盘端点（mock 底层）
+- `test_ai_tools.py` 追加 4 项——edit_tool（成功/缺名/不存在）+ `_add/_remove_persisted`
+- `test_api_stream_core.py` 追加 6 项（§27.22）
+
+**稳定性修正：** pytest 下 `_visible_tool_whitelist` 依赖注入 mock 不稳定（模块属性遮蔽），
+且该方法仅转发给 ToolPermissionController（已单独测）→ 移除该测试。
+
+**覆盖率：** 61%（累计 57% → 61%，miss -619 行）。全量 1721 → 1922（+201 项）。
+剩余低覆盖集中在**需真实运行链路/重型 mock**：`model_runner` 剩余方法（_generate_with_tools 完整循环、
+_run_task/_think_loop）、`api_stream` 完整 WS 流、`output_system` 深路径、真实硬件/屏幕/语音分支。
+
+### 27.24 后端测试补全（续）：工具循环分支 + 白名单命令
+
+**新增测试（全量 1922 → 1932 全绿）：**
+- `test_model_runner.py` 追加 3 项——`_generate_with_tools` 专家直出（无工具+文本）、
+  主管纯文本拒绝重试（chat_calls>=3 验证注入）、缺参拦截（calc 未执行）
+- `test_exec_command_safety.py` 追加 6 项——`run_command` 白名单（空/不在白名单/白名单内/
+  shlex 解析失败）、`run_script`（空/极端拦截/成功）
+
+**覆盖率：** 61%（累计 miss -645 行，57% → 61%）。全量 1721 → 1932（+211 项）。
+剩余低覆盖需**完整运行链路/真实环境**：`model_runner` 完整循环（_run_task/_think_loop）、
+`api_stream` WS 流式、真实硬件/屏幕/语音分支——纯单测提升有限。
+
+### 27.25 后端测试补全（续）：_generate 重试/回退 + system prompt 构建
+
+**新增测试（全量 1932 → 1936 全绿，`test_model_runner.py` 追加 4 项）：**
+- `_generate` 前端不可达 → 跳过 LLM（返回"[系统] 前端连接已断开"）
+- `_generate` 原生工具 client → 走 `_generate_with_tools`
+- `_generate` 无原生工具 client → 传统 `generate()` 回退
+- `_build_system_prompt_for_mode` 对话历史前置（mock PromptComposer）
+
+**覆盖率：** 61%（累计 miss -700+ 行）。全量 1721 → 1936（+215 项）。
+剩余低覆盖：`model_runner._run_task/_think_loop`（完整编排循环）、`api_stream` WS 流式、
+真实硬件/屏幕/语音分支——纯单测边际收益低。
+
+### 27.26 后端测试补全（续）：_run_task 生命周期 + RuntimeExpert
+
+**新增测试（全量 1936 → 1940 全绿，`test_model_runner.py` 追加 4 项）：**
+- `_run_task` 正常思考 → finally 清理 manager 注册（runners/count）
+- `_run_task` 异常 → status=error + 详情
+- `_run_task` 取消 → status=completed
+- `_run_runtime_expert` on_demand → 实例化 + run_cli_mode
+
+**覆盖率：** 61%（累计 miss -730+ 行）。全量 1721 → 1940（+219 项）。
+剩余低覆盖：`_think_loop` 完整编排循环、`api_stream` WS 流式、真实硬件/屏幕/语音——需完整运行链路 mock。

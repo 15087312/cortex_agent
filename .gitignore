@@ -117,6 +117,7 @@ openapi.json
 
 # Test coverage
 .coverage
+frontend/coverage/
 htmlcov/
 .pytest_cache/
 .tox/
