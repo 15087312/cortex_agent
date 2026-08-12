@@ -12,9 +12,11 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 def _start_backend():
     port = os.environ.get("SERVER_PORT", "8080")
+    # 默认只绑定本机回环（安全）：局域网/公网访问需显式设置 SERVER_HOST=0.0.0.0
+    host = os.environ.get("SERVER_HOST", "127.0.0.1")
     subprocess.Popen(
         [sys.executable, "-m", "uvicorn", "api.main:app",
-         "--host", "0.0.0.0", "--port", str(port), "--log-level", "info"],
+         "--host", host, "--port", str(port), "--log-level", "info"],
         cwd=PROJECT_ROOT,
         stdout=open(os.path.join(PROJECT_ROOT, "data", "logs", "backend.log"), "a") if os.path.isdir(os.path.join(PROJECT_ROOT, "data", "logs")) else subprocess.DEVNULL,
         stderr=subprocess.STDOUT,

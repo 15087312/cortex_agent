@@ -321,8 +321,9 @@ class TestCooccurrenceStats:
         assert edges_created > 0, "应该创建因果边"
 
 
+@pytest.mark.slow
 class TestPerformance:
-    """测试性能"""
+    """性能测试（依赖机器负载，默认被 -m "not slow" 排除）"""
 
     def test_query_performance(self, tmp_path):
         """查询性能测试"""

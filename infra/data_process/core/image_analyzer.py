@@ -704,6 +704,18 @@ class ImageAnalyzer:
         except Exception:
             return await self._detect_ui_mock(image_data, element_types)
 
+    async def _detect_ui_mock(
+        self,
+        image_data: bytes,
+        element_types: List[str]
+    ) -> Dict[str, Any]:
+        """视觉后端不可用时的降级 UI 检测（返回空结果，不崩）
+
+        此前 detect_ui_elements 的 else 分支调用此方法但类中未定义，
+        视觉后端不可用时直接 AttributeError（非预期错误 bug，已修）。
+        """
+        return {"elements": [], "layout": {}, "mock": True, "error": "视觉后端不可用"}
+
     async def _detect_ui_openai(
         self,
         image_data: bytes,

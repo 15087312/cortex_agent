@@ -166,3 +166,86 @@ def test_analyze_unavailable_returns_error():
     r = asyncio.run(inst.analyze(_png_bytes(), "描述"))
     assert "视觉后端不可用" in r.get("error", "")
     assert r.get("format") == "unavailable"
+
+
+# ── 本地视觉：_analyze_qwen_vl（mock transformers 推理）─────────────────────
+
+def test_analyze_qwen_vl(monkeypatch):
+    import asyncio
+    inst = _fresh()
+    inst.model_type = "qwen_vl"
+    inst._initialized = True
+    inst._device = "cpu"
+
+    class FakeProc:
+        def apply_chat_template(self, *a, **k):
+            return "tpl"
+        def __call__(self, *a, **k):
+            class _In(dict):
+                input_ids = ["ids"]
+                def __init__(self, **kw):
+                    super().__init__(kw)
+                def to(self, d):
+                    return self
+            return _In()
+
+    class FakeModel:
+        def generate(self, **k):
+            class Out:
+                def __len__(self):
+                    return 5
+            return [[1, 2, 3]]
+
+    inst.processor = FakeProc()
+    inst.model = FakeModel()
+
+    import modules.thinking  # noqa
+    # batch_decode 需要返回 "描述"
+    def fake_decode(ids, **k):
+        return ["一张测试图片"]
+    inst.processor.batch_decode = fake_decode
+
+    import infra.data_process.core.image_analyzer as ia_mod
+    # patch 内部 import 的 torch.no_grad 为 dummy（真 torch 可用则无需）
+    r = asyncio.run(inst._analyze_qwen_vl(_png_bytes(), "描述"))
+    assert "一张测试图片" in r["description"]
+
+
+# ── 本地视觉：_analyze_mlx_vlm（mock mlx_vlm）──────────────────────────────
+
+def test_analyze_mlx_vlm(monkeypatch):
+    import asyncio
+    import sys as _sys
+    import types
+    inst = _fresh()
+    inst.model_type = "mlx_vlm"
+    inst._initialized = True
+    inst._mlx_model_name = "fake-model"
+    inst._mlx_config = None
+
+    mlx_mod = types.ModuleType("mlx_vlm")
+    mlx_mod.load = lambda n: None
+    mlx_mod.generate = lambda *a, **k: types.SimpleNamespace(text="视觉描述内容")
+    inst._mlx_generate = mlx_mod.generate
+    mlx_mod.utils = types.ModuleType("mlx_vlm.utils")
+    mlx_mod.utils.load_config = lambda n: {}
+    mlx_mod.prompt_utils = types.ModuleType("mlx_vlm.prompt_utils")
+    mlx_mod.prompt_utils.apply_chat_template = lambda *a, **k: "tpl"
+    monkeypatch.setitem(_sys.modules, "mlx_vlm", mlx_mod)
+    monkeypatch.setitem(_sys.modules, "mlx_vlm.utils", mlx_mod.utils)
+    monkeypatch.setitem(_sys.modules, "mlx_vlm.prompt_utils", mlx_mod.prompt_utils)
+
+    r = asyncio.run(inst._analyze_mlx_vlm(_png_bytes(), "描述"))
+    assert "视觉描述内容" in r["description"]
+
+
+# ── detect_ui_elements 降级 ────────────────────────────────────────────────
+
+def test_detect_ui_elements_mock_fallback(monkeypatch):
+    import asyncio
+    inst = _fresh()
+    inst.model_type = "unavailable"
+    inst._initialized = True
+    r = asyncio.run(inst.detect_ui_elements(_png_bytes(), ["button"]))
+    assert isinstance(r, dict)
+    assert "elements" in r
