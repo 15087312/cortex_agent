@@ -1,187 +1,48 @@
 # Cortex Agent
 
-> **类人智能后端系统** — 多模型协作 · 连续思考 · 认知黑板 · 安全审计
+> **类人智能 Agent 系统** —— 多模型协作 · 连续思考 · 认知黑板 · 记忆与因果推理 · 安全审计 · 多端交互
+
+Cortex Agent 是一个面向"类人智能"的完整 Agent 运行时：不仅是一个聊天机器人，而是一套**可编排的多模型协作引擎**，配备事件驱动认知黑板、结构化记忆、因果推理、分级安全门控、85+ 工具与 MCP 扩展，并提供 **Web UI / Qt 桌面客户端 / 桌宠 / 终端** 四种交互方式。
 
 ---
 
-## 一键安装
+## 核心亮点
 
-### macOS / Linux
-```bash
-curl -fsSL https://raw.githubusercontent.com/15087312/cortex_agent/main/install.sh | bash
-```
-
-### Windows（PowerShell）
-在 PowerShell 中直接执行：
-```powershell
-iex (New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/15087312/cortex_agent/main/install.ps1')
-```
-
-如果遇到执行策略限制，先运行：
-```powershell
-Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
-```
-
-安装完成后运行：
-```bash
-cortex
-```
-
-## 手动安装
-
-### macOS
-```bash
-# 1. 克隆
-git clone https://github.com/15087312/cortex_agent.git
-cd cortex_agent
-
-# 2. 安装
-pip install -e .
-
-# 3. 配置
-cp .env.example .env
-# 编辑 .env 填入你的 API Key
-
-# 4. 启动
-cortex
-```
-
-### Windows
-```powershell
-# 1. 克隆
-git clone https://github.com/15087312/cortex_agent.git
-cd cortex_agent
-
-# 2. 创建虚拟环境（推荐）
-python -m venv venv
-.\venv\Scripts\Activate.ps1
-
-# 3. 安装
-pip install -e .
-
-# 4. 配置
-Copy-Item .env.example .env
-# 用文本编辑器编辑 .env 填入 API Key
-
-# 5. 启动
-cortex
-```
+| | 亮点 | 说明 |
+|---|---|---|
+| **认知黑板** | 事件驱动，消除多 Agent 的 N² 复杂度 | 单一真理来源 + 分层上下文切片，每个 turn 完全隔离，杜绝重复回复与上下文污染 |
+| **多模型三层编排** | Large → Supervisor → Expert 并行协作 | 战略决策 → 任务分解 → 专家并行执行，结果汇聚黑板由总指挥整合 |
+| **连续思考引擎** | 不止"输入→输出" | 多轮 ReAct 迭代，复杂度自适应思考预算，模型自主决定继续思考 / 委托 / 输出 |
+| **双对话模式** | Agent 编排 与 纯对话（chatonly） | 纯对话走轻量引擎单一人格；Agent 模式多角色协作，前端可编排/自定义角色 |
+| **记忆 + 因果** | 事件记忆 + 因果图谱推理 | 会话提炼为结构化事件（SQLite+FAISS），因果树深度回忆按因果链召回 |
+| **多端交互** | Web / Qt 桌面 / 桌宠 / TUI | Vue 3 Web UI、PyQt6 桌面客户端、Live2D 桌宠、Textual 终端 |
+| **安全 fail-closed** | 分级审批 + 全链路审计 | 工具调用分级门控（LOW/HIGH/CRITICAL），权限/拦截异常一律拒绝（不静默放行） |
+| **工具系统** | 85 内置 + MCP + AI 自创 | 文件/搜索/感知/代码执行/UI 检测；MCP 服务器扩展；模型运行时自创工具 |
+| **测试保障** | 1700+ 项测试 | unit/integration 分层，临时库隔离、零触碰生产、禁吞错掩盖，多轮补测覆盖 0% 模块 |
 
 ---
 
-## 使用方式
+## 架构概览
 
-```bash
-# 一键启动（后端 + 交互式终端）
-cortex
-
-# 指定端口
-cortex --port 9000
-
-# 只启动后端（API 服务模式，无终端界面）
-cortex --no-tui
-
-# 连接已有的远程后端
-cortex --api-url http://192.168.1.100:8080
-
-# 指定 API 密钥
-cortex --api-key your-secret-key
 ```
-
-启动后进入交互式终端，直接输入问题即可对话。按 `Ctrl+C` 优雅退出。
-
----
-
-## 前端界面（Web UI）
-
-Vue 3 前端提供完整的 Web 交互界面（聊天、编排、设置、仪表盘等），与后端通过 HTTP + WebSocket 通信。
-
-### 技术栈
-
-| 类别 | 技术 |
-|------|------|
-| 框架 | Vue 3（SFC `<script setup>`）+ Vite 6 |
-| 状态管理 | Pinia（chat/session/config 等 store） |
-| 路由 | Vue Router（懒加载页面） |
-| UI | 手写 CSS（无 UI 框架），Lucide SVG 图标 |
-| 测试 | Vitest + @vue/test-utils（jsdom） |
-| 桌宠 | Live2D 模型（frontend/pet/） |
-
-### 页面
-
-`frontend/src/pages/` 共 15 个页面：
-
-| 页面 | 说明 |
-|------|------|
-| Chat | 主对话（多模态附件上传、流式、思考区、待办、审批横幅） |
-| Orchestration | 编排管理（角色/人设/工具权限/模型参数/激活开关/人设预设） |
-| Dashboard | 仪表盘（API 请求日志、模块状态） |
-| Memory | 事件记忆管理 |
-| Settings | 系统设置（模型/感知/主动搭话/快捷键等） |
-| Skills / Tools / Modules | 技能 / 工具 / 模块管理 |
-| ScheduledTasks / Outreach | 定时任务 / 主动搭话配置 |
-| Perception / Security / System / Graph / Causal | 感知 / 安全 / 系统 / 图谱 / 因果图 |
-
-### 启动
-
-```bash
-# 开发模式（Vite HMR，默认 5173）
-cd frontend && npm run dev
-
-# 生产静态服务（默认 8765，代理 /api → 后端 8080）
-python frontend/server.py
-
-# 前端测试（Vitest）
-cd frontend && npm test
+                          ┌─────────────────────────────────────────┐
+   用户输入 ─────────────► │  Cortex 入口（cortex/ CLI / 各端前端）  │
+                          └──────────────────┬──────────────────────┘
+                                             ▼
+                         ┌──────────────────────────────────────────┐
+                         │   FastAPI + WebSocket/SSE（api/）         │
+                         │   ├── Agent 模式 → 多模型三层编排          │
+                         │   ├── chatonly 模式 → 轻量引擎             │
+                         │   └── 管理 API（编排/人设/感知/记忆）        │
+                         └──────────────────┬──────────────────────┘
+                                             ▼
+        ┌──────────────┬───────────────────┼────────────────────┬──────────────┐
+        ▼              ▼                   ▼                    ▼              ▼
+   CognitiveBlackboard  记忆系统          安全门控             感知系统        工具系统
+   （事件驱动黑板）     EventStore+FAISS  fail-closed 分级审批   屏幕/OCR/语音    85+ / MCP
+        │              CausalGraph       完整审计链           差异检测        / create_tool
+        └──────────────┴───────────────────┴────────────────────┴──────────────┘
 ```
-
-**API 约定**：前端所有后端请求统一用 `/api/` 前缀（Vite/8765 代理会去掉前缀转到 8080）；
-WebSocket 直连 `:8080/stream/ws/{session_id}`；`/audio`、`/pet` 资源保留裸路径。
-
-### 纯对话模式（chatonly）
-
-`CORTEX_MODE=chatonly` 时走 `modules/thinking/chat_light/` 轻量引擎（单一"总指挥"人格）：
-- system prompt 由 `chat_light/prompt_composer.py` 组装，支持设置页人设/系统覆盖
-- 自定义 large-tier 总指挥 agent 的人设会自动用于纯对话
-
----
-
-## 桌宠
-
-内置桌面宠物（前端 Live2D + 后端引擎）：
-
-- **前端** `frontend/pet/`：Live2D 模型加载与交互
-- **后端** `modules/desktop_pet/`：
-  - `pet_engine.py` — 桌宠引擎（绑定固定主会话 `pet_main`，对话记忆延续；TTS 语音回复 + `pet_reply` 广播）
-  - `pet_state.py` — 桌宠运行状态
-  - `actions.py` — 动作
-- 通过 `DESKTOP_PET_ENABLED` 开关启用
-
----
-
-## 核心架构
-
-### 事件驱动黑板架构（Event-Driven Blackboard）
-
-传统多 agent 系统存在 **N² 复杂度**（所有 agent 都读全部 history），导致重复回复、超时、上下文污染。Cortex Agent 从根本上重构为**事件驱动黑板**：
-
-- **单一真理来源**：`CognitiveBlackboard` 维护完整思维状态
-- **分层上下文切片**（`ContextSlicer`）：
-  - **Large 模型** → 看全局目标、计划、风险、委托、发现
-  - **Supervisor** → 看任务目标、可用工具
-  - **Expert** → 只看当前步骤、工具状态、最近 5 步执行历史
-- **消除 N² 污染**：每个 turn 完全隔离，agent 间无噪音干扰
-
-### 四层架构
-
-| 层级 | 路径 | 职责 |
-|------|------|------|
-| L1 入口 | `cortex/` | CLI 入口，子进程编排，版本管理 |
-| L2 API | `api/` | FastAPI 应用、WebSocket/SSE 流式、中间件（CORS/认证/限流/请求ID） |
-| L3 业务 | `modules/` | 9 个业务模块（思考、记忆、安全、感知、输出、管理、数据库、桌宠、cortex） |
-| L4 基础设施 | `infra/` | 模型客户端、工具注册/管理、MCP 协议、数据处理、硬件输入 |
-
-依赖规则：L3→L4 允许；L4→L3 禁止。跨模块通信仅通过 MessageBus、CognitiveBlackboard 或 Protocol 接口。
 
 ### 多模型三层编排
 
@@ -189,163 +50,156 @@ WebSocket 直连 `:8080/stream/ws/{session_id}`；`/audio`、`/pet` 资源保留
 用户输入
    ↓
 [Large 模型] ← 战略决策、关键判断、最终整合
-   ↓ 分解为子任务（delegate_task 工具调用）
-[Supervisor] ← N 个主管并行接收任务
-   ├─ code_supervisor → 代码架构设计
-   ├─ creative_supervisor → 创意方案规划
-   ├─ query_supervisor → 信息检索指导
-   └─ ...
-   ↓ 每个主管分配给专家（probe_start）
+   ↓ 分解为子任务（delegate_task）
+[Supervisor] ← N 个主管并行（code / creative / query …）
+   ↓ 分配专家（probe_start）
 [Expert] ← N×M 个专家并行执行
-   ├─ code_writer, code_reviewer, test_writer
-   ├─ creative_writer, emotion, memory_manager
-   └─ ...
-   ↓ 所有结果汇聚到 CognitiveBlackboard
-[CognitiveBlackboard] ← 统一的思维状态
-   ↓
-[Large 模型整合] ← 综合所有专家发现，生成最终答案
+   ↓ 结果汇聚
+[CognitiveBlackboard] → [Large 模型整合，生成最终答案]
 ```
 
-### 连续思考引擎（ContinuousThinker）
+### 事件驱动黑板（为什么没有 N² 复杂度）
 
-不是简单的"输入→输出"，而是多轮 ReAct 风格迭代：
+传统多 Agent 让所有 Agent 读全部历史 → 重复回复、超时、上下文污染。Cortex 用 `CognitiveBlackboard` 作为单一真理来源，`ContextSlicer` 按层级切片上下文：
 
-- **复杂度分析**：4 维评分（推理深度、上下文范围、歧义度、任务复杂度）→ 自动分配思考预算
-- **控制工具**：模型通过 `continue_thinking`（继续思考）、`respond_to_user`（输出结果）、`delegate_task`（委托任务）自主决定何时停止
-- **终止规则**：7 条自动终止条件（空回复、停用词、3 次重复、Jaccard 相似度等）
-- **委托跟踪**：等待子任务完成，结果通过 MessageBus 事件驱动回流
+- **Large** 看全局目标、计划、风险、委托、发现
+- **Supervisor** 看任务目标、可用工具
+- **Expert** 只看当前步骤、工具状态、最近 5 步执行历史
 
-### 专家系统（RuntimeExpert）
+跨模块通信仅通过 MessageBus / CognitiveBlackboard / Protocol 接口，依赖方向严格 L3→L4。
 
-专家有两种执行模式：
+### 四层架构
 
-| 模式 | 适用场景 | 触发方式 |
-|------|---------|---------|
-| `run_loop()` | 被动等待消息驱动的长期监听 | MessageBus 事件 |
-| `run_cli_mode()` | 主动执行任务直到完成 | Supervisor/ModelRunner 调用 |
+| 层级 | 路径 | 职责 |
+|------|------|------|
+| L1 入口 | `cortex/` | CLI 入口、子进程编排、版本管理 |
+| L2 API | `api/` | FastAPI、WebSocket/SSE 流式、中间件（CORS/认证/限流/请求ID） |
+| L3 业务 | `modules/` | 9 个业务模块（思考、记忆、安全、感知、输出、管理、数据库、桌宠、cortex） |
+| L4 基础设施 | `infra/` | 模型客户端、工具注册/管理、MCP、数据处理、硬件输入 |
 
-内置专家角色：customer_expert（用户视角验收）、memory_manager（记忆管理）、memory_search（记忆搜索）、pre_gen_pipeline（价值观+情感预生成分析）。
+### 双对话模式
 
-### 探针驱动激活（Probe-Driven Activation）
-
-模型不直接调用模型，而是通过工具→探针→模型运行器的间接链路：
-
-1. 模型调用 `delegate_task` 工具 → `ProbePermissionManager` 验证权限
-2. `probe_start` 注册探针到 `ProbeCache`，发送 SYSTEM 消息到 `ModelRunnerManager`
-3. Manager 创建 `ModelRunner` → 启动 `ContinuousThinker` 执行任务
-4. 专家完成后写入 Blackboard → 通过 MessageBus 发送 `thinking_result` 唤醒委托方
-5. 委托方模型从 Blackboard 读取结果继续推理
+| 模式 | 引擎 | 特点 |
+|------|------|------|
+| **Agent（默认）** | `modules/thinking/core/` | 多角色协作、探针驱动激活、专家并行 |
+| **纯对话（chatonly）** | `modules/thinking/chat_light/` | 轻量单人格，system prompt 支持人设/系统覆盖，自定义总指挥 agent 人设自动生效 |
 
 ---
 
-## 记忆系统
+## 快速开始
 
-### 事件记忆架构
+### 一键安装
 
-会话结束时，LLM 将对话提炼为结构化事件，存入向量数据库供后续检索。
+**macOS / Linux**
+```bash
+curl -fsSL https://raw.githubusercontent.com/15087312/cortex_agent/main/install.sh | bash
+```
+
+**Windows（PowerShell）**
+```powershell
+iex (New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/15087312/cortex_agent/main/install.ps1')
+```
+执行策略受限时先：`Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force`
+
+安装后运行 `cortex`。
+
+### 手动安装
+
+```bash
+git clone https://github.com/15087312/cortex_agent.git
+cd cortex_agent
+pip install -e .
+cp .env.example .env        # 编辑填入 API Key
+```
+
+### 各端运行
+
+| 端 | 命令 | 说明 |
+|----|------|------|
+| **后端 + TUI** | `cortex` | 一键启动（API + Textual 交互终端），`Ctrl+C` 退出 |
+| **后端（无界面）** | `cortex --no-tui` | 仅 API 服务模式 |
+| **Web UI（开发）** | `cd frontend && npm run dev` | Vite HMR，默认 5173，代理 `/api` → 8080 |
+| **Web UI（生产）** | `python frontend/server.py` | 静态服务默认 8765 |
+| **Qt 桌面客户端** | `python frontend/main.py` | macOS PyQt6+QtWebEngine，自动拉起桌宠 |
+| **桌宠** | `DESKTOP_PET_ENABLED=true` 启用 | 独立进程 `pet_launch.py`，透明置顶窗 Live2D |
+| **远程连接** | `cortex --api-url http://192.168.1.100:8080` | 连接已有后端 |
+
+**前端 API 约定**：所有请求用 `/api/` 前缀（代理去前缀到 8080）；WebSocket 直连
+`:8080/stream/ws/{session_id}`；`/audio`、`/pet` 资源保留裸路径。
+
+---
+
+## 交互端
+
+### Web UI（Vue 3）
+
+15 个页面：Chat（多模态附件/流式/思考区/待办/审批横幅）、Orchestration（角色编排/人设/工具权限/
+激活开关）、Dashboard、Memory、Settings、Skills/Tools/Modules、ScheduledTasks/Outreach、Perception/
+Security/System/Graph/Causal。
+
+### Qt 桌面客户端（macOS）
+
+`frontend/main.py`：PyQt6 + QtWebEngine，后台启动 server.py，Qt 窗口内嵌 Web UI；关闭隐藏到 Dock、
+`Cmd+Q` 退出；原生 `confirm()/prompt()` 会阻塞 QtWebEngine，前端一律用页内弹层。
+
+### 桌宠（Live2D）
+
+Live2D 角色 + 独立进程 + Qt 透明置顶窗：拖动移动、单击角色互动菜单、F8/"科特"语音触发主会话对话；
+绑定固定主会话 `pet_main`，对话记忆延续，TTS 语音回复。
+
+### 终端（TUI）
+
+Textual 交互终端，`cortex` 启动，支持多模态文件与流式回复。
+
+---
+
+## 功能模块
+
+### 记忆系统
+
+会话结束时 LLM 将对话提炼为结构化事件，存入 SQLite+FAISS 供向量检索，并构建因果图谱支持多跳推理。
 
 | 组件 | 作用 |
 |------|------|
-| **EventReducer** | 会话结束时调用 LLM，将对话提炼为 MemoryEvent（fact/thought/lesson/keywords） |
-| **EventStore** | SQLite + FAISS 存储事件，支持向量相似度检索 |
-| **EventRetrieval** | 混合检索：语义×0.35 + 重要性×0.20 + 时效×0.20 + 使用频率×0.15 + 提及频率×0.10 |
-| **CausalGraph** | 事件因果关系图，支持多跳推理 |
-| **CausalTree** | 因果树深度回忆，按因果链召回相关事件 |
+| **EventReducer** | 会话提炼为 MemoryEvent（fact/thought/lesson/keywords） |
+| **EventStore** | SQLite + FAISS 存储与向量检索 |
+| **EventRetrieval** | 混合检索（语义×0.35 + 重要性 + 时效 + 使用/提及频率） |
+| **CausalGraph / CausalTree** | 事件因果图 + 因果树深度回忆 |
 
-### 记忆事件结构
+### 安全系统
 
-```python
-MemoryEvent = {
-    fact: "发生了什么",
-    thought: "思考/反思",
-    lesson: "学到了什么（可复用经验）",
-    keywords: ["关键词1", "关键词2"],
-    importance: 0.7,  # 0.0-1.0
-    type: "fact",     # emotion | thought | fact | strategy
-    owner_id: "large_primary",  # 记忆归属
-}
-```
+- **多层防护**：输入检查 → 执行审查（分级审批 LOW/MEDIUM/HIGH/CRITICAL）→ 输出审查 → 完整审计链
+- **fail-closed**：权限/安全拦截检查异常一律拒绝，不静默放行（历史上修复过 3 处 fail-open）
+- **危险命令检测**：极端危险命令硬阻断（rm -rf /、pipe-to-shell 下载执行等）
 
-### 存储层
-
-| 存储 | 用途 |
-|------|------|
-| SQLite | 事件元数据、会话历史 |
-| FAISS | 向量索引，语义相似度检索 |
-| JSONL | 审计日志、黑匣子 |
-
----
-
-## 安全系统
-
-### 多层防护
-
-- **输入检查** → 内容审核、意图识别
-- **执行审查** → 工具调用前预检，分级审批（LOW/MEDIUM/HIGH/CRITICAL）
-- **输出审查** → 回复内容合规性校验
-- **完整审计链** → JSONL 格式，SHA-256 哈希链，所有决策可追溯
-
-### 安全门控（Security Gate）
-
-工具执行前经过三级安全检查：
-- **LOW** → 快速检查
-- **MEDIUM** → 路径/命令验证
-- **HIGH/CRITICAL** → LLM 审批或用户确认
-
----
-
-## MCP 工具系统
-
-插件系统已整体移除，其生态位由 **MCP（Model Context Protocol）** 和 **AI 自创工具（create_tool）** 替代。
-
-### 三层工具架构
+### 工具系统
 
 | 层级 | 来源 | 说明 |
 |------|------|------|
-| **ToolRegistry（内置）** | `infra/tool_manager/` | 85 个内置工具：文件操作、搜索、感知、代码执行、UI 检测等 |
-| **MCP（远程）** | `infra/mcp/` | 通过 stdio/SSE 连接的 MCP 服务器（文件系统、数据库、浏览器等） |
-| **create_tool（AI 自创）** | `infra/tool_manager/tools/create_tool.py` | 模型在运行时动态创建/编辑/删除工具，持久化到磁盘 |
+| **ToolRegistry（内置）** | `infra/tool_manager/` | 85 个内置工具 |
+| **MCP（远程）** | `infra/mcp/` | stdio/SSE 连接的 MCP 服务器 |
+| **create_tool（AI 自创）** | 运行时动态创建 | 持久化到磁盘 |
 
-### 统一路由
+统一经 `MCPToolService` 路由，工具名冲突内置优先，全部经过安全权限检查。
 
-所有工具（内置 + MCP + AI 自创）通过 `MCPToolService` 统一路由：
-- `CombinedToolProvider` 合并本地 ToolRegistry + 远程 MCP Server 的工具列表
-- 工具名冲突时优先保留内置工具，跳过同名 MCP 工具
-- `ToolManagerPermissionAdapter` 确保所有调用经过安全权限检查
+### 感知系统
 
-### 学习模式（Learn Mode）
-
-学习模式是一个**瞬态**状态，不固定存在于 EXECUTION_MODE 中：
-
-1. 模型调用 `request_mode_change("learn")` 进入学习模式
-2. `model_runner` 注入学习提示词并自动执行 `run_learn_pipeline`
-3. 管线步骤：打开应用 → 截图 → OmniParser 元素检测 → AI 规划动作序列 → 执行录制 → 生成插件
-4. 完成后自动恢复原始执行模式（plan/edit/yolo/control）
+窗口变化 / 屏幕差异 / OCR / 语音 / 文件变化检测，1Hz 心跳差异源，驱动主动搭话与桌宠互动。
 
 ---
 
-## 运行模式
+## 运行模式与配置
 
-### 执行模式（EXECUTION_MODE）
+| 执行模式 | 行为 |
+|----------|------|
+| `plan` | 只读，禁止所有写操作 |
+| `edit` | 写操作前需用户确认 |
+| `yolo` | 仅安全专家检测，跳过用户确认 |
+| `control` | MEDIUM+ 工具需用户单独确认 |
 
-| 模式 | 行为 |
-|------|------|
-| `plan` | 只读 — 禁止所有写操作 |
-| `edit` | 确认 — 写操作前需用户确认 |
-| `yolo` | 宽松 — 仅安全专家检测，跳过用户确认 |
-| `control` | 用户完全控制 — MEDIUM+工具需用户单独确认 |
-
-### 其他关键配置
-
-| 配置项 | 默认值 | 说明 |
-|--------|--------|------|
-| `PERCEPTION_ENABLED` | True | 感知系统（文件/对话/屏幕监控 + 规范违反检测） |
-| `DIFFERENCE_DETECTOR_ENABLED` | True | 差异检测器（4种差异源，1Hz 心跳） |
-| `VALUE_ALIGNMENT_HANDLER_ENABLED` | True | 价值观对齐被动监测 |
-| `PROACTIVE_OUTREACH_ENABLED` | True | 主动搭话（闲置触发） |
-| `SECURITY_REVIEW_MODE` | auto | 安全审查模式（llm / user / auto） |
-
-完整配置见 [.env.example](.env.example) 和 [docs/CONFIG_VALUE_EVOLUTION.md](docs/CONFIG_VALUE_EVOLUTION.md)。
+其他关键配置：`PERCEPTION_ENABLED`、`DIFFERENCE_DETECTOR_ENABLED`、`PROACTIVE_OUTREACH_ENABLED`、
+`SECURITY_REVIEW_MODE`、`CORTEX_MODE`（agent/chatonly）、`DESKTOP_PET_ENABLED` 等。
+完整配置见 [.env.example](.env.example) 与 [docs/CONFIG_VALUE_EVOLUTION.md](docs/CONFIG_VALUE_EVOLUTION.md)。
 
 ---
 
@@ -354,53 +208,29 @@ MemoryEvent = {
 ```
 ai_backend/
 ├── cortex/                 # CLI 入口（cortex 命令）
-├── api/                    # FastAPI 应用 + WebSocket/SSE
-├── frontend/               # Vue 3 前端（聊天/编排/设置/仪表盘等 15 个页面）
-│   ├── src/                # 前端源码（Vue SFC + Pinia + Vue Router）
-│   ├── pet/                # 桌宠前端（Live2D 模型 + 交互逻辑）
-│   ├── server.py           # 静态服务（默认 8765，代理 /api 到后端 8080）
-│   └── package.json        # npm 依赖与脚本（dev/build/test）
-├── modules/                # 业务逻辑模块
-│   ├── thinking/           # 核心编排引擎
-│   │   ├── chat_light/     # 纯对话模式（chatonly）轻量引擎
-│   │   ├── cognition/      # 认知黑板、会话生命周期、领域事件
-│   │   ├── communication/  # MessageBus（点对点、广播、RPC、订阅）
-│   │   ├── context/        # 上下文管理（GCP、压缩、同步、审计）
-│   │   ├── core/           # ContinuousThinker、ModelRunner、ModelRunnerManager
-│   │   ├── probes/         # 探针系统（注册、缓存、权限、工具）
-│   │   └── skills/         # 技能管理器（YAML 技能加载）
-│   ├── memory/             # 事件记忆系统（EventStore + FAISS + 因果树）
-│   ├── security_system/    # 安全系统（分级审批 + 审计 + fail-closed）
+├── api/                    # FastAPI 应用 + WebSocket/SSE + 管理 API
+├── frontend/               # Vue 3 前端 + Qt 桌面端 + 桌宠
+│   ├── src/                # Web UI 源码（15 个页面）
+│   ├── pet/                # 桌宠 Live2D 前端
+│   ├── main.py             # macOS 桌面客户端（PyQt6 + QtWebEngine）
+│   ├── pet_launch.py       # 桌宠独立进程
+│   ├── pet_widget.py       # 桌宠透明置顶窗
+│   └── server.py           # 静态服务（8765，代理 /api）
+├── modules/                # 业务模块
+│   ├── thinking/           # 编排引擎（core / chat_light / cognition / communication / probes / skills）
+│   ├── memory/             # 事件记忆 + 因果图谱
+│   ├── security_system/    # 安全门控（fail-closed）+ 审计
 │   ├── perception/         # 感知系统
-│   │   ├── detectors/      # 检测器（窗口、帧差、OCR、语音）
-│   │   ├── screen/         # 屏幕理解（touchpoint + CDP + 视觉模型）
-│   │   ├── events/         # 事件总线
-│   │   └── state/          # 世界状态管理
-│   ├── desktop_pet/        # 桌宠引擎（pet_engine/pet_state/actions）
-│   ├── output_system/      # 输出管线（多通道分发）
-│   ├── management/         # 监控、告警、健康检查、管理 API
-│   └── database/           # SQLite + DiskCache
-├── infra/                  # 基础设施层
-│   ├── model/              # 模型客户端（Large/Medium/Small，格式由 config/providers 统一）
-│   ├── tool_manager/       # 工具注册/管理 + 85 个内置工具
-│   │   └── tools/          # 工具实现（搜索、感知、文件、MCP、create_tool 等）
-│   ├── mcp/                # MCP 协议集成
-│   ├── data_process/       # 语音识别 + 图像分析 + CDP 扫描
-│   └── hardware_input/     # 硬件输入（PyAutoGUI）
-├── config/                 # 配置系统（Pydantic Settings）
-│   ├── providers/          # 模型 API 格式适配层（openai/anthropic/dashscope）
-│   └── prompts/            # 提示词组装（roles.yaml / base.yaml / composer）
-├── cli_tui/                # Textual TUI 终端界面
-├── utils/                  # 共享工具（日志、异步、JSON、时间）
-├── skills/                 # YAML 技能定义文件
-├── tests/                  # 测试（unit 105 个文件 + integration + external）
-├── docs/                   # 文档（含 ERROR_AND_FIXES 修复记录）
-├── scripts/                # 部署和运维脚本（含 fix_macos_libomp.py）
-├── data/                   # 运行时数据（记忆、缓存、索引）
-├── pyproject.toml          # 项目配置
-├── requirements.txt        # Python 依赖
-├── Dockerfile              # Docker 构建（多阶段）
-└── docker-compose.yml      # Docker Compose 编排
+│   ├── desktop_pet/        # 桌宠引擎
+│   ├── output_system/ management/ database/ cortex/
+├── infra/                  # 模型客户端 / 工具 / MCP / 数据处理 / 硬件输入
+├── config/                 # Pydantic Settings + providers（模型格式适配）+ prompts
+├── cli_tui/                # Textual TUI
+├── utils/                  # 共享工具
+├── tests/                  # 137 个测试文件（unit/integration/external）
+├── docs/                   # 文档（架构/记忆/修复记录）
+├── scripts/                # 部署与运维（含 fix_macos_libomp.py）
+└── data/                   # 运行时数据
 ```
 
 ---
@@ -409,17 +239,35 @@ ai_backend/
 
 | 类别 | 技术 |
 |------|------|
-| **后端框架** | Python 3.11+ / FastAPI / Uvicorn |
-| **前端** | Vue 3 / Vite 6 / Pinia / Vue Router / Vitest |
-| **数据存储** | SQLite (SQLAlchemy WAL) / DiskCache / JSONL / FAISS |
-| **模型客户端** | aiohttp / httpx，格式由 `config/providers` 统一（DashScope / OpenAI / Anthropic） |
-| **终端界面** | Textual (TUI) / Rich |
-| **桌宠** | Live2D + TTS（frontend/pet + modules/desktop_pet） |
-| **搜索引擎** | DuckDuckGo / 搜狗 / 必应 / 百度 / crawl4ai（无头浏览器） |
-| **NLP** | jieba / sentence-transformers / tiktoken |
-| **ML（可选）** | PyTorch / transformers / faiss-cpu / mlx-lm（Apple Silicon） |
-| **监控** | Prometheus / psutil |
-| **部署** | Docker / Docker Compose / PyInstaller |
+| 后端 | Python 3.11+ / FastAPI / Uvicorn / aiohttp / httpx |
+| 模型 | DashScope / OpenAI / Anthropic（`config/providers` 统一格式适配） |
+| 前端 | Vue 3 / Vite 6 / Pinia / Vue Router / Vitest |
+| 桌面 | PyQt6 + QtWebEngine（macOS） |
+| 桌宠 | Live2D + TTS |
+| 数据 | SQLite / DiskCache / JSONL / FAISS |
+| NLP/ML | jieba / sentence-transformers / PyTorch / transformers / faiss / mlx-lm（可选） |
+| 搜索 | DuckDuckGo / 搜狗 / 必应 / 百度 |
+| 部署 | Docker / Docker Compose / PyInstaller |
+
+---
+
+## 测试
+
+**137 个测试文件，全量 1700+ 项通过**（unit / integration / external 分层）。
+
+```bash
+# 后端全量（推荐）
+pytest tests/ -m "not external and not slow"
+
+# 前端
+cd frontend && npm test
+```
+
+**隔离原则**：绝不触碰生产库（临时 SQLite + monkeypatch 单例）；重库加载放宽 timeout；
+后台线程类提供 `stop()`；禁 `except: pass` 吞错掩盖；测试假对象须与真实模型字段一致。
+
+**覆盖亮点**：utils / config.providers / identity_loader / values_store / tool_discovery /
+context_budget / ModelRunnerManager 从 0% 补到覆盖；management 全端点；安全 fail-closed 回归。
 
 ---
 
@@ -427,94 +275,53 @@ ai_backend/
 
 | 接口 | 说明 |
 |------|------|
-| `GET /health` | 健康检查（healthy / degraded / critical） |
+| `GET /health` | 健康检查（healthy / degraded） |
 | `GET /` | 系统信息和版本 |
-| `WS /stream/ws/{session_id}` | WebSocket 实时对话 |
+| `WS /stream/ws/{session_id}` | WebSocket 实时对话（流式/附件/审批） |
 | `GET /stream/sse/{session_id}` | SSE 流式对话 |
-| `GET /config` | 获取配置 |
-| `PUT /config/{key}` | 更新配置（需 API Key，白名单限制） |
-
----
-
-## 开发
-
-```bash
-# 安装开发依赖
-pip install -e ".[dev]"
-
-# 运行后端测试（unit + integration，跳过 external/slow）
-pytest tests/ -q -m "not external and not slow"
-
-# 运行前端测试（Vitest）
-cd frontend && npm test
-
-# 代码检查
-ruff check .
-
-# 启动后端（开发模式）
-python -m scripts.start_all
-```
-
----
-
-## 测试
-
-共 **137 个测试文件**（`tests/`），按环境分层：
-
-| 层级 | 目录 | 说明 |
-|------|------|------|
-| **unit** | `tests/unit/` | 纯单元测试（mock 外部依赖），秒级完成 |
-| **integration** | `tests/integration/` | 真实临时库/组件协作，需 `-m "not external"` 排除真环境用例 |
-| **external** | `tests/external/` | 需真实模型/屏幕/硬件的用例，默认跳过 |
-
-### 运行
-
-```bash
-# 全量（推荐）
-pytest tests/ -m "not external and not slow"
-
-# 单个文件
-pytest tests/unit/test_providers.py -q
-
-# 前端测试
-cd frontend && npm test
-```
-
-### 测试隔离原则（重要）
-
-- **绝不触碰生产库**：memory/conscience/causal 类测试用临时 SQLite + monkeypatch 单例
-  （`EventStore._instance`/`CausalGraph._instance` 等），并重置 `EventRetrieval._instance`
-- **重库加载放宽 timeout**：触发真实 embedding/BERT 加载的测试加模块级
-  `pytestmark = pytest.mark.timeout(60)`（如 conscience/causal_graph/image_analyzer）
-- **线程清理**：起后台线程的类（如 ApiLogStore）必须提供 `stop()`，fixture teardown 调用
-- **禁止吞错掩盖**：`except: pass` 会掩盖真实 bug（如 `test_context_slicer` 曾因签名过时被吞）
-- **测试假对象须与真实模型字段一致**（§20 教训）；**只断言调用不查结果**是假测试（§25）
-
-### 覆盖情况
-
-多轮补测后全量 **1700+ 项通过**，重点覆盖：
-- 0% → 覆盖：utils、config/providers、identity_loader、values_store、tool_discovery、
-  context_budget、ModelRunnerManager
-- 全端点：management 管理 API、编排/人设/激活开关消费链
-- 核心：ModelRunner 方法、模型流式解析、记忆链路、因果树、agent 工具（含安全检测）、web_search
-- 安全回归：fail-closed（权限/拦截异常拒绝）、pipe-to-shell 漏检修复、附件契约
+| `GET /config` / `PUT /config/{key}` | 配置读写（白名单 + API Key） |
+| `PUT /config/persona/{role}` | 人设 / 系统提示词覆盖 |
+| `POST /management/orchestration/agents` | 自定义 Agent（含层级/模型/人设） |
 
 ---
 
 ## Docker 部署
 
 ```bash
-# 构建并启动
-docker-compose up -d
-
-# 查看日志
+docker-compose up -d      # 构建并启动（4GB 内存，2 CPU）
 docker-compose logs -f app
-
-# 停止
 docker-compose down
 ```
 
-资源限制：4GB 内存，2 CPU。健康检查：每 30 秒轮询 `/health`。
+---
+
+## 发布（Release）
+
+### 升级版本号并打 tag
+
+```bash
+python scripts/release.py patch --tag --push    # 2.0.0 -> 2.0.1，提交 + 打 tag v2.0.1 + 推送
+```
+
+脚本会自动同步 `VERSION` 与 `frontend/package.json`。推 tag 后 GitHub Actions
+（`.github/workflows/release.yml`）自动在 Windows / macOS 上构建并上传便携包到 Release。
+
+### 打包产物（`dist/CortexAgent/`）
+
+PyInstaller 一次产出两个可执行文件（`pyinstaller pyinstaller.spec --clean --noconfirm`）：
+
+| 可执行文件 | 作用 |
+|-----------|------|
+| `Cortex_Client(.exe)` | 桌面客户端（PyQt6 + QtWebEngine），双击启动 |
+| `AI_Backend(.exe)`    | 后端 API（uvicorn），由客户端自动拉起（同目录） |
+
+客户端内置 Vue 构建产物 `frontend/dist`（发布前需 `cd frontend && npm run build`）。
+
+### 首次运行注意
+
+- **Embedding 模型**（约 500MB）：缓存缺失时启动会自动下载（支持 `HF_MIRROR` 环境变量加速，如 `hf-mirror.com`）。
+- **视觉模型**：`VISION_BACKEND` 默认 `local`（下载较大模型）；可用 `VISION_BACKEND=mock` 或 `api` 跳过本地加载。
+- Windows 首次运行若被 SmartScreen 拦截，选"更多信息 → 仍要运行"。
 
 ---
 
@@ -522,13 +329,13 @@ docker-compose down
 
 | 文档 | 说明 |
 |------|------|
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 详细架构设计文档 |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 详细架构设计 |
 | [docs/THINKING_ARCHITECTURE.md](docs/THINKING_ARCHITECTURE.md) | 思考模块内部架构（双层 ReAct 循环） |
 | [docs/MEMORY_INJECTION.md](docs/MEMORY_INJECTION.md) | 记忆系统与注入链路 |
-| [docs/CONFIG_VALUE_EVOLUTION.md](docs/CONFIG_VALUE_EVOLUTION.md) | 价值观进化系统配置 |
+| [docs/CONFIG_VALUE_EVOLUTION.md](docs/CONFIG_VALUE_EVOLUTION.md) | 价值观进化配置 |
 | [docs/ERRORS_AND_FIXES.md](docs/ERRORS_AND_FIXES.md) | 错误原因与修复记录（§1-§27，含假测试/安全/覆盖修复经验） |
-| [frontend/ARCHITECTURE.md](frontend/ARCHITECTURE.md) | 前端架构说明 |
-| [frontend/README.md](frontend/README.md) | 前端使用/开发说明 |
+| [frontend/ARCHITECTURE.md](frontend/ARCHITECTURE.md) | 前端架构 |
+| [frontend/README.md](frontend/README.md) | 前端使用/开发 |
 
 ---
 

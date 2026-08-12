@@ -1102,3 +1102,76 @@ enabled/forced/role-skills、tools enabled（可见性）、scheduled_tasks prom
 
 **验证：** 新增 `test_custom_agent.py`（11 项：身份合并/删除失效/端点/调度/激活开关/预设读侧/
 composer 自定义人格/LOG_LEVEL）；全量 1733 通过。
+
+## 28. 无鉴权 WebSocket + 0.0.0.0 绑定 + execution_mode 注入 + 审批 future 断开泄漏（安全审计高危）
+
+**现象：** 全量安全审计发现三个高危/中危问题：
+
+1. **WS 完全无鉴权（HIGH）**：HTTP 中间件不覆盖 WebSocket（`api/main.py` 注释明示），任何能连到 8080 端口的客户端可自由连接 `/stream/ws/{任意 session_id}`；用相同 session_id 连接会**顶掉原连接并接管消息流**（会话劫持）。
+2. **默认绑定 0.0.0.0（HIGH）**：`main.py`/`start_all.py`/`autostart_launcher.py`/`Dockerfile` 全部监听所有网卡——局域网内任何设备可直连。
+3. **WS 消息可注入全局执行模式（HIGH）**：`api_stream.websocket_chat` 在 input 消息里带 `"execution_mode":"yolo"` 就直接 `object.__setattr__(settings, "EXECUTION_MODE", ...)` **全局生效**，绕过 PUT /config 的认证——攻击者可远程以 yolo 模式（跳过确认）执行工具（含 exec_command）。
+4. **审批 future 断开泄漏 + 全局计时冻结（MEDIUM）**：用户关闭前端后，`ToolSecurityGate._pending_reviews` / `ModelRunner._pending_user_responses` 的 future 永远无人 resolve，`asyncio.wait_for(future, timeout=None)` 永久挂起，且 `Suspension` 被 suspend 后永不 resume → **整个系统计时冻结**。
+5. **API Key 落 localStorage（MEDIUM）**：`frontend/src/api.js` 把密钥持久化到 localStorage（§17.7 已记录过此模式，Vue 重构时又带回）。
+
+**修复：**
+1. **WS 握手鉴权**：新增 `api_stream._ws_auth_ok()`——`SIMPLE_API_KEY` 未配置（开发模式）放行；已配置则校验 `X-API-Key` header 或 `?api_key=` 查询参数（hmac 常量时间比较，header/query 任一匹配即放行）。`chat_gateway.websocket_chat`（实际挂载的入口）与 `api_stream.websocket_chat`（纵深防御）均在 accept 前校验，失败 `close(4401)`。CLI（aiohttp）带 header；浏览器 WebSocket 无法设 header，前端 `ws/client.js` 追加 `?api_key=`。
+2. **默认绑定 127.0.0.1**：`main.py`/`start_all.py`/`autostart_launcher.py` 改为 `SERVER_HOST` env（默认 `127.0.0.1`）；docker-compose 显式 `SERVER_HOST=0.0.0.0`（容器内需监听 eth0 供 docker-proxy 转发，宿主机已用 `127.0.0.1:8080:8080` 限制外部访问）。
+3. **移除 WS execution_mode 注入**：`api_stream.websocket_chat` 不再读消息里的 `execution_mode`；CLI `send_input` 不再附带该字段。模式切换统一走 `PUT /config/EXECUTION_MODE`（CLI `_set_execution_mode` 已按此实现，带认证）。
+4. **审批/交互会话关联 + 断开清理**：`ToolSecurityGate` 新增 `_pending_review_sessions`（request_id→session_id）+ `reject_session_reviews(session_id)`；`check/_check_impl/_check_high_risk/_check_user_review` 全链透传 `session_id`，`ModelRunner` 的 gate.check 与 `_handle_mode_change_request` 关联会话；新增 `ModelRunner.reject_session_user_responses(session_id)` 清理 `ask_user_intent` 待交互。`api_stream.websocket_chat` 的 finally 在断开时调用两者批量拒绝——只影响断开会话，不误伤其他会话，`Suspension` 恢复、思考流程继续。
+5. **API Key 仅内存**：`frontend/src/api.js` 移除 localStorage/sessionStorage 读写；刷新后由 `autoDetectApiKey()` 从 `/config/api-key` 自动拉取（生产环境仅回环返回明文）。
+6. **会话接管防护**：`ConnectionManager.connect` 先关闭同 session 旧连接再注册新连接（code 4000）。
+
+**验证：** 新增测试 15 项——`test_ws_auth.py`（6 项 _ws_auth_ok 单元）、`test_chat_gateway.py` 追加 3 项（无 key 拒绝/错 key 拒绝/带 key 通过）、`test_toolgate.py` 追加 `TestRejectSessionReviews`（3 项：只拒目标会话/check 透传 session 标签/未知会话 noop）、`test_reject_session_interactions.py`（3 项：清理/跳过已完成/cancelled 提示）；全量 unit 1378 + 前端 5 项 + `vite build` 全绿。
+
+**经验：**
+1. **HTTP 认证中间件不覆盖 WebSocket**——凡有 WS 端点必须单独做握手鉴权，且鉴权必须在 `accept()` 之前（否则已握手成功无法拒绝）；
+2. **"开关/模式"禁止经无鉴权通道注入**——WS 消息里的配置写入都是旁路，统一收敛到带认证的 PUT /config；
+3. **无限等待（timeout=None）必须配断开清理**——§10 把审批改为无限等待后，前端断开就成永久挂起 + Suspension 全局冻结；交互类 future 必须登记归属（session_id）并在断开时批量拒绝；
+4. **本机服务默认绑定 127.0.0.1**，需要局域网暴露时显式开 SERVER_HOST=0.0.0.0（Docker 容器内除外，需配宿主端口映射）；
+5. **敏感凭据只进内存**——localStorage 的 XSS 窃取面太大，自动拉取 + 内存持有即可满足免录入体验。
+
+### 27.20 后端测试补全（覆盖率 57% → 60%）+ 修复 1 个真实 bug
+
+**补测（新增 ~130 项，全量 1721 → 1859 全绿）：**
+- **0% 模块**：`test_ocr_utils.py`（OCR 引擎三分支/单例）、`infra.model.interface` re-export
+- **agent 工具**：value_tools（12）、web_fetch（SSRF/URL/方法/超时 9）、open_app（touchpoint/subprocess 7）、
+  plan_tools/security_tools/file_history_tools（14）、dev_tools（AST/依赖 13）、ai_tools（代码校验/创建/删除 18）、
+  exec_command 执行路径（7）、memory_matcher（语义/关键词/时间/重要性 15）
+- **模型客户端**：`test_model_client_chat.py`（chat 成功/工具/非200/超时重试、generate reasoning 回退/anthropic 9）
+- **本地视觉**：image_analyzer `_analyze_qwen_vl`/`_analyze_mlx_vlm`/UI 降级
+
+**修复 1 个真实 bug：** `image_analyzer.detect_ui_elements` 的 else 分支调用**不存在的方法
+`_detect_ui_mock`**（视觉后端不可用时 AttributeError）→ 补降级方法返回空结果。测试覆盖。
+
+**稳定性：** pytest 全局 timeout 10s → 20s（全量负载下多个极快测试偶发 timeout flaky，单独跑 0.9s 通过）。
+性能测试 `TestPerformance` 标记 `slow`（依赖机器负载，默认排除）。
+
+**覆盖率：** 57% → 60%（miss -335 行）。剩余低覆盖集中在需要真实环境/重型 mock 的模块：
+api_stream（35%）、model_runner（45%）、image_analyzer（23%→含本地视觉）、speech_recognizer/hardware_input/
+mouse_keyboard/perception_tools/cdp_scanner（外部硬件依赖）。高危需确认项见
+`docs/BUGS_REQUIRING_CONFIRMATION.md`（本轮无新增高危行为变更，发现的均为普通 bug 已直接修复）。
+
+### 27.21 后端测试补全（续）：覆盖率 60% → 61%
+
+**新增测试（全量 1859 → 1895 全绿）：**
+- `test_speech_recognizer.py`（6 项）——whisper 识别/降级 mock/置信度/文件/Base64（whisper 缺失抛 ImportError 行为）
+- `test_hardware_controller.py`（14 项）——PyAutoGUI 包装：移动/点击/滚动/拖拽/位置/按键/输入/热键/截图（含截图禁用分支）
+- `test_mouse_external.py`（9 项）——external_api SSRF/GET/POST/超时 + mouse_keyboard 移动/点击/键盘
+- `test_perception_cdp.py`（7 项）——cdp_scanner DOM 解析（按钮/占位符/深度/文本跳过）+ transcribe_audio + understand_screen 降级
+
+**稳定性修正：** 全量 flaky 截图测试改为 mock `utils.screen_capture`（真实 pyautogui 全量负载下返回 None）。
+
+**覆盖率：** 60% → 61%（累计 57% → 61%，miss 从 9601 → 9090，-511 行）。
+**累计新增**：1721 → 1895 项（+174）。剩余低覆盖：`api_stream`（35%）、`model_runner`（45%）、
+`ai_tools`/`tools` 部分、`output_system`、`management` 深路径——需重型 mock 或真实环境。
+
+### 27.22 后端测试补全（续）：api_stream 鉴权/身份/记忆提取
+
+**新增测试（全量 1895 → 1901 全绿，`test_api_stream_core.py` 追加 6 项）：**
+- `_ws_auth_ok`（开发模式放行 / header 正确错误 / query 正确）
+- `_resolve_identity_name`（缓存 / 去 _001 后缀 / 空）
+- `_post_task_extraction`（mock EventReducer 提取成功 / 对话过短不提取）
+
+**覆盖率：** 61%（api_stream 35% → 39%）。累计 57% → 61%，全量 1721 → 1901（+180 项）。
+剩余低覆盖：`model_runner`（45%，1590 行）、`ai_tools`/`output_system`/`management` 深路径、tools 剩余
+分支——需重型 mock（完整运行链路）或真实环境。

@@ -78,3 +78,34 @@ ModelRunner._think_loop()                          ← 会话循环（跨委托�
 ### 关于 RuntimeExpert
 
 `RuntimeExpert` 是一个预留的抽象基类，用于将来可能需要不同生命周期管理的专家类型（如持久运行的安全监控专家）。当前所有专家都走 `_think_loop` → `_generate_with_tools` 路径，`RuntimeExpert.run_cli_mode` 未被生产环境使用。
+
+---
+
+## 纯对话引擎（chat_light / chatonly）
+
+`CORTEX_MODE=chatonly` 走独立的轻量引擎 `modules/thinking/chat_light/`，**不是**上面的双层 ReAct 循环：
+
+```
+用户消息
+   ↓
+_recall_memories（记忆召回，可选）
+   ↓
+ContextSlicer.slice（会话历史切片）
+   ↓
+PromptComposer.build_system（人设/系统覆盖/感知说明）
+   ↓
+ModelRunner.run（单轮流式生成，无连续思考/无委托）
+   ↓
+流式 token → 前端
+```
+
+与 Agent 引擎的区别：
+
+| | Agent（core/） | 纯对话（chat_light/） |
+|---|---|---|
+| 引擎 | `core/continuous_thinker` + `_generate_with_tools` | `chat_light/continuous_thinker` 单轮 |
+| 思考循环 | 多轮 ReAct + 控制工具 + 委托 | 无（一次生成） |
+| 模型 | 三层（Large/Supervisor/Expert） | 单一"总指挥"人格 |
+| 人设 | 按角色 roles.yaml + personas | `get_persona("orchestrator")`，回退 large-tier 自定义 agent |
+
+入口 `chat_gateway._chatonly_ws` 按 `_resolve_mode()` 分流：agent 走 api_stream、chatonly 走本引擎。

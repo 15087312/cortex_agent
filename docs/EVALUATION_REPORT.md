@@ -1,5 +1,10 @@
 # 高级功能使用评估报告
 
+> **历史快照说明**：本报告评估日期 2026-08-09。其中 **Attention 系统（modules/attention/）已删除**，
+> 评估测试目录 `tests/evaluation/` 已不存在，测试数字过时（当前 137 个测试文件 / 1700+ 项）。
+> 涉及 attention 的章节（5D 向量、紧急场景 0.8+、区分度优化）均已失效，保留仅作历史参考；
+> Causal Memory / Conscience / Perception Trigger / PetEngine / EventReducer 的评估结论仍有效。
+
 **评估日期**: 2026-08-09  
 **评估范围**: 看起来高级但实际使用效果不明的功能模块  
 **测试文件**: `tests/evaluation/test_feature_effectiveness.py`, `tests/evaluation/test_trigger_evaluation.py`

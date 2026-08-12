@@ -2,6 +2,39 @@
 
 > Cortex Agent 系统架构详解 — 四层分层、事件驱动黑板、多模型编排、协议解耦
 
+> **更新说明**：本文件已按当前代码同步（9 业务模块、`config/providers` 模型格式层、
+> 双对话引擎、多端交互、安全 JSONL 审计）。不存在的模块（attention）与类已删除或修正。
+
+---
+
+## 0. 交互端与双引擎
+
+Cortex 提供四种交互方式与两条对话引擎：
+
+### 0.1 交互端
+
+| 端 | 入口 | 说明 |
+|----|------|------|
+| Web UI | `frontend/`（Vue 3 + Vite） | 15 个页面：Chat/编排/设置/仪表盘等，经 `/api` 前缀代理到后端 |
+| Qt 桌面客户端 | `frontend/main.py`（PyQt6 + QtWebEngine） | 后台起 server.py，Qt 窗口内嵌 Web UI；自动拉起桌宠 |
+| 桌宠 | `frontend/pet_launch.py` + `pet_widget.py` + `modules/desktop_pet/` | Live2D 透明置顶窗，绑定固定主会话 pet_main，TTS 语音回复 |
+| 终端 TUI | `cli_tui/`（Textual） | `cortex` 启动 |
+
+### 0.2 双对话引擎
+
+| 模式 | 引擎 | 流程 |
+|------|------|------|
+| Agent（默认） | `modules/thinking/core/` | 多角色编排：Large 决策 → Supervisor 拆解 → Expert 并行 → 黑板整合 |
+| 纯对话（chatonly） | `modules/thinking/chat_light/` | 单人格轻量：`_recall_memories → ContextSlicer.slice → composer.build_system → runner.run`，无连续思考循环/委托 |
+
+入口 `chat_gateway`（`/stream/ws/{sid}`）按 `_resolve_mode()` 分流：agent 走 `api_stream`、chatonly 走 `_chatonly_ws`。
+
+### 0.3 测试
+
+`tests/` 137 个测试文件（unit/integration/external），全量 1700+ 项。隔离原则：
+临时 SQLite + monkeypatch 单例（不碰生产库）、重库加载放宽 timeout、后台线程类提供 `stop()`、
+禁 `except: pass` 吞错、测试假对象与真实模型字段一致。
+
 ---
 
 ## 1. 总体架构
@@ -22,7 +55,7 @@
                        │ 路由分发
 ┌──────────────────────▼──────────────────────────────────┐
 │  L3 业务层 (modules/)                                    │
-│  15 个业务模块：思考/记忆/安全/感知/注意力/输出/工具管理/...   │
+│  9 个业务模块：思考/记忆/安全/感知/输出/管理/数据库/桌宠/cortex（无 attention 模块）   │
 └──────────────────────┬──────────────────────────────────┘
                        │ Protocol 接口 + 直接导入
 ┌──────────────────────▼──────────────────────────────────┐
@@ -191,8 +224,7 @@ class CognitiveBlackboard:
 | 端口 | 适配器 | 职责 |
 |------|--------|------|
 | `SecurityPort` | `SecurityApiAdapter` | 输入验证 |
-| `ContextPort` | `ContextManagerAdapter` | 记忆/上下文加载/保存/注入 |
-| `GuidancePort` | `PreGenExpertGuidanceAdapter` | 预生成专家管线（情感+价值观+安全） |
+| `GuidancePort` | `PreGenExpertGuidanceAdapter` | 良知系统（内心独白/过往经验）注入 |
 | `OutputReviewPort` | `OutputSystemReviewAdapter` | 输出校验 + 专家审查 + 情感样式 |
 | `ActivityNotifierPort` | `DifferenceDetectorActivityNotifier` | 通知差异检测器 |
 
@@ -283,9 +315,9 @@ Pydantic Settings (config/settings.py)
 | 文件 | 类 | 职责 |
 |------|-----|------|
 | `config/settings.py` | `Settings` | 全局配置（模型API、功能开关、TTL、阈值） |
-| `config/model_config.py` | `LargeModelConfig` 等 | 模型参数（max_tokens、temperature） |
-| `config/attention_config.py` | `AttentionWeightConfig` 等 | 注意力权重、中断规则、调度配置 |
-| `config/output_config.py` | `OutputPriorityConfig` 等 | 输出优先级、TTS |
+| `config/providers/` | ProviderRegistry | 模型 API 格式统一适配（openai/anthropic/dashscope） |
+| `config/prompts/` | PromptComposer | 提示词组装（roles.yaml / base.yaml） |
+| `config/values_store.py` | ValueSystem | 价值观规则存储（add/remove/cleanup） |
 
 ### 5.3 运行时配置修改
 
@@ -398,7 +430,7 @@ EventRetrieval              CausalGraph (因果图)
 
 ### 8.2 浅层回忆（EventRetrieval）
 
-评分公式: `0.35×语义 + 0.20×重要性 + 0.20×衰减 + 0.15×效用 + 0.10×频率`
+评分公式: `0.60×语义 + 0.15×重要性 + 0.10×时效 + 0.08×效用 + 0.07×频率`
 
 | 因子 | 来源 | 说明 |
 |------|------|------|
@@ -464,9 +496,9 @@ EventRetrieval              CausalGraph (因果图)
 ### 9.3 审计系统
 
 - **格式**：JSONL
-- **完整性**：SHA-256 哈希链（每条记录包含 previous_hash + current_hash）
+- **完整性**：JSONL 纯追加写入（timestamp/event_type/security_level/content_preview/result/metadata）
 - **内容**：所有工具调用、权限决策、安全事件
-- **检查点**：Ed25519 签名锚定
+- **可追溯**：所有工具调用、权限决策、安全事件全量落盘
 
 ---
 
@@ -489,7 +521,7 @@ EventRetrieval              CausalGraph (因果图)
 ┌─────────┐    ┌──────────────┐    ┌────────────┐
 │ 内置工具 │    │  MCP 远程工具 │    │ AI 自创工具 │
 │ToolReg. │    │  stdio/SSE   │    │ create_tool │
-│ 50+ 个  │    │  7+ 个服务器  │    │ 运行时创建  │
+│ 85 个  │    │  7+ 个服务器  │    │ 运行时创建  │
 └─────────┘    └──────────────┘    └────────────┘
 ```
 

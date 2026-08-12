@@ -1,5 +1,15 @@
 # 价值观自动进化系统 — 配置参考
 
+> **已过时说明（2026）**：本文档描述的 `VALUE_ALIGNMENT_HANDLER_ENABLED`/`ValueAlignmentHandler`/
+> `RuleCompliancePerception`/`SecurityExpert` 等组件**已不存在**，`COMPANION_MODE` 已移除。
+> 当前价值观体系为：
+> - **`config/values_store.py` 的 `ValueSystem`**：`data/values/core_values.txt` 存储，
+>   add_rule/remove_rule/update_rule/cleanup/reset，规则质量门控（长度/通用性）与相似度去重（0.75）
+> - **良知系统 `modules/thinking/conscience.py`**：内心独白/过往经验注入（规则感知与自我修正载体）
+> - **工具 `modify_value_system`**（`infra/tool_manager/tools/value_tools.py`，category=admin / risk=CRITICAL）
+>
+> 下文配置细节仅作历史参考。
+
 本文档描述与价值观检测、修改、演进相关的所有配置项。
 
 ---

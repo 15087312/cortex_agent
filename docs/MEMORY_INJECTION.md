@@ -33,7 +33,7 @@
 
 ### Agent 路径
 ```
-api_stream._post_task_extraction (line 873)
+api_stream._post_task_extraction
   └─ asyncio.sleep(30s)  # 任务结束后延迟提取（fire-and-forget）
      └─ EventReducer.reduce(session_id, conversation_text, owner_id)
         └─ 每条 MemoryEvent 打上 ev.session_id = session_id   ← event_reducer.py:139
@@ -43,7 +43,7 @@ api_stream._post_task_extraction (line 873)
 
 ### chatonly 路径
 ```
-backend/chat/continuous_thinker._extract_memory (line 157)
+modules/thinking/chat_light/continuous_thinker._extract_memory (line 157)
   └─ 条件：MEMORY_REDUCE_ENABLED
   └─ EventReducer.reduce(session_id, conversation_text)  # 同样打 session_id
 ```
@@ -78,7 +78,7 @@ backend/chat/continuous_thinker._extract_memory (line 157)
 ## 四、提示词注入 — Agent 路径
 
 ### 4.1 记忆片段的构建
-`continuous_thinker._build_prompt(initial_question, round_num)`（line 577）：
+`continuous_thinker._build_prompt(initial_question, round_num)`（见 core/continuous_thinker.py）：
 
 ```
 创建 TurnContext(pool)
@@ -94,8 +94,9 @@ backend/chat/continuous_thinker._extract_memory (line 157)
 
 ### 4.2 记忆块逻辑（会话优先）
 ```python
-# 1. 会话记忆：本会话产生的事件（session_id == self._session_id）
-session_events = [e for e in store.list_events(500) if e.session_id == self._session_id]
+# 1. 会话记忆 = 【对话历史】（system prompt 注入），事件记忆按 owner_id + 门控：
+#    _memory_focus 始终召回 / 本会话已有历史对话时才 retrieve（core/continuous_thinker._build_prompt）
+events = await retrieval.retrieve(query, owner_id=f"{tier}::{model_id}", threshold=0.10)
 
 # 2. 事件记忆补充
 events = session_events
@@ -129,7 +130,7 @@ model_runner._generate(prompt)
 
 ## 五、提示词注入 — chatonly 路径
 
-`backend/chat/continuous_thinker.think`（line 40）：
+`modules/thinking/chat_light/continuous_thinker.think`（见 chat_light/continuous_thinker.py）：
 
 ```
 1. memory_context = _recall_memories(user_message, session_id)
@@ -176,7 +177,7 @@ model_runner._generate(prompt)
            → orchestrator.process
              → model_runner（large）
                → _build_runner_prompt → continuous_thinker._build_prompt
-                 → EventStore.list_events(500) 过滤 session_id    ← 会话记忆
+                 → 事件记忆按 owner_id + 门控检索（会话记忆=对话历史）    ← 会话记忆
                  → EventRetrieval.retrieve(query)                 ← 全局补充
                  → ContextFragment("memory") → TurnContext
                  → composer.build → user_prompt（含【历史记忆】）
@@ -184,7 +185,7 @@ model_runner._generate(prompt)
          → _post_task_extraction → EventReducer.reduce(session_id) ← 写事件
 
 [chatonly] chat_gateway /stream/ws → _chatonly_ws
-         → backend/chat/continuous_thinker.think
+         → modules/thinking/chat_light/continuous_thinker.think
            → _recall_memories(session_id)                          ← 会话优先
            → ContextSlicer.slice + composer.build_system → LLM
          → _extract_memory → EventReducer.reduce(session_id)       ← 写事件
@@ -198,7 +199,7 @@ model_runner._generate(prompt)
 |---|-------------|-------------|
 | 内容 | 当前会话的对话消息 | 全局历史中提取的事实/经验/思考 |
 | 存储 | Blackboard observations（`context_type=conversation_history`）+ SQLite session_repo | `EventStore`（SQLite + FAISS），`MemoryEvent` |
-| 注入位置 | system prompt **最顶部**（`【对话历史】`，`_build_system_prompt_for_mode` line 1282） | user 消息（`【历史记忆】`，`continuous_thinker._build_prompt` 记忆块） |
+| 注入位置 | system prompt **最顶部**（`【对话历史】`，`_build_system_prompt_for_mode`（见 core/model_runner.py）） | user 消息（`【历史记忆】`，`continuous_thinker._build_prompt` 记忆块） |
 | 作用域 | 仅当前会话 | 全局，按 `session_id` 区分会话记忆 |
 | 写入 | 每轮对话直接追加 | 任务结束后 `EventReducer` 提取 |
 
@@ -209,11 +210,11 @@ model_runner._generate(prompt)
 ## 九、简化模型：两套记忆系统各自独立注入
 
 **最终模型**（用户确认）：
-- **会话记忆 = 历史对话**：当前会话对话消息，已作为 `【对话历史】` 注入 system prompt 顶部（`_build_system_prompt_for_mode` line 1282）。**不再单独注入"会话事件"**。
+- **会话记忆 = 历史对话**：当前会话对话消息，已作为 `【对话历史】` 注入 system prompt 顶部（`_build_system_prompt_for_mode`（见 core/model_runner.py））。**不再单独注入"会话事件"**。
 - **事件记忆 = 全局记忆**：全局 `EventStore` 提取的事件，以 `【曾经发生的事】`（标注日期 + 注释"非当前会话、仅供参考、优先当前会话对话"）注入 user 消息。
 - **AI 知道当前时间**：`_build_time_context()`（model_runner.py:1334）给 system prompt 注入 `【当前时间】` + `【对话对象】` + `【上次对话】`。
 
-**事件记忆注入 gate**（`continuous_thinker._build_prompt` + `backend/chat/continuous_thinker._recall_memories`）：
+**事件记忆注入 gate**（`continuous_thinker._build_prompt` + `modules/thinking/chat_light/continuous_thinker._recall_memories`）：
 ```
 if _memory_focus:               # 显式记忆聚焦 → 始终注入
     events = retrieve_mixed(...)
