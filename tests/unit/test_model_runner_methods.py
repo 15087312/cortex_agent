@@ -1,6 +1,6 @@
 """ModelRunner 方法测试（此前 14 个方法零覆盖）：参数验证/guard prompt/prompt 构建/交互等待"""
 import asyncio
-from unittest.mock import MagicMock, AsyncMock
+from unittest.mock import MagicMock, AsyncMock, patch
 
 import pytest
 
@@ -304,3 +304,42 @@ def test_on_wakeup_message_sets_event():
     r._wakeup_event = ev
     r._on_wakeup_message()
     assert ev.is_set()
+
+
+# ── 模型调用工具方法 ─────────────────────────────────────────────────────────
+
+def test_supports_native_tool_chat():
+    from modules.thinking.core.model_runner import ModelRunner
+    class WithNative:
+        supports_native_tools = True
+    class WithoutNative:
+        supports_native_tools = False
+    class NoAttr:
+        pass
+    assert ModelRunner._supports_native_tool_chat(WithNative()) is True
+    assert ModelRunner._supports_native_tool_chat(WithoutNative()) is False
+    assert ModelRunner._supports_native_tool_chat(NoAttr()) is False
+
+
+def test_build_time_context():
+    r = _make_runner(None)
+    out = r._build_time_context()
+    assert "当前时间" in out
+    assert "对话对象" in out
+
+
+def test_push_reasoning(monkeypatch):
+    r = _make_runner(None)
+    r.session_id = "s1"
+    import modules.thinking.api_stream as ap
+    cm = MagicMock()
+    cm.active_connections = {"s1": object()}
+    cm.send_json_from_thread = MagicMock()
+    monkeypatch.setattr(ap, "connection_manager", cm)
+    r._push_reasoning("思考中")
+    cm.send_json_from_thread.assert_called_once()
+
+
+def test_push_reasoning_empty():
+    r = _make_runner(None)
+    r._push_reasoning("")  # 空推理不推送，不抛
