@@ -20,7 +20,7 @@ try:
 except Exception:
     pass
 
-from PyQt6.QtWidgets import QApplication, QMainWindow, QMessageBox
+from PyQt6.QtWidgets import QApplication, QMainWindow, QMenu, QMessageBox, QSystemTrayIcon
 from PyQt6.QtCore import QUrl, QSettings, Qt, QRect
 from PyQt6.QtGui import (
     QAction, QKeySequence, QIcon, QPixmap, QPainter,
@@ -91,6 +91,9 @@ class MainWindow(QMainWindow):
         self._setup_browser()
         self._setup_menus()
         self._restore_geometry()
+        # Windows/Linux：关窗隐藏到托盘，可从托盘恢复（macOS 用 Dock，无需托盘）
+        if sys.platform != "darwin":
+            self._setup_tray()
         app.paletteChanged.connect(self._on_palette_change)
 
     def _setup_window(self):
@@ -105,6 +108,38 @@ class MainWindow(QMainWindow):
 
     def _on_palette_change(self, palette):
         self._apply_theme()
+
+    # ── 系统托盘（Windows/Linux：关窗后仍有入口恢复）──
+
+    def _setup_tray(self):
+        """创建系统托盘图标。关闭窗口只隐藏（closeEvent），从托盘可恢复/退出。"""
+        try:
+            self._tray = QSystemTrayIcon(self)
+            self._tray.setIcon(self._app.windowIcon() or _make_app_icon())
+            self._tray.setToolTip("Cortex Agent")
+            menu = QMenu(self)
+            show_action = menu.addAction("显示主窗口")
+            show_action.triggered.connect(self._restore_from_tray)
+            menu.addSeparator()
+            quit_action = menu.addAction("退出")
+            quit_action.triggered.connect(self._quit_app)
+            self._tray.setContextMenu(menu)
+            self._tray.activated.connect(self._on_tray_activated)
+            self._tray.show()
+        except Exception:
+            self._tray = None
+
+    def _restore_from_tray(self):
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    def _on_tray_activated(self, reason):
+        if reason == QSystemTrayIcon.ActivationReason.Trigger:
+            if self.isVisible():
+                self.hide()
+            else:
+                self._restore_from_tray()
 
     def _setup_menus(self):
         mb = self.menuBar()
@@ -325,6 +360,34 @@ def _port_in_use(port=8765):
         return s.connect_ex(("127.0.0.1", port)) == 0
 
 
+def _ensure_backend(port=8080):
+    """确保后端 API 已运行，未运行则拉起。
+
+    - 打包版（PyInstaller）：启动同目录的 AI_Backend(.exe)
+    - 开发版：以当前解释器起 uvicorn 子进程（cwd=项目根，保证 api.main 可导入）
+    """
+    if _port_in_use(port):
+        return
+    try:
+        import subprocess
+        if getattr(sys, "frozen", False):
+            exe = os.path.join(
+                os.path.dirname(sys.executable),
+                "AI_Backend.exe" if sys.platform == "win32" else "AI_Backend",
+            )
+            if os.path.isfile(exe):
+                subprocess.Popen([exe], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return
+            print("[..] 未找到同目录 AI_Backend，跳过后端启动", flush=True)
+        else:
+            root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            cmd = [sys.executable, "-m", "uvicorn", "api.main:app",
+                   "--host", "127.0.0.1", "--port", str(port), "--log-level", "warning"]
+            subprocess.Popen(cmd, cwd=root, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception as e:
+        print(f"[..] 后端启动失败: {e}", flush=True)
+
+
 def main():
     global _server_thread
 
@@ -334,6 +397,10 @@ def main():
         traceback.print_exception(tp, val, tb)
         print("[DBG] 未捕获异常导致退出", flush=True)
     sys.excepthook = _excepthook
+
+    # 确保后端 API (8080) 已运行（Qt 页面 /api 请求都代理到它）
+    print("[..] 检查后端 API 服务 (8080)...")
+    _ensure_backend()
 
     if _port_in_use():
         print("[OK] 前端服务已在运行 (端口 8765)")
@@ -381,6 +448,10 @@ def main():
         global _pet_proc
         if os.environ.get("CORTEX_DISABLE_PET", "0") == "1":
             print("[..] 桌宠已禁用 (CORTEX_DISABLE_PET=1)")
+            return
+        if getattr(sys, "frozen", False):
+            # 打包版不内置桌宠进程（避免额外打包一个 Qt 可执行文件）
+            print("[..] 打包版跳过独立桌宠进程")
             return
         try:
             import subprocess as _sp

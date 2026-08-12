@@ -113,7 +113,28 @@ clone_or_update() {
 install_deps() {
     info "安装 Python 依赖..."
     "$PYTHON" -m pip install -e . --quiet --no-warn-script-location 2>&1 | tail -1
+    info "安装 Qt 桌面依赖（PyQt6 + WebEngine）..."
+    "$PYTHON" -m pip install PyQt6 PyQt6-WebEngine --quiet --no-warn-script-location 2>&1 | tail -1
     ok "依赖安装完成"
+}
+
+# ── 前端构建（dist 缺失时用 npm 构建）──
+build_frontend() {
+    if [[ -f "frontend/dist/index.html" ]]; then
+        ok "frontend/dist 已构建，跳过"
+        return
+    fi
+    if command -v npm &>/dev/null; then
+        info "构建 Vue 前端..."
+        ( cd frontend && npm run build 2>&1 | tail -1 )
+        if [[ -f "frontend/dist/index.html" ]]; then
+            ok "前端构建完成"
+        else
+            warn "npm build 失败，可稍后手动执行: cd frontend && npm run build"
+        fi
+    else
+        warn "未找到 npm，前端未构建（浏览器界面不可用）。请安装 Node.js: https://nodejs.org"
+    fi
 }
 
 # ── 下载 OmniParser UI 检测模型 ──
@@ -258,6 +279,7 @@ main() {
     echo ""
     clone_or_update
     install_deps
+    build_frontend
     setup_omniparser
     setup_env
     print_done

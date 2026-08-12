@@ -86,7 +86,32 @@ function Clone-Or-Update {
 function Install-Dependencies {
     Write-Info "Installing Python dependencies..."
     & $script:python -m pip install -e . --quiet 2>&1 | Select-Object -Last 1
+    Write-Info "Installing Qt desktop dependencies (PyQt6 + WebEngine)..."
+    & $script:python -m pip install PyQt6 PyQt6-WebEngine --quiet 2>&1 | Select-Object -Last 1
     Write-OK "Dependencies installed"
+}
+
+function Build-Frontend {
+    if (Test-Path "frontend\dist\index.html") {
+        Write-OK "frontend/dist already built, skipping"
+        return
+    }
+    if (Get-Command npm -ErrorAction SilentlyContinue) {
+        Write-Info "Building Vue frontend (npm run build)..."
+        Push-Location "frontend"
+        try {
+            & npm run build 2>&1 | Select-Object -Last 1
+            if (Test-Path "dist\index.html") {
+                Write-OK "Frontend built"
+            } else {
+                Write-Warn "npm build failed, run manually: cd frontend && npm run build"
+            }
+        } finally {
+            Pop-Location
+        }
+    } else {
+        Write-Warn "npm not found, frontend not built (browser UI unavailable). Install Node.js: https://nodejs.org"
+    }
 }
 
 function Setup-OmniParser {
@@ -219,6 +244,7 @@ try {
     Check-Prerequisites
     Clone-Or-Update
     Install-Dependencies
+    Build-Frontend
     Setup-OmniParser
     Setup-Env
     Print-Done
