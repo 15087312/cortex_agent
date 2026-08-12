@@ -402,6 +402,22 @@ describe('Orchestration.vue', () => {
     expect(put.body).toEqual({ value: 'DOM 输入的人设' })
   })
 
+  it('loadData 容错：tools 数组形式 + 部分请求失败', async () => {
+    routeFetch([
+      { match: '/api/management/orchestration', data: () => { throw new Error('net') } },
+      { match: '/api/tools/ai', data: () => { throw new Error('net') } },
+      { match: '/api/tools/', data: { success: true, data: { tools: ['toolA', 'toolB'] } } },
+      { match: '/api/management/persona-presets', data: { success: true, data: { presets: [] } } },
+    ])
+    const w = mount(Orchestration, { global: { plugins: [createPinia()] } })
+    await new Promise((r) => setTimeout(r, 50))
+    // o 失败 → agents 空；tools 数组 → 直接透传（Array.isArray 分支）；ai 失败 → aiTools 空
+    expect(w.vm.agents).toHaveLength(0)
+    expect(w.vm.tools).toEqual(['toolA', 'toolB'])
+    expect(w.vm.aiTools).toEqual({})
+    expect(w.vm.loading).toBe(false)
+  })
+
   it('saveRoleToolsSel 未选角色不提交', async () => {
     const reqs = mockApi()
     const w = await mountOrch()

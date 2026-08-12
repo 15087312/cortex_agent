@@ -228,4 +228,43 @@ describe('SessionSettings', () => {
     expect(w.vm.statusBadge('error')).toEqual({ color: '#f85149', label: '错误' })
     expect(w.vm.statusBadge('unknown')).toEqual({ color: '#8b949e', label: 'unknown' })
   })
+
+  it('DOM：保存主动搭话按钮触发 PUT 且序列化正确', async () => {
+    const putCalls = []
+    const fetchMock = vi.fn(async (url, opts) => {
+      if (opts?.method === 'PUT' && url.includes('/outreach-config')) {
+        putCalls.push([url, opts])
+        return ok({ success: true })
+      }
+      if (url.includes('/outreach-config')) return ok(outreachData)
+      if (url.includes('/tasks')) return ok({ data: { tasks: { tasks: [] } } })
+      return ok({ data: { agents: [] } })
+    })
+    const w = mountSettings(fetchMock)
+    await flushPromises()
+    const saveBtn = w.findAll('button').find((b) => b.text().includes('保存主动搭话'))
+    expect(saveBtn.exists()).toBe(true)
+    await saveBtn.trigger('click')
+    await flushPromises()
+    expect(putCalls.length).toBe(1)
+    const body = JSON.parse(putCalls[0][1].body)
+    expect(body.outreach.enabled).toBe(true)
+    expect(body.outreach.cooldown_minutes).toBe(15)
+    expect(body.outreach.schedule.time).toBe('14:00')
+    expect(body.outreach.screen.enabled).toBe(false)
+    expect(body.outreach.time_windows).toEqual([{ start: '09:00', end: '12:00', probability: 0.5 }])
+  })
+
+  it('DOM：切换 tab 到定时任务并渲染成功状态徽章', async () => {
+    const fetchMock = defaultRoutes({
+      tasks: { data: { tasks: { tasks: [{ id: 't1', time: '09:00', schedule: '09:00', enabled: true, action: 'chat', last_status: 'success', last_run: '2024-01-01 09:00' }] } } },
+    })
+    const w = mountSettings(fetchMock)
+    await flushPromises()
+    const tasksTab = w.findAll('.seg button').find((b) => b.text().includes('定时任务'))
+    await tasksTab.trigger('click')
+    // 成功徽章渲染（statusBadge 模板分支）
+    expect(w.text()).toContain('成功')
+    expect(w.text()).toContain('2024-01-01 09:00')
+  })
 })

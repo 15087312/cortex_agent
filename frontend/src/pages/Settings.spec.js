@@ -583,4 +583,41 @@ describe('Settings.vue', () => {
     await w.find('input.shortcut-input').trigger('blur')
     expect(w.vm.editingShortcut).toBe(false)
   })
+
+  it('txtCfg setter 持久化用户名（trim 空串回退）', async () => {
+    mockApi()
+    const w = await mountSettings()
+    await new Promise((r) => setTimeout(r, 30))
+    // setter → 写后端
+    w.vm.userName = '新名字'
+    await new Promise((r) => setTimeout(r, 30))
+    const puts = writes.filter((x) => x.url.includes('/api/config/USER_NAME'))
+    expect(puts.length).toBeGreaterThanOrEqual(1)
+    expect(puts[0].body).toEqual({ value: '新名字' })
+    // 空白串 → trim 后写空串（第二次写）
+    w.vm.userName = '   '
+    await new Promise((r) => setTimeout(r, 30))
+    const puts2 = writes.filter((x) => x.url.includes('/api/config/USER_NAME'))
+    expect(puts2.length).toBe(puts.length + 1)
+    expect(puts2[puts2.length - 1].body).toEqual({ value: '' })
+  })
+
+  it('saveGlobalDefault 无 @ 概率时段解析（默认省略）', async () => {
+    mockApi()
+    const w = await mountSettings()
+    await new Promise((r) => setTimeout(r, 30))
+    const g = w.vm.globalDefault
+    g.enabled = true
+    g.windowsOn = true
+    g.timeWindowsText = '09:00-12:00,14:00-18:00@0.5,坏数据'
+    await w.vm.saveGlobalDefault()
+    await new Promise((r) => setTimeout(r, 30))
+    const put = writes.find((x) => x.url.includes('/PROACTIVE_OUTREACH_DEFAULT'))
+    const cfg = JSON.parse(put.body.value)
+    expect(cfg.time_windows).toEqual([
+      { start: '09:00', end: '12:00' },
+      { start: '14:00', end: '18:00', probability: 0.5 },
+    ])
+    expect(cfg.enabled).toBe(true)
+  })
 })

@@ -177,7 +177,8 @@ describe('Memory 页面', () => {
     resolveDialog(true)
     await p
     await new Promise((r) => setTimeout(r, 10))
-    // 不崩溃即通过（错误路径已执行）
+    const { useToastStore } = await import('@/stores/toast.js')
+    expect(useToastStore().toasts.some((t) => t.msg.includes('删除失败'))).toBe(true)
   })
 
   it('handleClear 清空失败显示错误 toast', async () => {
@@ -192,7 +193,8 @@ describe('Memory 页面', () => {
     resolveDialog(true)
     await p
     await new Promise((r) => setTimeout(r, 10))
-    // 不崩溃即通过（错误路径已执行）
+    const { useToastStore } = await import('@/stores/toast.js')
+    expect(useToastStore().toasts.some((t) => t.msg.includes('清空失败'))).toBe(true)
   })
 
   it('handleCreate 创建失败显示错误 toast', async () => {
@@ -205,7 +207,8 @@ describe('Memory 页面', () => {
     w.vm.newEvent = { fact: '内容', keywords: '', importance: 0.5, event_type: 'fact' }
     await w.vm.handleCreate()
     await new Promise((r) => setTimeout(r, 10))
-    // 错误路径已执行，不崩溃
+    const { useToastStore } = await import('@/stores/toast.js')
+    expect(useToastStore().toasts.some((t) => t.msg.includes('创建失败'))).toBe(true)
   })
 
   it('过滤搜索调用带 type/keyword 的查询', async () => {
@@ -244,5 +247,36 @@ describe('Memory 页面', () => {
     await w.find('.memory-timeline-item').trigger('click')
     await new Promise((r) => setTimeout(r, 10))
     expect(w.vm.detailEvent?.fact).toBe('时间线事件')
+  })
+
+  it('DOM：搜索按钮触发查询 + 新建按钮打开 Modal 并创建', async () => {
+    const calls = []
+    routeFetch([
+      { match: '/management/memory/events?limit=50', data: () => { calls.push('search'); return { data: { events: [], total: 0 } } } },
+      { match: '/management/memory/events', data: (u, init) => {
+        if (init?.method === 'POST') { calls.push('create'); return { success: true } }
+        return { data: { events: [], total: 0 } }
+      } },
+    ])
+    const w = mountPage()
+    await new Promise((r) => setTimeout(r, 20))
+    await w.vm.$nextTick()
+    // 搜索按钮 → 触发 loadData
+    const searchBtn = w.findAll('button').find((b) => b.text().includes('搜索'))
+    await searchBtn.trigger('click')
+    await new Promise((r) => setTimeout(r, 20))
+    expect(calls).toContain('search')
+    // 新建按钮 → 打开 Modal
+    const newBtn = w.findAll('button').find((b) => b.text().includes('新建'))
+    await newBtn.trigger('click')
+    expect(w.vm.showCreate).toBe(true)
+    // 填入内容并点创建 → POST
+    const textarea = w.find('textarea')
+    await textarea.setValue('DOM 创建记忆')
+    const createBtn = w.findAll('button').find((b) => b.text().trim() === '创建')
+    await createBtn.trigger('click')
+    await new Promise((r) => setTimeout(r, 20))
+    expect(calls).toContain('create')
+    expect(w.vm.showCreate).toBe(false)
   })
 })

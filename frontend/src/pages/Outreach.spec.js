@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect, afterEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import Outreach from './Outreach.vue'
@@ -14,6 +14,8 @@ function mountPage() {
 
 describe('Outreach 页面', () => {
   afterEach(() => {
+    // spy 兜底清理（clearInterval spy 断言失败时不泄漏到后续测试）
+    vi.restoreAllMocks()
     // 卸载组件 → onBeforeUnmount 清理 30s 轮询定时器
     if (wrapper) { wrapper.unmount(); wrapper = null }
   })
@@ -185,6 +187,55 @@ describe('Outreach 页面', () => {
     expect(w.vm.sessions[0].enabled).toBe(true)
   })
 
+  it('loadAll 二次加载保持展开状态（prev 分支）', async () => {
+    routeFetch([
+      {
+        match: '/stream/sessions',
+        data: { data: [
+          { session_id: 's1', title: '会话1', metadata: { outreach: { enabled: true } } },
+          { session_id: 's2', title: '会话2' },
+        ] },
+      },
+      { match: '/stream/proactive-log?limit=50', data: { data: { logs: [], total: 0 } } },
+    ])
+    const w = mountPage()
+    await new Promise((r) => setTimeout(r, 30))
+    await w.vm.$nextTick()
+    // 用户展开会话1，会话2保持收起
+    w.vm.sessions[0]._open = true
+    expect(w.vm.sessions[1]._open).toBe(false)
+    // 二次加载（模拟 30s 轮询）→ prev 分支：展开的保持展开、收起的保持收起
+    await w.vm.loadAll()
+    await w.vm.$nextTick()
+    expect(w.vm.sessions[0]._open).toBe(true)
+    expect(w.vm.sessions[1]._open).toBe(false)
+  })
+
+  it('模板交互：展开后点保存按钮触发 saveConfig', async () => {
+    let saved = 0
+    routeFetch([
+      {
+        match: '/stream/sessions',
+        data: { data: [{ session_id: 's1', title: '会话1', metadata: { outreach: { enabled: true } } }] },
+      },
+      { match: '/stream/proactive-log?limit=50', data: { data: { logs: [], total: 0 } } },
+      { match: '/stream/session/s1/outreach-config', data: () => { saved++; return { success: true } } },
+    ])
+    const w = mountPage()
+    await new Promise((r) => setTimeout(r, 30))
+    await w.vm.$nextTick()
+    // 展开会话 → 显示规则面板
+    await w.find('.outreach-head').trigger('click')
+    expect(w.find('.outreach-body').exists()).toBe(true)
+    // 面板内点「保存」按钮触发 saveConfig
+    const saveBtn = w.findAll('button').find((b) => b.text().includes('保存'))
+    expect(saveBtn.exists()).toBe(true)
+    await saveBtn.trigger('click')
+    await new Promise((r) => setTimeout(r, 20))
+    expect(saved).toBe(1)
+    expect(w.vm.sessions[0]._open).toBe(true)
+  })
+
   it('卸载时清理轮询定时器', async () => {
     routeFetch([
       { match: '/stream/sessions', data: { data: [] } },
@@ -192,7 +243,10 @@ describe('Outreach 页面', () => {
     ])
     const w = mountPage()
     await new Promise((r) => setTimeout(r, 30))
+    const clearSpy = vi.spyOn(globalThis, 'clearInterval')
     w.unmount()
-    // 不崩溃即通过（onBeforeUnmount 清理 timer）
+    // onBeforeUnmount 中 `if (timer) clearInterval(timer)` 必须真实调用 clearInterval
+    expect(clearSpy).toHaveBeenCalled()
+    clearSpy.mockRestore()
   })
 })

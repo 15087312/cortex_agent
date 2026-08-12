@@ -172,4 +172,62 @@ describe('ScheduledTasks 页面', () => {
     await w.vm.loadTasks()
     expect(w.vm.tasks).toHaveLength(0)
   })
+
+  it('多会话按 last_active 倒序 + select 切换会话触发 loadTasks', async () => {
+    const taskReq = []
+    routeFetch([
+      { match: '/management/orchestration', data: { data: { agents: [] } } },
+      {
+        match: '/stream/sessions',
+        data: { data: [
+          { session_id: 's2', title: '会话B', last_active: '2024-01-03T00:00:00' },
+          { session_id: 's1', title: '会话A', last_active: '2024-01-02T00:00:00' },
+        ] },
+      },
+      { match: '/stream/session/s1/tasks', data: () => { taskReq.push('s1'); return { data: { tasks: { tasks: [] } } } } },
+      { match: '/stream/session/s2/tasks', data: () => { taskReq.push('s2'); return { data: { tasks: { tasks: [{ id: 't2', time: '10:00', schedule: '10:00' }] } } } } },
+    ])
+    const w = mountPage()
+    await new Promise((r) => setTimeout(r, 30))
+    await w.vm.$nextTick()
+    // 倒序：s2 最新排第一且默认选中
+    expect(w.vm.sessions[0].session_id).toBe('s2')
+    expect(w.vm.selected).toBe('s2')
+    expect(taskReq).toContain('s2')
+    // DOM 切换下拉框 → @change 触发 loadTasks
+    const sel = w.find('select')
+    await sel.setValue('s1')
+    await new Promise((r) => setTimeout(r, 30))
+    expect(taskReq).toContain('s1')
+    expect(w.vm.selected).toBe('s1')
+  })
+
+  it('DOM：任务类型切换触发 onTypeChange 并渲染对应输入', async () => {
+    routeFetch([
+      { match: '/management/orchestration', data: { data: { agents: [{ role: 'chief', name: '总指挥' }] } } },
+      { match: '/stream/sessions', data: { data: [{ session_id: 's1', title: '会话A', last_active: '2024-01-02T00:00:00' }] } },
+      { match: '/stream/session/s1/tasks', data: { data: { tasks: { tasks: [] } } } },
+    ])
+    const w = mountPage()
+    await new Promise((r) => setTimeout(r, 30))
+    await w.vm.$nextTick()
+    // 点「添加任务」→ DOM 渲染 daily 类型输入（HH:MM）
+    const addBtn = w.findAll('button').find((b) => b.text().includes('添加任务'))
+    await addBtn.trigger('click')
+    await w.vm.$nextTick()
+    expect(w.vm.tasks).toHaveLength(1)
+    expect(w.find('input[placeholder="HH:MM"]').exists()).toBe(true)
+    // 切换类型 select → interval → schedule 结构更新 + 渲染分钟输入
+    const typeSel = w.findAll('select')[1]
+    await typeSel.setValue('interval')
+    await w.vm.$nextTick()
+    expect(w.vm.tasks[0].type).toBe('interval')
+    expect(w.vm.tasks[0].schedule.kind).toBe('interval')
+    expect(w.text()).toContain('分钟')
+    // 切换 cron → 渲染表达式输入
+    await typeSel.setValue('cron')
+    await w.vm.$nextTick()
+    expect(w.vm.tasks[0].schedule.kind).toBe('cron')
+    expect(w.find('input[placeholder="分 时 日 月 周"]').exists()).toBe(true)
+  })
 })

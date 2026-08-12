@@ -373,6 +373,26 @@ describe('Chat 页面', () => {
     vi.restoreAllMocks()
   })
 
+  it('handleCopyMessage clipboard 失败回退 copyTextFallback', async () => {
+    const w = await mountChat()
+    const chat = useChatStore()
+    chat.addMessage({ role: 'assistant', content: '复制我' })
+    const { useToastStore } = await import('@/stores/toast.js')
+    const toast = useToastStore()
+    // clipboard 拒绝 → 走 .catch → copyTextFallback → execCommand 成功 → toast 已复制
+    vi.spyOn(navigator.clipboard, 'writeText').mockRejectedValue(new Error('denied'))
+    Object.defineProperty(document, 'execCommand', { value: () => true, configurable: true, writable: true })
+    try {
+      w.vm.handleCopyMessage(0)
+      await flushPromises()
+      expect(toast.toasts.some((t) => t.msg.includes('已复制'))).toBe(true)
+    } finally {
+      delete document.execCommand
+    }
+    // 无内容直接返回不报错
+    w.vm.handleCopyMessage(99)
+  })
+
   it('handleNewSession 初始化新会话', async () => {
     const w = await mountChat()
     const chat = useChatStore()
@@ -594,7 +614,9 @@ describe('Chat 页面', () => {
   it('handleDeleteMessage 无消息直接返回', async () => {
     const w = await mountChat()
     await w.vm.handleDeleteMessage(99)
-    // 不弹确认框、不崩溃
+    // msg 不存在 → 直接 return，不弹确认框
+    const { dialogState } = await import('@/composables/useDialog.js')
+    expect(dialogState().visible).toBe(false)
   })
 
   it('handleEditMessage 确认后编辑成功', async () => {

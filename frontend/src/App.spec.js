@@ -93,6 +93,9 @@ describe('App.vue', () => {
     const w = await mountApp()
     fireKey('Escape')
     await nextTick()
+    // 无对话框时 Esc 直接 return，对话框状态保持关闭
+    const { dialogState } = await import('@/composables/useDialog.js')
+    expect(dialogState().visible).toBe(false)
   })
 
   it('"?" 显示快捷键提示 toast', async () => {
