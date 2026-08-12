@@ -3,6 +3,7 @@ import { mount } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { createTestPinia } from '@/test/helpers.js'
 import { useThemeStore } from '@/stores/theme.js'
+import pkg from '../../package.json'
 import Sidebar from './Sidebar.vue'
 
 function makeRouter() {
@@ -30,7 +31,8 @@ describe('Sidebar', () => {
     expect(w.text()).toContain('Cortex Agent')
     expect(w.text()).toContain('对话')
     expect(w.text()).toContain('设置')
-    expect(w.text()).toContain('v2.0.0')
+    // 版本号从 package.json 读取（与 vite define __APP_VERSION__ 同源），发版不破测试
+    expect(w.text()).toContain('v' + pkg.version)
   })
 
   it('点击导航跳转', async () => {
