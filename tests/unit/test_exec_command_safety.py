@@ -112,3 +112,46 @@ def test_exec_command_timeout_clamped(monkeypatch):
     assert captured["timeout"] <= ec.MAX_TIMEOUT
     ec.exec_command("echo hi", timeout=0)
     assert captured["timeout"] >= 1
+
+
+# ── run_command 白名单 / run_script ─────────────────────────────────────────
+
+def test_run_command_empty():
+    assert "不能为空" in ec.run_command("")["error"]
+
+
+def test_run_command_not_whitelisted():
+    r = ec.run_command("nonsense_cmd_xyz")
+    assert "白名单" in r["error"]
+
+
+def test_run_command_whitelisted(monkeypatch):
+    captured = {}
+    def fake_exec(cmd, timeout=None, workdir=None):
+        captured["cmd"] = cmd
+        return {"stdout": "ok", "exit_code": 0}
+    monkeypatch.setattr(ec, "exec_command", fake_exec)
+    r = ec.run_command("pytest -q", timeout=60)
+    assert r["exit_code"] == 0
+
+
+def test_run_command_bad_parse(monkeypatch):
+    monkeypatch.setattr(ec.shlex, "split", lambda s: (_ for _ in ()).throw(ValueError()))
+    r = ec.run_command("unclosed'")
+    assert "解析失败" in r["error"]
+
+
+def test_run_script_empty():
+    assert "不能为空" in ec.run_script("")["error"]
+
+
+def test_run_script_extreme_blocked():
+    r = ec.run_script("rm -rf /")
+    assert r["exit_code"] == -1
+
+
+def test_run_script_success(monkeypatch):
+    import subprocess as sp
+    monkeypatch.setattr(sp, "run", lambda *a, **k: _exec_result(stdout="hello", rc=0))
+    r = ec.run_script("print('hi')", language="python")
+    assert r["exit_code"] == 0
