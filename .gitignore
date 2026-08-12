@@ -154,3 +154,8 @@ test_gpt55_standard*
 # 前端依赖
 frontend/node_modules/
 data/backup_test_cleanup_*
+
+# 真实记忆库与备份（含隐私对话数据，绝不提交）
+data/memory.db
+data/memory.db.bak*
+data/*.db
