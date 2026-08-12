@@ -1,0 +1,73 @@
+name: Release
+
+# 推送 v* tag 时自动构建 Windows/macOS 便携包并上传到 GitHub Release。
+# 用法: python scripts/release.py patch --tag --push
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Python deps
+        shell: bash
+        run: |
+          pip install --upgrade pip
+          pip install pyinstaller PyQt6 PyQt6-WebEngine
+          # macOS 无 portaudio，pyaudio 无法编译 → 移除；其余照装
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            grep -v -E '^pyaudio|pyaudio[<>=]' requirements.txt > reqs.tmp
+          else
+            cp requirements.txt reqs.tmp
+          fi
+          pip install -r reqs.tmp
+
+      - name: Build frontend (dist)
+        shell: bash
+        run: |
+          cd frontend
+          npm ci
+          npm run build
+
+      - name: PyInstaller
+        shell: bash
+        run: |
+          pyinstaller pyinstaller.spec --clean --noconfirm
+
+      - name: Package zip
+        shell: bash
+        run: |
+          cd dist
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            powershell -Command "Compress-Archive -Path CortexAgent -DestinationPath ../CortexAgent-windows-${{ github.ref_name }}.zip -Force"
+          else
+            zip -r "../CortexAgent-macos-${{ github.ref_name }}.zip" CortexAgent
+          fi
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: CortexAgent-*.zip
+          generate_release_notes: true
