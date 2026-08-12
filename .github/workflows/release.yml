@@ -34,15 +34,16 @@ jobs:
       - name: Install Python deps
         shell: bash
         run: |
-          pip install --upgrade pip
-          pip install pyinstaller PyQt6 PyQt6-WebEngine
+          # Windows 上 pip.exe 无法自升级，必须用 python -m pip
+          python -m pip install --upgrade pip
+          python -m pip install pyinstaller PyQt6 PyQt6-WebEngine
           # macOS 无 portaudio，pyaudio 无法编译 → 移除；其余照装
           if [ "$RUNNER_OS" = "macOS" ]; then
             grep -v -E '^pyaudio|pyaudio[<>=]' requirements.txt > reqs.tmp
           else
             cp requirements.txt reqs.tmp
           fi
-          pip install -r reqs.tmp
+          python -m pip install -r reqs.tmp
 
       - name: Build frontend (dist)
         shell: bash
