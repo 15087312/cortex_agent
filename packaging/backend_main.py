@@ -14,4 +14,11 @@ else:
 import uvicorn
 
 if __name__ == "__main__":
-    uvicorn.run("api.main:app", host="127.0.0.1", port=8080, log_level="info")
+    # 端口被占时自动回退到空闲端口，并把实际端口写入发现文件
+    from utils.port_discovery import pick_free_port, save_backend_port
+    preferred = int(os.environ.get("SERVER_PORT", "8080"))
+    port = pick_free_port(preferred)
+    save_backend_port(port)
+    if port != preferred:
+        print(f"[Cortex] 端口 {preferred} 被占用，已自动改用端口 {port}", flush=True)
+    uvicorn.run("api.main:app", host="127.0.0.1", port=port, log_level="info")

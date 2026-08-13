@@ -361,29 +361,40 @@ def _port_in_use(port=8765):
 
 
 def _ensure_backend(port=8080):
-    """确保后端 API 已运行，未运行则拉起。
+    """确保后端 API 已运行，未运行则拉起；端口被占时自动回退到空闲端口。
 
     - 打包版（PyInstaller）：启动同目录的 AI_Backend(.exe)
     - 开发版：以当前解释器起 uvicorn 子进程（cwd=项目根，保证 api.main 可导入）
     """
-    if _port_in_use(port):
-        return
+    try:
+        from utils.port_discovery import pick_free_port, probe_health, read_backend_port
+        # 已有一个健康后端（按发现文件 / 探测）→ 直接用，不重复启动
+        if probe_health(read_backend_port()):
+            return
+        port = pick_free_port(port)
+        if probe_health(port):
+            return
+    except Exception:
+        pass
+
     try:
         import subprocess
+        env = dict(os.environ)
+        env["SERVER_PORT"] = str(port)
         if getattr(sys, "frozen", False):
             exe = os.path.join(
                 os.path.dirname(sys.executable),
                 "AI_Backend.exe" if sys.platform == "win32" else "AI_Backend",
             )
             if os.path.isfile(exe):
-                subprocess.Popen([exe], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                subprocess.Popen([exe], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 return
             print("[..] 未找到同目录 AI_Backend，跳过后端启动", flush=True)
         else:
             root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             cmd = [sys.executable, "-m", "uvicorn", "api.main:app",
                    "--host", "127.0.0.1", "--port", str(port), "--log-level", "warning"]
-            subprocess.Popen(cmd, cwd=root, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.Popen(cmd, cwd=root, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception as e:
         print(f"[..] 后端启动失败: {e}", flush=True)
 

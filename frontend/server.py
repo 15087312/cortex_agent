@@ -16,6 +16,22 @@ BACKEND_URL = "http://localhost:8080"
 FRONTEND_DIR = os.path.dirname(os.path.abspath(__file__))
 DIST_DIR = os.path.join(FRONTEND_DIR, "dist")
 
+
+def _resolve_backend_port() -> int:
+    """解析后端实际端口：优先发现文件，不可达则扫描 8080-8089 找健康后端"""
+    from utils.port_discovery import read_backend_port, probe_health
+    port = read_backend_port()
+    if probe_health(port):
+        return port
+    for i in range(8080, 8090):
+        if i != port and probe_health(i):
+            return i
+    return port
+
+
+BACKEND_PORT = _resolve_backend_port()
+BACKEND_URL = f"http://localhost:{BACKEND_PORT}"
+
 _MISSING_DIST_PAGE = """<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="UTF-8"><title>Cortex Agent</title></head>
 <body style="font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#111;color:#eee">
@@ -82,6 +98,9 @@ class ProxyHandler(http.server.SimpleHTTPRequestHandler):
             }).encode())
 
     def do_GET(self):
+        if self.path == "/backend-port":
+            self._serve_backend_port()
+            return
         if self.path.startswith("/api/"):
             self._proxy_request("GET")
             return
@@ -89,6 +108,16 @@ class ProxyHandler(http.server.SimpleHTTPRequestHandler):
             self._serve_index()
             return
         super().do_GET()
+
+    def _serve_backend_port(self):
+        """返回后端实际端口（前端 WebSocket 直连用，端口可能自动回退而非 8080）"""
+        body = json.dumps({"port": BACKEND_PORT}).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def end_headers(self):
         # Vite 产物带内容 hash，文件名不变则内容不变 → 强缓存；index.html 由 _serve_index 设为 no-cache

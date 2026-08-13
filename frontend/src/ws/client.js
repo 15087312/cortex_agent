@@ -17,6 +17,8 @@ class WsClient {
     this._resolve = null
     this._reject = null
     this._timeoutId = null
+    this._backendPort = null
+    this._resolveBackendPort()
   }
 
   get connected() {
@@ -24,8 +26,18 @@ class WsClient {
   }
 
   _host() {
-    // 直连后端 :8080（Qt 静态代理 8765 无 WS 转发；与 js/ws.js 一致）
-    try { return (window.location.hostname || 'localhost') + ':8080' } catch { return 'localhost:8080' }
+    // 直连后端（端口可能因占用自动回退，经 /backend-port 发现；Qt 静态代理 8765 无 WS 转发）
+    return (window.location.hostname || 'localhost') + ':' + (this._backendPort || 8080)
+  }
+
+  _resolveBackendPort() {
+    // 构造时预解析后端端口（fire-and-forget）；若首次连接时尚未返回，重试会用上真实端口
+    try {
+      fetch(window.location.origin + '/backend-port', { signal: AbortSignal.timeout(3000) })
+        .then((r) => r.json())
+        .then((j) => { if (j && j.port) this._backendPort = j.port })
+        .catch(() => {})
+    } catch {}
   }
 
   connect(sid) {

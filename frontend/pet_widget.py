@@ -19,7 +19,13 @@ from PyQt6.QtWidgets import QWidget
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-BACKEND_URL = os.environ.get("CORTEX_BACKEND_URL", "http://localhost:8080")
+# 后端端口可能因占用自动回退（见 utils/port_discovery.py），从发现文件读取
+try:
+    from utils.port_discovery import read_backend_port
+    _BACKEND_PORT = read_backend_port()
+except Exception:
+    _BACKEND_PORT = 8080
+BACKEND_URL = os.environ.get("CORTEX_BACKEND_URL", f"http://localhost:{_BACKEND_PORT}")
 _PET_DIR = os.path.dirname(os.path.abspath(__file__))
 
 PET_W, PET_H = 300, 470
