@@ -58,13 +58,18 @@ def test_detect_api_with_key_openai(monkeypatch):
 
 def test_detect_unknown_backend_falls_back_to_local(monkeypatch):
     """未知 VISION_BACKEND 值容错回退到本地检测，不直接判死"""
+    import sys
     inst = _fresh()
     from config.settings import settings
     monkeypatch.setattr(settings, "VISION_BACKEND", "不存在的后端")
-    result = inst._detect_available_model()
-    # 本机 mlx_vlm/transformers 可用 → 回退到本地后端；无本地库才会 unavailable
-    assert result in ("mlx_vlm", "qwen_vl", "llava", "openai", "unavailable")
-    assert result != ""
+    monkeypatch.setattr(settings, "VISION_API_KEY", "")
+    monkeypatch.setattr(settings, "OPENAI_API_KEY", "")
+    monkeypatch.setattr(settings, "VISION_LOCAL_MODEL", "")
+    # 不真实加载 mlx_vlm/transformers/llava：会拉起 torch 等重库，与已加载的
+    # faiss/onnxruntime 双 OpenMP 冲突 → 测试进程 GIL 死锁（整批随机挂起）。
+    for m in ("mlx_vlm", "transformers", "llava", "qwen_vl_utils"):
+        monkeypatch.setitem(sys.modules, m, None)
+    assert inst._detect_available_model() == "unavailable"
 
 
 # ── _analyze_openai base_url 归一化（§26 回归）──────────────────────────────
@@ -205,8 +210,23 @@ def test_analyze_qwen_vl(monkeypatch):
         return ["一张测试图片"]
     inst.processor.batch_decode = fake_decode
 
+    # 不真实加载 torch/qwen_vl_utils（conftest 已全局拦截，避免测试进程 GIL 死锁）
+    import sys
+    import types
+    fake_torch = types.ModuleType("torch")
+    class _NG:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+    fake_torch.no_grad = lambda: _NG()
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    fake_qvu = types.ModuleType("qwen_vl_utils")
+    fake_qvu.process_vision_info = lambda messages: ([], [])
+    monkeypatch.setitem(sys.modules, "qwen_vl_utils", fake_qvu)
+
     import infra.data_process.core.image_analyzer as ia_mod
-    # patch 内部 import 的 torch.no_grad 为 dummy（真 torch 可用则无需）
     r = asyncio.run(inst._analyze_qwen_vl(_png_bytes(), "描述"))
     assert "一张测试图片" in r["description"]
 

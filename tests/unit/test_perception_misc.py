@@ -52,10 +52,19 @@ def test_touchpoint_is_electron_missing():
     assert TouchpointDetector._is_electron_app("/nonexistent") is False
 
 
-def test_ocr_detector_type_and_available():
+def test_ocr_detector_type_and_available(monkeypatch):
+    import sys
+    import types
     d = OCRDetector()
     assert d.detector_type == "ocr"
-    assert isinstance(d.is_available(), bool)
+    # 不真实加载 onnxruntime：RapidOCR() 初始化会起 17 个线程池线程，
+    # 与 GIL 交互在测试进程中偶发死锁（整个 suite 随机挂起）。用假模块测两个分支。
+    monkeypatch.setitem(sys.modules, "rapidocr_onnxruntime", None)
+    assert d.is_available() is False
+    fake = types.ModuleType("rapidocr_onnxruntime")
+    fake.RapidOCR = object
+    monkeypatch.setitem(sys.modules, "rapidocr_onnxruntime", fake)
+    assert d.is_available() is True
 
 
 def test_ocr_start_requires_available():

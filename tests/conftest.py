@@ -19,6 +19,51 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
+@pytest.fixture(scope="session", autouse=True)
+def block_real_native_libs():
+    """unit 测试不真实加载重量级原生库。
+
+    torch / transformers / onnxruntime / mlx-vlm 初始化会创建 OpenMP/线程池线程，
+    与已加载的 faiss 等原生库双 OpenMP 冲突（见 docs/ERRORS_AND_FIXES.md §27），
+    表现为测试进程随机 GIL 死锁（sample 确认：主线程卡 take_gil，libtorch_cpu
+    线程持 GIL 死锁）。unit 测试这些库一律用假模块（sys.modules 注入）测分支。
+    """
+    for mod in (
+        "torch",
+        "transformers",
+        "sentence_transformers",
+        "mlx_vlm",
+        "paddleocr",
+        "rapidocr_onnxruntime",
+    ):
+        sys.modules[mod] = None
+    yield
+    for mod in (
+        "torch",
+        "transformers",
+        "sentence_transformers",
+        "mlx_vlm",
+        "paddleocr",
+        "rapidocr_onnxruntime",
+    ):
+        sys.modules.pop(mod, None)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def register_capabilities():
+    """注册业务能力到 infra 端口。
+
+    生产环境由 api/main → bootstrap 注册；测试会话开始时统一注册，
+    否则工具层 get_capability() 返回 None 会走降级分支。
+    测试需要 mock 具体能力时：unregister_capability(name) + register_capability(name, fake)。
+    """
+    from bootstrap import register_business_capabilities
+    register_business_capabilities()
+    yield
+    from infra.tool_manager.service_registry import _capabilities
+    _capabilities.clear()
+
+
 @pytest.fixture
 def settings():
     """提供测试用 Settings 实例"""
