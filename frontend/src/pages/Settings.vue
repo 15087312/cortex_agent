@@ -387,34 +387,21 @@ async function checkUpdates() {
   checkingUpdate.value = true
   try {
     const cur = String(appVersion).replace(/^v/, '')
-    // 优先从 GitHub Releases 拉最新 tag（真正的跨版本更新检查）
+    // 从 GitHub Releases 拉最新 tag（真正的跨版本更新检查）
     let latest = null
+    let gotRelease = false
     try {
       const r = await fetch('https://api.github.com/repos/15087312/cortex_agent/releases/latest', { signal: AbortSignal.timeout(8000) })
-      if (r.ok) { const j = await r.json(); latest = j.tag_name ? String(j.tag_name).replace(/^v/, '') : null }
+      if (r.ok) { const j = await r.json(); latest = j.tag_name ? String(j.tag_name).replace(/^v/, '') : null; gotRelease = true }
     } catch {}
-    if (latest) {
+    if (gotRelease && latest) {
       const diff = cmpVersion(latest, cur)
       toast.show(diff > 0 ? '发现新版本: v' + latest + '（当前 v' + cur + '）' : '当前已是最新版本 v' + cur, diff > 0 ? 'info' : 'success')
-      return
-    }
-    // GitHub 不可达/无发布 → 降级：服务器版本一致性（保留 systemInfo 回退）
-    let serverVersion = null
-    try {
-      const health = await endpoints.health()
-      serverVersion = (health?.data?.version || health?.version || '').replace(/^v/, '')
-    } catch {
-      toast.show('无法连接后端服务', 'error')
-      return
-    }
-    if (serverVersion) {
-      toast.show(serverVersion === cur ? '当前已是最新版本 v' + cur : '服务器版本 v' + serverVersion + '（当前 v' + cur + '）', serverVersion === cur ? 'success' : 'info')
     } else {
-      const sys = await endpoints.systemInfo().catch(() => null)
-      const v = (sys?.data?.version || sys?.version || '').replace(/^v/, '')
-      toast.show(v ? '服务器版本: v' + v : '当前版本 v' + cur, 'success')
+      // GitHub 不可达 / 无发布 → 警告提示
+      toast.show('无法连接 GitHub，检查更新失败（当前 v' + cur + '）', 'warning')
     }
-  } catch { toast.show('无法检查更新', 'error') }
+  } catch { toast.show('无法检查更新', 'warning') }
   checkingUpdate.value = false
 }
 function openLink(url) { window.open(url, '_blank') }

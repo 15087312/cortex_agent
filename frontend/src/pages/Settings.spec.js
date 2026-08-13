@@ -526,48 +526,40 @@ describe('Settings.vue', () => {
     expect(w.vm.diagLoading).toBe(false)
   })
 
-  it('checkUpdates 后端无版本时回退 systemInfo', async () => {
+  it('checkUpdates GitHub 不可达时警告提示', async () => {
     const pinia = createPinia()
     setActivePinia(pinia)
-    routeFetch([
-      { match: '/api/health', data: { success: true, data: {} } },
-      { match: '/api/', data: { success: true, data: { version: '7.7.7' } } },
-    ])
-    // 模拟 GitHub 不可达（只拦 api.github.com，其余透传给 routeFetch）
+    const w = await mountSettings(pinia)
+    const { useToastStore } = await import('@/stores/toast.js')
+    const toast = useToastStore()
+    // 模拟 GitHub 不可达（只拦 api.github.com，其余透传）
     const origFetch = global.fetch
     global.fetch = (url, ...args) => String(url).includes('api.github.com')
       ? Promise.reject(new Error('offline'))
       : origFetch(url, ...args)
     try {
-      const w = await mountSettings(pinia)
-      const { useToastStore } = await import('@/stores/toast.js')
-      const toast = useToastStore()
       await w.vm.checkUpdates()
       await new Promise((r) => setTimeout(r, 30))
-      expect(toast.toasts.some((t) => t.msg.includes('7.7.7'))).toBe(true)
+      expect(toast.toasts.some((t) => t.msg.includes('无法连接 GitHub') && t.type === 'warning')).toBe(true)
     } finally {
       global.fetch = origFetch
     }
   })
 
-  it('checkUpdates 无法连接后端', async () => {
+  it('checkUpdates GitHub 返回新版本时提示发现新版本', async () => {
     const pinia = createPinia()
     setActivePinia(pinia)
-    routeFetch([
-      { match: '/api/health', data: () => { throw new Error('down') } },
-    ])
-    // 模拟 GitHub 不可达（只拦 api.github.com，其余透传给 routeFetch）
+    const w = await mountSettings(pinia)
+    const { useToastStore } = await import('@/stores/toast.js')
+    const toast = useToastStore()
     const origFetch = global.fetch
     global.fetch = (url, ...args) => String(url).includes('api.github.com')
-      ? Promise.reject(new Error('offline'))
+      ? Promise.resolve({ ok: true, json: () => Promise.resolve({ tag_name: 'v99.0.0' }) })
       : origFetch(url, ...args)
     try {
-      const w = await mountSettings(pinia)
-      const { useToastStore } = await import('@/stores/toast.js')
-      const toast = useToastStore()
       await w.vm.checkUpdates()
       await new Promise((r) => setTimeout(r, 30))
-      expect(toast.toasts.some((t) => t.msg.includes('无法连接后端'))).toBe(true)
+      expect(toast.toasts.some((t) => t.msg.includes('发现新版本') && t.msg.includes('v99.0.0'))).toBe(true)
     } finally {
       global.fetch = origFetch
     }
