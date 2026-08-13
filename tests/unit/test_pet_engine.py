@@ -134,6 +134,7 @@ def test_is_active(monkeypatch):
 
 def test_build_messages(monkeypatch):
     e = _pe(monkeypatch)
+    e._client = _real_client()
     msgs = e._build_messages("你好", extra_system="补充")
     assert msgs[0].role == "system"
     assert "补充" in msgs[0].content

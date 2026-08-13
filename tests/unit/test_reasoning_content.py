@@ -27,9 +27,8 @@ class TestReasoningContent:
 
     def test_parse_openai_response_with_reasoning_content(self):
         """解析OpenAI响应时应该保存reasoning_content"""
-        client = LargeModelClient(api_key="test", api_url="http://test.com")
-        client._api_format = "openai"
-        
+        client = LargeModelClient(api_key="test", api_url="http://test.com", api_format="openai")
+
         data = {
             "choices": [{
                 "message": {
@@ -47,9 +46,8 @@ class TestReasoningContent:
 
     def test_messages_to_api_includes_reasoning_content(self):
         """消息转换时应该包含reasoning_content"""
-        client = LargeModelClient(api_key="test", api_url="http://test.com")
-        client._api_format = "openai"
-        
+        client = LargeModelClient(api_key="test", api_url="http://test.com", api_format="openai")
+
         messages = [
             ChatMessage(
                 role="assistant",
@@ -64,9 +62,8 @@ class TestReasoningContent:
 
     def test_messages_to_api_no_reasoning_content(self):
         """没有reasoning_content时不应该包含该字段"""
-        client = LargeModelClient(api_key="test", api_url="http://test.com")
-        client._api_format = "openai"
-        
+        client = LargeModelClient(api_key="test", api_url="http://test.com", api_format="openai")
+
         messages = [
             ChatMessage(role="assistant", content="response")
         ]

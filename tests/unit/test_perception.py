@@ -181,7 +181,8 @@ class TestWindowDetector:
         det = WindowDetector()
         det._last_window = "something_else"
         det._last_app = "OtherApp"
-        with patch.object(det, "_get_active_window", return_value=("MyWindow", "MyApp")):
+        with patch.object(det, "is_available", return_value=True), \
+             patch.object(det, "_get_active_window", return_value=("MyWindow", "MyApp")):
             events = det.detect(np.empty(0), "_system")
             assert len(events) == 1
             assert events[0].event_type == PerceptionEventType.SCREEN_WINDOW
@@ -192,7 +193,8 @@ class TestWindowDetector:
         det = WindowDetector()
         det._last_window = "SameWindow"
         det._last_app = "SameApp"
-        with patch.object(det, "_get_active_window", return_value=("SameWindow", "SameApp")):
+        with patch.object(det, "is_available", return_value=True), \
+             patch.object(det, "_get_active_window", return_value=("SameWindow", "SameApp")):
             events = det.detect(np.empty(0), "_system")
             assert len(events) == 0
 

@@ -489,17 +489,17 @@ def test_run_in_main_loop_uses_main_loop(monkeypatch):
     async def coro():
         result["ran"] = True
         return "ok"
-    # 提交到主 loop 执行
-    from concurrent.futures import ThreadPoolExecutor
-    with ThreadPoolExecutor(1) as ex:
-        fut = ex.submit(lambda: mod.run_in_main_loop(coro()))
-        # 主 loop 需驱动 coroutine_threadsafe
-        import threading, time
-        threading.Timer(0.2, lambda: loop.call_soon_threadsafe(loop.stop)).start()
-        loop.run_forever()
-        assert fut.result(timeout=5) == "ok"
+    # daemon 线程驱动主 loop，避免主线程 run_forever 在 CI 下被 pytest-timeout 挂住
+    import threading
+    t = threading.Thread(target=loop.run_forever, daemon=True)
+    t.start()
+    try:
+        assert mod.run_in_main_loop(coro()) == "ok"
+    finally:
+        loop.call_soon_threadsafe(loop.stop)
+        t.join(2)
+        loop.close()
     assert result["ran"] is True
-    loop.close()
 
 
 def test_run_in_main_loop_fallback(monkeypatch):

@@ -62,7 +62,10 @@ async def _capture_generate(client_cls, api_url, tier: str, role: str) -> dict:
     from config.settings import settings
     from config.prompts.composer import PromptComposer, PromptRequest
 
-    client = client_cls(api_key=settings.LARGE_MODEL_API_KEY, api_url=api_url)
+    # CI 无 ~/.cortex/settings.json → key/url 为空；fallback 保证格式层走 openai 结构
+    api_key = settings.LARGE_MODEL_API_KEY or "test-key"
+    api_url = api_url or "http://localhost:1/v1/chat/completions"
+    client = client_cls(api_key=api_key, api_url=api_url)
 
     session = MockSession()
     client._session = session
@@ -123,7 +126,9 @@ class TestLargeModelPostFormat:
         from infra.model.large_model_client import LargeModelClient
         from config.settings import settings
 
-        data = await _capture_generate(LargeModelClient, settings.LARGE_MODEL_API_URL, "large", "orchestrator")
+        # CI 无 ~/.cortex 配置 → model 名固定 mock，避免依赖本机 LARGE_MODEL_NAME
+        with patch.object(settings, "LARGE_MODEL_NAME", "deepseek-v4-flash"):
+            data = await _capture_generate(LargeModelClient, settings.LARGE_MODEL_API_URL, "large", "orchestrator")
 
         assert "chat/completions" in data["url"], f"URL 格式错误: {data['url']}"
         assert "Bearer" in data["headers"].get("Authorization", ""), "缺少 Bearer 认证"

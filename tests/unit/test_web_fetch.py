@@ -33,7 +33,9 @@ def test_web_fetch_ssrf_blocked(monkeypatch):
     assert "禁止访问内网" in r["error"]
 
 
-def test_web_fetch_bad_method():
+def test_web_fetch_bad_method(monkeypatch):
+    # mock 内网检查：避免本地代理 fake-ip 把 example.com 解析为内网地址
+    monkeypatch.setattr(wf, "_is_private_ip", lambda h: False)
     r = _run(wf.web_fetch("https://example.com", method="PUT"))
     assert "不支持的 HTTP 方法" in r["error"]
 

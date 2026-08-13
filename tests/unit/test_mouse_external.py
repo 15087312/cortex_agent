@@ -15,7 +15,11 @@ def test_is_private_ip():
 
 
 def test_is_private_ip_public():
-    assert ea._is_private_ip("https://example.com") is False
+    # mock DNS：避免本地代理 fake-ip（如 198.18.x.x）把 example.com 解析为内网地址
+    import socket
+    fake_addr = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))]
+    with patch("socket.getaddrinfo", return_value=fake_addr):
+        assert ea._is_private_ip("https://example.com") is False
 
 
 def test_http_get_ssrf_blocked():
