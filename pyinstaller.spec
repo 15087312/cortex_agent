@@ -65,6 +65,7 @@ datas += [
     (os.path.join(ROOT, "frontend/dist"), "frontend/dist"),
     (os.path.join(ROOT, "frontend/public"), "frontend/public"),
     (os.path.join(ROOT, "frontend/pet"), "frontend/pet"),
+    (os.path.join(ROOT, "frontend/package.json"), "frontend/package.json"),
     (os.path.join(ROOT, ".env.example"), ".env.example"),
 ]
 

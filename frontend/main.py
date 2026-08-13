@@ -11,7 +11,6 @@ import threading
 import time
 import signal
 import atexit
-import re
 
 # 防残留: 若启动本客户端的 cortex 父进程被强杀，自动退出避免孤儿进程
 try:
@@ -269,19 +268,20 @@ class MainWindow(QMainWindow):
                 self.move(center.x() - 640, center.y() - 400)
 
     def _show_about(self):
+        # 从 frontend/package.json 读版本（与前端 __APP_VERSION__ 同源），不硬编码
         version = "v2.0.0"
-        idx = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                           "index.html")
-        if os.path.isfile(idx):
-            m = re.search(r'<span class="version">([^<]+)</span>',
-                          open(idx).read())
-            if m:
-                version = m.group(1)
+        try:
+            import json as _json
+            pkg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "package.json")
+            with open(pkg_path, encoding="utf-8") as _f:
+                version = "v" + str(_json.load(_f).get("version", "2.0.0"))
+        except Exception:
+            pass
         QMessageBox.about(
             self, "About Cortex Agent",
             f"<h3>Cortex Agent</h3><p>{version}</p>"
             f"<p>AI 智能体后端系统 — Web UI 桌面客户端</p>"
-            f"<p style='color:gray; font-size:11px'>macOS 原生版</p>"
+            f"<p style='color:gray; font-size:11px'>桌面客户端</p>"
         )
 
     def _show_preferences(self):

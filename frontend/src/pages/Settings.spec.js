@@ -533,12 +533,21 @@ describe('Settings.vue', () => {
       { match: '/api/health', data: { success: true, data: {} } },
       { match: '/api/', data: { success: true, data: { version: '7.7.7' } } },
     ])
-    const w = await mountSettings(pinia)
-    const { useToastStore } = await import('@/stores/toast.js')
-    const toast = useToastStore()
-    await w.vm.checkUpdates()
-    await new Promise((r) => setTimeout(r, 30))
-    expect(toast.toasts.some((t) => t.msg.includes('7.7.7'))).toBe(true)
+    // 模拟 GitHub 不可达（只拦 api.github.com，其余透传给 routeFetch）
+    const origFetch = global.fetch
+    global.fetch = (url, ...args) => String(url).includes('api.github.com')
+      ? Promise.reject(new Error('offline'))
+      : origFetch(url, ...args)
+    try {
+      const w = await mountSettings(pinia)
+      const { useToastStore } = await import('@/stores/toast.js')
+      const toast = useToastStore()
+      await w.vm.checkUpdates()
+      await new Promise((r) => setTimeout(r, 30))
+      expect(toast.toasts.some((t) => t.msg.includes('7.7.7'))).toBe(true)
+    } finally {
+      global.fetch = origFetch
+    }
   })
 
   it('checkUpdates 无法连接后端', async () => {
@@ -547,12 +556,21 @@ describe('Settings.vue', () => {
     routeFetch([
       { match: '/api/health', data: () => { throw new Error('down') } },
     ])
-    const w = await mountSettings(pinia)
-    const { useToastStore } = await import('@/stores/toast.js')
-    const toast = useToastStore()
-    await w.vm.checkUpdates()
-    await new Promise((r) => setTimeout(r, 30))
-    expect(toast.toasts.some((t) => t.msg.includes('无法连接后端'))).toBe(true)
+    // 模拟 GitHub 不可达（只拦 api.github.com，其余透传给 routeFetch）
+    const origFetch = global.fetch
+    global.fetch = (url, ...args) => String(url).includes('api.github.com')
+      ? Promise.reject(new Error('offline'))
+      : origFetch(url, ...args)
+    try {
+      const w = await mountSettings(pinia)
+      const { useToastStore } = await import('@/stores/toast.js')
+      const toast = useToastStore()
+      await w.vm.checkUpdates()
+      await new Promise((r) => setTimeout(r, 30))
+      expect(toast.toasts.some((t) => t.msg.includes('无法连接后端'))).toBe(true)
+    } finally {
+      global.fetch = origFetch
+    }
   })
 
   it('通用设置 tab：开机启动/防休眠/定位开关触发 saveCfg', async () => {
