@@ -55,6 +55,23 @@ def test_read_backend_port_missing_uses_default(tmp_path, monkeypatch):
     assert read_backend_port(default=9999) == 9999
 
 
+def test_save_backend_port_failure_silent(tmp_path, monkeypatch):
+    """写发现文件失败时静默（不抛异常）"""
+    import utils.port_discovery as pd
+    monkeypatch.setattr(pd, "_PORT_FILE", str(tmp_path / "sub" / "port.json"))
+    monkeypatch.setattr(pd.os, "makedirs", lambda *a, **k: (_ for _ in ()).throw(OSError("no perm")))
+    save_backend_port(18081)  # 不应抛异常
+    assert read_backend_port() == 8080
+
+
+def test_read_backend_port_corrupt_file(tmp_path, monkeypatch):
+    import utils.port_discovery as pd
+    target = tmp_path / "port.json"
+    target.write_text("not-json{", encoding="utf-8")
+    monkeypatch.setattr(pd, "_PORT_FILE", str(target))
+    assert read_backend_port() == 8080
+
+
 def test_probe_health_true_for_healthy_backend():
     # 起一个返回 200 的 http server 模拟后端 /health
     from http.server import BaseHTTPRequestHandler, HTTPServer
