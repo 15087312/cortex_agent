@@ -21,13 +21,22 @@ def _bind(port):
 def test_pick_free_port_skips_occupied():
     s = _bind(18080)
     try:
-        assert pick_free_port(18080) == 18081
+        p = pick_free_port(18080)
+        assert p != 18080  # 占用时交给 OS 分配任意空闲端口
+        assert 1 <= p <= 65535
     finally:
         s.close()
 
 
 def test_pick_free_port_returns_preferred_when_free():
     assert pick_free_port(18090) == 18090
+
+
+def test_pick_free_port_ephemeral_is_usable():
+    p = pick_free_port(18080)
+    # 返回的端口应能再次绑定（即确实是空闲的）
+    s = _bind(p)
+    s.close()
 
 
 def test_save_and_read_backend_port(tmp_path, monkeypatch):

@@ -18,15 +18,9 @@ DIST_DIR = os.path.join(FRONTEND_DIR, "dist")
 
 
 def _resolve_backend_port() -> int:
-    """解析后端实际端口：优先发现文件，不可达则扫描 8080-8089 找健康后端"""
-    from utils.port_discovery import read_backend_port, probe_health
-    port = read_backend_port()
-    if probe_health(port):
-        return port
-    for i in range(8080, 8090):
-        if i != port and probe_health(i):
-            return i
-    return port
+    """解析后端实际端口：从发现文件读取（后端启动时写入，端口可能为 OS 随机分配）"""
+    from utils.port_discovery import read_backend_port
+    return read_backend_port()
 
 
 BACKEND_PORT = _resolve_backend_port()

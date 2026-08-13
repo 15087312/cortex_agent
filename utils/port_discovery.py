@@ -1,8 +1,10 @@
-"""端口发现与自动回退 — 后端启动时选空闲端口并落盘，消费方据此连接。
+"""端口发现与自动回退 — 后端启动时选择端口并落盘，消费方据此连接。
 
 背景：8080 可能被残留进程占用，写死端口会导致 "address already in use" 崩溃。
-方案：后端在 preferred..preferred+9 里选第一个空闲端口，写入
-~/.cortex/backend_port.json；前端代理(server.py)/WebSocket/pet 读取该文件拿到真实端口。
+方案：
+- 显式指定 SERVER_PORT 且空闲 → 用指定端口；
+- 否则交给操作系统分配任意空闲端口（bind 0，无固定范围）。
+实际端口写入 ~/.cortex/backend_port.json；前端代理(server.py)/WebSocket/pet 读取。
 """
 import json
 import os
@@ -24,13 +26,18 @@ def _is_free(port: int) -> bool:
         return False
 
 
-def pick_free_port(preferred: int = 8080, max_tries: int = 10) -> int:
-    """返回 [preferred, preferred+max_tries) 中第一个空闲端口；全被占则返回 preferred"""
-    preferred = max(1, int(preferred))
-    for p in range(preferred, preferred + max_tries):
-        if _is_free(p):
-            return p
-    return preferred
+def _pick_ephemeral() -> int:
+    """向 OS 申请一个任意空闲端口（bind 0 → 内核分配，无固定范围）"""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def pick_free_port(preferred: int = 8080) -> int:
+    """首选端口空闲则用之；否则交给 OS 分配任意空闲端口"""
+    if preferred and _is_free(preferred):
+        return preferred
+    return _pick_ephemeral()
 
 
 def save_backend_port(port: int) -> None:
