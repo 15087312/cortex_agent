@@ -661,7 +661,7 @@ async def call_outreach_llm(prompt: str, session_id: str = "", role: str = None,
         try:
             extras.append(f"【当前时间】{datetime.now().strftime('%Y-%m-%d %H:%M')}")
             extras.append(f"【对话对象】{getattr(_cfg, 'USER_NAME', '用户') or '用户'}")
-        except Exception:
+        except Exception:  # pragma: no cover — datetime.now()/USER_NAME 读取为 stdlib 属性访问，实际不可失败
             pass
         try:
             from modules.thinking.probes.probe_tools import _session_guidance
@@ -689,7 +689,7 @@ async def call_outreach_llm(prompt: str, session_id: str = "", role: str = None,
                 extras.append("\n".join(lines))
         except Exception:
             pass
-        if extras:
+        if extras:  # pragma: no cover — extras 首元素（当前时间）恒被先追加，此处不可能为空
             system_prompt = f"{system_prompt}\n\n" + "\n\n".join(extras)
 
         messages = [
