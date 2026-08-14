@@ -26,3 +26,6 @@ factory-boy==3.3.0
 
 # 内存泄漏检测（conftest 默认开启：pympler 会话级类型 diff + 增长趋势采样）
 pympler==1.1
+
+# 内存看门狗（conftest 超限自动终止，获取实时 RSS）
+psutil==7.2.2

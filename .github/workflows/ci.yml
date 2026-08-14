@@ -31,7 +31,7 @@ jobs:
           grep -v -E '^pyaudio|^pyautogui|mlx-lm' requirements.txt > reqs.tmp
           python -m pip install -r reqs.tmp
           # 测试框架在 requirements-dev.txt；CI 只装运行需要的
-          python -m pip install pytest pytest-asyncio pytest-timeout pytest-cov pympler
+          python -m pip install pytest pytest-asyncio pytest-timeout pytest-cov pympler psutil
 
       # unit / integration 分两个进程跑：合并在同一进程会因非 daemon 线程在退出时挂住
       - name: Run unit tests

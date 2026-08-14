@@ -19,6 +19,56 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
+# ---------------------------------------------------------------------------
+# 内存上限保护：超预期内存占用自动终止测试进程（默认开启）
+#
+# 原理: 看门狗线程周期采样当前进程 RSS（psutil），超过上限立即 os._exit(1)。
+#   - 进程内无法用 RLIMIT_AS（macOS 不允许设低于当前已用地址空间）
+#   - 看门狗直接杀进程，避免内存失控拖垮整台机器/CI runner
+#
+# 环境变量可调:
+#   CORTEX_TEST_MEM_LIMIT_MB  上限 MB（默认 4096，当前全量峰值 ~1.1GB RSS）
+#   设为 0 关闭本保护
+# ---------------------------------------------------------------------------
+_MEM_LIMIT_MB = int(os.environ.get("CORTEX_TEST_MEM_LIMIT_MB", "4096"))
+
+
+def _mem_watchdog() -> None:
+    """看门狗线程：RSS 超上限立即终止进程。"""
+    import time
+    try:
+        import psutil
+        _get_rss = lambda: psutil.Process().memory_info().rss  # bytes，跨平台统一
+    except ImportError:
+        import resource
+        # 退化：ru_maxrss 为峰值（Linux=KB，macOS=bytes），只能做峰值兜底
+        def _get_rss():
+            v = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+            return v * 1024 if sys.platform != "darwin" else v
+    limit = _MEM_LIMIT_MB * 1024 * 1024
+    while True:
+        try:
+            if _get_rss() > limit:
+                print(f"\n[MEM-LIMIT] 内存超限 {_MEM_LIMIT_MB}MB，自动终止测试进程",
+                      file=sys.stderr, flush=True)
+                os._exit(1)
+        except Exception:
+            pass
+        time.sleep(0.5)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _memory_limit():
+    if _MEM_LIMIT_MB <= 0:
+        yield
+        return
+    import threading
+    threading.Thread(target=_mem_watchdog, daemon=True).start()
+    print(f"\n[MEM-LIMIT] 测试进程内存上限: {_MEM_LIMIT_MB} MB（超限自动终止）",
+          file=sys.stderr, flush=True)
+    yield
+
+
 @pytest.fixture(scope="session", autouse=True)
 def block_real_native_libs():
     """unit 测试不真实加载重量级原生库。
