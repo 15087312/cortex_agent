@@ -6,6 +6,7 @@ mock transport 边界（不发起真实连接），覆盖：
 - add_server: 重复跳过 / stdio 成功 / SSE 成功 / connect 失败回滚 / 参数缺失
 - get_all_tools / get_tool / get_server_for_tool / call_tool / get_server_status / shutdown
 """
+import asyncio
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -294,3 +295,118 @@ class TestReplaceServer:
             ok = await mgr.replace_server("new", command="cmd")
         assert ok is True
         assert mgr._tool_to_server.get("x") == "new"
+
+
+class TestAutoReconnect:
+    """断线自动重连：指数退避 + 重连后刷新工具索引"""
+
+    async def test_reconnect_with_backoff_success(self):
+        t = _fake_transport("srv", connected=False, connect_ok=True)
+        mgr = MCPServerManager([])
+        mgr._transports = {"srv": t}
+        cfg = MCPServerConfig(name="srv", command="x", reconnect=True,
+                              reconnect_max_retries=3, reconnect_base_delay=0.1)
+        ok = await mgr._reconnect_with_backoff("srv", cfg)
+        assert ok is True
+        assert t.connect.await_count >= 1
+
+    async def test_reconnect_with_backoff_gives_up(self):
+        t = _fake_transport("srv", connected=False, connect_ok=False)
+        mgr = MCPServerManager([])
+        mgr._transports = {"srv": t}
+        cfg = MCPServerConfig(name="srv", command="x", reconnect=True,
+                              reconnect_max_retries=3, reconnect_base_delay=0.0)
+        ok = await mgr._reconnect_with_backoff("srv", cfg)
+        assert ok is False
+        assert t.connect.await_count == 3  # 重试耗尽
+
+    async def test_reconnect_stops_when_stop_event_set(self):
+        t = _fake_transport("srv", connected=False, connect_ok=False)
+        mgr = MCPServerManager([])
+        mgr._transports = {"srv": t}
+        mgr._stop_events["srv"] = asyncio.Event()
+        mgr._stop_events["srv"].set()  # 已停止 → 不重试
+        cfg = MCPServerConfig(name="srv", command="x", reconnect=True,
+                              reconnect_max_retries=5, reconnect_base_delay=0.0)
+        ok = await mgr._reconnect_with_backoff("srv", cfg)
+        assert ok is False
+        assert t.connect.await_count == 0
+
+    async def test_refresh_tools_replaces_index(self):
+        t = _fake_transport("srv", tools=[_tool("new_a"), _tool("new_b")])
+        mgr = MCPServerManager([])
+        mgr._transports = {"srv": t}
+        mgr._tools_index = {"old": _tool("old", "srv"), "keep": _tool("keep", "other")}
+        mgr._tool_to_server = {"old": "srv", "keep": "other"}
+        await mgr._refresh_tools("srv")
+        t.list_tools.assert_awaited_once()
+        assert "old" not in mgr._tools_index      # 旧工具已摘
+        assert "keep" in mgr._tools_index          # 其他 server 不受影响
+        assert mgr._tool_to_server.get("new_a") == "srv"
+        assert mgr._tool_to_server.get("new_b") == "srv"
+
+    async def test_watch_connection_reconnects_and_refreshes(self):
+        t = _fake_transport("srv", tools=[_tool("fresh")], connected=False, connect_ok=True)
+        mgr = MCPServerManager([])
+        mgr._transports = {"srv": t}
+        mgr._tools_index = {"stale": _tool("stale", "srv")}
+        mgr._tool_to_server = {"stale": "srv"}
+        cfg = MCPServerConfig(name="srv", command="x", reconnect=True,
+                              reconnect_interval=0.01,
+                              reconnect_max_retries=2, reconnect_base_delay=0.0)
+        mgr._configs["srv"] = cfg
+        mgr._start_reconnect_watch("srv", cfg)
+        assert "srv" in mgr._watch_tasks
+        await asyncio.sleep(0.1)  # 让监控任务触发重连
+        assert t.connect.await_count >= 1
+        assert "fresh" in mgr._tools_index  # 重连后工具已刷新
+        assert "stale" not in mgr._tools_index
+        await mgr._stop_reconnect_watch("srv")  # 防任务遗留
+        assert "srv" not in mgr._watch_tasks
+
+    async def test_start_all_launches_watch_when_reconnect(self):
+        t = _fake_transport("srv", tools=[_tool("a")], connect_ok=True)
+        mgr = MCPServerManager([])
+        mgr._transports = {"srv": t}
+        mgr._configs["srv"] = MCPServerConfig(name="srv", command="x", reconnect=True,
+                                              reconnect_interval=60.0)
+        await mgr.start_all()
+        assert "srv" in mgr._watch_tasks
+        await mgr._stop_all_reconnect_watches()
+
+    async def test_start_all_no_watch_when_disabled(self):
+        t = _fake_transport("srv", tools=[_tool("a")], connect_ok=True)
+        mgr = MCPServerManager([])
+        mgr._transports = {"srv": t}
+        mgr._configs["srv"] = MCPServerConfig(name="srv", command="x", reconnect=False)
+        await mgr.start_all()
+        assert mgr._watch_tasks == {}
+
+    async def test_remove_server_stops_watch(self):
+        t = _fake_transport("srv", connected=False, connect_ok=True)
+        mgr = MCPServerManager([])
+        mgr._transports = {"srv": t}
+        cfg = MCPServerConfig(name="srv", command="x", reconnect=True,
+                              reconnect_interval=0.01,
+                              reconnect_max_retries=2, reconnect_base_delay=0.0)
+        mgr._configs["srv"] = cfg
+        mgr._start_reconnect_watch("srv", cfg)
+        assert "srv" in mgr._watch_tasks
+        await mgr.remove_server("srv")
+        assert "srv" not in mgr._watch_tasks
+        assert "srv" not in mgr._transports
+
+    async def test_shutdown_stops_all_watches(self):
+        t1 = _fake_transport("s1", connected=False, connect_ok=True)
+        t2 = _fake_transport("s2", connected=False, connect_ok=True)
+        mgr = MCPServerManager([])
+        mgr._transports = {"s1": t1, "s2": t2}
+        for n, t in (("s1", t1), ("s2", t2)):
+            mgr._configs[n] = MCPServerConfig(name=n, command="x", reconnect=True,
+                                              reconnect_interval=0.01,
+                                              reconnect_max_retries=2, reconnect_base_delay=0.0)
+            mgr._start_reconnect_watch(n, mgr._configs[n])
+        assert len(mgr._watch_tasks) == 2
+        await mgr.shutdown()
+        assert mgr._watch_tasks == {}
+        assert mgr._stop_events == {}

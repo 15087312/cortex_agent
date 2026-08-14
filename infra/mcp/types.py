@@ -15,6 +15,11 @@ class MCPServerConfig:
     env: Dict[str, str] = field(default_factory=dict)
     enabled: bool = True
     timeout_seconds: float = 30.0
+    # ── 自动重连（等价 dsh mcp-client 的 startConnection 指数退避）──
+    reconnect: bool = False
+    reconnect_interval: float = 5.0       # 断线检测轮询间隔（秒）
+    reconnect_max_retries: int = 5        # 每次断线最多重试次数
+    reconnect_base_delay: float = 0.5     # 指数退避基础延迟（秒）
 
 
 @dataclass(frozen=True)
