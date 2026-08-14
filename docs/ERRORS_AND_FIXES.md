@@ -1226,3 +1226,107 @@ _run_task/_think_loop）、`api_stream` 完整 WS 流、`output_system` 深路�
 
 **覆盖率：** 61%（累计 miss -730+ 行）。全量 1721 → 1940（+219 项）。
 剩余低覆盖：`_think_loop` 完整编排循环、`api_stream` WS 流式、真实硬件/屏幕/语音——需完整运行链路 mock。
+
+---
+
+## 29. config/settings.py 缺失 `import sys` → NameError 隐患（后端）
+
+**现象：** `~/.cortex/settings.json` 不存在时，`_ensure_user_config`/`_apply_user_config` 等 10 处使用 `sys.stderr`，但模块未 `import sys` → 首次运行触发 `NameError`。
+
+**根因：** `settings.py` 顶部只 `import os`，多处 `print(..., file=sys.stderr)` 依赖隐式 sys。单元测试因 autouse fixture 注入 sys 才未暴露。
+
+**修复：** `import sys` 加入模块顶部（`config/settings.py`）。
+
+**发现方式：** 覆盖率补测 `config/settings.py`（61%→100%）时，测试用注入 sys 绕过，暴露了真实缺口。
+
+---
+
+## 30. ScreenMonitor 后台线程遗留 → pytest 全量随机挂起（后端/测试）
+
+**现象：** 全量测试随机 INTERNALERROR/挂起（pytest-timeout 20s 触发但 session 中止），faulthandler dump 显示线程卡在 `screen_monitor_source.py _read_stdout_loop` 无限调用被 mock 的 readline，主线程卡在 pytest capture `readouterr`。
+
+**根因：** `ScreenMonitorSource._ensure_process` 启动的 reader 后台线程（非 daemon）在测试未显式 stop 时遗留运行；测试用 `__new__` 绕过 `__init__`（实例不在注册表无法清理）+ mock 掉 `_close_process`（`_reader_running` 保持 True 线程永不停）。遗留线程持有 pytest 捕获 fd → 下一个测试 capture 读取阻塞（fd 泄漏 + mock 锁死锁）。
+
+**修复（三层）：**
+1. 生产代码：`ScreenMonitorSource`/`ScreenDiffSource` 加类级 `weakref.WeakSet` 活跃实例注册表，`stop()` 注销
+2. conftest autouse fixture `_stop_background_sources` 统一 stop 遗留实例
+3. 测试修正：`_source` 手动注册 + 不再 mock `_close_process`
+
+**验证：** 之前必卡的组合 5/5 稳定通过；全量正常退出。
+
+**同类排查：** `setup.py`（window_detector）、`PerceptionEventBus`、`voice/hotkey/ocr` 检测器均存在非 daemon 后台线程，全部纳入 weakref 注册表 + conftest 统一清理。
+
+---
+
+## 31. test_detect_text OCR 顺序污染 —— sys.modules 模块级置 None（后端/测试）
+
+**现象：** 全量测试中 `test_screen_monitor_server.py::test_detect_text` 偶发失败，单独运行通过。
+
+**根因：** `test_mcp_screen_monitor.py` 模块级 `sys.modules["rapidocr_onnxruntime"] = None` 永久污染（为防真实 OCR 加载），导致后续 import `screen_monitor_server` 的测试里 `_ocr` 为 None，`extract_text=True` 分支不执行 → 断言无文字。
+
+**修复：** `test_detect_text` 改用 monkeypatch 注入 fake OCR（临时替换 `sms._ocr`），不依赖模块级污染。
+
+**教训：** 模块级 `sys.modules[X] = None` 会污染整个测试进程，应改用 monkeypatch/局部注入。
+
+---
+
+## 32. BytesIO 内部 buffer 不被 pympler 计算 —— 泄漏检测盲区（测试基建）
+
+**现象：** 泄漏检测验证套件中"文件句柄泄漏"测试（`io.BytesIO` 累积）漏报——pympler 只统计 Python 对象，`BytesIO` 的 C 层 buffer 不计入大小。
+
+**根因：** `pympler.muppy.get_size` 对 `_io.BytesIO` 只算对象本身，内部 bytes buffer 无法归因。
+
+**修复：** 泄漏测试同时累积内容字节（`_FILE_CONTENTS` 显式引用 bytes），让 muppy 可测。
+
+**教训：** pympler 字节采样对"纯 C 缓冲"（BytesIO/某些扩展）有盲区；泄漏测试套件（tests/leak/）的价值正是暴露这类检测盲区。
+
+---
+
+## 33. 本地代理 fake-ip 解析 example.com 为内网 IP → SSRF 防护误判（测试环境）
+
+**现象：** 本地（macOS + 代理软件如 Surge/Clash）DNS 把 example.com 解析到 `198.18.0.50`（fake-ip 网段），`_is_private_ip` 判定为内网 → 两个 SSRF 相关测试失败（`test_is_private_ip_public`、`test_web_fetch_bad_method`）。CI（ubuntu 正常解析公网）不受影响。
+
+**修复：** 测试 mock DNS/内网检查：
+- `test_is_private_ip_public` mock `socket.getaddrinfo` 返回固定公网 IP
+- `test_web_fetch_bad_method` monkeypatch `_is_private_ip` 返回 False
+
+**教训：** 依赖真实 DNS 的测试在代理环境不可靠，应 mock 系统边界。
+
+---
+
+## 34. test_api 版本断言过期（2.0.0 vs 实际版本）（测试）
+
+**现象：** `tests/integration/test_api.py::test_root_returns_app_info` 断言 `version == "2.0.0"`，项目已发布到 v2.1.1 → 断言失败。
+
+**修复：** 改为读 `cortex.version.__version__` 动态比较，不再硬编码。
+
+---
+
+## 35. macOS 不允许 resource.setrlimit(RLIMIT_AS) 低于当前用量（测试基建）
+
+**现象：** 实现"内存上限自动终止"时用 `RLIMIT_AS` 限制进程地址空间，设置 100MB 上限报错 `current limit exceeds maximum limit`（当前进程地址空间已超）。
+
+**根因：** macOS 的 `RLIMIT_AS` 是总地址空间上限，且**不能设置低于当前已用**；Python 进程加载库后地址空间已很大。
+
+**解决：** 放弃 RLIMIT_AS，改用**看门狗线程** + `psutil.Process().memory_info().rss` 周期采样，超限 `os._exit(1)`（conftest `_mem_watchdog`，默认 4096MB，`CORTEX_TEST_MEM_LIMIT_MB` 可调）。
+
+---
+
+## 36. sys.getallocatedobjects() 在 Python 3.13 移除（测试基建）
+
+**现象：** 泄漏检测采样用 `sys.getallocatedobjects()` 报 `AttributeError`（被 try/except 吞掉导致采样点为空）。
+
+**根因：** 该函数在 3.8 引入、3.11 起废弃、3.13 移除。
+
+**修复：** 改用 `len(gc.get_objects())`（对象计数），后进一步升级为 `pympler.muppy.get_size`（真实字节）。
+
+---
+
+## 37. EventStore.__del__ 对假 faiss 索引触发 GC 死循环（后端/测试）
+
+**现象：** `test_event_store_ext.py` 原始写法在 fixture teardown 后触发 Python 3.13 无限 GC 循环（99.7% CPU 卡死）。
+
+**根因：** `EventStore.__del__` 在循环 GC 期对已置 `None`/假索引调用 `faiss.write_index` 抛 SWIG TypeError，GC 反复重试。
+
+**修复：** fixture teardown 先把 `_faiss_index` 置 None 再 `close()`，避免 `__del__` 在 GC 期接触假索引。
+
