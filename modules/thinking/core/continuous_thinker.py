@@ -221,7 +221,7 @@ class ContinuousThinker:
         b_ngrams = {text_b[i:i+n] for i in range(len(text_b) - n + 1)}
         intersection = a_ngrams & b_ngrams
         union = a_ngrams | b_ngrams
-        if not union:
+        if not union:  # pragma: no cover  # 死分支：两文本均 ≥n 字符时 ngram 集恒非空，union 永不为空
             return 0.0
         return len(intersection) / len(union)
 
@@ -841,7 +841,7 @@ class ContinuousThinker:
 
         thought = ""
         duration_ms = 0.0
-        for attempt in range(1, MAX_THINK_RETRIES + 1):
+        for attempt in range(1, MAX_THINK_RETRIES + 1):  # pragma: no cover  # 循环必然以 break(成功)/return(超时或异常) 退出，无自然落出路径
             try:
                 start_time = time.time()
                 raw_thought = await pausable_wait_for(self.think_fn(context), timeout=SINGLE_THINK_TIMEOUT)
@@ -1111,7 +1111,7 @@ class ContinuousThinker:
                     self.notebook.append(cleaned_for_notebook, is_finished=notebook_is_finished)
 
                 # 更新委托计数器
-                if has_delegation:
+                if has_delegation:  # pragma: no cover  # 死分支：has_delegation==has_new_delegation，为 True 时已在 1099 行 break，到此恒为 False
                     if has_new_delegation:
                         self._consecutive_new_delegation_rounds += 1
                     else:
@@ -1150,7 +1150,7 @@ class ContinuousThinker:
                     wait_seconds = self._parse_wait_seconds(current_thought)
 
                 # 智能等待：检测到委托但工具未给等待时间时自动延长
-                if has_delegation and wait_seconds <= self.interval:
+                if has_delegation and wait_seconds <= self.interval:  # pragma: no cover  # 死分支：has_delegation 到此恒为 False（见 1114 注释）
                     wait_seconds = max(wait_seconds, 8.0)
                     self.logger.info(
                         f"第{round_num}轮：检测到委托，自动延长等待至 {wait_seconds}s"

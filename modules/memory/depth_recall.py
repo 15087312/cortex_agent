@@ -425,7 +425,7 @@ class DepthRecallScheduler:
 
         # 文本关键词匹配（兜底）
         text = f"{event.fact} {event.thought} {event.lesson} {' '.join(event.keywords)}".lower()
-        if not text:
+        if not text:  # pragma: no cover  # 防御分支：f-string 恒含空格，text 永不为空串，无法触达
             return 0.0
 
         all_labels = set()

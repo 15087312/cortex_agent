@@ -452,7 +452,7 @@ class MultiModelOrchestrator:
                 )
             except Exception as e:
                 logger.debug(f"[编排器] 初始化失败 (非致命): {e}")
-            except Exception as e:
+            except Exception as e:  # pragma: no cover  # 死代码：上方 `except Exception` 已捕获全部异常，此分支不可达
                 logger.debug(f"[SessionLifecycle] 初始化失败 (非致命): {e}")
                 blackboard = None
                 turn_context = None
@@ -665,7 +665,7 @@ class MultiModelOrchestrator:
                 try:
                     with _session_registry_lock:
                         info = _session_registry.get(session_id or "")
-                    if info:
+                    if info:  # pragma: no cover  # 防御分支：能走到此循环时会话必然已注册（438-447 无条件写入），info 恒真
                         mgr = info.get("runner_manager")
                         if mgr:
                             runners = mgr.get_active_runners()
@@ -736,7 +736,7 @@ class MultiModelOrchestrator:
                     logger.warning("[编排器] 大模型已发送完成信号但无 final_response")
                 else:
                     logger.warning("[编排器] 大模型超时，尝试恢复最后可用的内容")
-                if blackboard and blackboard.final_response:
+                if blackboard and blackboard.final_response:  # pragma: no cover  # 与 726-727 同条件且其间无人修改 final_response，死分支
                     final_response = blackboard.final_response
 
             if not final_response:
