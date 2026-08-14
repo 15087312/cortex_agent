@@ -243,13 +243,74 @@ def pytest_sessionstart(session):
 
 
 def pytest_sessionfinish(session, exitstatus):
-    """会话结束（capture 已释放）：输出泄漏检测报告。"""
+    """会话结束（capture 已释放）：输出泄漏检测报告 + 模块覆盖清单。"""
     try:
         import gc as _gc
         _gc.collect()
         _report_leak_detector(_LEAK_CTX["tracker"])
     except Exception:
         pass
+    try:
+        _report_module_coverage()
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# 生产模块执行覆盖清单 —— 保证"所有模块都在泄漏检测覆盖范围内"
+#
+# 泄漏检测是 session 级聚合趋势，只对"被测试执行过"的模块有效。
+# 若某生产模块从未被任何测试 import/执行，它就不在检测范围。
+# 本清单在会话结束对比"全部生产模块"与"实际被执行(import)的模块"，
+# 明确报告哪些模块无测试触及 —— 这些模块需要补测试后才能纳入检测覆盖。
+#
+# 环境变量:
+#   CORTEX_TEST_MODULE_UNCOVERED_MAX  允许未覆盖的生产模块数（默认 10，
+#      超限在报告中标 ⚠；设 -1 关闭检查）
+# ---------------------------------------------------------------------------
+_PRODUCTION_DIRS = ("modules", "infra", "utils", "config", "api", "cortex")
+_MODULE_UNCOVERED_MAX = int(os.environ.get("CORTEX_TEST_MODULE_UNCOVERED_MAX", "10"))
+
+
+def _all_production_modules() -> set:
+    """扫描生产目录下的全部 .py 模块路径（不含 __init__）。"""
+    found = set()
+    for base in _PRODUCTION_DIRS:
+        if not os.path.isdir(base):
+            continue
+        for root, dirs, files in os.walk(base):
+            dirs[:] = [d for d in dirs if d != "__pycache__"]
+            for f in files:
+                if f.endswith(".py") and f != "__init__.py":
+                    rel = os.path.relpath(os.path.join(root, f))
+                    found.add(rel[:-3].replace(os.sep, "."))
+    return found
+
+
+def _report_module_coverage() -> None:
+    """报告未被测试执行（import）的生产模块 —— 这些不在泄漏检测覆盖范围。"""
+    if _MODULE_UNCOVERED_MAX < 0:
+        return
+    all_mods = _all_production_modules()
+    executed = {m for m in sys.modules if m in all_mods}
+    uncovered = sorted(all_mods - executed)
+
+    print("\n" + "=" * 60)
+    print("[MODULE-COVERAGE] 生产模块执行覆盖清单")
+    print(f"  生产模块总数: {len(all_mods)}  测试已执行: {len(executed)}  "
+          f"未执行: {len(uncovered)}")
+    if uncovered:
+        print(f"  —— 以下 {len(uncovered)} 个生产模块无测试触及，不在泄漏检测覆盖范围：")
+        for m in uncovered[:20]:
+            print(f"    ⚠ {m}")
+        if len(uncovered) > 20:
+            print(f"    … 等共 {len(uncovered)} 个")
+        if len(uncovered) > _MODULE_UNCOVERED_MAX:
+            print(f"  ⚠ 未覆盖模块数 {len(uncovered)} 超过上限 "
+                  f"{_MODULE_UNCOVERED_MAX}，请为这些模块补测试以纳入泄漏检测")
+    else:
+        print("  ✓ 所有生产模块均被测试执行，全部在泄漏检测覆盖范围内")
+    print("=" * 60)
 
 
 def _report_leak_detector(pympler_tracker) -> None:
