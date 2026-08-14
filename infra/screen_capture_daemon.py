@@ -263,5 +263,5 @@ def main():
     daemon.run()
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover — 入口守卫，由 subprocess/启动脚本触发
     main()

@@ -41,3 +41,13 @@ def test_clear():
     nb.clear()
     assert "任务刚开始" in nb.content
     assert nb.get_status()["entries"] == 0
+
+
+def test_append_truncates_max_entries():
+    nb = TaskNotebook()
+    for i in range(25):
+        nb.append(f"条目{i}")
+    status = nb.get_status()
+    assert status["entries"] == 20
+    assert "条目24" in status["content"]
+    assert "条目0" not in status["content"]

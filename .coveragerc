@@ -1,0 +1,35 @@
+# coverage 配置：整体覆盖率门禁 + 豁免登记规范
+#
+# 豁免（exclude_lines）是"显式登记"而非"默认放过"：
+#   1. `# pragma: no cover` —— 逐行/逐块豁免，必须带理由注释（如 __main__ 入口守卫）
+#   2. 防御分支/异常兜底 —— 优先补测试；确无法测的用 pragma 登记
+# 新增豁免时同步在代码注释写清"为什么豁免、何时可补测"。
+
+[run]
+branch = True
+source =
+    api
+    config
+    infra
+    modules
+    utils
+omit =
+    */tests/*
+    */__pycache__/*
+    */scripts/*
+    */frontend/*
+    */node_modules/*
+    */data/*
+    api/__main__.py
+
+[report]
+exclude_lines =
+    pragma: no cover
+    if __name__ == .__main__.:
+    if TYPE_CHECKING:
+    raise NotImplementedError
+show_missing = True
+
+[paths]
+source =
+    .
