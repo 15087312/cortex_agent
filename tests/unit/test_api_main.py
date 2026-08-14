@@ -436,11 +436,19 @@ def test_dashboard_not_found(client, reset_rate_limit, monkeypatch, tmp_path):
 
 def test_register_module_routers_includes_all():
     from api.main import register_module_routers
+    from infra.data_process.api import router as dp_router
     app = FastAPI()
     register_module_routers(app)
     paths = {getattr(r, "path", "") for r in app.routes}
-    for prefix in ("/data-process", "/tools", "/stream", "/management", "/output", "/security", "/differences"):
+    # 核心路由必须注册
+    for prefix in ("/tools", "/stream", "/management", "/output", "/security", "/differences"):
         assert any(p.startswith(prefix) for p in paths), prefix
+    # data-process：router 自身有路由且被 include（失败时输出诊断，便于 CI 定位）
+    assert dp_router.routes, "data_process router 无路由（模块注册被跳过）"
+    assert any(p.startswith("/data-process") for p in paths), (
+        f"data-process 未注册: router.routes={len(dp_router.routes)}; "
+        f"app.routes 前 20 条={sorted(paths)[:20]}"
+    )
 
 
 def test_register_module_routers_skips_difference_when_disabled(monkeypatch):

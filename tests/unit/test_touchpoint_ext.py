@@ -2,8 +2,18 @@
 import sys
 from unittest.mock import MagicMock
 
+import pytest
+
 from modules.perception.detectors import touchpoint_detector as td
 from modules.perception.detectors.touchpoint_detector import TouchpointDetector
+
+
+@pytest.fixture(autouse=True)
+def _force_mac(monkeypatch):
+    """这些测试针对 macOS 应用路径查找（lsappinfo/mdfind）。
+    CI 是 Linux，_IS_MAC 模块级常量为 False 会直接返回 None → 强制为 True。
+    """
+    monkeypatch.setattr(td, "_IS_MAC", True)
 
 
 class _RunResult:

@@ -311,15 +311,22 @@ async def test_remove_runner_manager(monkeypatch):
 
 def test_reject_session_user_responses():
     r = _runner()
-    fut = asyncio.Future()
-    r._pending_user_responses = {"rid": fut}
-    monkeypatch = type("P", (), {})()
-    import modules.thinking.core.model_runner as mr
-    orig = dict(mr._runner_managers)
+    # 显式创建事件循环：CI(3.11) 同步测试线程无当前 loop，asyncio.Future() 会 RuntimeError；
+    # 保持 loop 活跃到测试结束（fut.set_result 需要 loop 调度）
+    _loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(_loop)
     try:
-        mr._runner_managers = {"s1": type("M", (), {"_runners": {"m1": r}})()}
-        assert reject_session_user_responses("s1") == 1
-        assert fut.done()
-        assert reject_session_user_responses("") == 0
+        fut = asyncio.Future()
+        r._pending_user_responses = {"rid": fut}
+        import modules.thinking.core.model_runner as mr
+        orig = dict(mr._runner_managers)
+        try:
+            mr._runner_managers = {"s1": type("M", (), {"_runners": {"m1": r}})()}
+            assert reject_session_user_responses("s1") == 1
+            assert fut.done()
+            assert reject_session_user_responses("") == 0
+        finally:
+            mr._runner_managers = orig
     finally:
-        mr._runner_managers = orig
+        _loop.close()
+        asyncio.set_event_loop(None)

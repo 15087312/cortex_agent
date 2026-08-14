@@ -97,7 +97,7 @@ def test_record_query_time_overflow(graph):
         graph.record_query_time(0.01)
     m = graph.get_metrics()
     assert m["causal_graph_query_count"] == 101
-    assert m["causal_graph_avg_query_time_seconds"] == 0.01
+    assert m["causal_graph_avg_query_time_seconds"] == pytest.approx(0.01)  # 浮点累积误差
 
 
 # ── 环路检测：visited 去重 continue ───────────────────────────────────

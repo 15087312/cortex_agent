@@ -59,6 +59,9 @@ class TestEmbeddingModel:
 
         monkeypatch.setitem(sys.modules, "sentence_transformers",
                             SimpleNamespace(SentenceTransformer=_RejectKw))
+        # CI 无 ~/.cortex settings，EMBEDDING_LOCAL_FILES_ONLY 可能为空 → 显式 mock 为 True
+        from config.settings import settings
+        monkeypatch.setattr(settings, "EMBEDDING_LOCAL_FILES_ONLY", True)
         e = _engine()
         assert e._load_embedding_model() is False
 

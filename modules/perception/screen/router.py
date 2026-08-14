@@ -142,10 +142,15 @@ class DetectorRouter:
             if not vision_backend.is_available():
                 return base_result
 
-            # 异步调用视觉模型
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # 已在异步上下文中，用 asyncio.ensure_future
+            # 异步调用视觉模型：get_running_loop 判断是否已在异步上下文，
+            # 避免 get_event_loop 在无 loop 线程抛 RuntimeError（3.12+ 已移除自动创建）
+            try:
+                asyncio.get_running_loop()
+                running = True
+            except RuntimeError:
+                running = False
+            if running:
+                # 已在异步上下文中，用线程池跑独立 loop（asyncio.run 不能在运行中 loop 内调用）
                 import concurrent.futures
                 with concurrent.futures.ThreadPoolExecutor() as pool:
                     vision_result = pool.submit(
