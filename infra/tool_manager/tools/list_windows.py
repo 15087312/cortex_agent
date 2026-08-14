@@ -4,6 +4,7 @@ import subprocess
 from typing import Dict, List, Any
 
 from infra.tool_manager.tool_registry import ToolRegistry
+from infra.tool_manager.service_registry import get_capability
 from utils.logger import setup_logger
 
 logger = setup_logger("list_windows_tool")
@@ -41,12 +42,14 @@ def _is_electron(app_name: str) -> bool:
 
         # 降级：检查 .app bundle 结构（仅 macOS）
         try:
-            from modules.perception.detectors.touchpoint_detector import TouchpointDetector
-            app_path = TouchpointDetector._find_app_path(app_name)
-            if app_path:
-                result = TouchpointDetector._is_electron_app(app_path)
-                _electron_cache[app_name] = result
-                return result
+            factory = get_capability("touchpoint_detector")
+            if factory is not None:
+                TouchpointDetector = factory()
+                app_path = TouchpointDetector._find_app_path(app_name)
+                if app_path:
+                    result = TouchpointDetector._is_electron_app(app_path)
+                    _electron_cache[app_name] = result
+                    return result
         except Exception:
             pass
 

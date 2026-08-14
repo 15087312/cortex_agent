@@ -8,6 +8,13 @@ import os
 from typing import Dict, Any
 
 from infra.tool_manager.tool_registry import ToolRegistry
+from infra.tool_manager.service_registry import get_capability
+
+
+def _get_history() -> Any:
+    """从能力端口获取 file_history 服务；未注册返回 None"""
+    factory = get_capability("file_history")
+    return factory() if factory is not None else None
 
 
 def _get_session_id(**kwargs) -> str:
@@ -29,10 +36,10 @@ def _get_session_id(**kwargs) -> str:
 )
 def record_file_change(action: str, file_path: str, content: str = "", **kwargs) -> Dict[str, Any]:
     """记录文件修改历史"""
-    from modules.cortex.file_history import get_file_history
-
     session_id = _get_session_id(**kwargs)
-    history = get_file_history()
+    history = _get_history()
+    if history is None:
+        return {"success": False, "error": "file_history 服务未注册"}
     abs_path = os.path.abspath(file_path)
 
     if action == "before":
@@ -70,10 +77,10 @@ def record_file_change(action: str, file_path: str, content: str = "", **kwargs)
 )
 def rollback_file(file_path: str, **kwargs) -> Dict[str, Any]:
     """回滚单个文件"""
-    from modules.cortex.file_history import get_file_history
-
     session_id = _get_session_id(**kwargs)
-    history = get_file_history()
+    history = _get_history()
+    if history is None:
+        return {"success": False, "error": "file_history 服务未注册"}
     abs_path = os.path.abspath(file_path)
 
     initial = history.get_initial(session_id, abs_path)
@@ -101,10 +108,10 @@ def rollback_file(file_path: str, **kwargs) -> Dict[str, Any]:
 )
 def rollback_session_files(**kwargs) -> Dict[str, Any]:
     """回滚会话所有文件"""
-    from modules.cortex.file_history import get_file_history
-
     session_id = _get_session_id(**kwargs)
-    history = get_file_history()
+    history = _get_history()
+    if history is None:
+        return {"success": False, "error": "file_history 服务未注册"}
     results = history.rollback_session(session_id)
     restored = sum(1 for v in results.values() if v == "restored")
     return {"success": True, "restored": restored, "total": len(results), "details": results}
@@ -121,10 +128,10 @@ def rollback_session_files(**kwargs) -> Dict[str, Any]:
 )
 def list_file_versions(file_path: str = "", **kwargs) -> Dict[str, Any]:
     """列出文件版本"""
-    from modules.cortex.file_history import get_file_history
-
     session_id = _get_session_id(**kwargs)
-    history = get_file_history()
+    history = _get_history()
+    if history is None:
+        return {"success": False, "error": "file_history 服务未注册"}
 
     if file_path:
         abs_path = os.path.abspath(file_path)

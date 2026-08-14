@@ -6,7 +6,7 @@ import asyncio
 import json
 from typing import Dict, List, Optional
 from config.settings import settings
-from modules.management import report_exception
+from utils.error_reporter import report_exception
 from utils.logger import setup_logger
 
 logger = setup_logger("medium_model_client")

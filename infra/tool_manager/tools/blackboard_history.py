@@ -5,6 +5,7 @@
 """
 import json
 from infra.tool_manager.tool_registry import ToolRegistry
+from infra.tool_manager.service_registry import get_capability
 from utils.logger import setup_logger
 
 logger = setup_logger("blackboard_history")
@@ -37,7 +38,10 @@ async def blackboard_history(
         JSON: {"observations": [...], "count": N, "query": Q}
     """
     try:
-        from modules.database.blackboard_repo import query_observations
+        factory = get_capability("blackboard_query")
+        if factory is None:
+            return json.dumps({"observations": [], "count": 0, "error": "黑板查询能力未注册"}, ensure_ascii=False)
+        query_observations = factory()
 
         k = max(1, min(50, int(limit)))
         start = end = ""

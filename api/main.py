@@ -35,6 +35,10 @@ from modules.output_system.tts import DEFAULT_TTS_OUTPUT_DIR as _tts_dir
 from modules.security_system.api import router as security_router
 from config.settings import settings
 
+# 装配：向 infra 能力端口注册业务服务（消除 infra → modules 逆向依赖）
+from bootstrap import register_business_capabilities
+register_business_capabilities()
+
 # 条件导入差异检测器路由
 if settings.DIFFERENCE_DETECTOR_ENABLED:
     from modules.perception.difference.api import router as difference_router

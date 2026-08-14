@@ -6,13 +6,17 @@ get_skill_detail: 阅读指定技能的完整说明书（先通过控制工具 l
 from typing import Any, Dict
 
 from infra.tool_manager.tool_registry import ToolRegistry
+from infra.tool_manager.service_registry import get_capability
 from utils.logger import setup_logger
 
 logger = setup_logger("skill_tools")
 
 
 def _get_manager():
-    from modules.thinking.skills.manager import skill_manager
+    factory = get_capability("skill_manager")
+    if factory is None:
+        return None
+    skill_manager = factory()
     if not skill_manager._loaded:
         skill_manager.load_skills()
     return skill_manager
@@ -32,6 +36,8 @@ def get_skill_detail(skill_id: str) -> Dict[str, Any]:
     """阅读技能说明书全文"""
     try:
         mgr = _get_manager()
+        if mgr is None:
+            return {"error": "技能服务未注册"}
         skill = mgr.get_skill(skill_id)
         if not skill:
             return {"error": f"技能不存在: {skill_id}"}

@@ -7,7 +7,7 @@ from typing import Dict, List, Optional
 from .base_model import BaseModelClient, ToolCall, ChatMessage, ChatResponse
 from config.settings import settings
 from utils.logger import setup_logger
-from modules.management import report_api_error, report_exception
+from utils.error_reporter import report_api_error, report_exception
 import asyncio
 import json
 

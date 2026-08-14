@@ -1,6 +1,7 @@
 """事件记忆查询工具 — 大模型主动检索历史事件"""
 import json
 from infra.tool_manager.tool_registry import ToolRegistry
+from infra.tool_manager.service_registry import get_capability
 from utils.logger import setup_logger
 
 logger = setup_logger("event_query")
@@ -36,8 +37,10 @@ async def event_query(query: str, top_k: str = "10", min_importance: str = "0.0"
         imp = max(0.0, min(1.0, float(min_importance)))
         type_list = [t.strip() for t in types.split(",") if t.strip()] if types else None
 
-        from modules.memory.event_retrieval import get_event_retrieval
-        retrieval = get_event_retrieval()
+        factory = get_capability("event_retrieval")
+        if factory is None:
+            return {"error": "事件检索能力未注册", "events": []}
+        retrieval = factory()
         events = await retrieval.retrieve(
             query=query,
             max_results=k,

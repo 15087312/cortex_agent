@@ -100,9 +100,11 @@ def test_scan_dependencies(monkeypatch):
 def fh(monkeypatch):
     hist = MagicMock()
     hist.record_initial.return_value = "v1"
-    import modules.cortex.file_history as fh_mod
-    monkeypatch.setattr(fh_mod, "get_file_history", lambda: hist)
-    return hist
+    # 工具层经能力端口获取 file_history；通过注册表注入 mock 实现
+    from infra.tool_manager.service_registry import register_capability, unregister_capability
+    register_capability("file_history", lambda: hist)
+    yield hist
+    unregister_capability("file_history")
 
 
 def test_record_before(fh, tmp_path):

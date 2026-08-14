@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException, Body, Path, Query, Header, Depends
 from typing import Dict, Any, Optional
 
 from infra.tool_manager import tool_manager, ToolRegistry
+from infra.tool_manager.service_registry import get_capability
 from api.errors import AppError, ErrorCode
 
 logger = __import__("utils.logger", fromlist=["setup_logger"]).setup_logger("tool_api")
@@ -15,8 +16,12 @@ from api.auth import require_api_key
 
 async def _security_gate_check(tool_name: str, params: Dict[str, Any], caller_role: str) -> None:
     """执行模式安全门检查，拦截则抛出 HTTPException"""
-    from modules.security_system.tool_security_gate import get_tool_security_gate
-    gate = get_tool_security_gate()
+    factory = get_capability("tool_security_gate")
+    if factory is None:
+        # fail-closed：安全门未注册时默认拒绝，不绕过安全检查
+        logger.warning(f"[ToolAPI] 安全门未注册，默认拦截: tool={tool_name}")
+        raise HTTPException(status_code=503, detail="安全门未初始化")
+    gate = factory()
     allowed, reason = await gate.check(
         tool_name=tool_name,
         tool_params=params,

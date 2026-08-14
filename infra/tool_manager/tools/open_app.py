@@ -4,6 +4,7 @@ import subprocess
 import sys
 
 from infra.tool_manager.tool_registry import ToolRegistry
+from infra.tool_manager.service_registry import get_capability
 from utils.logger import setup_logger
 
 logger = setup_logger("open_app_tool")
@@ -60,10 +61,11 @@ def open_app(app_name: str, activate_only: bool = False) -> dict:
     # 2. 用 TouchpointDetector 查找应用路径（支持中文名→英文路径映射）
     app_path = ""
     try:
-        from modules.perception.detectors.touchpoint_detector import TouchpointDetector
-        p = TouchpointDetector._find_app_path(app_name)
-        if p:
-            app_path = p
+        factory = get_capability("touchpoint_detector")
+        if factory is not None:
+            p = factory()._find_app_path(app_name)
+            if p:
+                app_path = p
     except Exception:
         pass
 

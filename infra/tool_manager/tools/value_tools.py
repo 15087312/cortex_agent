@@ -8,6 +8,7 @@
 """
 from typing import Optional
 from infra.tool_manager.tool_registry import ToolRegistry
+from infra.tool_manager.service_registry import get_capability
 from utils.logger import setup_logger
 
 logger = setup_logger("value_tools")
@@ -19,8 +20,8 @@ def _get_value_system():
 
 
 def _get_formatter():
-    from modules.thinking.value_formatter import ValueFormatter
-    return ValueFormatter(_get_value_system())
+    factory = get_capability("value_formatter")
+    return factory() if factory is not None else None
 
 
 @ToolRegistry.register(
@@ -208,11 +209,12 @@ def get_current_values(format: str = "compact") -> str:
             content = value_sys.load()
             return f"【完整价值观文本】\n{content}"
 
-        elif format == "compact":
-            compact = formatter.build_compact_context()
-            return compact if compact else "（暂无规则）"
-
-        elif format == "sections":
+        elif format in ("compact", "sections"):
+            if formatter is None:
+                return "❌ 值格式化服务未注册"
+            if format == "compact":
+                compact = formatter.build_compact_context()
+                return compact if compact else "（暂无规则）"
             return formatter.build_sections()
 
         else:

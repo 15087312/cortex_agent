@@ -5,6 +5,7 @@
 """
 
 from infra.tool_manager.tool_registry import ToolRegistry
+from infra.tool_manager.service_registry import get_capability
 from utils.logger import setup_logger
 
 logger = setup_logger("create_skill_tool")
@@ -41,7 +42,10 @@ async def create_skill(
         return {"status": "error", "message": "skill_id 和 name 不能为空"}
 
     try:
-        from modules.thinking.skills import skill_manager
+        factory = get_capability("skill_manager")
+        if factory is None:
+            return {"status": "error", "message": "技能服务未注册"}
+        skill_manager = factory()
         # SkillManager.create_skill 内部：yaml.safe_dump front matter + 原子写 + reload
         ok, msg = skill_manager.create_skill(
             skill_id=skill_id,

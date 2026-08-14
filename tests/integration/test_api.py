@@ -80,7 +80,8 @@ async def test_root_returns_app_info(_mock_lifespan, _no_auth, _reset_rate_limit
     data = resp.json()
     assert data["success"] is True
     assert data["data"]["name"] == "Humanoid AGI"
-    assert data["data"]["version"] == "2.0.0"
+    from cortex.version import __version__ as _ver
+    assert data["data"]["version"] == _ver
     assert data["data"]["status"] == "running"
 
 

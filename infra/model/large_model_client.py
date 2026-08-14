@@ -9,8 +9,9 @@ import json
 import ssl
 import time
 from config.settings import settings
-from modules.management import report_api_error, report_exception
+from utils.error_reporter import report_api_error, report_exception
 from utils.logger import get_logger
+from infra.tool_manager.service_registry import get_capability
 
 logger = get_logger(__name__)
 
@@ -608,10 +609,12 @@ class LargeModelClient(BaseModelClient):
         # ── 当前回合用户图片（直连多模态）：取一次并清除，避免 ReAct 循环重复附图 ──
         turn_images = None
         try:
-            from modules.thinking.turn_images import get_turn_images, clear_turn_images
-            turn_images = get_turn_images()
-            if turn_images:
-                clear_turn_images()
+            factory = get_capability("turn_images")
+            if factory is not None:
+                get_turn_images, clear_turn_images = factory()
+                turn_images = get_turn_images()
+                if turn_images:
+                    clear_turn_images()
         except Exception:
             turn_images = None
 

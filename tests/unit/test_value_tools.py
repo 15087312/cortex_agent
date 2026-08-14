@@ -8,10 +8,14 @@ from infra.tool_manager.tools import value_tools
 @pytest.fixture
 def vs(tmp_path, monkeypatch):
     from config.values_store import value_system
+    from modules.thinking.value_formatter import ValueFormatter
+    from infra.tool_manager.service_registry import register_capability, unregister_capability
     tmp_vs = ValueSystem(values_file=str(tmp_path / "values.txt"))
     monkeypatch.setattr(value_tools, "_get_value_system", lambda: tmp_vs)
-    # formatter 用同一实例
-    return tmp_vs
+    # formatter 用同一实例（经能力端口注入，工具层不再直接 import modules）
+    register_capability("value_formatter", lambda: ValueFormatter(tmp_vs))
+    yield tmp_vs
+    register_capability("value_formatter", lambda: ValueFormatter(value_system))
 
 
 def _add(vs, section="行为准则", rule="始终对用户保持诚实并如实说明限制"):

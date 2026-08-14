@@ -10,6 +10,7 @@ import os
 from typing import Dict, Any
 
 from infra.tool_manager.tool_registry import ToolRegistry
+from infra.tool_manager.service_registry import get_capability
 from utils.logger import setup_logger
 
 logger = setup_logger("perception_tools")
@@ -242,9 +243,10 @@ def detect_ui_elements(
 ) -> Dict[str, Any]:
     """检测 UI 元素 — 自动选择最佳检测后端"""
     try:
-        from modules.perception.screen import get_detector_router
-
-        router = get_detector_router()
+        factory = get_capability("detector_router")
+        if factory is None:
+            return {"success": False, "error": "感知服务未注册", "elements": []}
+        router = factory()
         ctx = router.detect(app=app, depth=depth)
 
         # 角色过滤
