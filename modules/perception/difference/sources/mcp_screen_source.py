@@ -22,6 +22,7 @@ import subprocess
 import sys
 import threading
 import time
+import weakref
 from queue import Empty, Queue
 from typing import Optional
 
@@ -45,7 +46,11 @@ class ScreenDiffSource(DifferenceSource):
     """MCP 屏幕差异源
 
     后台线程持续检测屏幕像素变化，将结果注入 DifferenceDetector。
+
+    活跃实例追踪（weakref）：测试/退出时统一 stop，避免后台线程遗留。
     """
+
+    _all_instances = weakref.WeakSet()
 
     @property
     def source_type(self) -> str:
@@ -80,6 +85,8 @@ class ScreenDiffSource(DifferenceSource):
 
         # 定位 server 脚本
         self._server_script = server_script or self._find_server_script()
+
+        ScreenDiffSource._all_instances.add(self)
 
     @staticmethod
     def _find_server_script() -> str:
@@ -119,6 +126,7 @@ class ScreenDiffSource(DifferenceSource):
             self._thread.join(timeout=3.0)
             self._thread = None
         self._close_process()
+        ScreenDiffSource._all_instances.discard(self)
         logger.info(f"屏幕差异源已停止 (已检测 {self._total_changes} 次变化)")
 
     @property

@@ -103,3 +103,28 @@ def app_state():
 def memory_manager():
     """提供测试用 MemoryManager 实例（新系统暂存根）"""
     return None
+
+
+@pytest.fixture(autouse=True)
+def _stop_background_sources():
+    """每个测试后 stop 所有遗留的屏幕监控/差异源实例。
+
+    修复：ScreenMonitorSource / ScreenDiffSource 的 daemon 后台线程在测试未显式
+    stop 时会继续运行（无限调用被 mock 的 reader），干扰 pytest capture 导致偶发挂起。
+    通过类级 weakref 注册表统一清理。
+    """
+    yield
+    for mod, cls_name in (
+        ("modules.perception.difference.sources.screen_monitor_source", "ScreenMonitorSource"),
+        ("modules.perception.difference.sources.mcp_screen_source", "ScreenDiffSource"),
+    ):
+        try:
+            module = __import__(mod, fromlist=["x"])
+            cls = getattr(module, cls_name)
+            for inst in list(getattr(cls, "_all_instances", ())):
+                try:
+                    inst.stop()
+                except Exception:
+                    pass
+        except Exception:
+            pass

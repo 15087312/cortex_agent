@@ -11,6 +11,7 @@ import subprocess
 import sys
 import threading
 import time
+import weakref
 from queue import Queue, Empty
 from typing import Optional
 
@@ -27,8 +28,12 @@ class ScreenMonitorSource:
 
     source_type = "screen_monitor"
 
+    # 活跃实例追踪（weakref）：测试/退出时统一 stop，避免后台线程遗留
+    _all_instances = weakref.WeakSet()
+
     def __init__(self, server_script: str = None, interval: float = None):
         self._interval = interval or DEFAULT_INTERVAL
+        ScreenMonitorSource._all_instances.add(self)
         self._server_script = server_script or self._find_server_script()
         self._running = False
         self._thread: Optional[threading.Thread] = None
@@ -67,6 +72,7 @@ class ScreenMonitorSource:
             self._thread.join(timeout=3)
             self._thread = None
         self._close_process()
+        ScreenMonitorSource._all_instances.discard(self)
         logger.info("屏幕内容源已停止")
 
     # ── 持久子进程管理 ──

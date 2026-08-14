@@ -62,6 +62,8 @@ def test_vision_detect_full(monkeypatch):
 
 def _source(monkeypatch):
     s = ScreenMonitorSource.__new__(ScreenMonitorSource)
+    # __new__ 绕过 __init__，手动注册到活跃实例表，便于 conftest 统一 stop 遗留线程
+    ScreenMonitorSource._all_instances.add(s)
     s._interval = 5.0
     s._running = False
     s._thread = None
@@ -120,8 +122,10 @@ def test_ensure_process_script_exists(monkeypatch):
     monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: proc)
     s._send_request = MagicMock()
     s._read_response = MagicMock(return_value={"result": {}})
-    s._close_process = MagicMock()
+    # 不 mock _close_process：保留真实清理（设 _reader_running=False 停 reader 线程），
+    # 否则 stop() 无法停掉 _ensure_process 启动的后台线程
     assert s._ensure_process() is True
+    s.stop()
 
 
 def test_close_process_and_send(monkeypatch):
