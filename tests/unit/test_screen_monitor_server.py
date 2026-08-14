@@ -57,8 +57,14 @@ class TestDetectElements:
         result = _detect_elements(img, detect_buttons=False, extract_text=False)
         assert isinstance(result, list)
 
-    def test_detect_text(self):
+    def test_detect_text(self, monkeypatch):
         img = _make_test_img(text="HelloWorld")
+        # conftest 屏蔽真实 OCR（防双 OpenMP 死锁）→ 注入 fake OCR 测文字检测分支
+        import infra.mcp.servers.screen_monitor_server as sms
+        monkeypatch.setattr(
+            sms, "_ocr",
+            lambda enhanced: [[[[0, 0], [10, 10], [10, 0], [0, 10]], "HelloWorld", 0.9]],
+        )
         result = _detect_elements(img, detect_buttons=False, extract_text=True)
         texts = [e for e in result if e["type"] == "text"]
         assert len(texts) >= 1
