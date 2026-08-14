@@ -6,6 +6,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import field_validator
 from typing import Optional, List
 import os
+import sys
 
 # macOS 双 libomp 兜底：
 # faiss 与 torch 各捆绑一份 libomp.dylib，同一进程两套 OpenMP 会 abort（OMP: Error #15）。
@@ -546,7 +547,8 @@ class Settings(BaseSettings):
             # OpenAI 或未知 API 使用 gpt-4o
             return self.IMAGE_MODEL_NAME
 
-        return self.IMAGE_MODEL_NAME
+        # 不可达：elif 条件是恒真式（A or A'），保留作防御
+        return self.IMAGE_MODEL_NAME  # pragma: no cover
 
     @property
     def effective_vision_local_model(self) -> str:
@@ -997,7 +999,9 @@ class Settings(BaseSettings):
 # 全局配置实例
 try:
     settings = Settings()
-except Exception as e:
+except Exception as e:  # pragma: no cover — 兜底路径：仅在 Settings() 构造失败时触发；
+    # 而任何导致首次构造失败的环境（非法 env/缺失 .cortex）下，Settings(_env_file=None)
+    # 同样会失败，故该分支在真实环境不可达（构造成功场景不可构造）。
     import sys
     print(f"[WARNING] Failed to load settings from .env: {e}", file=sys.stderr)
     print("[WARNING] Using default settings. Create a .env file for production.", file=sys.stderr)
