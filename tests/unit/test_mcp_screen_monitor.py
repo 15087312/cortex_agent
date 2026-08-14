@@ -18,9 +18,9 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
-# 测试环境不加载真实 OCR 引擎（避免 onnxruntime 双 OpenMP 死锁，见 tests/conftest.py），
-# 使 _init() 走 ImportError 分支，_ocr 为 None，测试再注入 fake OCR。
-sys.modules["rapidocr_onnxruntime"] = None
+# 测试环境不加载真实 OCR 引擎（避免 onnxruntime 双 OpenMP 死锁，见 tests/conftest.py）。
+# conftest 的 block_real_native_libs 已全局置 rapidocr_onnxruntime=None，
+# 这里不再模块级置 None（避免 §31 类顺序污染），_init() 自然走 ImportError，_ocr 为 None。
 
 import infra.mcp.servers.screen_monitor_server as sms  # noqa: E402
 

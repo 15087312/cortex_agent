@@ -1330,3 +1330,31 @@ _run_task/_think_loop）、`api_stream` 完整 WS 流、`output_system` 深路�
 
 **修复：** fixture teardown 先把 `_faiss_index` 置 None 再 `close()`，避免 `__del__` 在 GC 期接触假索引。
 
+
+---
+
+## 38. bug 文档系统性审计 —— 发现 2 处同类问题并修复
+
+**背景：** 对 §1-37 逐条提取根因模式，在代码中搜索同类问题。
+
+**审计范围与结论（大部分模式已正确处理）：**
+
+| 模式 | 结论 |
+|---|---|
+| §29 缺 `import sys` | ✅ 无遗漏（全量搜索 `sys.stderr/stdout` 使用处均已 import） |
+| §31 `sys.modules` 模块级置 None | ⚠️ **发现 2 处同类** → 修复 |
+| §34 硬编码版本断言 | ✅ 均为测试内部假数据，非项目版本断言 |
+| §24 线程内事件循环自锁 | ✅ frontend_channel/api_stream 已处理（注释明确避免自锁） |
+| §30 后台线程遗留 | ✅ 已全面 weakref 注册表 + conftest 清理 |
+| §28 无鉴权 WS | ✅ chat_gateway 显式 `_ws_auth_ok` + 4401 拒绝，test_ws_auth 覆盖 |
+| §21 主动搭话绕过开关 | ✅ trigger gate 52 处 enabled/allowed 测试充分 |
+| §25 工具调用被套人设 | ✅ model_runner 经 PromptComposer 统一构建；工具型调用用 `_NEUTRAL_SYSTEM_PROMPT` |
+| §37 `__del__` 陷阱 | ⚠️ **发现 1 处同类** → 修复 |
+
+**同类 Bug 1（§31 型）：** `test_mcp_screen_diff.py` / `test_mcp_screen_monitor.py` 模块级 `sys.modules["rapidocr_onnxruntime"] = None` 永久污染——conftest 的 `block_real_native_libs` 已全局置 None，此处冗余且保留"模块级污染"反模式。
+**修复：** 移除两个文件的模块级置 None，统一由 conftest 管理。验证 93 passed。
+
+**同类 Bug 2（§37 型）：** `causal_graph.CausalGraph.__del__` 直接 `self.close()`，无 `sys.is_finalizing()` 防护、无 try/except——GC/解释器关闭期若 builtins/模块已清理，`__del__` 抛异常可能触发 GC 死循环。
+**修复：** 对齐 `event_store.__del__` 防护模式：`is_finalizing()` 提前返回 + try/except 吞异常。验证 171 passed。
+
+**经验：** 把已知 bug 的根因做成"可搜索模式"清单（`sys.modules` 污染 / `__del__` 无防护 / 缺 import / 版本硬编码），每次审计按清单批量 grep，能高效发现同类问题。

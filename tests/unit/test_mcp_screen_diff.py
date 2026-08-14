@@ -18,8 +18,8 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
-# 测试环境不加载真实 OCR/onnx 引擎（见 tests/conftest.py），这里仅保证模块自身 import 干净。
-sys.modules["rapidocr_onnxruntime"] = None
+# 测试环境不加载真实 OCR/onnx 引擎（见 tests/conftest.py）。
+# conftest 的 block_real_native_libs 已全局置 None，不再模块级置 None（避免 §31 类顺序污染）。
 
 import infra.mcp.servers.screen_diff_server as dss  # noqa: E402
 

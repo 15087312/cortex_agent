@@ -7,6 +7,7 @@ CausalGraph — 因果图存储与邻域扩散
 import json
 import os
 import sqlite3
+import sys
 import threading
 import time
 import uuid
@@ -802,4 +803,10 @@ class CausalGraph:
             self._conn = None
 
     def __del__(self):
-        self.close()
+        # 解释器关闭/GC 期 builtins 可能已被清空（见 §37 教训），跳过并吞异常
+        if sys.is_finalizing():
+            return
+        try:
+            self.close()
+        except Exception:
+            pass
