@@ -124,6 +124,41 @@ class MCPServerManager:
             for name, t in self._transports.items()
         ]
 
+    async def remove_server(self, name: str) -> bool:
+        """移除单个 MCP server（独立热卸载）。
+
+        逆序清理：
+          1. 先摘除该 server 的工具（模型立刻看不到，避免调用半死工具）
+          2. 关闭连接（transport.close 内部终止子进程）
+          3. 清理索引
+        用于运行时停用单个 MCP server，不影响其他 server。
+        """
+        if name not in self._transports:
+            logger.warning(f"[MCP] server {name} 不存在，无法移除")
+            return False
+
+        # 1. 摘除该 server 的工具（列表推导避免迭代中修改 dict）
+        for tname in [t for t, s in self._tool_to_server.items() if s == name]:
+            self._tool_to_server.pop(tname, None)
+            self._tools_index.pop(tname, None)
+
+        # 2. 关闭连接并清理索引
+        transport = self._transports.pop(name, None)
+        if transport:
+            await transport.close()
+        logger.info(f"[MCP] 已移除 server: {name}")
+        return True
+
+    async def replace_server(self, name: str, command: str = None,
+                             args: list = None, env: dict = None,
+                             url: str = "") -> bool:
+        """热替换 server：先卸载旧的（摘工具+断开），再按新配置添加。
+
+        等价于 dsh mcp-client 的 HMR（dispose 旧实例 + 创建新实例）。
+        """
+        await self.remove_server(name)
+        return await self.add_server(name, command, args, env, url)
+
     async def shutdown(self):
         """关闭所有连接"""
         for name, transport in self._transports.items():

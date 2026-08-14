@@ -219,3 +219,78 @@ class TestShutdown:
         assert mgr._transports == {}
         assert mgr._tools_index == {}
         assert mgr._tool_to_server == {}
+
+
+class TestRemoveServer:
+    """独立热卸载：逆序清理（摘工具 → 关连接 → 清索引）"""
+
+    async def test_remove_detaches_tools_and_closes(self):
+        t = _fake_transport("srv", tools=[])
+        mgr = MCPServerManager([])
+        mgr._transports = {"srv": t}
+        mgr._tools_index = {"a": _tool("a", "srv"), "b": _tool("b", "srv"), "c": _tool("c", "other")}
+        mgr._tool_to_server = {"a": "srv", "b": "srv", "c": "other"}
+        ok = await mgr.remove_server("srv")
+        assert ok is True
+        t.close.assert_awaited_once()
+        assert "srv" not in mgr._transports
+        assert "a" not in mgr._tools_index and "b" not in mgr._tools_index
+        assert "c" in mgr._tools_index  # 其他 server 的工具不受影响
+        assert mgr._tool_to_server == {"c": "other"}
+
+    async def test_remove_unknown_returns_false(self):
+        mgr = MCPServerManager([])
+        mgr._transports = {"s1": _fake_transport("s1")}
+        ok = await mgr.remove_server("nope")
+        assert ok is False
+        assert "s1" in mgr._transports  # 不影响已有 server
+
+    async def test_remove_cleanup_uses_original_tool_names(self):
+        t = _fake_transport("srv", tools=[])
+        mgr = MCPServerManager([])
+        mgr._transports = {"srv": t}
+        # 工具名与 server 映射（含无 server 的工具）
+        mgr._tools_index = {"a": _tool("a", "srv"), "orphan": _tool("orphan", "gone")}
+        mgr._tool_to_server = {"a": "srv", "orphan": "gone"}
+        await mgr.remove_server("srv")
+        assert "orphan" in mgr._tools_index  # 不属于 srv，不误删
+
+    async def test_remove_then_call_tool_fails_gracefully(self):
+        t = _fake_transport("srv", tools=[])
+        mgr = MCPServerManager([])
+        mgr._transports = {"srv": t}
+        mgr._tools_index = {"a": _tool("a", "srv")}
+        mgr._tool_to_server = {"a": "srv"}
+        await mgr.remove_server("srv")
+        result = await mgr.call_tool("a", {})
+        assert result["isError"] is True
+        assert "不属于任何 MCP server" in result["content"][0]["text"]
+
+
+class TestReplaceServer:
+    """热替换：remove 旧（摘工具+断开）→ add 新配置"""
+
+    async def test_replace_with_new_command(self):
+        old = _fake_transport("srv", tools=[_tool("a")])
+        new = _fake_transport("srv", tools=[_tool("b")], connect_ok=True)
+        mgr = MCPServerManager([])
+        mgr._transports = {"srv": old}
+        mgr._tools_index = {"a": _tool("a", "srv")}
+        mgr._tool_to_server = {"a": "srv"}
+        with patch("infra.mcp.transport.MCPStdioTransport") as m:
+            m.return_value = new
+            ok = await mgr.replace_server("srv", command="new-cmd", args=["x"])
+        assert ok is True
+        old.close.assert_awaited_once()  # 旧连接已断开
+        new.connect.assert_awaited_once()
+        assert "a" not in mgr._tools_index  # 旧工具已摘
+        assert mgr._tool_to_server.get("b") == "srv"  # 新工具已注册
+
+    async def test_replace_missing_server_still_connects(self):
+        t = _fake_transport("new", tools=[_tool("x")], connect_ok=True)
+        mgr = MCPServerManager([])
+        with patch("infra.mcp.transport.MCPStdioTransport") as m:
+            m.return_value = t
+            ok = await mgr.replace_server("new", command="cmd")
+        assert ok is True
+        assert mgr._tool_to_server.get("x") == "new"
