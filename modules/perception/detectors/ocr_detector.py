@@ -5,6 +5,7 @@ OCR 检测器 — 屏幕文字识别
 """
 import time
 import threading
+import weakref
 from typing import Dict, List, Optional
 
 import numpy as np
@@ -23,10 +24,15 @@ class OCRDetector(PerceptionDetector):
     """OCR 检测器
 
     监听 SCREEN_DIFF 事件，变化比例 >= 15% 时触发 OCR 识别。
+
+    活跃实例追踪（weakref）：测试/退出时统一 stop，避免后台线程遗留。
     """
+
+    _all_instances = weakref.WeakSet()
 
     def __init__(self, threshold: float = OCR_TRIGGER_THRESHOLD, cooldown: float = 5.0):
         self._threshold = threshold
+        OCRDetector._all_instances.add(self)
         self._cooldown = cooldown
         self._running = False
         self._ocr_engine = None
@@ -67,6 +73,7 @@ class OCRDetector(PerceptionDetector):
         if self._event_bus and self._sub_id:
             self._event_bus.unsubscribe(self._sub_id)
             self._sub_id = ""
+        OCRDetector._all_instances.discard(self)
         logger.info("OCR 检测器: 已停止")
 
     def _on_screen_diff(self, event) -> None:

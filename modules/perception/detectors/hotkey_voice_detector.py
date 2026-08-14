@@ -23,6 +23,7 @@
 import collections
 import threading
 import time
+import weakref
 from typing import Any, Dict, List, Optional
 
 import numpy as np
@@ -46,7 +47,11 @@ class HotkeyVoiceDetector(PerceptionDetector):
     - 第一次按下 → 开始录音（pyaudio 采集到内存）
     - 再次按下 → 停止录音 → Whisper 转写 → 发布 SPEECH_DETECTED
     - 录音中检测到结束词（默认"完毕"）→ 自动停止录音
+
+    活跃实例追踪（weakref）：测试/退出时统一 stop，避免后台线程遗留。
     """
+
+    _all_instances = weakref.WeakSet()
 
     def __init__(
         self,
@@ -79,6 +84,7 @@ class HotkeyVoiceDetector(PerceptionDetector):
         self._frames: List[bytes] = []
         self._frames_lock = threading.Lock()
         self._record_thread: Optional[threading.Thread] = None
+        HotkeyVoiceDetector._all_instances.add(self)
         self._finish_lock = threading.Lock()
         # 录音会话代号：快速重启时防止旧的结束词检测线程串台到新会话
         self._record_generation = 0
@@ -137,6 +143,7 @@ class HotkeyVoiceDetector(PerceptionDetector):
             self._record_thread.join(timeout=5)
             self._record_thread = None
         self._end_check_thread = None
+        HotkeyVoiceDetector._all_instances.discard(self)
         if self._listener:
             try:
                 self._listener.stop()

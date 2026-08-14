@@ -114,17 +114,117 @@ def _stop_background_sources():
     通过类级 weakref 注册表统一清理。
     """
     yield
-    for mod, cls_name in (
-        ("modules.perception.difference.sources.screen_monitor_source", "ScreenMonitorSource"),
-        ("modules.perception.difference.sources.mcp_screen_source", "ScreenDiffSource"),
+    for mod, cls_name, stop_method in (
+        ("modules.perception.difference.sources.screen_monitor_source", "ScreenMonitorSource", "stop"),
+        ("modules.perception.difference.sources.mcp_screen_source", "ScreenDiffSource", "stop"),
+        ("modules.perception.setup", "PerceptionSystem", "stop"),
+        ("modules.perception.events.bus", "PerceptionEventBus", "shutdown"),
+        ("modules.perception.detectors.voice_detector", "VoiceDetector", "stop"),
+        ("modules.perception.detectors.hotkey_voice_detector", "HotkeyVoiceDetector", "stop"),
+        ("modules.perception.detectors.ocr_detector", "OCRDetector", "stop"),
     ):
         try:
             module = __import__(mod, fromlist=["x"])
             cls = getattr(module, cls_name)
             for inst in list(getattr(cls, "_all_instances", ())):
                 try:
-                    inst.stop()
+                    getattr(inst, stop_method)()
                 except Exception:
                     pass
         except Exception:
             pass
+
+
+# ---------------------------------------------------------------------------
+# 内存泄漏检测 —— 默认开启，覆盖全项目（unit + integration，经 tests/conftest.py）
+#
+# 两层检测：
+#   1. 增长趋势（轻量）：pytest_runtest_teardown 每 LEAK_INTERVAL 个测试采样
+#      sys.getallocatedobjects()，会话结束对后半段采样点拟合斜率；
+#      若存活对象数随测试数持续线性增长 → 跨测试泄漏。
+#   2. 类型定位（pympler）：会话前后 SummaryTracker 快照 diff，
+#      列出会话内创建但未释放的对象类型，供人工确认泄漏点。
+#
+# 开销：getallocatedobjects 为 O(1)；pympler 仅在会话结束遍历一次对象表。
+# 环境变量可调：LEAK_INTERVAL（采样间隔，默认 50）、LEAK_REPORT（0 关闭报告）。
+# ---------------------------------------------------------------------------
+
+import gc as _gc
+
+LEAK_INTERVAL = int(os.environ.get("LEAK_INTERVAL", "100"))
+LEAK_REPORT = os.environ.get("LEAK_REPORT", "1") == "1"
+
+# 每测试新增存活对象数超过此阈值判定为泄漏嫌疑（保守，避免误报）
+LEAK_RATE_THRESHOLD = int(os.environ.get("LEAK_RATE_THRESHOLD", "1500"))
+
+_LEAK_CTX = {"count": 0, "samples": [], "tracker": None}
+
+
+def pytest_runtest_teardown(item, nextitem):
+    """每 LEAK_INTERVAL 个测试采样 GC 跟踪的存活对象数（len(gc.get_objects())）。
+
+    开销约 0.1-0.5s/次（遍历 GC 对象表）；默认每 100 测试一次。
+    """
+    _LEAK_CTX["count"] += 1
+    if _LEAK_CTX["count"] % LEAK_INTERVAL == 0:
+        try:
+            _LEAK_CTX["samples"].append((_LEAK_CTX["count"], len(_gc.get_objects())))
+        except Exception:
+            pass
+
+
+def pytest_sessionstart(session):
+    """会话开始：构造 pympler baseline（用于会话结束的类型 diff）。"""
+    try:
+        from pympler import tracker
+        _gc.collect()
+        _LEAK_CTX["tracker"] = tracker.SummaryTracker()
+    except ImportError:
+        _LEAK_CTX["tracker"] = None  # pympler 未安装：仅保留增长趋势检测
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """会话结束（capture 已释放）：输出泄漏检测报告。"""
+    try:
+        _gc.collect()
+        _report_leak_detector(_LEAK_CTX["tracker"])
+    except Exception:
+        pass
+
+
+def _report_leak_detector(pympler_tracker) -> None:
+    if not LEAK_REPORT:
+        return
+    print("\n" + "=" * 60)
+    print("[LEAK-DETECT] 内存泄漏检测报告")
+    print("=" * 60)
+
+    # 1) 增长趋势判定
+    samples = _LEAK_CTX["samples"]
+    if len(samples) >= 3:
+        half = samples[len(samples) // 2:]
+        delta_objs = half[-1][1] - half[0][1]
+        delta_tests = max(1, half[-1][0] - half[0][0])
+        rate = delta_objs / delta_tests
+        print(f"  [趋势] 采样点: {samples}")
+        print(f"  [趋势] 后 {len(half)} 个采样点: 对象数 {half[0][1]} → {half[-1][1]} "
+              f"(每测试新增 {rate:.0f} 存活对象)")
+        if rate > LEAK_RATE_THRESHOLD:
+            print(f"  ⚠ 疑似内存泄漏: 每测试持续新增 {rate:.0f} 个存活对象，"
+                  f"超过阈值 {LEAK_RATE_THRESHOLD}，请用 scripts/leak_check.py 定位")
+        else:
+            print(f"  ✓ 对象数稳定（每测试 {rate:.0f} 对象，阈值 {LEAK_RATE_THRESHOLD}）")
+    else:
+        print(f"  [趋势] 测试样本不足（{len(samples)} 个采样点 < 3），跳过增长判定")
+
+    # 2) pympler 类型定位
+    if pympler_tracker is not None:
+        print("  [pympler] 会话内创建但未释放的对象类型 top（随测试数增长的 = 泄漏候选）:")
+        try:
+            pympler_tracker.print_diff()
+        except Exception as e:
+            print(f"  pympler 分析失败: {e}")
+    print("=" * 60)
+
+
+

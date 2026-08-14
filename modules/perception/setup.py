@@ -5,6 +5,7 @@
 屏幕 UI 检测由 TouchpointDetector（检测工具）和 ScreenMonitorMCP（MCP server）处理。
 """
 import threading
+import weakref
 from typing import Optional
 
 from utils.logger import setup_logger
@@ -22,9 +23,14 @@ class PerceptionSystem:
     - 语音检测器（可选）
     - 世界状态管理器
     - 主动触发（基于差异检测事件）
+
+    活跃实例追踪（weakref）：测试/退出时统一 stop，避免非 daemon 线程遗留阻塞退出。
     """
 
+    _all_instances = weakref.WeakSet()
+
     def __init__(self):
+        PerceptionSystem._all_instances.add(self)
         self.world_state = None
         self.event_bus = None
         self.voice_detector = None
@@ -225,6 +231,7 @@ class PerceptionSystem:
             from modules.perception.events.bus import get_event_bus
             self.world_state.stop(get_event_bus())
         self._started = False
+        PerceptionSystem._all_instances.discard(self)
         logger.info("感知系统已停止")
 
     def get_status(self) -> dict:

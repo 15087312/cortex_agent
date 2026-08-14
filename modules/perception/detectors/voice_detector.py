@@ -12,6 +12,7 @@ import collections
 import re
 import threading
 import time
+import weakref
 from typing import Any, Dict, List, Optional
 
 import numpy as np
@@ -51,7 +52,11 @@ class VoiceDetector(PerceptionDetector):
     3. 直接发布 SPEECH_DETECTED 事件到 Event Bus
 
     detect() 返回缓存的事件（用于非图像检测器路径）。
+
+    活跃实例追踪（weakref）：测试/退出时统一 stop，避免后台线程遗留。
     """
+
+    _all_instances = weakref.WeakSet()
 
     def __init__(
         self,
@@ -77,6 +82,7 @@ class VoiceDetector(PerceptionDetector):
 
         self._running = False
         self._thread: Optional[threading.Thread] = None
+        VoiceDetector._all_instances.add(self)
         self._recognizer = None
         self._microphone = None
         self._events: collections.deque = collections.deque(maxlen=100)
@@ -135,6 +141,7 @@ class VoiceDetector(PerceptionDetector):
             self._thread.join(timeout=5)
         self._recognizer = None
         self._microphone = None
+        VoiceDetector._all_instances.discard(self)
         logger.info("语音检测器已停止")
 
     def detect(

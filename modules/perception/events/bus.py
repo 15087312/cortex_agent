@@ -7,6 +7,7 @@
 """
 import asyncio
 import threading
+import weakref
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from utils.logger import setup_logger
@@ -41,9 +42,14 @@ class PerceptionEventBus:
         bus = get_event_bus()
         bus.subscribe(PerceptionEventType.SCREEN_OCR, my_handler)
         bus.publish(event)
+
+    活跃实例追踪（weakref）：测试/退出时统一 shutdown，避免 async 线程遗留。
     """
 
+    _all_instances = weakref.WeakSet()
+
     def __init__(self):
+        PerceptionEventBus._all_instances.add(self)
         self._subscriptions: Dict[str, List[_Subscription]] = {}
         self._sub_lock = threading.Lock()
         self._async_lock = threading.Lock()
@@ -159,6 +165,7 @@ class PerceptionEventBus:
             self._async_thread.join(timeout=5)
         self._async_loop = None
         self._async_thread = None
+        PerceptionEventBus._all_instances.discard(self)
 
     def clear(self) -> None:
         """清空所有订阅（测试用）"""
