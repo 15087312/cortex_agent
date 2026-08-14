@@ -82,3 +82,46 @@ def test_web_fetch_timeout(monkeypatch):
     monkeypatch.setattr(req_mod, "request", lambda *a, **k: (_ for _ in ()).throw(req_mod.exceptions.Timeout()))
     r = _run(wf.web_fetch("https://example.com"))
     assert "超时" in r["error"]
+
+
+# ── 防御性分支：SSRF 边界 / 异常回退 ─────────────────────────────────────────
+
+def test_private_ip_public_address():
+    import socket
+    def fake_getaddrinfo(*a, **k):
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.8.8", 0))]
+    real = socket.getaddrinfo
+    socket.getaddrinfo = fake_getaddrinfo
+    try:
+        assert wf._is_private_ip("example.com") is False
+    finally:
+        socket.getaddrinfo = real
+
+
+def test_private_ip_cloud_metadata(monkeypatch):
+    import socket
+    class FakeIP:
+        is_private = is_loopback = is_link_local = is_reserved = False
+        def __str__(self):
+            return "169.254.169.254"
+    monkeypatch.setattr(wf.ipaddress, "ip_address", lambda s: FakeIP())
+    def fake_getaddrinfo(*a, **k):
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("169.254.169.254", 0))]
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
+    assert wf._is_private_ip("metadata.example") is True
+
+
+def test_web_fetch_connection_error(monkeypatch):
+    import requests as req_mod
+    monkeypatch.setattr(wf, "_is_private_ip", lambda h: False)
+    monkeypatch.setattr(req_mod, "request", lambda *a, **k: (_ for _ in ()).throw(req_mod.exceptions.ConnectionError("refused")))
+    r = _run(wf.web_fetch("https://example.com"))
+    assert "连接失败" in r["error"]
+
+
+def test_web_fetch_generic_error(monkeypatch):
+    import requests as req_mod
+    monkeypatch.setattr(wf, "_is_private_ip", lambda h: False)
+    monkeypatch.setattr(req_mod, "request", lambda *a, **k: (_ for _ in ()).throw(ValueError("boom")))
+    r = _run(wf.web_fetch("https://example.com"))
+    assert "boom" in r["error"]

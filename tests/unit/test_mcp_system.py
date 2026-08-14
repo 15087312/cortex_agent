@@ -528,6 +528,18 @@ class TestInMemoryMCPToolExecutor:
         r = e.execute(ToolCallRequest(tool_name="x"))
         assert r.success is False
 
+    def test_execute_async_function(self):
+        from infra.mcp.in_memory import InMemoryMCPToolExecutor
+        from infra.mcp.types import ToolCallRequest
+
+        async def afunc(x):
+            return x * 2
+
+        e = InMemoryMCPToolExecutor({"afunc": afunc})
+        r = e.execute(ToolCallRequest(tool_name="afunc", params={"x": 21}))
+        assert r.success is True
+        assert r.result == 42
+
 
 # ====================================================================
 # combined_provider.py — 合并 Provider/Executor

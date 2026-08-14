@@ -122,3 +122,46 @@ def test_git_diff_marks_only_pure_add_remove():
         r = git_tools.git_diff()
     assert r["added_lines"] == 1
     assert r["removed_lines"] == 1
+
+
+# ── 防御性分支：异常回退 / 成功路径 / 失败透传 ───────────────────────────────
+
+def test_run_git_generic_exception():
+    with patch("subprocess.run", side_effect=RuntimeError("boom")):
+        r = git_tools._run_git(["status"])
+        assert r["success"] is False
+        assert "boom" in r["error"]
+
+
+def test_git_add_success():
+    captured = {}
+
+    def fake_run(args, workdir=None):
+        captured["args"] = args
+        return {"stdout": "", "stderr": "", "exit_code": 0, "success": True}
+
+    with patch("infra.tool_manager.tools.git_tools._run_git", side_effect=fake_run):
+        r = git_tools.git_add("x.py")
+    assert r["success"] is True
+    assert captured["args"] == ["add", "x.py"]
+
+
+def test_git_commit_success():
+    captured = {}
+
+    def fake_run(args, workdir=None):
+        captured["args"] = args
+        return {"stdout": "", "stderr": "", "exit_code": 0, "success": True}
+
+    with patch("infra.tool_manager.tools.git_tools._run_git", side_effect=fake_run):
+        r = git_tools.git_commit("  message  ")
+    assert r["success"] is True
+    assert captured["args"] == ["commit", "-m", "message"]
+
+
+def test_git_diff_failure_passthrough():
+    with patch("infra.tool_manager.tools.git_tools._run_git",
+               return_value={"success": False, "error": "not a repo"}):
+        r = git_tools.git_diff()
+    assert r["success"] is False
+    assert "added_lines" not in r

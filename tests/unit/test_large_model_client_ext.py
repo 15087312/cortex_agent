@@ -224,6 +224,20 @@ class TestGenerate:
         out = asyncio.run(client.generate("hi", system_prompt="sys", max_retries=1))
         assert out == ""
 
+    def test_anthropic_no_content_blocks(self):
+        client = _make_client(ANTHROPIC_URL)
+        _attach(client, responses=[_MockResponse(status=200, data={"content": []})])
+        out = asyncio.run(client.generate("hi", system_prompt="sys", max_retries=1))
+        assert out == ""
+
+    def test_reasoning_content_present_but_empty(self):
+        client = _make_client()
+        _attach(client, responses=[_MockResponse(status=200, data={
+            "choices": [{"message": {"role": "assistant", "content": "", "reasoning_content": ""}}],
+        })])
+        out = asyncio.run(client.generate("hi", system_prompt="sys", max_retries=1))
+        assert out == ""
+
     def test_empty_choices_returns_empty(self):
         client = _make_client()
         _attach(client, responses=[_MockResponse(status=200, data={})])
@@ -358,6 +372,14 @@ class TestChat:
         with pytest.raises(Exception, match="Chat request timeout"):
             asyncio.run(client.chat([ChatMessage(role="user", content="hi")], max_retries=1))
         assert reporter.call_count == 1
+
+    def test_timeout_retry_then_success(self, monkeypatch):
+        monkeypatch.setattr(asyncio, "sleep", AsyncMock())
+        client = _make_client()
+        _attach(client, errors=[asyncio.TimeoutError()],
+                responses=[_MockResponse(status=200, data=OPENAI_OK)])
+        resp = asyncio.run(client.chat([ChatMessage(role="user", content="hi")], max_retries=2))
+        assert resp.message.content == "ok"
 
     def test_generic_error_retry_then_success(self, monkeypatch):
         monkeypatch.setattr(asyncio, "sleep", AsyncMock())
@@ -494,6 +516,111 @@ class TestChatStream:
         resp = asyncio.run(client.chat_stream([ChatMessage(role="user", content="hi")], max_retries=2))
         assert resp.message.content == "ok"
 
+    def test_model_override_updates_provider(self):
+        lines = [b'data: {"choices":[{"delta":{"content":"ok"}}]}', b'data: [DONE]']
+        client = _make_client()
+        _attach(client, responses=[_MockResponse(status=200, lines=lines)])
+        asyncio.run(client.chat_stream(
+            [ChatMessage(role="user", content="hi")], model="other-model", max_retries=1))
+        assert client._provider.model_name == "other-model"
+
+    def test_503_busy_backoff(self, monkeypatch):
+        sleep_mock = AsyncMock()
+        monkeypatch.setattr(asyncio, "sleep", sleep_mock)
+        lines = [b'data: {"choices":[{"delta":{"content":"ok"}}]}', b'data: [DONE]']
+        client = _make_client()
+        _attach(client, errors=[RuntimeError("503 Service Busy")],
+                responses=[_MockResponse(status=200, lines=lines)])
+        resp = asyncio.run(client.chat_stream([ChatMessage(role="user", content="hi")], max_retries=2))
+        assert resp.message.content == "ok"
+        assert sleep_mock.call_args_list[0][0][0] == 5
+
+    def test_zero_retries_raises(self):
+        client = _make_client()
+        _attach(client, responses=[_MockResponse(status=200, lines=[])])
+        with pytest.raises(Exception, match="Stream chat failed after all retries"):
+            asyncio.run(client.chat_stream([ChatMessage(role="user", content="hi")], max_retries=0))
+
+    def test_parse_returns_none(self):
+        client = _make_client()
+        _attach(client, responses=[_MockResponse(status=200, lines=[b'data: [DONE]'])])
+        client._parse_openai_stream = AsyncMock(return_value=None)
+        result = asyncio.run(client.chat_stream([ChatMessage(role="user", content="hi")], max_retries=1))
+        assert result is None
+
+    def test_openai_stream_edge_lines(self):
+        lines = [
+            b"",
+            b": comment",
+            b"raw line",
+            b'data: {"choices": []}',
+            b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"f"}}]}}]}',
+            b'data: {"choices":[{"delta":{"content":"done"}}]}',
+        ]
+        client = _make_client()
+        _attach(client, responses=[_MockResponse(status=200, lines=lines)])
+        resp = asyncio.run(client.chat_stream([ChatMessage(role="user", content="hi")], max_retries=1))
+        assert resp.message.content == "done"
+        assert resp.finish_reason == "stop"
+
+    def test_anthropic_stream_edge_lines(self):
+        lines = [
+            b"",
+            b": comment",
+            b"raw text",
+            b'data: not-json',
+            b'data: {"type":"content_block_start","content_block":{"type":"text","text":"hi"}}',
+            b'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":""}}',
+            b'data: {"type":"content_block_delta","delta":{"type":"signature_delta","signature":"x"}}',
+            b'data: {"type":"content_block_delta","delta":{"type":"input_json_delta","partial_json":"{}"}}',
+            b'data: {"type":"content_block_stop"}',
+            b'data: {"type":"message_start"}',
+            b'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}',
+            b'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"end"}}',
+        ]
+        client = _make_client(ANTHROPIC_URL)
+        _attach(client, responses=[_MockResponse(status=200, lines=lines)])
+        resp = asyncio.run(client.chat_stream([ChatMessage(role="user", content="hi")], max_retries=1))
+        assert resp.message.content == "end"
+        assert resp.finish_reason == "stop"
+
+    def test_anthropic_stream_bad_tool_json(self):
+        lines = [
+            b'data: {"type":"content_block_start","content_block":{"type":"tool_use","id":"t1","name":"f"}}',
+            b'data: {"type":"content_block_delta","delta":{"type":"input_json_delta","partial_json":"bad"}}',
+            b'data: {"type":"content_block_stop"}',
+        ]
+        client = _make_client(ANTHROPIC_URL)
+        _attach(client, responses=[_MockResponse(status=200, lines=lines)])
+        resp = asyncio.run(client.chat_stream([ChatMessage(role="user", content="hi")], max_retries=1))
+        assert json.loads(resp.message.tool_calls[0].arguments) == {}
+
+    def test_dashscope_stream_edge_lines(self):
+        lines = [
+            b"",
+            b": comment",
+            b"raw line",
+            b'data: not-json',
+            b'data: {"output":{"text":"ab"}}',
+            b'data: {"output":{"text":"ab"}}',
+            b'data: {"output":{"text":"abcd"}}',
+            b'data: {"output":{"choices":[{"message":{"content":"x"}}]}}',
+        ]
+        client = _make_client(DASHSCOPE_URL)
+        _attach(client, responses=[_MockResponse(status=200, lines=lines)])
+        resp = asyncio.run(client.chat_stream([ChatMessage(role="user", content="hi")], max_retries=1))
+        assert resp.message.content == "abcd"
+
+    def test_dashscope_stream_no_on_token(self):
+        lines = [
+            b'data: {"output":{"text":"ab"}}',
+            b'data: {"output":{"text":"abcd"}}',
+        ]
+        client = _make_client(DASHSCOPE_URL)
+        _attach(client, responses=[_MockResponse(status=200, lines=lines)])
+        resp = asyncio.run(client.chat_stream([ChatMessage(role="user", content="hi")], max_retries=1))
+        assert resp.message.content == "abcd"
+
 
 # ---------------------------------------------------------------------------
 # _messages_to_api / _parse_image_dataurl / _parse_chat_response
@@ -596,6 +723,55 @@ class TestMessagesToApi:
         msgs = client._messages_to_api([ChatMessage(role="user", content="look")])
         assert msgs[0] == {"role": "user", "content": "look"}
 
+    def test_openai_tool_role_no_call_id(self):
+        client = _make_client()
+        msgs = client._messages_to_api([ChatMessage(role="tool", content="r")])
+        assert msgs[0] == {"role": "tool", "content": "r"}
+
+    def test_dashscope_tool_role_no_name(self):
+        client = _make_client(DASHSCOPE_URL)
+        msgs = client._messages_to_api([ChatMessage(role="tool", content="r")])
+        assert msgs[0] == {"role": "tool", "content": "r"}
+
+    def test_turn_images_skips_non_user(self, turn_images_cap):
+        img = "data:image/png;base64,QUJD"
+        _set_turn_images(lambda: (lambda: [img], lambda: None))
+        client = _make_client()
+        msgs = client._messages_to_api([
+            ChatMessage(role="user", content="u1"),
+            ChatMessage(role="assistant", content="a"),
+        ])
+        assert msgs[0]["content"] == [
+            {"type": "text", "text": "u1"},
+            {"type": "image_url", "image_url": {"url": img}},
+        ]
+        assert msgs[1] == {"role": "assistant", "content": "a"}
+
+    def test_turn_images_skips_list_content(self, turn_images_cap):
+        img = "data:image/png;base64,QUJD"
+        _set_turn_images(lambda: (lambda: [img], lambda: None))
+        client = _make_client(ANTHROPIC_URL)
+        msgs = client._messages_to_api([
+            ChatMessage(role="tool", content="r", tool_call_id="t1"),
+        ])
+        assert msgs[0]["content"][0]["type"] == "tool_result"
+        assert len(msgs[0]["content"]) == 1
+
+    def test_turn_images_anthropic_no_content(self, turn_images_cap):
+        img = "data:image/png;base64,QUJD"
+        _set_turn_images(lambda: (lambda: [img], lambda: None))
+        client = _make_client(ANTHROPIC_URL)
+        msgs = client._messages_to_api([ChatMessage(role="user")])
+        assert msgs[0]["content"][0]["type"] == "image"
+        assert msgs[0]["content"][0]["source"]["media_type"] == "image/png"
+
+    def test_turn_images_openai_no_content(self, turn_images_cap):
+        img = "data:image/png;base64,QUJD"
+        _set_turn_images(lambda: (lambda: [img], lambda: None))
+        client = _make_client()
+        msgs = client._messages_to_api([ChatMessage(role="user")])
+        assert msgs[0]["content"] == [{"type": "image_url", "image_url": {"url": img}}]
+
 
 class TestParseImageDataurl:
     def test_data_url(self):
@@ -695,6 +871,43 @@ class TestParseChatResponse:
         assert resp.message.content == "hello world"
         assert resp.message.tool_calls is None
 
+    def test_dashscope_choices_no_tool_calls(self):
+        client = _make_client(DASHSCOPE_URL)
+        resp = client._parse_chat_response({
+            "output": {"choices": [{"message": {"role": "assistant", "content": "c"},
+                                    "finish_reason": "stop"}]},
+        })
+        assert resp.message.content == "c"
+        assert resp.message.tool_calls is None
+
+    def test_dashscope_legacy_json_no_action_role(self):
+        client = _make_client(DASHSCOPE_URL)
+        tools = [{"function": {"name": "add"}}]
+        resp = client._parse_chat_response({"output": {"text": '{"foo": 1}'}}, tools=tools)
+        assert resp.message.tool_calls is None
+        assert resp.message.content == '{"foo": 1}'
+
+    def test_dashscope_legacy_plain_with_tools(self):
+        client = _make_client(DASHSCOPE_URL)
+        tools = [{"function": {"name": "add"}}]
+        resp = client._parse_chat_response({"output": {"text": "hello"}}, tools=tools)
+        assert resp.message.content == "hello"
+        assert resp.message.tool_calls is None
+
+    def test_dashscope_legacy_parens_no_match(self):
+        client = _make_client(DASHSCOPE_URL)
+        tools = [{"function": {"name": "add"}}]
+        resp = client._parse_chat_response({"output": {"text": "!!! (x)"}}, tools=tools)
+        assert resp.message.tool_calls is None
+        assert resp.message.content == "!!! (x)"
+
+    def test_dashscope_legacy_invalid_json(self):
+        client = _make_client(DASHSCOPE_URL)
+        tools = [{"function": {"name": "add"}}]
+        resp = client._parse_chat_response({"output": {"text": "{oops"}}, tools=tools)
+        assert resp.message.tool_calls is None
+        assert resp.message.content == "{oops"
+
 
 # ---------------------------------------------------------------------------
 # generate_stream / health_check
@@ -720,6 +933,24 @@ class TestGenerateStream:
 
     def test_bad_json_skipped(self):
         lines = [b'data: not-json', b'data: {"output": {"text": "ok"}}']
+        client = _make_client(DASHSCOPE_URL)
+        _attach(client, responses=[_MockResponse(status=200, lines=lines)])
+
+        async def go():
+            out = []
+            async for chunk in client.generate_stream("hi"):
+                out.append(chunk)
+            return out
+
+        assert asyncio.run(go()) == ["ok"]
+
+    def test_edge_lines_skipped(self):
+        lines = [
+            b"",
+            b"event: ping",
+            b'data: {"output": {"text": ""}}',
+            b'data: {"output": {"text": "ok"}}',
+        ]
         client = _make_client(DASHSCOPE_URL)
         _attach(client, responses=[_MockResponse(status=200, lines=lines)])
 

@@ -511,6 +511,32 @@ def _get_alert_seconds():
         return 15 * 60
 
 
+def test_get_idle_alert_seconds_exception_fallback(monkeypatch):
+    """config 读取失败 → 使用 15 分钟默认值（30-32）"""
+    import modules.perception.difference.sources.time_source as ts_mod
+
+    class Boom:
+        @property
+        def PROACTIVE_OUTREACH_IDLE_MINUTES(self):
+            raise RuntimeError("config 未加载")
+
+    # config.settings 模块被 config/__init__ 重导出覆盖，从 sys.modules 取真实模块 patch
+    import sys
+    settings_mod = sys.modules["config.settings"]
+    monkeypatch.setattr(settings_mod, "settings", Boom())
+    assert ts_mod._get_idle_alert_seconds() == 15 * 60
+
+
+def test_detect_level_resets_to_none_no_diff():
+    """级别从 non-None 回落到 None 时不产生差异（79->102）"""
+    s = TimeDifferenceSource()
+    # 上次报告的是 idle_alert，但当前无空闲 → current_level=None
+    s._last_reported_category = "idle_alert"
+    s._last_activity = time.time()  # 无空闲
+    assert s.detect() == []
+    assert s._last_reported_category is None
+
+
 # ====================================================================
 # ExistentialHeartbeat
 # ====================================================================

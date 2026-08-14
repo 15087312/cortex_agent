@@ -86,3 +86,43 @@ def test_all_dangerous_modules_detected():
 
 def test_dangerous_function_names_present():
     assert {"eval", "exec", "compile", "__import__", "open"} <= DANGEROUS_FUNCTIONS
+
+
+# ── AST 遍历 fall-through 分支（node 不命中危险名单 → 继续循环）──────────────
+
+def test_ast_importfrom_safe_module_continues():
+    ok, msg = _check_code_with_ast("from json import dumps\ndumps({'a': 1})")
+    assert ok is True
+    assert msg == ""
+
+
+def test_ast_importfrom_no_module_continues():
+    ok, msg = _check_code_with_ast("from . import sibling")
+    assert ok is True
+    assert msg == ""
+
+
+def test_ast_call_safe_name_continues():
+    ok, msg = _check_code_with_ast("print('hello')")
+    assert ok is True
+    assert msg == ""
+
+
+def test_ast_call_non_name_non_attribute_func_continues():
+    # func 是 Lambda/其它表达式（既非 Name 也非 Attribute）→ 74->58 继续
+    ok, msg = _check_code_with_ast("(lambda: 1)()")
+    assert ok is True
+    assert msg == ""
+
+
+def test_ast_call_safe_attribute_continues():
+    # Attribute 但 attr 不在 {system, call, popen, run} → 75->58 继续
+    ok, msg = _check_code_with_ast("obj.upper('x')")
+    assert ok is True
+    assert msg == ""
+
+
+def test_ast_call_dangerous_attribute_blocks():
+    ok, msg = _check_code_with_ast("proc.call('ls')")
+    assert ok is False
+    assert "call" in msg

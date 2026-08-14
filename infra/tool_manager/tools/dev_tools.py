@@ -365,7 +365,7 @@ def directory_tree(path: Optional[str] = None, max_depth: int = 3, include_hidde
 
     def _walk(current: Path, prefix: str, depth: int) -> None:
         if depth > max_depth:
-            return
+            return  # pragma: no cover — depth 递增仅在 depth < max_depth 时发生，永远到不了这里
         try:
             entries = sorted(current.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower()))
         except PermissionError:

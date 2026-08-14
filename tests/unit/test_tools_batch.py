@@ -56,6 +56,130 @@ def test_plan_unknown_action(plans):
     assert plan_tools.plan("bogus")["success"] is False
 
 
+# ── plan_tools 防御性分支 ────────────────────────────────────────────────────
+
+def test_plan_list_skips_corrupt(plans):
+    (plans / "broken.json").write_text("not json", encoding="utf-8")
+    r = plan_tools.plan("list")
+    assert r["success"] is True
+    assert r["plans"] == []
+
+
+def test_plan_get_requires_id(plans):
+    assert "需要 plan_id" in plan_tools.plan("get")["error"]
+
+
+def test_plan_get_not_found(plans):
+    assert "不存在" in plan_tools.plan("get", plan_id="nope")["error"]
+
+
+def test_plan_update_requires_id(plans):
+    assert "需要 plan_id" in plan_tools.plan("update")["error"]
+
+
+def test_plan_update_not_found(plans):
+    assert "不存在" in plan_tools.plan("update", plan_id="nope")["error"]
+
+
+def test_plan_update_title_content(plans):
+    plan_tools.plan("create", title="T")
+    pid = plan_tools.plan("list")["plans"][0]["id"]
+    r = plan_tools.plan("update", plan_id=pid, title="T2", content="C2")
+    assert r["success"] is True
+    got = plan_tools.plan("get", plan_id=pid)
+    assert got["title"] == "T2"
+    assert got["content"] == "C2"
+
+
+def test_plan_update_no_optional_fields(plans):
+    plan_tools.plan("create", title="T")
+    pid = plan_tools.plan("list")["plans"][0]["id"]
+    r = plan_tools.plan("update", plan_id=pid, status="")
+    assert r["success"] is True
+
+
+def test_plan_delete_requires_id(plans):
+    assert "需要 plan_id" in plan_tools.plan("delete")["error"]
+
+
+def test_plan_delete_not_found(plans):
+    assert "不存在" in plan_tools.plan("delete", plan_id="nope")["error"]
+
+
+# ── security_tools 防御性分支 ────────────────────────────────────────────────
+
+def test_scan_secrets_skips_git_dir(tmp_path):
+    g = tmp_path / ".git"
+    g.mkdir()
+    (g / "secret.py").write_text("API_KEY = 'sk-1234567890abcdef'\n", encoding="utf-8")
+    r = security_tools.scan_secrets(str(tmp_path))
+    assert r["total"] == 0
+
+
+def test_scan_secrets_skips_unreadable(tmp_path):
+    (tmp_path / "dir.py").mkdir()
+    r = security_tools.scan_secrets(str(tmp_path))
+    assert r["success"] is True
+
+
+def test_scan_sast_missing_path():
+    r = security_tools.scan_sast("/不存在/路径")
+    assert "路径不存在" in r["error"]
+
+
+def test_scan_sast_skips_git_dir(tmp_path):
+    g = tmp_path / ".git"
+    g.mkdir()
+    (g / "v.py").write_text("cursor.execute(f\"SELECT * FROM u\")\n", encoding="utf-8")
+    r = security_tools.scan_sast(str(tmp_path))
+    assert r["total"] == 0
+
+
+def test_scan_sast_skips_unreadable(tmp_path):
+    (tmp_path / "d.py").mkdir()
+    r = security_tools.scan_sast(str(tmp_path))
+    assert r["success"] is True
+
+
+def test_scan_dangerous_missing_path():
+    r = security_tools.scan_dangerous_code("/不存在/路径")
+    assert "路径不存在" in r["error"]
+
+
+def test_scan_dangerous_skips_git_dir(tmp_path):
+    g = tmp_path / ".git"
+    g.mkdir()
+    (g / "d.py").write_text("eval(x)\n", encoding="utf-8")
+    r = security_tools.scan_dangerous_code(str(tmp_path))
+    assert r["total"] == 0
+
+
+def test_scan_dangerous_skips_unreadable(tmp_path):
+    (tmp_path / "x.py").mkdir()
+    r = security_tools.scan_dangerous_code(str(tmp_path))
+    assert r["success"] is True
+
+
+def test_scan_dependencies_skips_127(monkeypatch):
+    import types
+    calls = []
+    def fake_run(cmd, **kw):
+        calls.append(cmd)
+        rc = 127 if len(calls) == 1 else 0
+        return types.SimpleNamespace(returncode=rc, stdout="ok", stderr="")
+    monkeypatch.setattr(security_tools.subprocess, "run", fake_run)
+    r = security_tools.scan_dependencies()
+    assert r["success"] is True
+    assert len(calls) >= 2
+
+
+def test_scan_dependencies_all_fail(monkeypatch):
+    monkeypatch.setattr(security_tools.subprocess, "run",
+                        MagicMock(side_effect=RuntimeError("boom")))
+    r = security_tools.scan_dependencies()
+    assert "未安装" in r["error"]
+
+
 # ── security_tools（扫描）───────────────────────────────────────────────────
 
 def test_scan_secrets_finds_pattern(tmp_path):

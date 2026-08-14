@@ -169,6 +169,29 @@ class TestWindowDetector:
         assert det._last_window is None
         assert det._last_app is None
 
+
+class _ConcreteDetector(PerceptionDetector):
+    @property
+    def detector_type(self) -> str:
+        return "concrete"
+
+    def detect(self, roi_image, roi_name, context=None):
+        return []
+
+    def is_available(self) -> bool:
+        return True
+
+
+class TestPerceptionDetectorBase:
+    def test_reset_default_pass(self):
+        """基类 reset() 默认实现不抛异常（49 行）"""
+        det = _ConcreteDetector()
+        det.reset()
+
+    def test_abstract_methods_require_impl(self):
+        with pytest.raises(TypeError):
+            PerceptionDetector()
+
     def test_init_is_fast(self):
         """实例化不应阻塞（AppKit 应懒加载）"""
         t0 = time.time()
@@ -300,6 +323,86 @@ class TestEventBusAdvanced:
         b1 = get_event_bus()
         b2 = get_event_bus()
         assert b1 is b2
+
+    def test_ensure_async_loop_shutdown_returns(self):
+        self.bus.shutdown()
+        self.bus._ensure_async_loop()  # _shutdown=True → 直接返回
+        assert self.bus._async_loop is None
+
+    def test_ensure_async_loop_already_running_returns(self):
+        # 首次发布异步事件创建 loop，二次调用命中 is_running 分支
+        async def handler(e):
+            pass
+        self.bus.subscribe("test", async_handler=handler)
+        self.bus.publish(PerceptionEvent(event_type="test"))
+        import time as _t
+        _t.sleep(0.1)
+        self.bus._ensure_async_loop()
+        assert self.bus._async_loop is not None
+
+    def test_get_event_bus_double_checked_locking(self, monkeypatch):
+        """单例内部双重检查锁：外层 None → 加锁 → 内层再建（188-190）"""
+        import modules.perception.events.bus as bus_mod
+        monkeypatch.setattr(bus_mod, "_event_bus", None)
+        b = bus_mod.get_event_bus()
+        assert isinstance(b, PerceptionEventBus)
+        assert bus_mod._event_bus is b
+
+    def test_ensure_async_loop_inner_shutdown_race(self, monkeypatch):
+        """锁内二次检查 _shutdown：外层 False → 加锁后变 True → 70 行返回"""
+        bus = PerceptionEventBus.__new__(PerceptionEventBus)
+        bus._shutdown = False
+        bus._async_loop = None
+        bus._async_thread = None
+
+        class RaceLock:
+            def __enter__(self):
+                bus._shutdown = True
+                return self
+            def __exit__(self, *a):
+                return False
+
+        bus._async_lock = RaceLock()
+        bus._ensure_async_loop()  # 加锁瞬间 shutdown → 70 行 return
+        assert bus._async_loop is None
+
+    def test_ensure_async_loop_inner_running_race(self, monkeypatch):
+        """锁内二次检查 loop running：外层 None → 加锁后已有运行中 loop → 72 行返回"""
+        bus = PerceptionEventBus.__new__(PerceptionEventBus)
+        bus._shutdown = False
+        bus._async_loop = None
+        bus._async_thread = None
+
+        running_loop = MagicMock()
+        running_loop.is_running.return_value = True
+
+        class RaceLock:
+            def __enter__(self):
+                bus._async_loop = running_loop
+                return self
+            def __exit__(self, *a):
+                return False
+
+        bus._async_lock = RaceLock()
+        bus._ensure_async_loop()
+        assert bus._async_loop is running_loop  # 未重建
+
+    def test_get_event_bus_inner_double_check_race(self, monkeypatch):
+        """单例锁内已有实例 → 直接复用（188->190）"""
+        import modules.perception.events.bus as bus_mod
+        existing = bus_mod.PerceptionEventBus()
+        monkeypatch.setattr(bus_mod, "_event_bus", None)
+
+        class RaceLock:
+            def __enter__(self):
+                bus_mod._event_bus = existing
+                return self
+            def __exit__(self, *a):
+                return False
+
+        monkeypatch.setattr(bus_mod, "_init_lock", RaceLock())
+        assert bus_mod.get_event_bus() is existing
+        existing.shutdown()
 
     def test_to_dict_all_keys(self):
         event = PerceptionEvent(
@@ -483,6 +586,86 @@ class TestWorldStateManagerAdvanced:
         assert state.screen_text == ""
 
         wm.stop(bus)
+
+    def test_summary_empty_returns_no_info(self):
+        state = WorldState()
+        assert state.get_summary() == "无感知信息"
+
+    def test_summary_app_only(self):
+        assert "当前应用" in WorldState(active_app="Safari").get_summary()
+
+    def test_summary_window_only(self):
+        s = WorldState(active_window="Google" * 30).get_summary()
+        assert "窗口" in s
+        assert len(s) < 200  # 窗口标题截断 50
+
+    def test_summary_screen_text_only(self):
+        s = WorldState(screen_text="一段屏幕文本" * 50).get_summary()
+        assert "屏幕文本" in s
+
+    def test_summary_ui_elements_only(self):
+        s = WorldState(ui_elements=[{"type": "button"}, {"type": "text"}]).get_summary()
+        assert "UI 元素" in s
+        assert "2 个" in s
+
+    def test_ui_elements_cap(self):
+        bus = PerceptionEventBus()
+        wm = WorldStateManager()
+        wm.start(bus)
+        for i in range(60):
+            bus.publish(PerceptionEvent(
+                event_type=PerceptionEventType.SCREEN_UI,
+                payload={"subtype": f"n{i}"},
+            ))
+        state = wm.get_state()
+        assert len(state.ui_elements) == 50
+        wm.stop(bus)
+
+    def test_ocr_empty_new_lines_no_screen_text(self):
+        """new_lines 为空时 screen_text 不被覆盖（108-113 分支）"""
+        bus = PerceptionEventBus()
+        wm = WorldStateManager()
+        wm.start(bus)
+        bus.publish(PerceptionEvent(
+            event_type=PerceptionEventType.SCREEN_OCR,
+            payload={"new_lines": []},
+        ))
+        state = wm.get_state()
+        assert state.screen_text == ""
+        wm.stop(bus)
+
+
+class TestWorldStateManagerSingleton:
+    def test_get_world_state_manager_singleton(self):
+        import modules.perception.state.world_state as ws_mod
+        old = ws_mod._world_state_manager
+        ws_mod._world_state_manager = None
+        try:
+            m1 = ws_mod.get_world_state_manager()
+            m2 = ws_mod.get_world_state_manager()
+            assert m1 is m2
+        finally:
+            ws_mod._world_state_manager = old
+
+    def test_get_world_state_convenience(self):
+        import modules.perception.state.world_state as ws_mod
+        assert isinstance(ws_mod.get_world_state(), WorldState)
+
+    def test_singleton_inner_double_check_race(self, monkeypatch):
+        """锁内已有实例 → 复用（147->149）"""
+        import modules.perception.state.world_state as ws_mod
+        existing = ws_mod.WorldStateManager()
+        monkeypatch.setattr(ws_mod, "_world_state_manager", None)
+
+        class RaceLock:
+            def __enter__(self):
+                ws_mod._world_state_manager = existing
+                return self
+            def __exit__(self, *a):
+                return False
+
+        monkeypatch.setattr(ws_mod, "_world_state_lock", RaceLock())
+        assert ws_mod.get_world_state_manager() is existing
 
 
 # ====================================================================

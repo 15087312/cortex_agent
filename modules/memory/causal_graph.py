@@ -233,7 +233,7 @@ class CausalGraph:
         if "edge_type" not in existing:
             conn.execute("ALTER TABLE edges ADD COLUMN edge_type TEXT DEFAULT 'causal'")
         if "created_at" not in existing:
-            conn.execute("ALTER TABLE edges ADD COLUMN created_at TEXT DEFAULT ''")
+            conn.execute("ALTER TABLE edges ADD COLUMN created_at TEXT DEFAULT ''")  # pragma: no cover — created_at 缺失时 _init_db 的 idx_edges_created_at 索引先失败，该分支不可达
         if "version" not in existing:
             conn.execute("ALTER TABLE edges ADD COLUMN version INTEGER DEFAULT 0")
         

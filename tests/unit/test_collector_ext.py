@@ -174,3 +174,30 @@ def test_collect_database_error(monkeypatch):
     monkeypatch.setattr(_disk_cache_mod.disk_cache, "get_stats", lambda: (_ for _ in ()).throw(RuntimeError("x")))
     sc = StatusCollector(ModuleRegistry())
     assert sc._collect_database()["status"] == "error"
+
+
+# ── 防御分支：数据库行数统计失败 ─────────────────────────────────────────────
+
+def test_collect_database_row_count_failure(monkeypatch, tmp_path):
+    """某张表行数统计失败 → 该表行数缺失，其余继续（256-257）"""
+    class FakeCursor:
+        def execute(self, sql, *a):
+            if sql.startswith("SELECT COUNT"):
+                raise sqlite3.OperationalError("corrupt table")
+        def fetchall(self):
+            return [("good",), ("broken",)]
+
+    class FakeConn:
+        def cursor(self):
+            return FakeCursor()
+        def close(self):
+            pass
+
+    monkeypatch.setattr(sqlite3, "connect", lambda path: FakeConn())
+    monkeypatch.setattr(_disk_cache_mod.disk_cache, "get_stats", lambda: {"mode": "disk"})
+    sc = StatusCollector(ModuleRegistry())
+    out = sc._collect_database()
+    assert out["status"] == "healthy"
+    assert "good" in out["tables"]
+    assert "broken" in out["tables"]
+    assert "good" not in out["row_counts"]  # 两表 COUNT 都失败 → 无行数

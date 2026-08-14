@@ -55,6 +55,12 @@ def test_openai_chat_url_normalizes():
     assert OpenAIProvider("k", "https://api.deepseek.com/v1", "m").chat_url() == "https://api.deepseek.com/v1/chat/completions"
 
 
+def test_openai_chat_url_no_v1():
+    """base_url 无 /v1 且不以 /chat/completions 结尾 → 拼接 /v1/chat/completions（87）"""
+    p = OpenAIProvider("k", "https://api.example.com/base", "m")
+    assert p.chat_url() == "https://api.example.com/base/v1/chat/completions"
+
+
 def test_anthropic_chat_url_messages():
     assert AnthropicProvider("k", "https://api.anthropic.com/v1", "m").chat_url() == "https://api.anthropic.com/v1/messages"
     assert AnthropicProvider("k", "https://api.anthropic.com/v1/messages", "m").chat_url() == "https://api.anthropic.com/v1/messages"
@@ -65,6 +71,29 @@ def test_dashscope_chat_url_raw():
 
 
 # ── build_request 三格式 ────────────────────────────────────────────────────
+
+def test_openai_build_headers():
+    p = OpenAIProvider("k", "u", "model-x")
+    assert p.build_headers()["Authorization"] == "Bearer k"
+    assert p.build_headers()["Content-Type"] == "application/json"
+
+
+def test_openai_build_request_minimal():
+    """无 top_p/stream/tools/tool_choice → 不写这些键（37->39 / 41->43 / 43->45）"""
+    p = OpenAIProvider("k", "u", "model-x")
+    body = p.build_request([{"role": "user", "content": "hi"}], max_tokens=10, temperature=0.5)
+    assert body["model"] == "model-x"
+    assert "top_p" not in body
+    assert "stream" not in body
+    assert "tools" not in body
+    assert "tool_choice" not in body
+
+
+def test_openai_build_request_stream_only():
+    p = OpenAIProvider("k", "u", "model-x")
+    body = p.build_request([{"role": "user", "content": "hi"}], max_tokens=10, temperature=0.5, stream=True)
+    assert body["stream"] is True  # 39-40
+
 
 def test_openai_build_request_with_top_p():
     p = OpenAIProvider("k", "u", "model-x")
@@ -116,6 +145,23 @@ def test_openai_parse_response_with_reasoning():
     assert r["usage"]["prompt_tokens"] == 5
 
 
+def test_openai_parse_response_no_choices():
+    p = OpenAIProvider("k", "u", "m")
+    r = p.parse_response({})
+    assert r == {"content": "", "tool_calls": None, "finish_reason": "stop", "usage": None}
+
+
+def test_openai_parse_response_no_tool_calls():
+    """无 tool_calls → tool_calls=None（61->71 False 分支）"""
+    p = OpenAIProvider("k", "u", "m")
+    r = p.parse_response({
+        "choices": [{"message": {"content": "答"}, "finish_reason": "stop"}],
+        "usage": None,
+    })
+    assert r["tool_calls"] is None
+    assert r["content"] == "答"
+
+
 def test_anthropic_parse_response_blocks():
     p = AnthropicProvider("k", "u", "m")
     r = p.parse_response({
@@ -152,6 +198,44 @@ def test_openai_stream_line():
     assert p.parse_stream_line("data: {") is None  # 非 JSON
     r = p.parse_stream_line('data: {"choices":[{"delta":{"content":"加"}}]}')
     assert r == {"content": "加"}
+
+
+def test_openai_stream_line_non_data_prefix():
+    assert OpenAIProvider("k", "u", "m").parse_stream_line("ping: x") is None  # 91
+
+
+def test_openai_stream_line_done():
+    assert OpenAIProvider("k", "u", "m").parse_stream_line("data: [DONE]") is None  # 94
+
+
+def test_openai_stream_line_no_choices():
+    assert OpenAIProvider("k", "u", "m").parse_stream_line('data: {"id":"1"}') is None  # 101
+
+
+def test_openai_stream_line_tool_calls_only():
+    """delta 只有 tool_calls → 返回 tool_calls（104->106 / 107）"""
+    p = OpenAIProvider("k", "u", "m")
+    r = p.parse_stream_line(
+        'data: {"choices":[{"delta":{"tool_calls":[{"function":{"name":"calc","arguments":"{}"}}]}}]}'
+    )
+    assert r["tool_calls"][0]["function"]["name"] == "calc"
+
+
+def test_openai_stream_line_content_and_finish():
+    """delta 有 content + finish_reason → 两个键都返回（110）"""
+    p = OpenAIProvider("k", "u", "m")
+    r = p.parse_stream_line(
+        'data: {"choices":[{"delta":{"content":"完"},"finish_reason":"stop"}]}'
+    )
+    assert r["content"] == "完"
+    assert r["finish_reason"] == "stop"
+
+
+def test_openai_stream_line_empty_delta():
+    """delta 为空 → 返回 None"""
+    assert OpenAIProvider("k", "u", "m").parse_stream_line(
+        'data: {"choices":[{"delta":{}}]}'
+    ) is None
 
 
 def test_anthropic_stream_line():

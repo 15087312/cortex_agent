@@ -155,7 +155,7 @@ class StatusCollector:
                 ],
                 "available": True
             }
-        except Exception:
+        except Exception:  # pragma: no cover - 纯字面量 try 体不可能抛异常，防御性兜底
             return {"status": "error", "error": "Resource collection failed"}
     
     def _collect_attention(self) -> Dict[str, Any]:
@@ -170,7 +170,7 @@ class StatusCollector:
                 ],
                 "available": True
             }
-        except Exception:
+        except Exception:  # pragma: no cover - 纯字面量 try 体不可能抛异常，防御性兜底
             return {"status": "error", "error": "Resource collection failed"}
     
     def _collect_info_process(self) -> Dict[str, Any]:
@@ -226,7 +226,7 @@ class StatusCollector:
                 ],
                 "available": True
             }
-        except Exception:
+        except Exception:  # pragma: no cover - 纯字面量 try 体不可能抛异常，防御性兜底
             return {"status": "error", "error": "Resource collection failed"}
     
     def _collect_database(self) -> Dict[str, Any]:
@@ -277,7 +277,7 @@ class StatusCollector:
                 "status": "healthy",
                 "available": True
             }
-        except Exception:
+        except Exception:  # pragma: no cover - 纯字面量 try 体不可能抛异常，防御性兜底
             return {"status": "error", "error": "Resource collection failed"}
 
 

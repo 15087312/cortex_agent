@@ -91,3 +91,43 @@ def test_report_logger_failure_falls_back(monkeypatch):
     assert len(calls) == 2
     assert calls[1][0] == "[ERROR_REPORT] %s"
     assert isinstance(calls[1][1], str)
+
+
+def test_report_logger_both_fail_debug(monkeypatch):
+    """logger.error 对 dict 和 str 都失败时走 logger.debug 兜底"""
+    from unittest.mock import MagicMock
+    err = MagicMock(side_effect=RuntimeError("always fail"))
+    fake = MagicMock()
+    fake.error = err
+    monkeypatch.setattr("utils.error_reporter._reporter.logger", fake)
+    mod_logger = MagicMock()
+    monkeypatch.setattr("utils.error_reporter.logger", mod_logger)
+    report_error(ValueError("x"), source="s", module="m", function="f")
+    assert mod_logger.debug.call_count == 1
+
+
+def test_report_api_error_response_only(monkeypatch):
+    captured = {}
+
+    class FakeLogger:
+        def error(self, *a, **k):
+            captured["payload"] = a[1]
+
+    monkeypatch.setattr("utils.error_reporter._reporter.logger", FakeLogger())
+    report_api_error(OSError("conn"), module="m", function="f", response={"body": 1})
+    p = captured["payload"]
+    assert p["context"] == {"response": {"body": 1}}
+    assert p["code"] == ""
+
+
+def test_report_api_error_request_only(monkeypatch):
+    captured = {}
+
+    class FakeLogger:
+        def error(self, *a, **k):
+            captured["payload"] = a[1]
+
+    monkeypatch.setattr("utils.error_reporter._reporter.logger", FakeLogger())
+    report_api_error(OSError("conn"), module="m", function="f", request={"q": 1})
+    p = captured["payload"]
+    assert p["context"] == {"request": {"q": 1}}

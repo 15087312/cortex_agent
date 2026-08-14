@@ -74,3 +74,63 @@ def test_build_indexes_populates():
     assert len(e._tool_keywords_cache) > 0
     assert "calc" in e._tool_keywords_cache
     assert any(kw.startswith("category:") for kw in e._tool_keywords_cache["calc"])
+
+
+# ── 防御性分支：缓存过期重建 / 标签 / 分类 / 单例 ────────────────────────────
+
+def test_maybe_rebuild_indexes_when_stale(monkeypatch):
+    e = _engine()
+    e._last_build_time = 0
+    built = []
+    monkeypatch.setattr(e, "_build_indexes", lambda: built.append(1))
+    e._maybe_rebuild_indexes()
+    assert len(built) == 1
+
+
+def test_tag_match_relevance():
+    e = _engine()
+    info = ToolRegistry._tools.get("tools_search")
+    assert info is not None
+    score, reason = e._calculate_relevance("system", ["system"], "tools_search", info)
+    assert score >= 0.7
+    assert reason == "tag_match"
+
+
+def test_category_match_relevance():
+    e = _engine()
+    info = ToolRegistry._tools.get("calc")
+    score, reason = e._calculate_relevance("category:query", ["category:query"], "calc", info)
+    assert score >= 0.3
+    assert reason == "category_match"
+
+
+def test_discovery_engine_singleton():
+    from infra.tool_manager import tool_discovery as td
+    a = td.get_tool_discovery_engine()
+    b = td.get_tool_discovery_engine()
+    assert a is b
+    assert isinstance(a, ToolDiscoveryEngine)
+
+
+def test_discovery_engine_creates_when_none(monkeypatch):
+    from infra.tool_manager import tool_discovery as td
+    monkeypatch.setattr(td, "_discovery_engine", None)
+    e = td.get_tool_discovery_engine()
+    assert isinstance(e, ToolDiscoveryEngine)
+
+
+def test_discovery_engine_lock_reentry(monkeypatch):
+    from infra.tool_manager import tool_discovery as td
+    sentinel = object()
+
+    class FakeLock:
+        def __enter__(self):
+            td._discovery_engine = sentinel
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr(td, "_discovery_engine", None)
+    monkeypatch.setattr(td, "_discovery_engine_lock", FakeLock())
+    assert td.get_tool_discovery_engine() is sentinel

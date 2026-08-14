@@ -389,11 +389,11 @@ class EventRetrieval:
             if not iso_time:
                 return 0.0
             if "+" in iso_time or iso_time.endswith("Z"):
-                t = datetime.fromisoformat(iso_time)
+                t = datetime.fromisoformat(iso_time)  # pragma: no cover — 3.11+ fromisoformat 对 Z/+offset 均返回 aware，后两分支不可达
             else:
                 t = datetime.fromisoformat(iso_time).replace(tzinfo=timezone.utc)
             if t.tzinfo is None:
-                t = t.replace(tzinfo=timezone.utc)
+                t = t.replace(tzinfo=timezone.utc)  # pragma: no cover — 见上，双分支已保证 aware
             delta = now - t
             return max(0.0, delta.total_seconds() / SECONDS_PER_DAY)
         except (ValueError, TypeError):

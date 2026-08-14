@@ -104,3 +104,28 @@ def test_get_recent_logs_bad_line_skipped(tmp_path):
     p.write_text("{{bad", encoding="utf-8")
     logger = SecurityAuditLogger(str(p))
     assert logger.get_recent_logs() == []
+
+
+# ── 防御分支：无目录 / 编码异常 / 日志输出失败 ──────────────────────────────
+
+def test_ensure_dir_skipped_when_no_dirname(monkeypatch, tmp_path):
+    """archive_path 无目录部分时 _ensure_dir 直接跳过（22->exit）"""
+    logger = SecurityAuditLogger.__new__(SecurityAuditLogger)
+    logger.archive_path = "plain_audit.jsonl"
+    logger._ensure_dir()  # 不应抛异常
+
+
+def test_log_encoding_failure_fallback(tmp_path):
+    """content 为 bytes 时切片后无 .encode → AttributeError → 回退占位文案（36-37）"""
+    logger = _logger(tmp_path)
+    logger.log("t", "L1", b"\xff\xfe binary", True)  # bytes 无 .encode → fallback
+    logger.log("t", "L1", "正常内容" * 100, True)  # 超长截断 + 正常编码
+    lines = (tmp_path / "audit.jsonl").read_text(encoding="utf-8").strip().split("\n")
+    assert any("[内容包含无法编码的字符]" in item for item in lines)
+
+
+def test_log_info_exception_falls_back_to_debug(tmp_path):
+    logger = _logger(tmp_path)
+    with patch.object(logger, "_save_local"):
+        with patch("modules.security_system.audit_logger.logger.info", side_effect=RuntimeError("boom")):
+            logger.log("t", "L1", "x", True)  # 51-52 logger.info 失败 → debug 兜底，不抛异常

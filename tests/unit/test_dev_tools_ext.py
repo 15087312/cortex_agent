@@ -481,3 +481,115 @@ class TestReadWriteTextFile:
         monkeypatch.setattr(dt.Path, "write_text", MagicMock(side_effect=OSError("boom")))
         r = dt.write_text_file(str(p), "x")
         assert "写入失败" in r["error"]
+
+
+# ── 防御性分支：相对路径解析异常 / 文件级异常 / 循环边界 ─────────────────────
+
+class TestParseAstDefensive:
+    def test_relative_path_resolve_error(self, monkeypatch):
+        monkeypatch.setattr(dt.Path, "resolve", MagicMock(side_effect=OSError("boom")))
+        r = dt.parse_ast("some/relative.py")
+        assert "路径无法解析" in r["error"]
+
+    def test_generic_exception(self, tmp_path, monkeypatch):
+        p = _write_ext(tmp_path)
+        monkeypatch.setattr(dt.ast, "parse", MagicMock(side_effect=RuntimeError("boom")))
+        r = dt.parse_ast(str(p))
+        assert "boom" in r["error"]
+
+
+class TestFindDefinitionDefensive:
+    def test_skips_unparseable_file(self, tmp_path):
+        _write_ext(tmp_path)
+        (tmp_path / "broken.py").write_text("def f(:\n", encoding="utf-8")
+        r = dt.find_definition("afunc", path=str(tmp_path))
+        assert r["success"] is True
+
+
+class TestFindReferencesDefensive:
+    def test_many_results_returns_early(self, tmp_path):
+        p = tmp_path / "refs.py"
+        p.write_text("\n".join(["themarker"] * 35), encoding="utf-8")
+        r = dt.find_references("themarker", path=str(tmp_path))
+        assert r["count"] == 30
+
+    def test_skips_unreadable_file(self, tmp_path):
+        _write_ext(tmp_path)
+        (tmp_path / "weird.py").mkdir()
+        r = dt.find_references("annotated", path=str(tmp_path))
+        assert r["success"] is True
+
+    def test_outer_exception(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(dt.Path, "rglob", MagicMock(side_effect=RuntimeError("boom")))
+        r = dt.find_references("x", path=str(tmp_path))
+        assert "boom" in r["error"]
+
+
+class TestGetFunctionSignatureDefensive:
+    def test_empty_name(self):
+        assert "不能为空" in dt.get_function_signature("/a.py", "")["error"]
+
+    def test_relative_path_resolve_error(self, monkeypatch):
+        monkeypatch.setattr(dt.Path, "resolve", MagicMock(side_effect=OSError("boom")))
+        r = dt.get_function_signature("x/rel.py", "f")
+        assert "路径无法解析" in r["error"]
+
+    def test_generic_exception(self, tmp_path, monkeypatch):
+        p = _write_ext(tmp_path)
+        monkeypatch.setattr(dt.ast, "parse", MagicMock(side_effect=RuntimeError("boom")))
+        r = dt.get_function_signature(str(p), "annotated")
+        assert "boom" in r["error"]
+
+
+class TestComplexityDefensive:
+    def test_relative_path_resolve_error(self, monkeypatch):
+        monkeypatch.setattr(dt.Path, "resolve", MagicMock(side_effect=OSError("boom")))
+        r = dt.calculate_cyclomatic_complexity("x/rel.py")
+        assert "路径无法解析" in r["error"]
+
+    def test_generic_exception(self, tmp_path, monkeypatch):
+        p = tmp_path / "c.py"
+        p.write_text("def f():\n    return 1\n", encoding="utf-8")
+        monkeypatch.setattr(dt.ast, "parse", MagicMock(side_effect=RuntimeError("boom")))
+        r = dt.calculate_cyclomatic_complexity(str(p))
+        assert "boom" in r["error"]
+
+
+class TestSmellsDefensive:
+    def test_relative_path_resolve_error(self, monkeypatch):
+        monkeypatch.setattr(dt.Path, "resolve", MagicMock(side_effect=OSError("boom")))
+        r = dt.detect_code_smells("x/rel.py")
+        assert "路径无法解析" in r["error"]
+
+    def test_class_without_docstring(self, tmp_path):
+        p = tmp_path / "cls.py"
+        p.write_text("class Foo:\n    pass\n", encoding="utf-8")
+        r = dt.detect_code_smells(str(p))
+        assert any(s["type"] == "missing_docstring" and s["name"] == "Foo" for s in r["smells"])
+
+    def test_generic_exception(self, tmp_path, monkeypatch):
+        p = tmp_path / "c.py"
+        p.write_text("def f():\n    return 1\n", encoding="utf-8")
+        monkeypatch.setattr(dt.ast, "parse", MagicMock(side_effect=RuntimeError("boom")))
+        r = dt.detect_code_smells(str(p))
+        assert "boom" in r["error"]
+
+
+class TestGenerateDocumentationDefensive:
+    def test_relative_path_resolve_error(self, monkeypatch):
+        monkeypatch.setattr(dt.Path, "resolve", MagicMock(side_effect=OSError("boom")))
+        r = dt.generate_documentation("x/rel.py")
+        assert "路径无法解析" in r["error"]
+
+    def test_generic_exception(self, tmp_path, monkeypatch):
+        p = _write_ext(tmp_path)
+        monkeypatch.setattr(dt.ast, "parse", MagicMock(side_effect=RuntimeError("boom")))
+        r = dt.generate_documentation(str(p))
+        assert "boom" in r["error"]
+
+
+class TestDirectoryTreeDefensive:
+    def test_no_path_uses_project_root(self):
+        r = dt.directory_tree(max_depth=1)
+        assert r["success"] is True
+        assert r["max_depth"] == 1

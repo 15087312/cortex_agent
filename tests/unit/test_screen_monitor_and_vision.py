@@ -16,6 +16,14 @@ def test_vision_is_available_true(monkeypatch):
     assert isinstance(v.is_available(), bool)
 
 
+def test_vision_is_available_false_import_error(monkeypatch):
+    """ImageAnalyzer 导入失败 → is_available False（26-27）"""
+    import sys
+    v = VisionBackend()
+    monkeypatch.setitem(sys.modules, "infra.data_process.core.image_analyzer", None)
+    assert v.is_available() is False
+
+
 def test_vision_parse_elements():
     v = VisionBackend()
     desc = '按钮："提交"\n输入框: 用户名\nbutton: 登录\n按钮："提交"'
@@ -56,6 +64,70 @@ def test_vision_detect_full(monkeypatch):
     result = asyncio.run(v.detect(app="Test"))
     assert result.element_count >= 1
     assert result.visual_description
+
+
+def test_vision_detect_custom_prompt(monkeypatch):
+    """传入自定义 prompt → 跳过默认 prompt 分支（44->56）"""
+    import utils.screen_capture as sc_mod
+    import base64
+    v = VisionBackend()
+    monkeypatch.setattr(sc_mod, "capture_screen", lambda: base64.b64encode(b"raw").decode())
+    import infra.data_process.core.image_analyzer as ia_mod
+    analyzer = MagicMock()
+    analyzer.initialize = AsyncMock(return_value=None)
+    seen_prompt = {}
+    async def fake_analyze(image_data, prompt=None):
+        seen_prompt["prompt"] = prompt
+        return {"description": ""}
+    analyzer.analyze = fake_analyze
+    monkeypatch.setattr(ia_mod, "ImageAnalyzer", lambda **kw: analyzer)
+    result = asyncio.run(v.detect(app="Test", prompt="自定义提示词"))
+    assert seen_prompt["prompt"] == "自定义提示词"
+    assert result.visual_description == ""
+
+
+def test_vision_detect_analyzer_exception(monkeypatch):
+    """analyze 抛异常 → 返回空结果不崩溃（72-73）"""
+    import utils.screen_capture as sc_mod
+    import base64
+    v = VisionBackend()
+    monkeypatch.setattr(sc_mod, "capture_screen", lambda: base64.b64encode(b"raw").decode())
+    import infra.data_process.core.image_analyzer as ia_mod
+    analyzer = MagicMock()
+    analyzer.initialize = AsyncMock(return_value=None)
+    analyzer.analyze = AsyncMock(side_effect=RuntimeError("model down"))
+    monkeypatch.setattr(ia_mod, "ImageAnalyzer", lambda **kw: analyzer)
+    result = asyncio.run(v.detect(app="Test"))
+    assert result.backend == "vision"
+    assert result.element_count == 0
+
+
+def test_vision_parse_button_second_pattern():
+    """按钮描述『“xxx”按钮』形式 → 命中第二模式（92->90）"""
+    v = VisionBackend()
+    els = v._parse_elements_from_description('"登录"按钮 出现')
+    assert any(e.type == "button" and e.label == "登录" for e in els)
+
+
+def test_vision_parse_input_no_label_skipped():
+    """输入框标签为纯空格（strip 后为空）→ 不生成元素（105->103）"""
+    v = VisionBackend()
+    els = v._parse_elements_from_description('输入框: " "')
+    assert not any(e.type == "text_field" for e in els)
+
+
+def test_vision_parse_button_empty_label_skipped():
+    """按钮标签为空 → 跳过（92->90）"""
+    v = VisionBackend()
+    els = v._parse_elements_from_description('按钮: "   "')
+    assert not any(e.type == "button" for e in els)
+
+
+def test_vision_parse_button_overlong_label_skipped():
+    """按钮标签 ≥50 字符 → 跳过（92 的 len<50 分支）"""
+    v = VisionBackend()
+    els = v._parse_elements_from_description(f'按钮: {"长" * 60}')
+    assert not any(e.type == "button" for e in els)
 
 
 # ── screen_monitor_source ──

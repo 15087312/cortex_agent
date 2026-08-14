@@ -126,3 +126,17 @@ def test_tools_search_category_filter():
 def test_tools_search_no_match():
     r = tools_search.tools_search(keyword="不存在的工具xyz")
     assert r["count"] == 0
+
+
+def test_tools_search_risk_level_filter():
+    r = tools_search.tools_search(risk_level="LOW")
+    assert r["success"] is True
+    assert r["count"] > 0
+    assert all(t["risk_level"] == "LOW" for t in r["tools"])
+
+
+def test_tools_search_source_filter():
+    r = tools_search.tools_search(source="builtin")
+    assert r["success"] is True
+    assert r["count"] > 0
+    assert all(t["source"] == "builtin" for t in r["tools"])

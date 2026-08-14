@@ -87,3 +87,58 @@ def test_get_current_values_sections(vs):
 
 def test_get_current_values_unknown_format(vs):
     assert "未知格式" in value_tools.get_current_values("xml")
+
+
+# ── 防御性分支：参数校验 / 异常回退 / 未注册降级 ─────────────────────────────
+
+def test_get_value_system_real():
+    from config.values_store import value_system
+    assert value_tools._get_value_system() is value_system
+
+
+def test_remove_rule_missing_params(vs):
+    assert "需要 section 和 rule" in value_tools.modify_value_system("remove_rule", section="行为准则")
+    assert "需要 section 和 rule" in value_tools.modify_value_system("remove_rule", rule="x")
+
+
+def test_update_rule_missing_params(vs):
+    assert "需要 section、rule 和 new_rule" in value_tools.modify_value_system(
+        "update_rule", section="行为准则", rule="old")
+    assert "需要 section、rule 和 new_rule" in value_tools.modify_value_system(
+        "update_rule", section="行为准则", new_rule="new")
+    assert "需要 section、rule 和 new_rule" in value_tools.modify_value_system(
+        "update_rule", rule="old", new_rule="new")
+
+
+def test_update_rule_quality_gate(vs):
+    r = value_tools.modify_value_system(
+        "update_rule", section="行为准则", rule="旧", new_rule="短")
+    assert "未通过质量门控" in r
+
+
+def test_modify_value_system_exception(vs, monkeypatch):
+    from unittest.mock import MagicMock
+    monkeypatch.setattr(vs, "add_rule", MagicMock(side_effect=RuntimeError("boom")))
+    r = value_tools.modify_value_system("add_rule", section="行为准则",
+                                        rule="始终对用户保持诚实并如实说明限制")
+    assert "执行出错" in r
+    assert "boom" in r
+
+
+def test_get_current_values_no_formatter(monkeypatch):
+    from infra.tool_manager.service_registry import unregister_capability, register_capability
+    from config.values_store import value_system
+    original = value_tools._get_formatter()
+    try:
+        unregister_capability("value_formatter")
+        assert "未注册" in value_tools.get_current_values("compact")
+    finally:
+        register_capability("value_formatter", original)
+
+
+def test_get_current_values_exception(vs, monkeypatch):
+    from unittest.mock import MagicMock
+    monkeypatch.setattr(vs, "load", MagicMock(side_effect=RuntimeError("boom")))
+    r = value_tools.get_current_values("full")
+    assert "查询出错" in r
+    assert "boom" in r

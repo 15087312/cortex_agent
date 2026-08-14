@@ -44,6 +44,7 @@ def test_day_boundaries():
     assert time_utils.get_start_of_day(dt) == datetime(2026, 8, 11, 0, 0, 0)
     assert time_utils.get_end_of_day(dt) == datetime(2026, 8, 11, 23, 59, 59, 999999)
     assert time_utils.get_start_of_day() == time_utils.get_start_of_day(time_utils.now())
+    assert time_utils.get_end_of_day() == time_utils.get_end_of_day(time_utils.now())
 
 
 # ── json_utils ──────────────────────────────────────────────────────────────
@@ -63,6 +64,13 @@ def test_format_json():
     out = json_utils.format_json({"a": 1}, indent=4)
     assert '"a": 1' in out
     assert "\n" in out
+
+
+def test_serialize_unsupported_type_raises():
+    """不可序列化对象 → DateTimeEncoder.default 抛 TypeError（15 行）"""
+    import pytest
+    with pytest.raises(TypeError):
+        json_utils.serialize({"obj": object()})
 
 
 # ── async_utils ─────────────────────────────────────────────────────────────
