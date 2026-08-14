@@ -149,26 +149,34 @@ def _stop_background_sources():
 # 环境变量可调：LEAK_INTERVAL（采样间隔，默认 50）、LEAK_REPORT（0 关闭报告）。
 # ---------------------------------------------------------------------------
 
-import gc as _gc
-
 LEAK_INTERVAL = int(os.environ.get("LEAK_INTERVAL", "100"))
 LEAK_REPORT = os.environ.get("LEAK_REPORT", "1") == "1"
 
-# 每测试新增存活对象数超过此阈值判定为泄漏嫌疑（保守，避免误报）
-LEAK_RATE_THRESHOLD = int(os.environ.get("LEAK_RATE_THRESHOLD", "1500"))
+# 每测试新增存活字节数超过此阈值判定为泄漏嫌疑（保守，避免误报；单位 KiB/测试）
+LEAK_RATE_THRESHOLD = int(os.environ.get("LEAK_RATE_THRESHOLD", "256"))
 
 _LEAK_CTX = {"count": 0, "samples": [], "tracker": None}
 
 
-def pytest_runtest_teardown(item, nextitem):
-    """每 LEAK_INTERVAL 个测试采样 GC 跟踪的存活对象数（len(gc.get_objects())）。
+def _leak_sample_mem_kib() -> int:
+    """采样当前存活对象总字节数（pympler.muppy，含 bytes/bytearray 等原始内存）。"""
+    from pympler import muppy
+    return muppy.get_size(muppy.get_objects()) // 1024
 
-    开销约 0.1-0.5s/次（遍历 GC 对象表）；默认每 100 测试一次。
+
+def pytest_runtest_teardown(item, nextitem):
+    """每 LEAK_INTERVAL 个测试采样存活内存 KiB（真实字节，含 bytes/numpy 内容）。
+
+    开销：muppy 遍历存活对象约 0.1-1s/次（随进程对象数），默认每 100 测试一次。
     """
     _LEAK_CTX["count"] += 1
     if _LEAK_CTX["count"] % LEAK_INTERVAL == 0:
         try:
-            _LEAK_CTX["samples"].append((_LEAK_CTX["count"], len(_gc.get_objects())))
+            _LEAK_CTX["samples"].append(
+                (_LEAK_CTX["count"], _leak_sample_mem_kib(), getattr(item, "nodeid", "")),
+            )
+        except ImportError:
+            pass  # pympler 未安装：跳过采样（报告会提示）
         except Exception:
             pass
 
@@ -176,16 +184,18 @@ def pytest_runtest_teardown(item, nextitem):
 def pytest_sessionstart(session):
     """会话开始：构造 pympler baseline（用于会话结束的类型 diff）。"""
     try:
+        import gc
         from pympler import tracker
-        _gc.collect()
+        gc.collect()
         _LEAK_CTX["tracker"] = tracker.SummaryTracker()
     except ImportError:
-        _LEAK_CTX["tracker"] = None  # pympler 未安装：仅保留增长趋势检测
+        _LEAK_CTX["tracker"] = None  # pympler 未安装：无法检测，报告会提示
 
 
 def pytest_sessionfinish(session, exitstatus):
     """会话结束（capture 已释放）：输出泄漏检测报告。"""
     try:
+        import gc as _gc
         _gc.collect()
         _report_leak_detector(_LEAK_CTX["tracker"])
     except Exception:
@@ -199,26 +209,31 @@ def _report_leak_detector(pympler_tracker) -> None:
     print("[LEAK-DETECT] 内存泄漏检测报告")
     print("=" * 60)
 
-    # 1) 增长趋势判定
+    # 1) 增长趋势判定（基于 pympler.muppy 真实字节数）
     samples = _LEAK_CTX["samples"]
     if len(samples) >= 3:
         half = samples[len(samples) // 2:]
-        delta_objs = half[-1][1] - half[0][1]
+        delta_kib = half[-1][1] - half[0][1]
         delta_tests = max(1, half[-1][0] - half[0][0])
-        rate = delta_objs / delta_tests
-        print(f"  [趋势] 采样点: {samples}")
-        print(f"  [趋势] 后 {len(half)} 个采样点: 对象数 {half[0][1]} → {half[-1][1]} "
-              f"(每测试新增 {rate:.0f} 存活对象)")
+        rate = delta_kib / delta_tests  # KiB/测试
+        print(f"  [趋势] 采样点(测试数, 存活KiB, 节点):")
+        for n, kib, nid in samples:
+            print(f"    {n:5d}  {kib:8d} KiB  {nid}")
+        print(f"  [趋势] 后 {len(half)} 个采样点: {half[0][1]} → {half[-1][1]} KiB "
+              f"(每测试新增 {rate:.1f} KiB)")
         if rate > LEAK_RATE_THRESHOLD:
-            print(f"  ⚠ 疑似内存泄漏: 每测试持续新增 {rate:.0f} 个存活对象，"
-                  f"超过阈值 {LEAK_RATE_THRESHOLD}，请用 scripts/leak_check.py 定位")
+            print(f"  ⚠ 疑似内存泄漏: 每测试持续新增 {rate:.1f} KiB，"
+                  f"超过阈值 {LEAK_RATE_THRESHOLD} KiB/测试")
+            print(f"    → 用 scripts/leak_check.py 缩小范围定位泄漏点")
         else:
-            print(f"  ✓ 对象数稳定（每测试 {rate:.0f} 对象，阈值 {LEAK_RATE_THRESHOLD}）")
+            print(f"  ✓ 内存稳定（每测试 {rate:.1f} KiB，阈值 {LEAK_RATE_THRESHOLD} KiB/测试）")
     else:
-        print(f"  [趋势] 测试样本不足（{len(samples)} 个采样点 < 3），跳过增长判定")
+        print(f"  [趋势] 测试样本不足（{len(samples)} 个采样点 < 3，跳过增长判定）")
 
     # 2) pympler 类型定位
-    if pympler_tracker is not None:
+    if pympler_tracker is None:
+        print("  [警告] pympler 未安装，无法做类型 diff；请 pip install pympler")
+    else:
         print("  [pympler] 会话内创建但未释放的对象类型 top（随测试数增长的 = 泄漏候选）:")
         try:
             pympler_tracker.print_diff()
