@@ -26,11 +26,19 @@ class ContextSlicer:
         self.window_size = window_size
         self.chunk_chars = chunk_chars
         self._client = None  # 懒建一次，复用避免每块新建 aiohttp session
+        self._client_cfg = None  # 配置指纹：模型配置变更时自动重建（实时生效）
 
     def _get_client(self):
-        if self._client is None:
+        from infra.model.config_fingerprint import (
+            model_config_fingerprint, close_client_session,
+        )
+        cfg = model_config_fingerprint("large")
+        if self._client is None or self._client_cfg != cfg:
+            old = self._client
             from infra.model.large_model_client import LargeModelClient
             self._client = LargeModelClient()
+            self._client_cfg = cfg
+            close_client_session(old)
         return self._client
 
     async def slice(

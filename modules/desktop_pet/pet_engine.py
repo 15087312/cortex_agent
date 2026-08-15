@@ -143,8 +143,16 @@ class PetEngine:
         """主会话历史 + 桌宠人设 + 用户消息"""
         from infra.model.large_model_client import LargeModelClient
         from infra.model.base_model import ChatMessage
-        if self._client is None:
+        from infra.model.config_fingerprint import (
+            model_config_fingerprint, close_client_session,
+        )
+        # 配置指纹：模型配置（URL/Key/名称）变更时自动重建，实时生效
+        cfg = model_config_fingerprint("large")
+        if self._client is None or getattr(self, "_client_cfg", None) != cfg:
+            old = self._client
             self._client = LargeModelClient()
+            self._client_cfg = cfg
+            close_client_session(old)
 
         history = []
         try:

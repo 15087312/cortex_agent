@@ -17,17 +17,34 @@ class PromptComposer:
 
     def __init__(self):
         self._identity = ""
+        self._base_mtime = None
         self._load_prompts()
 
     def _load_prompts(self):
         try:
             base_path = PROMPTS_DIR / "base.yaml"
+            mtime = base_path.stat().st_mtime
             with open(base_path, "r", encoding="utf-8") as f:
                 data = yaml.safe_load(f)
             self._identity = data.get("identity", "")
+            self._base_mtime = mtime
         except Exception as e:
             logger.warning(f"Failed to load prompts: {e}, using defaults")
             self._identity = ""
+
+    def _ensure_fresh_identity(self):
+        """检测 base.yaml 是否被修改（mtime 变化），变化则重读——改提示词实时生效，无需重启"""
+        try:
+            base_path = PROMPTS_DIR / "base.yaml"
+            mtime = base_path.stat().st_mtime
+            if self._base_mtime != mtime:
+                with open(base_path, "r", encoding="utf-8") as f:
+                    data = yaml.safe_load(f)
+                self._identity = data.get("identity", "")
+                self._base_mtime = mtime
+                logger.info("[PromptComposer] 检测到 base.yaml 变更，已热重载 identity")
+        except Exception:
+            pass
 
     def build_system(self, memory_context: str = "") -> str:
         """Assemble full system prompt.
@@ -38,20 +55,27 @@ class PromptComposer:
         3. 感知说明（主 base.yaml 的 perception，纯对话只保留这一项规则）
         4. Memory context (injected if available)
         """
+        # 提示词热重载：base.yaml 被修改时自动重读（实时生效，无需重启）
+        self._ensure_fresh_identity()
+
         # 与 agent 模式共用主 settings：设置页的人设管理 / 高级修改对纯对话模式同样生效
         persona_override = ""
         custom_persona = ""
         try:
             from config.settings import settings as main_settings
             persona_override = main_settings.get_system_override("orchestrator")
-            custom_persona = main_settings.get_persona("orchestrator")
+            # 尊重编排的 active 状态：只从"激活的" agent 中选取纯对话人设，
+            # 停用的 agent 不应被强制套用（用户编排里设置了哪个启动，就用哪个）。
+            # 优先级：orchestrator（总指挥）> 激活的自定义 large agent > 内置 base.yaml
+            if main_settings.get_agent_active("orchestrator"):
+                custom_persona = main_settings.get_persona("orchestrator") or ""
             if not custom_persona:
-                # 纯对话是单人格：orchestrator 无自定义人设时，
-                # 回退到用户自定义的 large-tier 总指挥 agent 人设（编排页建的自定义总指挥）
                 for ca in main_settings.get_custom_agents():
-                    if ca.get("tier") == "large" and ca.get("role"):
-                        custom_persona = main_settings.get_persona(ca["role"])
-                        if custom_persona:
+                    if (ca.get("tier") == "large" and ca.get("role")
+                            and main_settings.get_agent_active(ca.get("role"))):
+                        p = main_settings.get_persona(ca["role"])
+                        if p:
+                            custom_persona = p
                             break
         except Exception:
             pass
