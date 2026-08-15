@@ -354,3 +354,45 @@ def test_get_conscience_singleton(monkeypatch):
     a = get_conscience()
     b = get_conscience()
     assert a is b
+
+
+# ── 心理活动人设随模型角色变化 ──
+
+def test_role_context_follows_owner():
+    """心理活动人设随 owner 角色变化（总指挥/主管/专家）"""
+    c = cons_mod.Conscience()
+    cases = {
+        "large_primary": "总指挥",
+        "sup_1": "代码主管",
+        "expert_1": "实现专家",
+        "expert_ui_001": "前端设计专家",
+    }
+    for owner, expect_name in cases.items():
+        intro, persona, name = c._build_role_context(owner)
+        assert name == expect_name, f"{owner} 应为人设 {expect_name}，实际 {name}"
+        assert intro == f"你是{expect_name}"
+
+
+def test_role_context_no_tools():
+    """心理活动人设只含人设与记忆，不含工具定义"""
+    c = cons_mod.Conscience()
+    for owner in ("large_primary", "sup_1", "expert_1"):
+        _, persona, _ = c._build_role_context(owner)
+        for kw in ("工具", "tools_search", "schema", "tool_whitelist", "【能力表】"):
+            assert kw not in persona, f"人设不应含工具关键词: {kw}"
+
+
+def test_think_uses_role_persona(monkeypatch):
+    """think 生成 prompt 使用对应角色人设"""
+    c = cons_mod.Conscience()
+    client = AsyncMock()
+    client.generate.return_value = "（我作为实现专家想起经验X→Y）"
+    c._model_client = client
+    c._dialog_buffers["expert_1"] = ["[user] 帮我写代码"]
+    monkeypatch.setattr(c, "_get_causal_knowledge", lambda *a, **k: "经验X→Y")
+    out = asyncio.run(c.think("帮我写代码", owner_id="expert_1"))
+    assert "实现专家" in out
+    # 检查发送的 prompt 含实现专家人设
+    prompt_arg = client.generate.call_args[0][0]
+    assert "实现专家" in prompt_arg
+    assert "工具" not in prompt_arg.split("【你过去的经验】")[0]

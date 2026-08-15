@@ -18,7 +18,9 @@ from utils.logger import setup_logger
 
 logger = setup_logger("conscience")
 
-CONSCIENCE_PROMPT = """你是总指挥，正在回忆过去的经验。
+CONSCIENCE_PROMPT = """{role_intro}，正在回忆过去的经验。
+
+{persona}
 
 【你过去的经验（因果知识）】
 {causal_knowledge}
@@ -39,7 +41,7 @@ CONSCIENCE_PROMPT = """你是总指挥，正在回忆过去的经验。
 
 要求：
 - 用括号包裹，第一人称，像在自言自语
-- 身份就是你自己——总指挥——不是别人
+- 身份就是你自己——{role_name}——不是别人
 - 优先引用因果知识（"我记得X往往导致Y"），其次引用价值观
 - 不要说"我是良知系统""根据分析"之类的话，这是你自己的记忆
 - 不要输出 JSON，不要用标签格式
@@ -80,6 +82,45 @@ class Conscience:
             buf.append(f"{'用户' if role == 'user' else '助手'}: {text[:300]}")
             if len(buf) > 20:
                 del buf[:len(buf) - 20]
+
+    def _resolve_role(self, owner_id: str) -> dict:
+        """从 model_id 推断角色（orchestrator 总指挥 / supervisor 主管 / expert 专家）。
+
+        优先精确匹配 roles.yaml 的 model_id；否则按前缀推断 tier 的默认角色。
+        """
+        try:
+            import yaml
+            from pathlib import Path
+            roles_file = Path(__file__).resolve().parents[2] / "config" / "prompts" / "roles.yaml"
+            roles = yaml.safe_load(roles_file.read_text(encoding="utf-8")).get("roles", {})
+        except Exception:
+            roles = {}
+        owner = owner_id or "large_primary"
+        for r in roles.values():
+            if r.get("model_id") == owner:
+                return r
+        if owner.startswith(("sup", "supervisor")):
+            return roles.get("code_supervisor", {})
+        if owner.startswith("expert"):
+            return roles.get("code_writer", {})
+        return roles.get("orchestrator", {})
+
+    def _build_role_context(self, owner_id: str) -> tuple:
+        """构建角色人设上下文（intro + 人设 + 角色名）。
+
+        只含人设/风格/擅长等身份信息与对应记忆，**不含工具定义/能力表**
+        ——心理活动是内心独白，不需要工具上下文。
+        """
+        role = self._resolve_role(owner_id)
+        name = role.get("name", "总指挥")
+        lines = []
+        if role.get("personality"):
+            lines.append(f"【人格】{role['personality']}")
+        if role.get("speaking_style"):
+            lines.append(f"【风格】{role['speaking_style']}")
+        if role.get("expertise"):
+            lines.append(f"【擅长】{'、'.join(role['expertise'])}")
+        return f"你是{name}", "\n".join(lines), name
 
     def _get_causal_knowledge(self, user_input: str, owner_id: str = "large_primary") -> str:
         """从因果图中提取与当前输入相关的经验知识
@@ -335,6 +376,9 @@ class Conscience:
             buf = self._dialog_buffers.get(owner_id or "large_primary", [])
             recent_dialog = "\n".join(buf[-6:]) if buf else "（无）"
             
+            # 3.5 按 owner 角色构建人设（人设随模型角色变化；只含人设+记忆，不含工具）
+            role_intro, persona, role_name = self._build_role_context(owner_id or "large_primary")
+
             # 4. 调用 LLM 生成内心独白
             if not self._model_client:
                 logger.debug("[Conscience] 无模型客户端，跳过内心独白生成")
@@ -355,6 +399,9 @@ class Conscience:
                 pass
 
             prompt = CONSCIENCE_PROMPT.format(
+                role_intro=role_intro,
+                persona=persona,
+                role_name=role_name,
                 causal_knowledge=causal_knowledge,
                 values=values_text,
                 recent_dialog=recent_dialog,
