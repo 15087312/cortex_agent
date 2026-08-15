@@ -28,19 +28,31 @@ def test_add_to_dialog():
     c.add_to_dialog("user", "你好")
     c.add_to_dialog("assistant", "好的")
     c.add_to_dialog("system", "忽略")  # 非 user/assistant 忽略
-    assert len(c._last_dialog_buffer) == 2
-    assert "用户" in c._last_dialog_buffer[0]
-    assert "助手" in c._last_dialog_buffer[1]
+    buf = c._dialog_buffers["large_primary"]
+    assert len(buf) == 2
+    assert "用户" in buf[0]
+    assert "助手" in buf[1]
     # 超过 20 条裁剪
     for i in range(25):
         c.add_to_dialog("user", f"消息{i}")
-    assert len(c._last_dialog_buffer) == 20
+    assert len(c._dialog_buffers["large_primary"]) == 20
+
+
+def test_add_to_dialog_session_isolated():
+    """心理活动对话缓存按 session 隔离：不同会话互不累计"""
+    c = Conscience()
+    c.add_to_dialog("user", "会话A内容", session_id="sess_a")
+    c.add_to_dialog("user", "会话B内容", session_id="sess_b")
+    assert c._dialog_buffers["sess_a"][0] == "用户: 会话A内容"
+    assert c._dialog_buffers["sess_b"][0] == "用户: 会话B内容"
+    # 切换会话后 think 只引用本会话的最近对话
+    assert c._dialog_buffers.get("sess_c", []) == []
 
 
 def test_add_to_dialog_empty():
     c = Conscience()
     c.add_to_dialog("user", "")
-    assert c._last_dialog_buffer == []
+    assert c._dialog_buffers == {}
 
 
 def test_extract_keywords():
@@ -186,7 +198,7 @@ async def test_think_generates_monologue(monkeypatch, tmp_path):
     c._get_node_ids_from_events = MagicMock(return_value=[])
     out = await c.think("性能又出问题了", owner_id="large_primary")
     assert out == "记得性能问题往往导致延期"
-    assert c._last_dialog_buffer  # 独白加入历史
+    assert c._dialog_buffers["large_primary"]  # 独白加入历史（按 session）
     gen_kwargs = c._model_client.generate.call_args.kwargs
     assert gen_kwargs["system_prompt"] == CONSCIENCE_SYSTEM_PROMPT
     assert "我记得" in CONSCIENCE_PROMPT

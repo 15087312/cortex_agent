@@ -67,15 +67,19 @@ class Conscience:
 
     def __init__(self, model_client=None):
         self._model_client = model_client
-        self._last_dialog_buffer: list = []
+        # 心理活动对话缓存按 session 隔离（owner_id/session_id → buffer），
+        # 避免切换会话后心理活动仍引用其它会话的"最近对话"导致跨会话累计
+        self._dialog_buffers: Dict[str, list] = {}
         # 记录本轮参与分析的节点 ID，用于反馈闭环
         self._last_analyzed_node_ids: List[str] = []
 
-    def add_to_dialog(self, role: str, text: str):
+    def add_to_dialog(self, role: str, text: str, session_id: str = "large_primary"):
         if role in ("user", "assistant") and text:
-            self._last_dialog_buffer.append(f"{'用户' if role == 'user' else '助手'}: {text[:300]}")
-            if len(self._last_dialog_buffer) > 20:
-                self._last_dialog_buffer = self._last_dialog_buffer[-20:]
+            key = session_id or "large_primary"
+            buf = self._dialog_buffers.setdefault(key, [])
+            buf.append(f"{'用户' if role == 'user' else '助手'}: {text[:300]}")
+            if len(buf) > 20:
+                del buf[:len(buf) - 20]
 
     def _get_causal_knowledge(self, user_input: str, owner_id: str = "large_primary") -> str:
         """从因果图中提取与当前输入相关的经验知识
@@ -327,8 +331,9 @@ class Conscience:
             except Exception:
                 values_text = "诚实、负责、安全、有益"
             
-            # 3. 获取最近对话
-            recent_dialog = "\n".join(self._last_dialog_buffer[-6:]) if self._last_dialog_buffer else "（无）"
+            # 3. 获取最近对话（按 owner_id/session 隔离，不跨会话引用）
+            buf = self._dialog_buffers.get(owner_id or "large_primary", [])
+            recent_dialog = "\n".join(buf[-6:]) if buf else "（无）"
             
             # 4. 调用 LLM 生成内心独白
             if not self._model_client:
@@ -367,8 +372,8 @@ class Conscience:
                 inner_thoughts = inner_thoughts.strip()
                 if inner_thoughts:
                     logger.info(f"[Conscience] 生成内心独白：{inner_thoughts[:100]}...")
-                    # 添加到对话历史（用于下一轮）
-                    self.add_to_dialog("assistant", f"[良知]{inner_thoughts}")
+                    # 添加到对话历史（用于下一轮，按 session 隔离）
+                    self.add_to_dialog("assistant", f"[良知]{inner_thoughts}", session_id=owner_id)
                 return inner_thoughts
             except Exception as e:
                 logger.debug(f"[Conscience] LLM 生成失败：{e}")

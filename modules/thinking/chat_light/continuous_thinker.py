@@ -78,7 +78,7 @@ class ContinuousThinker:
                         api_key=settings.SMALL_MODEL_API_KEY or settings.LARGE_MODEL_API_KEY,
                         api_url=settings.SMALL_MODEL_API_URL or settings.LARGE_MODEL_API_URL,
                     )
-                    _cons.add_to_dialog("user", user_message)
+                    _cons.add_to_dialog("user", user_message, session_id=session_id or "large_primary")
                     _mental = await _cons.think(user_message, owner_id=session_id or "large_primary")
                     if _mental:
                         # 注入模型上下文（与 agent 模式同款：system prompt 追加过往经验段）
