@@ -749,6 +749,12 @@ class Settings(BaseSettings):
             object.__setattr__(self, "MEMORY_DB_PATH", lib["db"])
             object.__setattr__(self, "MEMORY_FAISS_INDEX", lib["faiss"])
             object.__setattr__(self, "MEMORY_ID_MAP", lib["id_map"])
+            # 因果图跟记忆库走：启动时应用当前库的因果图路径（旧库无 causal 字段则派生）
+            object.__setattr__(
+                self, "CAUSAL_DB_PATH",
+                lib.get("causal") or self._causal_db_path_for(
+                    data.get("current", "默认"), str(Path(self.MEMORY_DB_PATH).parent)),
+            )
         except Exception:
             pass
 
@@ -822,6 +828,13 @@ class Settings(BaseSettings):
     def _memory_libs_path(self):
         return Path.home() / ".cortex" / "memory_libs.json"
 
+    @staticmethod
+    def _causal_db_path_for(name: str, base_dir: str) -> str:
+        """派生某记忆库对应的因果图路径（data/causal_{safe}.db），与事件库同目录"""
+        import re
+        safe = re.sub(r'[^0-9A-Za-z_\-\u4e00-\u9fff]', '', name) or "lib"
+        return str(Path(base_dir) / f"causal_{safe}.db")
+
     def get_memory_libs(self) -> dict:
         """读取记忆库配置；无配置/读取失败时返回默认记忆库（当前 settings 的路径）。
 
@@ -847,6 +860,7 @@ class Settings(BaseSettings):
                     "db": self.MEMORY_DB_PATH,
                     "faiss": self.MEMORY_FAISS_INDEX,
                     "id_map": self.MEMORY_ID_MAP,
+                    "causal": str(Path(self.MEMORY_DB_PATH).parent / "causal.db"),
                 }
             },
         }
@@ -888,19 +902,34 @@ class Settings(BaseSettings):
             red_mod._reducer_instance = None
         except Exception:
             pass
+        # 因果图跟记忆库走：切换库后重置 CausalGraph 单例，按新 CAUSAL_DB_PATH 重新加载
+        try:
+            import modules.memory.causal_graph as cg_mod
+            cg_mod.CausalGraph._instance = None
+        except Exception:
+            pass
 
     def switch_memory_lib(self, name: str) -> bool:
-        """切换到指定记忆库（更新运行时路径 + 重置记忆单例，原子化）"""
+        """切换到指定记忆库（更新运行时路径 + 重置记忆单例，原子化）
+
+        因果图跟记忆库走：每个库有独立 causal.db（旧库无 causal 字段时按库名派生）。
+        """
         with _MEMORY_SWITCH_LOCK:
             data = self.get_memory_libs()
             lib = data.get("libs", {}).get(name)
             if not lib:
                 return False
+            # 兼容旧库：无 causal 字段 → 派生并补写，保证因果图也隔离
+            if not lib.get("causal"):
+                lib["causal"] = self._causal_db_path_for(
+                    name, str(Path(self.MEMORY_DB_PATH).parent))
+                self._save_memory_libs(data)
             data["current"] = name
             self._save_memory_libs(data)
             object.__setattr__(self, "MEMORY_DB_PATH", lib["db"])
             object.__setattr__(self, "MEMORY_FAISS_INDEX", lib["faiss"])
             object.__setattr__(self, "MEMORY_ID_MAP", lib["id_map"])
+            object.__setattr__(self, "CAUSAL_DB_PATH", lib["causal"])
             self._reset_memory_singletons()
         return True
 
@@ -916,6 +945,7 @@ class Settings(BaseSettings):
             "db": str(Path(base) / f"memory_{safe}.db"),
             "faiss": str(Path(base) / f"events_faiss_{safe}.index"),
             "id_map": str(Path(base) / f"events_id_map_{safe}.json"),
+            "causal": str(Path(base) / f"causal_{safe}.db"),
         }
         data.setdefault("libs", {})[name] = lib
         data["current"] = name
@@ -954,6 +984,7 @@ class Settings(BaseSettings):
                 "db": str(Path(base) / "memory.db"),
                 "faiss": str(Path(base) / "events_faiss.index"),
                 "id_map": str(Path(base) / "events_id_map.json"),
+                "causal": str(Path(base) / "causal.db"),
             }
             data["current"] = "默认"
         elif data.get("current") == name:

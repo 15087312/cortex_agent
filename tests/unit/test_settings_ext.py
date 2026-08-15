@@ -506,6 +506,60 @@ class TestMemoryLibs:
         s = _new_settings(tmp_path, monkeypatch, memory_libs=libs)
         assert s.switch_memory_lib("ghost") is False
 
+    def test_switch_memory_lib_switches_causal(self, tmp_path, monkeypatch):
+        """切换记忆库时因果图路径跟随切换（每个库独立 causal.db）"""
+        libs = {
+            "current": "默认",
+            "libs": {
+                "默认": {"db": "/d", "faiss": "/d.f", "id_map": "/d.m", "causal": "/d.causal"},
+                "work": {"db": "/w", "faiss": "/w.f", "id_map": "/w.m", "causal": "/w.causal"},
+            },
+        }
+        s = _new_settings(tmp_path, monkeypatch, memory_libs=libs)
+        monkeypatch.setattr(Settings, "_reset_memory_singletons", lambda self: None)
+        assert s.switch_memory_lib("work") is True
+        assert s.CAUSAL_DB_PATH == "/w.causal"
+
+    def test_switch_memory_lib_legacy_lib_derives_causal(self, tmp_path, monkeypatch):
+        """旧库无 causal 字段 → 按库名派生并补写 memory_libs.json（兼容老数据）"""
+        libs = {
+            "current": "默认",
+            "libs": {"默认": {"db": "/d", "faiss": "/d.f", "id_map": "/d.m"},
+                     "work": {"db": "/w", "faiss": "/w.f", "id_map": "/w.m"}},
+        }
+        s = _new_settings(tmp_path, monkeypatch, memory_libs=libs)
+        monkeypatch.setattr(Settings, "_reset_memory_singletons", lambda self: None)
+        assert s.switch_memory_lib("work") is True
+        assert s.CAUSAL_DB_PATH.endswith("causal_work.db")
+        saved = json.loads((tmp_path / ".cortex" / "memory_libs.json").read_text(encoding="utf-8"))
+        assert saved["libs"]["work"]["causal"].endswith("causal_work.db")
+
+    def test_create_memory_lib_includes_causal(self, tmp_path, monkeypatch):
+        s = _new_settings(tmp_path, monkeypatch)
+        monkeypatch.setattr(Settings, "_reset_memory_singletons", lambda self: None)
+        lib = s.create_memory_lib("工作库")
+        assert lib["causal"].endswith("causal_工作库.db")
+        assert s.CAUSAL_DB_PATH == lib["causal"]
+
+    def test_apply_current_memory_lib_sets_causal(self, tmp_path, monkeypatch):
+        """启动时应用当前记忆库的因果图路径"""
+        libs = {
+            "current": "work",
+            "libs": {
+                "默认": {"db": "/d", "faiss": "/d.f", "id_map": "/d.m", "causal": "/d.causal"},
+                "work": {"db": "/w", "faiss": "/w.f", "id_map": "/w.m", "causal": "/w.causal"},
+            },
+        }
+        s = _new_settings(tmp_path, monkeypatch, memory_libs=libs)
+        assert s.CAUSAL_DB_PATH == "/w.causal"
+
+    def test_reset_memory_singletons_resets_causal_graph(self, tmp_path, monkeypatch):
+        """切换记忆库后重置 CausalGraph 单例，按新因果图路径重新加载"""
+        s = _new_settings(tmp_path, monkeypatch)
+        s._reset_memory_singletons()
+        import modules.memory.causal_graph as cg_mod
+        assert cg_mod.CausalGraph._instance is None
+
     def test_create_memory_lib(self, tmp_path, monkeypatch):
         s = _new_settings(tmp_path, monkeypatch)
         monkeypatch.setattr(Settings, "_reset_memory_singletons", lambda self: None)
