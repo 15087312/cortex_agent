@@ -51,7 +51,8 @@ async def test_model_runner_run():
 
 def test_model_runner_client_lazy():
     mr = ModelRunner()
-    with patch("modules.thinking.chat_light.model_runner.LargeModelClient") as lm:
+    # client property 函数内 import：patch 源模块属性即可 mock 构造
+    with patch("infra.model.large_model_client.LargeModelClient") as lm:
         c = mr.client
         assert c is lm.return_value
         assert mr.client is c  # 缓存

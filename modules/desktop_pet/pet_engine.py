@@ -147,8 +147,14 @@ class PetEngine:
             model_config_fingerprint, close_client_session,
         )
         # 配置指纹：模型配置（URL/Key/名称）变更时自动重建，实时生效
+        # 显式注入的 _client（测试/外部设置）尊重注入，仅记录指纹不重建
         cfg = model_config_fingerprint("large")
-        if self._client is None or getattr(self, "_client_cfg", None) != cfg:
+        if self._client is None:
+            self._client = LargeModelClient()
+            self._client_cfg = cfg
+        elif getattr(self, "_client_cfg", None) is None:
+            self._client_cfg = cfg
+        elif self._client_cfg != cfg:
             old = self._client
             self._client = LargeModelClient()
             self._client_cfg = cfg

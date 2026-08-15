@@ -1683,3 +1683,20 @@ def add_to_dialog(self, role, text):       # 无 session 参数
 **验证：** 相关 226 项测试通过；`pytest tests/unit` 全量通过（PyQt6 mock / conscience / reasoning / get_agent_active 修复均生效）。
 
 **教训：** ① 测试 import 被测模块时，环境缺桌面/原生依赖（PyQt6 等）必须在 conftest 统一 mock，不能依赖"本地恰好装了"；② 改内部属性/默认值时，要全局搜索所有引用（含 integration 测试）；③ 任何读用户真实配置文件（personas.yaml/settings.json）的测试都必须 mock 读取层，否则用户改配置即 flaky。
+
+## 53. 配置指纹重建在测试环境触发真实 client 构造 → `API key 不能为空`（后端/测试）
+
+**现象：** CI 失败 6 项 `ValueError: API key 不能为空`（test_config_hot_reload / test_pet_engine / test_pet_engine_ext），本地通过、CI 必现。
+
+**根因（两层）：**
+1. **显式注入的 client 被指纹重建覆盖**：测试设 `pe._client = _real_client()`（api_key="t"），但配置指纹逻辑 `if _client is None or _client_cfg != cfg` 中 `_client_cfg` 为 None（测试没记录）→ `None != cfg` → 重建为**无参** `LargeModelClient()` → 读 settings 的 LARGE_MODEL_API_KEY（CI 无 `.env`/`~/.cortex/settings.json` → 空）→ 抛 `ValueError: API key 不能为空`。本地有用户 key 所以过，CI 无 key 必现。
+2. **模块级 from-import 使测试 mock 失效**：`ModelRunner` 模块顶部 `from infra.model.large_model_client import LargeModelClient` 绑定后，`monkeypatch.setattr("infra.model.large_model_client.LargeModelClient", ...)` 只改源模块属性，ModelRunner 里已绑定的引用不变 → 测试 mock 无效 → 真实构造 → 同样报错。
+
+**修复（ModelRunner.client / pet_engine._build_messages）：**
+- 重构配置指纹判断为三分支：`_client is None`→懒建；`_client_cfg is None`（显式注入）→**只记录指纹不重建**；`_client_cfg != cfg`→重建
+- client 构造改**函数内 import** `from infra.model.large_model_client import LargeModelClient`——每次从源模块取，测试 patch 源模块属性即生效
+- 同步更新 `test_model_runner_client_lazy` 的 patch 路径为源模块
+
+**验证：** 相关 287 项测试通过；无 API key 环境下显式注入的 client 不再被覆盖、mock 正常生效。
+
+**教训：** ① "懒建缓存 + 配置指纹重建"必须**尊重显式注入**（`_client_cfg` 缺失≠需要重建，可能只是外部设置的实例）；② 模块级 `from X import Y` 会把 Y 绑定到本命名空间，测试 mock 源模块属性不生效——**需要在函数内 import 或通过模块引用访问**才能被 patch。

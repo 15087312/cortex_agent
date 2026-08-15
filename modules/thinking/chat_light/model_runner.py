@@ -29,11 +29,21 @@ class ModelRunner:
     def client(self) -> LargeModelClient:
         """懒建并缓存 LargeModelClient；模型配置（URL/Key/名称/格式）变更时自动重建，
         使设置页修改实时生效而无需重启。"""
+        # 函数内 import：测试可 monkeypatch 源模块属性（模块级 from-import 绑定不可 mock）
+        from infra.model.large_model_client import LargeModelClient
         from infra.model.config_fingerprint import (
             model_config_fingerprint, close_client_session,
         )
         cfg = model_config_fingerprint("large")
-        if self._client is None or self._client_cfg != cfg:
+        if self._client is None:
+            # 懒建：按当前配置构建
+            self._client = LargeModelClient()
+            self._client_cfg = cfg
+        elif self._client_cfg is None:
+            # 显式注入的 client（未记录指纹）：尊重注入，仅记录当前指纹，不重建
+            self._client_cfg = cfg
+        elif self._client_cfg != cfg:
+            # 配置变更：重建
             old = self._client
             self._client = LargeModelClient()
             self._client_cfg = cfg
