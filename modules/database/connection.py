@@ -9,6 +9,7 @@ from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import sessionmaker, Session, declarative_base
 from sqlalchemy.pool import NullPool
 from utils.logger import setup_logger
+from typing import Any
 
 logger = setup_logger("database")
 
@@ -41,9 +42,9 @@ config = DatabaseConfig()
 class DatabaseManager:
     """数据库管理器"""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._engine = None
-        self._session_factory = None
+        self._session_factory: Any = None
         self._tables_created = False
 
     def initialize(self):
@@ -126,8 +127,8 @@ class DatabaseManager:
         """获取数据库会话"""
         if self._session_factory is None:
             self.initialize()
-        
-        session = self._session_factory()
+
+        session = self._session_factory()  # type: ignore[misc]  # initialize() 已确保非 None
         try:
             yield session
             session.commit()
@@ -141,7 +142,7 @@ class DatabaseManager:
         """获取数据库会话（不自动提交）"""
         if self._session_factory is None:
             self.initialize()
-        return self._session_factory()
+        return self._session_factory()  # type: ignore[misc]  # initialize() 已确保非 None
     
     def close(self):
         """关闭数据库"""

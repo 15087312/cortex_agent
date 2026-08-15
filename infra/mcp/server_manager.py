@@ -29,6 +29,7 @@ class MCPServerManager:
             if not cfg.enabled:
                 continue
             self._configs[cfg.name] = cfg
+            transport: Optional[MCPStdioTransport | MCPSseTransport]
             if cfg.command:
                 transport = MCPStdioTransport(
                     server_name=cfg.name,
@@ -152,7 +153,7 @@ class MCPServerManager:
         for name in list(self._watch_tasks):
             await self._stop_reconnect_watch(name)
 
-    async def add_server(self, name: str, command: str,
+    async def add_server(self, name: str, command: Optional[str] = None,
                          args: list = None, env: dict = None,
                          url: str = "",
                          *, reconnect: bool = False,
@@ -164,6 +165,7 @@ class MCPServerManager:
             logger.warning(f"[MCP] server {name} 已存在，跳过")
             return False
 
+        transport: MCPStdioTransport | MCPSseTransport
         if command:
             from .transport import MCPStdioTransport
             transport = MCPStdioTransport(

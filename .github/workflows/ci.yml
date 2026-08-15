@@ -47,6 +47,13 @@ jobs:
             --cov=modules --cov=infra --cov=config --cov=api --cov=utils \
             --cov-report=term-missing --cov-fail-under=70
 
+      # 类型检查门禁：mypy 0 errors（配置见 pyproject.toml [tool.mypy]）
+      - name: Type check (mypy)
+        shell: bash
+        run: |
+          python -m pip install mypy types-PyYAML types-requests
+          python -m mypy modules/ infra/ config/ utils/ api/
+
       - name: Run integration tests
         shell: bash
         run: |

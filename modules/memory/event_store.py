@@ -14,7 +14,7 @@ import threading
 import uuid
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
 from config.settings import settings
 from utils.faiss_lock import faiss_file_lock
@@ -86,16 +86,16 @@ class MemoryEvent:
 class EventStore:
     """事件存储器 — SQLite + FAISS 双引擎"""
 
-    _instance: "EventStore" = None
+    _instance: Optional["EventStore"] = None
     _lock = threading.Lock()
 
     def __init__(self, db_path: str = None, faiss_index_path: str = None, id_map_path: str = None):
         self._write_lock = threading.Lock()  # 写操作互斥锁
         self._pending_embeddings: List[str] = []  # 待向量化的事件 ID
         self._embedding_worker_started = False
-        db_path = db_path or getattr(settings, "MEMORY_DB_PATH", "data/memory.db")
-        faiss_index_path = faiss_index_path or getattr(settings, "MEMORY_FAISS_INDEX", "data/events_faiss.index")
-        id_map_path = id_map_path or getattr(settings, "MEMORY_ID_MAP", "data/events_id_map.json")
+        db_path = db_path or cast(str, getattr(settings, "MEMORY_DB_PATH", "data/memory.db"))
+        faiss_index_path = faiss_index_path or cast(str, getattr(settings, "MEMORY_FAISS_INDEX", "data/events_faiss.index"))
+        id_map_path = id_map_path or cast(str, getattr(settings, "MEMORY_ID_MAP", "data/events_id_map.json"))
 
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         os.makedirs(os.path.dirname(faiss_index_path), exist_ok=True)
@@ -106,7 +106,7 @@ class EventStore:
         self._conn: Optional[sqlite3.Connection] = None
         self._faiss_index = None  # 延迟加载
         self._id_map: List[str] = []  # FAISS position → event_id
-        self._embedding_dim = None  # 初始化时为 None，实际维度由 EmbeddingEngine 决定
+        self._embedding_dim: Optional[int] = None  # 初始化时为 None，实际维度由 EmbeddingEngine 决定
         self.logger = logger
 
     # ------------------------------------------------------------------
@@ -357,7 +357,8 @@ class EventStore:
         """
         with self._write_lock:
             conn = self._get_conn()
-            conds, args = [], []
+            conds: List[str] = []
+            args: List[Any] = []
             if start_time:
                 conds.append("time >= ?")
                 args.append(start_time)

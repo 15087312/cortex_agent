@@ -25,7 +25,7 @@ import asyncio
 import inspect
 import time
 from abc import ABC, abstractmethod
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Set
 
 from utils.logger import setup_logger
 from utils.suspension import Suspension, pausable_wait_for, effective_elapsed_since
@@ -74,7 +74,7 @@ class RuntimeExpert(ABC):
         self._running = False
         self._round = 0
         self._started_at: Optional[float] = None
-        self._seen_request_entry_ids = set()
+        self._seen_request_entry_ids: Set[str] = set()
 
         self.logger = setup_logger(f"expert.{self.identity.role}")
 
@@ -437,7 +437,7 @@ class RuntimeExpert(ABC):
             f"[{self.identity.name}] CLI模式启动: {task[:80]}..."
         )
 
-        tool_history = []
+        tool_history: List[Dict[str, Any]] = []
         iteration = 0
         current_response = None
         time.time()

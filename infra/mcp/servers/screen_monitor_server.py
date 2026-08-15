@@ -15,14 +15,16 @@ import traceback
 
 import numpy as np
 
+from typing import Any
+
 # 将项目根目录加入 path，使得 from utils.screen_capture import SCREENSHOT_ENABLED 等导入可用
 _project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
 _available = True
-_cv2 = None
-_ocr = None
+_cv2: Any = None
+_ocr: Any = None
 
 # 分析图像最大宽度：超宽的 Retina 全分辨率图进入轮廓检测会极慢/卡死（曾 444% CPU）
 _MAX_ANALYZE_WIDTH = 1280

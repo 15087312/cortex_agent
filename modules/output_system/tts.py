@@ -15,7 +15,7 @@ import asyncio
 import time
 import uuid
 from pathlib import Path
-from typing import Optional
+from typing import Optional, cast
 
 from config.settings import settings
 from utils.logger import setup_logger
@@ -31,10 +31,10 @@ class TTSEngine:
 
     def __init__(self, output_dir: Optional[str] = None):
         # 实例化时读取配置（支持运行时热更新，不绑定 import 时快照）
-        self.output_dir = Path(
+        self.output_dir = Path(cast(str,
             output_dir
             or getattr(settings, "OUTPUT_TTS_OUTPUT_DIR", "data/output")
-        )
+        ))
         self.language = getattr(settings, "OUTPUT_TTS_LANGUAGE", "zh")
         self._available: Optional[bool] = None
 

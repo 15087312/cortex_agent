@@ -50,7 +50,7 @@ def _run_async_in_thread(func, kwargs) -> Any:
         except Exception as e:
             logger.debug(f"shutdown_asyncgens 失败 (非致命): {e}")
         try:
-            loop.run_until_complete(loop.shutdown_default_executor(timeout=5.0))
+            loop.run_until_complete(loop.shutdown_default_executor(timeout=5.0))  # type: ignore[call-arg]
         except Exception as e:
             logger.debug(f"shutdown_default_executor 失败 (非致命): {e}")
         try:

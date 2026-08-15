@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from dataclasses import dataclass, field
 
 from utils.logger import setup_logger
@@ -38,12 +38,12 @@ class MCPStdioTransport:
         self._args = args or []
         self._env = env or {}
         self._timeout = timeout
-        self._session = None
-        self._stdio_ctx = None
-        self._session_ctx = None
+        self._session: Any = None
+        self._stdio_ctx: Any = None
+        self._session_ctx: Any = None
         self._tools_cache: List[MCPToolDef] = []
         self._connected = False
-        self._loop = None
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
 
     def _submit_on_loop(self, coro_factory) -> Any:
         """把 session 调用提交回其绑定的常驻事件循环。
@@ -197,11 +197,12 @@ class MCPSseTransport:
         self.server_name = server_name
         self._url = url
         self._timeout = timeout
-        self._session = None
-        self._sse_ctx = None
-        self._session_ctx = None
+        self._session: Any = None
+        self._sse_ctx: Any = None
+        self._session_ctx: Any = None
         self._tools_cache: List[MCPToolDef] = []
         self._connected = False
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
 
     def _submit_on_loop(self, coro_factory) -> Any:
         if self._loop is None:

@@ -1347,8 +1347,8 @@ async def get_session_dialog(
 
         bb = None
         for lifecycle in get_active_sessions():
-            if lifecycle.session_id == session_id:
-                bb = lifecycle.blackboard
+            if lifecycle.session_id == session_id:  # type: ignore[attr-defined]
+                bb = lifecycle.blackboard  # type: ignore[attr-defined]
                 break
 
         if not bb:
@@ -1422,7 +1422,7 @@ async def get_bus_stats(peek: bool = Query(False), peek_all: bool = Query(False)
         stats = await bus.get_stats() if hasattr(bus, 'get_stats') else {}
         recipients = await bus.list_recipients() if hasattr(bus, 'list_recipients') else []
 
-        result = {
+        result: dict = {
             "stats": stats,
             "recipients": recipients,
         }
@@ -1430,7 +1430,7 @@ async def get_bus_stats(peek: bool = Query(False), peek_all: bool = Query(False)
         if peek_all:
             result["queues"] = {}
             if hasattr(bus, 'peek_all'):
-                for rid, msgs in bus.peek_all().items():
+                for rid, msgs in bus.peek_all().items():  # type: ignore[attr-defined]
                     result["queues"][rid] = {
                         "count": len(msgs),
                         "messages": [m.to_dict() if hasattr(m, 'to_dict') else str(m) for m in msgs[:50]],

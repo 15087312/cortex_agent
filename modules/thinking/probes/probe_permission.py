@@ -13,7 +13,7 @@ ModelPermissions 集成:
 - 当调用者提供了 ModelPermissions 对象时，优先使用其细粒度权限字段
 - 没有 ModelPermissions 时，回退到硬编码的 TIER_HIERARCHY / CONTROL_MAP
 """
-from typing import Optional, TYPE_CHECKING
+from typing import Optional, Dict, List, TYPE_CHECKING
 from utils.logger import setup_logger
 
 if TYPE_CHECKING:
@@ -31,21 +31,21 @@ class ProbePermissionManager:
             ...  # 大模型可以控制主管
     """
 
-    TIER_HIERARCHY = {
+    TIER_HIERARCHY: Dict[str, int] = {
         "large": 3,
         "supervisor": 2,
         "expert": 1,
     }
 
     # 每个 tier 可以控制的目标 tier
-    CONTROL_MAP = {
+    CONTROL_MAP: Dict[str, List[str]] = {
         "large": ["supervisor", "expert"],
         "supervisor": ["expert"],
         "expert": [],
     }
 
     # 每个 tier 可以修改记忆/人格的目标 tier
-    MEMORY_CONTROL_MAP = {
+    MEMORY_CONTROL_MAP: Dict[str, List[str]] = {
         "large": ["supervisor", "expert"],
         "supervisor": ["expert"],
         "expert": [],

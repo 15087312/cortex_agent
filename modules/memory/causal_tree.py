@@ -8,7 +8,7 @@ CausalTree — 因果树：两种推理能力
 """
 import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set
 
 from modules.memory.causal_graph import CausalGraph, CausalNode, CausalEdge
 
@@ -19,7 +19,7 @@ logger = get_logger(__name__)
 @dataclass
 class CacheEntry:
     """缓存条目（带版本号）"""
-    value: any
+    value: Any
     version: int
     expires_at: float  # 过期时间戳
 
@@ -110,7 +110,7 @@ class CausalTree:
             parts.append(f"{k}={v}")
         return ":".join(parts)
 
-    def _get_cached(self, key: str, node_version: int) -> Optional[any]:
+    def _get_cached(self, key: str, node_version: int) -> Optional[Any]:
         """获取缓存（检查版本号和 TTL）"""
         entry = self._cache.get(key)
         if not entry:
@@ -124,7 +124,7 @@ class CausalTree:
             return None
         return entry.value
 
-    def _set_cache(self, key: str, value: any, version: int):
+    def _set_cache(self, key: str, value: Any, version: int):
         """设置缓存"""
         self._cache[key] = CacheEntry(
             value=value,
@@ -245,10 +245,10 @@ class CausalTree:
 
     def _trace_to_leaves(self, node_id: str, max_depth: int = 5) -> List[List[CausalNode]]:
         """从节点向下追踪到叶节点，返回多条因果链"""
-        chains = []
+        chains: List[List[CausalNode]] = []
         self._dfs_down(node_id, [], chains, 0, max_depth)
         # 去重：相同终点只保留最短路径
-        seen = {}
+        seen: Dict[str, List[CausalNode]] = {}
         for chain in chains:
             key = chain[-1].id if chain else None
             if key and (key not in seen or len(chain) < len(seen[key])):
@@ -310,7 +310,7 @@ class CausalTree:
                 logger.debug(f"[CausalTree] 命中 trace_up 缓存：{node_id}")
                 return cached
 
-        chains = []
+        chains: List[CausalChain] = []
         self._dfs_up(node_id, [], [], max_depth, min_confidence, chains, set(), time_window)
         
         # 写入缓存
@@ -342,7 +342,7 @@ class CausalTree:
                 logger.debug(f"[CausalTree] 命中 trace_down 缓存：{node_id}")
                 return cached
 
-        chains = []
+        chains: List[CausalChain] = []
         self._dfs_down_legacy(node_id, [], [], max_depth, min_confidence, chains, set(), time_window)
         
         # 写入缓存
@@ -481,7 +481,7 @@ class CausalTree:
             target = self._graph.get_node(hypothetical_edge.to_id)
             if target:
                 chains.append(CausalChain(
-                    nodes=[node, target],
+                    nodes=[node, target],  # type: ignore[list-item]
                     edges=[hypothetical_edge],
                     direction="forward",
                     confidence=hypothetical_edge.confidence,
@@ -494,7 +494,7 @@ class CausalTree:
                     time_window=time_window,
                 )
                 for sc in sub_chains:
-                    sc.nodes.insert(0, node)
+                    sc.nodes.insert(0, node)  # type: ignore[arg-type]
                     sc.edges.insert(0, hypothetical_edge)
                     chains.append(sc)
 

@@ -674,7 +674,7 @@ async def call_outreach_llm(prompt: str, session_id: str = "", role: str = None,
         try:
             from modules.thinking.context.sources.perception_source import PerceptionSource
             frag = await PerceptionSource().collect()
-            if frag and getattr(frag, "content", ""):
+            if frag and getattr(frag, "content", ""):  # type: ignore[arg-type]  # 动态协议访问
                 extras.append(frag.content)
         except Exception:
             pass

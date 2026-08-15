@@ -23,6 +23,7 @@ from modules.thinking.core.delegation_port import (
 )
 from modules.thinking.core.process_collector import (
     ThinkingProcessCollector,
+    ThinkingProcessSnapshot,
     create_thinking_process_collector,
 )
 from modules.management.core.error_bus import error_bus, ErrorContext
@@ -94,7 +95,7 @@ class ContinuousThinker:
             from modules.memory.utils.task_notebook import TaskNotebook
             self.notebook = TaskNotebook(self._session_id)
         except Exception:
-            self.notebook = None
+            self.notebook = None  # type: ignore[assignment]  # 初始化失败允许为 None，调用方判空
         self._tool_validator = tool_validator  # 工具调用安全验证器（由输出系统注入）
         self.gcm_pool = gcm_pool  # 全局上下文池（可选注入）
         self._blackboard = blackboard  # CognitiveBlackboard
@@ -109,7 +110,7 @@ class ContinuousThinker:
         self._external_prompt_builder = prompt_builder
         self._process_collector = process_collector or create_thinking_process_collector()
         self._delegation_port = delegation_port or create_delegation_port()
-        self._last_process_snapshot = None
+        self._last_process_snapshot: Optional[ThinkingProcessSnapshot] = None
         self._pending_delegations: Dict[str, Dict[str, Any]] = {}  # 委托追踪（从 blackboard 读取或本地）
         self._last_sd_read_count: int = 0  # Blackboard dialog 读取位置
         self._consecutive_new_delegation_rounds: int = 0  # 连续新建委托轮次计数器
@@ -140,14 +141,14 @@ class ContinuousThinker:
 
     # ── ModelRunner 直通接口 ──
 
-    def record_delegation(self, role: str, task: str, result: Optional[Dict[str, Any]] = None) -> None:
+    def record_delegation(self, role: str, task: str, result: Any = None) -> None:
         import time
         # 使用 task_id 作为 key（与 _process_delegation_response 的 delegation_id 一致）
         task_id = ""
         if isinstance(result, dict):
             task_id = result.get("task_id", "") or result.get("metadata", {}).get("task_id", "")
-        elif hasattr(result, "metadata") and isinstance(result.metadata, dict):
-            task_id = result.metadata.get("task_id", "")
+        elif hasattr(result, "metadata") and isinstance(result.metadata, dict):  # type: ignore[union-attr]
+            task_id = result.metadata.get("task_id", "")  # type: ignore[union-attr]
         if not task_id:
             # 兜底：用签名作为 key
             task_id = f"{role}::{task[:60]}"
@@ -158,7 +159,7 @@ class ContinuousThinker:
             is_success = result.get("success", True)
             error_msg = result.get("error", "")
         elif hasattr(result, "success"):
-            is_success = bool(result.success)
+            is_success = bool(result.success)  # type: ignore[union-attr]
             error_msg = getattr(result, "error", "")
         if is_success:
             if task_id not in self._pending_delegations:
@@ -539,7 +540,7 @@ class ContinuousThinker:
             results.append(final_synthesis)
 
         final_result = self._select_final_result(results, self._last_control_decision)
-        metadata = {
+        metadata: Dict[str, Any] = {
             "rounds": len(results),
             "has_final_synthesis": final_synthesis is not None,
         }

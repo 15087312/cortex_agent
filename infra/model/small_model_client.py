@@ -3,7 +3,7 @@
 
 使用 OpenAI 兼容 API（DeepSeek）调用云端 7B 级模型。
 """
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 from .base_model import BaseModelClient, ToolCall, ChatMessage, ChatResponse
 from config.settings import settings
 from utils.logger import setup_logger
@@ -77,7 +77,7 @@ class SmallModelClient(BaseModelClient):
         # api_messages 序列化保留客户端（tool_calls/tool_call_id 转换是客户端特有）
         api_messages = []
         for msg in messages:
-            d = {"role": msg.role, "content": msg.content or ""}
+            d: Dict[str, Any] = {"role": msg.role, "content": msg.content or ""}
             if msg.tool_calls:
                 d["tool_calls"] = [
                     {"id": tc.id, "type": "function", "function": {"name": tc.name, "arguments": tc.arguments}}
@@ -144,7 +144,7 @@ class SmallModelClient(BaseModelClient):
             usage={"prompt_tokens": data.get("usage", {}).get("prompt_tokens", 0), "completion_tokens": data.get("usage", {}).get("completion_tokens", 0)},
         )
 
-    async def generate(self, prompt: str, *, system_prompt: str, max_retries: int = 3, **kwargs) -> str:
+    async def generate(self, prompt: str, *, system_prompt: str, max_retries: int = 3, **kwargs) -> str:  # type: ignore[override]
         """生成响应 - 使用 OpenAI / Anthropic 兼容 API，带重试机制
 
         Args:

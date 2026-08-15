@@ -46,7 +46,7 @@ class PerceptionEventBus:
     活跃实例追踪（weakref）：测试/退出时统一 shutdown，避免 async 线程遗留。
     """
 
-    _all_instances = weakref.WeakSet()
+    _all_instances: "weakref.WeakSet[PerceptionEventBus]" = weakref.WeakSet()
 
     def __init__(self):
         PerceptionEventBus._all_instances.add(self)
@@ -136,7 +136,7 @@ class PerceptionEventBus:
                 if sub.async_handler:
                     self._ensure_async_loop()
                     asyncio.run_coroutine_threadsafe(
-                        sub.async_handler(event), self._async_loop
+                        sub.async_handler(event), self._async_loop  # type: ignore[arg-type]
                     )
             except Exception as e:
                 logger.error(

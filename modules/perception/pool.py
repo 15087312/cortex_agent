@@ -6,7 +6,10 @@ PerceptionPool — 统一感知事件池
 """
 import hashlib
 import time
-from typing import Dict, List
+from typing import TYPE_CHECKING, Dict, List
+
+if TYPE_CHECKING:
+    from modules.thinking.context.pool import ContextFragment
 
 
 class PerceptionPool:

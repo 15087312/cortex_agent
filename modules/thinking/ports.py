@@ -21,12 +21,12 @@ class SecurityPort(Protocol):
 class GuidancePort(Protocol):
     """生成前专家指导提供者。"""
 
-    def run(self, user_input: str) -> Dict[str, Any]:
+    async def run(self, user_input: str, owner_id: str = "large_primary") -> Dict[str, Any]:
         """为当前用户输入返回专家指导。"""
 
 
 class OutputReviewPort(Protocol):
     """最终响应清理、专家审查和输出验证。"""
 
-    def review(self, raw_response: str, user_input: str = "") -> str:
+    async def review(self, raw_response: str, user_input: str = "") -> str:
         """返回经过审查和验证后的用户可见响应。"""

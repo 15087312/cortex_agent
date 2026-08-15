@@ -404,9 +404,10 @@ class _BingCNParser(HTMLParser):
 
 def _search_bing_cn(query: str, limit: int) -> List[Dict[str, str]]:
     """必应中国搜索（cn.bing.com，国内可访问，不触发验证码）"""
+    params: dict[str, str | int] = {"q": query, "count": limit}
     resp = requests.get(
         "https://cn.bing.com/search",
-        params={"q": query, "count": limit},
+        params=params,
         headers={
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept": "text/html,application/xhtml+xml",
@@ -501,9 +502,10 @@ class _BaiduParser(HTMLParser):
 
 def _search_baidu(query: str, limit: int) -> List[Dict[str, str]]:
     """百度搜索（国内 fallback）"""
+    params: dict[str, str | int] = {"wd": query, "rn": limit, "ie": "utf-8"}
     resp = requests.get(
         "https://www.baidu.com/s",
-        params={"wd": query, "rn": limit, "ie": "utf-8"},
+        params=params,
         headers={
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept": "text/html,application/xhtml+xml",

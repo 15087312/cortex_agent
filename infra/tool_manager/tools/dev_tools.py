@@ -42,7 +42,7 @@ def parse_ast(path: str, include_body: bool = False) -> Dict[str, Any]:
     try:
         with open(p, encoding="utf-8") as f: source = f.read()
         tree = ast.parse(source)
-        result = {"path": str(p), "functions": [], "classes": [], "imports": [], "total_lines": len(source.split("\n"))}
+        result: Dict[str, Any] = {"path": str(p), "functions": [], "classes": [], "imports": [], "total_lines": len(source.split("\n"))}
         for node in ast.walk(tree):
             if isinstance(node, ast.FunctionDef):
                 fn = {"name": node.name, "lineno": node.lineno, "end_lineno": node.end_lineno,
@@ -116,7 +116,7 @@ def get_function_signature(path: str, function_name: str) -> Dict[str, Any]:
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == function_name:
                 args = []
                 for a in node.args.args:
-                    arg_info = {"name": a.arg}
+                    arg_info: Dict[str, Any] = {"name": a.arg}
                     if a.annotation: arg_info["type"] = ast.get_source_segment(source, a.annotation) if a.annotation else None
                     args.append(arg_info)
                 returns = ast.get_source_segment(source, node.returns) if node.returns else None
@@ -159,7 +159,7 @@ def list_dependencies(path: Optional[str] = None) -> Dict[str, Any]:
     import importlib.metadata as md
     try:
         dists = md.distributions()
-        deps = sorted([{"name": d.metadata["Name"], "version": d.version} for d in dists if d.metadata.get("Name")], key=lambda x: x["name"].lower())
+        deps = sorted([{"name": d.metadata["Name"], "version": d.version} for d in dists if "Name" in d.metadata], key=lambda x: x["name"].lower())
         return {"success": True, "count": len(deps), "dependencies": deps}
     except Exception as e: return {"error": str(e)}
 
@@ -261,7 +261,7 @@ def calculate_cyclomatic_complexity(path: str) -> Dict[str, Any]:
     try:
         with open(p, encoding="utf-8") as f: source = f.read()
         tree = ast.parse(source)
-        results = []
+        results: List[Dict[str, Any]] = []
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 complexity = 1

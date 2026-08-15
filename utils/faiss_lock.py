@@ -17,7 +17,7 @@ _open = open
 try:
     import fcntl
 except ImportError:  # Windows 等无 fcntl 平台退化为仅线程锁
-    fcntl = None
+    fcntl = None  # type: ignore[assignment]
 
 
 class _PathLock:

@@ -12,7 +12,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple, cast
 
 from config.settings import settings
 from utils.logger import setup_logger
@@ -22,6 +22,10 @@ logger = setup_logger("causal_graph")
 CAUSAL_RELATIONS = {"causes", "prevents", "requires", "alternatives"}
 
 NODE_TYPES = {"root", "cause", "effect", "condition", "counterfactual"}
+
+# 锚点语义相似度门槛：无关键词命中时，绝对余弦相似度低于此值不构成有效锚点
+# （与事件检索的 MIN_SEMANTIC_SIMILARITY=0.30 保持一致）
+_MIN_ANCHOR_SEMANTIC_SIMILARITY = 0.30
 
 
 @dataclass
@@ -110,16 +114,16 @@ class CausalEdge:
 class CausalGraph:
     """因果图 — 节点和边的持久化存储，支持邻域扩散"""
 
-    _instance: "CausalGraph" = None
+    _instance: Optional["CausalGraph"] = None
     _lock = threading.Lock()
 
     def __init__(self, db_path: str = None):
-        db_path = db_path or getattr(settings, "CAUSAL_DB_PATH", "data/causal.db")
+        db_path = db_path or cast(str, getattr(settings, "CAUSAL_DB_PATH", "data/causal.db"))
         os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
         self._db_path = db_path
         self._conn: Optional[sqlite3.Connection] = None
         self._write_lock = threading.Lock()  # 写操作互斥锁
-        self._metrics = {
+        self._metrics: Dict[str, Any] = {
             "node_count": 0,
             "edge_count": 0,
             "query_count": 0,
@@ -392,7 +396,7 @@ class CausalGraph:
                 FROM edges e JOIN nodes n ON n.id = e.to_id
                 WHERE e.from_id = ? AND e.confidence >= ?
             """
-            params = (nid, min_confidence, nid, min_confidence)
+            params: tuple = (nid, min_confidence, nid, min_confidence)
             if relation_filter:
                 query = query.replace("WHERE e", "WHERE e.relation = ? AND e")
                 params = (relation_filter, nid, min_confidence, relation_filter, nid, min_confidence)
@@ -524,18 +528,27 @@ class CausalGraph:
             logger.debug(f"[CausalGraph] 语义相似度计算失败，降级到关键词匹配: {e}")
 
         # ── 3. 加权融合 ──
-        # 归一化关键词得分
+        # 语义分用绝对值（不再除以 max 归一化）——归一化会让"矮子里拔将军"：
+        # 无关查询也会把语义最近的节点抬到固定 0.4 分，导致噪声查询被误锚定。
+        # 无关键词命中的节点必须过绝对语义门槛，否则不构成有效锚点。
         max_kw_score = max((s for _, s in scored.values()), default=1.0) or 1.0
-        # 归一化语义得分
-        max_sem_score = max(semantic_scores.values(), default=1.0) or 1.0
 
-        final_scores: Dict[str, float] = {}
+        final_scores: Dict[str, Tuple[CausalNode, float]] = {}
         for node_id, (node, kw_score) in scored.items():
-            # 归一化
+            # 归一化关键词分（相对）
             norm_kw = kw_score / max_kw_score
-            norm_sem = semantic_scores.get(node_id, 0.0) / max_sem_score if max_sem_score > 0 else 0.0
-            # 加权融合：关键词 60% + 语义 40%
-            final_score = 0.6 * norm_kw + 0.4 * norm_sem
+            # 绝对语义相似度（向量已 L2 归一化，点积即余弦）
+            abs_sem = semantic_scores.get(node_id, 0.0)
+
+            if kw_score > 0:
+                # 有关键词命中：关键词主导 + 语义辅助
+                final_score = 0.6 * norm_kw + 0.4 * max(0.0, abs_sem)
+            else:
+                # 纯语义候选：必须过绝对语义门槛，直接用绝对相似度打分
+                if abs_sem < _MIN_ANCHOR_SEMANTIC_SIMILARITY:
+                    continue
+                final_score = abs_sem
+
             final_scores[node_id] = (node, final_score)
 
         # 按最终得分排序
@@ -547,7 +560,7 @@ class CausalGraph:
         import re
         if not text:
             return []
-        keywords = set()
+        keywords: Set[str] = set()
         eng = re.findall(r'[a-zA-Z_][a-zA-Z0-9_]{2,}', text)
         keywords.update(w.lower() for w in eng)
         chn = re.findall(r'[\u4e00-\u9fff]{2,}', text)
@@ -579,8 +592,8 @@ class CausalGraph:
             return 0
 
         # 统计每个节点出现次数 & 节点对共现次数
-        node_counts = {}  # node_id -> count
-        pair_counts = {}  # (A, B) -> count (A 出现时 B 也出现)
+        node_counts: Dict[str, int] = {}  # node_id -> count
+        pair_counts: Dict[Tuple[str, str], int] = {}  # (A, B) -> count (A 出现时 B 也出现)
         for ev in events:
             node_ids = [nid for nid in (ev.causal_node_ids or []) if nid]
             for nid in node_ids:

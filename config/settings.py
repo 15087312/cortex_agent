@@ -365,7 +365,7 @@ class Settings(BaseSettings):
             return list(agents.values())
         return []
 
-    def get_custom_agent(self, role: str) -> dict:
+    def get_custom_agent(self, role: str) -> Optional[dict]:
         """获取指定自定义 agent"""
         data = self._load_personas_yaml()
         agent = data.get("custom_agents", {}).get(role)
@@ -439,7 +439,7 @@ class Settings(BaseSettings):
             return [{"id": pid, **preset} for pid, preset in presets.items()] if presets else []
         return []
 
-    def get_persona_preset(self, preset_id: str) -> dict:
+    def get_persona_preset(self, preset_id: str) -> Optional[dict]:
         """获取指定人设预设"""
         data = self._load_personas_yaml()
         preset = data.get("persona_presets", {}).get(preset_id)
@@ -680,16 +680,14 @@ class Settings(BaseSettings):
 
     # ── 因果系统配置 ──
     CAUSAL_MAX_NODES: int = 500             # 因果图最大节点数
-    CAUSAL_MAX_ANCHORS: int = 3             # 深度回忆最大锚点数
-    CAUSAL_MAX_NEIGHBORS_PER_HOP: int = 10  # 每跳最大邻居数
-    CAUSAL_MAX_TREE_DEPTH: int = 4          # 因果树最大深度
-    CAUSAL_MAX_EVENTS_RECALL: int = 30      # 单轮事件召回上限
-    CAUSAL_MIN_CONFIDENCE: float = 0.2      # 最小因果置信度（低于此的边不参与推理）
     CAUSAL_MIN_COOCCUR: int = 2             # 共现统计最小阈值
     CAUSAL_HOT_CACHE_TTL: int = 300         # 热缓存 TTL（秒）
     CAUSAL_CONFIDENCE_BOOST_DELTA: float = 0.05  # 每次回忆边置信度增量
     CAUSAL_CONFIDENCE_MAX: float = 0.99     # 最大置信度上限
     CAUSAL_UPDATE_STATS_INTERVAL: int = 10  # 增量更新统计推送（秒）
+    CAUSAL_MIN_ANCHOR_CONFIDENCE: float = 0.50  # 锚点置信度下限：低于此值视为无关查询，深度回忆回退
+    #   （语义纯匹配实测：真实≥0.53，闲聊噪声≤0.37，0.50 可干净分离）
+    CAUSAL_MIN_EVENT_RELEVANCE: float = 0.35   # 佐证事件最低因果关联度：低于此值不入佐证、不挂链
 
     model_config = SettingsConfigDict(
         env_file=str(Path(__file__).resolve().parents[1] / ".env"),

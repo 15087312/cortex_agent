@@ -12,7 +12,7 @@ from .change_event import ChangeEvent
 try:
     from .integration import PerceptionIntegrator
 except Exception:
-    PerceptionIntegrator = None
+    PerceptionIntegrator = None  # type: ignore[misc, assignment]
 
 # 新系统（按需导入）
 def get_perception_system():

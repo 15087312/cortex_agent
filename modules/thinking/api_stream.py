@@ -417,7 +417,7 @@ class StreamThinkingSystem:
             session = self.sessions.get(session_id)
             return bool(session and session.get("processing"))
 
-    def _format_scheduler_event(self, event: Dict[str, Any]) -> Dict[str, Any]:
+    def _format_scheduler_event(self, event: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         event_type = event.get("type") or event.get("event_type", "event")
         action = event.get("action", "")
         target = event.get("target", "")

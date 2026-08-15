@@ -62,7 +62,7 @@ SECONDS_PER_DAY = 86400.0
 class EventRetrieval:
     """事件检索器"""
 
-    _instance: "EventRetrieval" = None
+    _instance: Optional["EventRetrieval"] = None
     _lock = threading.Lock()
 
     def __init__(self):

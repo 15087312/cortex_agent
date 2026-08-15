@@ -77,8 +77,8 @@ def plan(action: str, plan_id: str = "", title: str = "", content: str = "",
             "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
             "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         }
-        with open(_plan_path(plan_id), "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        with open(_plan_path(plan_id), "w", encoding="utf-8") as fh:
+            json.dump(data, fh, ensure_ascii=False, indent=2)
         return {"success": True, "plan_id": plan_id, "title": title}
 
     elif action == "get":
@@ -87,8 +87,8 @@ def plan(action: str, plan_id: str = "", title: str = "", content: str = "",
         p = _plan_path(plan_id)
         if not p.exists():
             return {"success": False, "error": f"方案 {plan_id} 不存在"}
-        with open(p, "r", encoding="utf-8") as f:
-            return {"success": True, **json.load(f)}
+        with open(p, "r", encoding="utf-8") as fh:
+            return {"success": True, **json.load(fh)}
 
     elif action == "update":
         if not plan_id:
@@ -96,8 +96,8 @@ def plan(action: str, plan_id: str = "", title: str = "", content: str = "",
         p = _plan_path(plan_id)
         if not p.exists():
             return {"success": False, "error": f"方案 {plan_id} 不存在"}
-        with open(p, "r", encoding="utf-8") as f:
-            data = json.load(f)
+        with open(p, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
         if title:
             data["title"] = title
         if content:
@@ -105,8 +105,8 @@ def plan(action: str, plan_id: str = "", title: str = "", content: str = "",
         if status:
             data["status"] = status
         data["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
-        with open(p, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        with open(p, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, ensure_ascii=False, indent=2)
         return {"success": True, "plan_id": plan_id}
 
     elif action == "delete":

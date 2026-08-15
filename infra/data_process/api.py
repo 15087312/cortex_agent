@@ -263,7 +263,7 @@ async def analyze_with_query(
         image_data = await image_file.read()
 
         analyzer = await get_default_analyzer()
-        result = await analyzer.analyze_with_coordinates(image_data, query)
+        result = await analyzer.analyze_with_coordinates(image_data, query)  # type: ignore[attr-defined]
         
         return JSONResponse(content={
             "success": True,

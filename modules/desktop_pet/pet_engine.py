@@ -8,6 +8,8 @@ import asyncio
 import threading
 import time
 
+from typing import Optional
+
 from config.settings import settings
 from utils.logger import setup_logger
 
@@ -17,7 +19,7 @@ logger = setup_logger("pet_engine")
 class PetEngine:
     """桌宠对话引擎（单例，感知系统启动时创建）"""
 
-    _instance: "PetEngine" = None
+    _instance: Optional["PetEngine"] = None
     _lock = threading.Lock()
 
     def __init__(self, event_bus=None):
@@ -118,7 +120,7 @@ class PetEngine:
         try:
             from modules.thinking.context.sources.perception_source import PerceptionSource
             frag = await PerceptionSource().collect()
-            if frag and getattr(frag, "content", ""):
+            if frag and getattr(frag, "content", ""):  # type: ignore[arg-type]
                 extras.append(frag.content)
         except Exception:
             pass
@@ -290,7 +292,7 @@ def _play_audio(path: str) -> None:
         return
     try:
         if os.name == "nt":
-            os.startfile(path)  # noqa: S606
+            os.startfile(path)  # type: ignore[attr-defined]  # noqa: S606
         else:
             subprocess.run(["afplay", path], capture_output=True, timeout=60)
     except Exception:

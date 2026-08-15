@@ -68,3 +68,27 @@ exclude = ["tests*", "docs*", "Open-ClaudeCode*"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+[tool.mypy]
+python_version = "3.11"
+# 存量兼容：隐式 Optional（def f(x: str = None)）允许——消除 implicit-optional 大量报错
+no_implicit_optional = false
+# 不深入第三方包（mypy 1.7 解析新 transformers 会 INTERNAL ERROR；第三方按 Any 处理）
+follow_imports = "skip"
+follow_untyped_imports = false
+ignore_missing_imports = true
+# 存量无注解函数：允许（不强制参数注解），有注解的仍严格检查
+allow_untyped_defs = true
+check_untyped_defs = false
+allow_untyped_globals = true
+warn_return_any = false
+warn_unused_ignores = false
+warn_redundant_casts = false
+exclude = [
+    "tests/",
+    "scripts/",
+    "frontend/",
+    "data/",
+    "cli_tui/",
+    "cortex/main.py",
+    "cortex/watchdog.py",
+]

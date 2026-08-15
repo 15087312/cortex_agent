@@ -29,7 +29,7 @@ class ScreenMonitorSource:
     source_type = "screen_monitor"
 
     # 活跃实例追踪（weakref）：测试/退出时统一 stop，避免后台线程遗留
-    _all_instances = weakref.WeakSet()
+    _all_instances: "weakref.WeakSet[ScreenMonitorSource]" = weakref.WeakSet()
 
     def __init__(self, server_script: str = None, interval: float = None):
         self._interval = interval or DEFAULT_INTERVAL

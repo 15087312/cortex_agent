@@ -101,7 +101,7 @@ def _run_async(coro):
     return asyncio.run(_run_task_wrapped())
 
 
-async def _persist_message(session_id: str, role: str, content: str) -> str:
+async def _persist_message(session_id: Optional[str], role: str, content: str) -> str:
     """连续持久化：无条件写入会话历史（agent 内存会话或 chatonly DB），返回消息 id。
 
     消息始终落库/落会话——前端任意时刻断线，重连后都能从历史恢复看到。
@@ -129,14 +129,14 @@ async def _persist_message(session_id: str, role: str, content: str) -> str:
         else:
             # chatonly 等非 agent 内存会话：直接落 DB（会话记忆由 DB 恢复，前端可追溯）
             from modules.database.session_repo import get_session_repo
-            msg_id = get_session_repo().save_message(session_id, role, content)
+            msg_id = get_session_repo().save_message(session_id, role, content)  # type: ignore[arg-type]  # 广播(None)场景由外层 except 兜底
     except Exception as e:
         logger.error(f"消息持久化失败: {e}")
     return msg_id
 
 
 async def push_content(
-    session_id: str,
+    session_id: Optional[str],
     *,
     msg_type: str,
     event: str,
@@ -175,7 +175,7 @@ async def push_content(
         if not sent_any and persist:
             logger.warning(
                 f"[前端通道] 无活跃 WebSocket 连接，消息已持久化到会话历史 "
-                f"(session={session_id[:8]}, event={event})"
+                f"(session={(session_id or '?')[:8]}, event={event})"
             )
     except Exception as e:
         logger.error(f"消息推送失败: {e}")
@@ -183,7 +183,7 @@ async def push_content(
 
 
 async def generate_and_push(
-    session_id: str,
+    session_id: Optional[str],
     llm_fn: Callable[[], Awaitable[str]],
     *,
     msg_type: str,

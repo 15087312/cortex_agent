@@ -72,6 +72,14 @@ def _get_confidence_boost_delta() -> float:
 def _get_confidence_max() -> float:
     return float(getattr(_settings, "CAUSAL_CONFIDENCE_MAX", 0.99))
 
+def _get_min_anchor_confidence() -> float:
+    """锚点置信度下限：低于此值视为无关查询，深度回忆回退"""
+    return float(getattr(_settings, "CAUSAL_MIN_ANCHOR_CONFIDENCE", 0.50))
+
+def _get_min_event_relevance() -> float:
+    """佐证事件最低因果关联度：低于此值不入佐证、不挂链"""
+    return float(getattr(_settings, "CAUSAL_MIN_EVENT_RELEVANCE", 0.35))
+
 
 _intent_cache: Dict[str, Tuple[str, float]] = {}
 _intent_cache_ttl: float = 60.0
@@ -149,9 +157,8 @@ class DeepRecallResult:
             lines.append(f"【共享因子】{'、'.join(self.shared_factors)}")
 
         for i, chain in enumerate(self.causal_chains, 1):
-            direction = "因果链" if chain.direction == "forward" else "溯源链"
             labels = [n.label for n in chain.nodes]
-            lines.append(f"  {direction} {i}: {' → '.join(labels)} (置信度 {chain.confidence:.0%})")
+            lines.append(f"  {i}. {' → '.join(labels)} (置信度 {chain.confidence:.0%})")
 
         if self.supporting_events:
             lines.append("【佐证事件】")
@@ -222,6 +229,15 @@ class DepthRecallScheduler:
             logger.info("[DepthRecall] 未找到锚点节点，回退到浅层检索")
             return self._fallback(query, max_results, "no_anchor_nodes")
 
+        # 噪声守卫：锚点置信度低于下限（语义归一化假高分已修复），
+        # 视为查询与因果图无关，回退浅层而非输出臆造因果链
+        if anchors[0][1] < _get_min_anchor_confidence():
+            logger.info(
+                f"[DepthRecall] 锚点置信度不足 ({anchors[0][1]:.2f} < "
+                f"{_get_min_anchor_confidence():.2f})，回退到浅层检索"
+            )
+            return self._fallback(query, max_results, "low_anchor_confidence")
+
         result.anchor = anchors[0][0]
         result.confidence = anchors[0][1]
         logger.info(f"[DepthRecall] 锚点: {result.anchor.label} (置信度 {result.confidence})")
@@ -266,11 +282,32 @@ class DepthRecallScheduler:
                 chains.extend(self._tree.trace_down(nid, max_depth=5, min_confidence=min_confidence))
 
         chains.sort(key=lambda c: c.confidence, reverse=True)
-        result.causal_chains = chains[:6]
 
         if not chains:
             logger.info("[DepthRecall] 未找到因果链，回退")
             return self._fallback(query, max_results, "no_causal_chains")
+
+        # 补全锚点：溯源链(backward)尾部补锚点、预测链(forward)头部补锚点，
+        # 让单跳因果显示完整路径（如 "人手不足 → 项目延期" 而非孤零零一个节点）
+        anchor = result.anchor
+        for c in chains:
+            if c.direction == "forward":
+                if c.nodes and c.nodes[0].id != anchor.id:
+                    c.nodes.insert(0, anchor)
+            elif c.nodes and c.nodes[-1].id != anchor.id:
+                c.nodes.append(anchor)
+
+        # 按节点序列去重（不同入口可能产出相同链路，避免重复刷屏）
+        seen: set = set()
+        unique_chains: List[CausalChain] = []
+        for c in chains:
+            key = tuple(n.id for n in c.nodes)
+            if key not in seen:
+                seen.add(key)
+                unique_chains.append(c)
+
+        chains = unique_chains
+        result.causal_chains = chains[:6]
 
         # Step 3: 事件池召回（限流：最多 _get_max_events_recall() 条）
         actual_max = min(max_results, _get_max_events_recall())
@@ -334,10 +371,10 @@ class DepthRecallScheduler:
         # 通过 EventStore 按标签/关键词搜索关联事件
         node_labels = []
         for nid in causal_node_ids:
-            node = self._graph.get_node(nid)
-            if node:
-                node_labels.extend(node.keywords)
-                node_labels.append(node.label)
+            n = self._graph.get_node(nid)
+            if n:
+                node_labels.extend(n.keywords)
+                node_labels.append(n.label)
 
         store = self._store
         keyword_events = store.search_by_keywords(list(set(node_labels)), limit=max_results * 3)
@@ -362,6 +399,7 @@ class DepthRecallScheduler:
                 merged[ev.id] = (ev, causal_score, False)
 
         scored: List[Tuple[MemoryEvent, float, bool]] = []
+        min_rel = _get_min_event_relevance()
         for ev_id, (ev, causal_rel, is_counter) in merged.items():
             semantic = 0.0
             for se in semantic_events:
@@ -376,8 +414,14 @@ class DepthRecallScheduler:
                 w["importance"] * ev.importance +
                 w["time"]       * self._time_decay(ev.time)
             )
-            # 因果关联低且语义低则视为反例候选
-            is_counter = causal_rel < 0.2 and semantic < 0.2 and ev.importance < 0.4
+            # 佐证准入门槛：因果关联不足的事件不能冒充"因果佐证"。
+            # 低分者仍作反例候选，否则直接丢弃——避免跨场景的高重要度事件混入
+            #（它们由浅层检索负责召回，深度回忆只输出因果相关的实例）。
+            if causal_rel < min_rel:
+                is_counter = (causal_rel < 0.2 and semantic < 0.2
+                              and ev.importance < 0.4)
+                if not is_counter:
+                    continue
             scored.append((ev, final_score, is_counter))
 
         scored.sort(key=lambda x: x[1], reverse=True)
@@ -393,12 +437,23 @@ class DepthRecallScheduler:
         - 事件已关联的 causal_node_ids 直接命中率（最高 1.0）
         - 事件向量与节点向量的余弦相似度（向量匹配）
         - 事件文本关键词与节点 label/keywords 的匹配率（兜底）
+
+        显式归属守卫：事件已被关联到"目标集合之外"的因果节点时，
+        视为系统已确认它属于其它概念，不再采信语义/词项重叠——
+        否则"同一天/共有关键词"的无关事件会被误判为因果佐证，
+        且会被增量更新永久挂链、自我强化。
         """
+        causal_target = set(causal_node_ids or [])
+
         # 直接命中：事件已显式关联到这些因果节点
-        if causal_node_ids and event.causal_node_ids:
-            direct_hits = len(set(event.causal_node_ids) & causal_node_ids)
+        if causal_target and event.causal_node_ids:
+            direct_hits = len(set(event.causal_node_ids) & causal_target)
             if direct_hits > 0:
-                return min(1.0, 0.4 + 0.6 * direct_hits / max(len(causal_node_ids), 1))
+                return min(1.0, 0.4 + 0.6 * direct_hits / max(len(causal_target), 1))
+
+        # 显式归属守卫：事件的所有显式关联都落在目标集合之外 → 与目标集合无因果关联
+        if event.causal_node_ids and not (set(event.causal_node_ids) & causal_target):
+            return 0.0
 
         # 向量匹配：计算事件向量与节点向量的余弦相似度
         try:
@@ -409,8 +464,8 @@ class DepthRecallScheduler:
                 event_vec = eng.embed(event_text)
                 if event_vec:
                     max_sim = 0.0
-                    for nid in causal_node_ids:
-                        node = CausalGraph.get_instance().get_node(nid)
+                    for nid in causal_target:
+                        node = self._graph.get_node(nid)
                         if node:
                             node_text = f"{node.label} {' '.join(node.keywords)}"
                             node_vec = eng.embed(node_text)
@@ -429,8 +484,8 @@ class DepthRecallScheduler:
             return 0.0
 
         all_labels = set()
-        for nid in causal_node_ids:
-            node = CausalGraph.get_instance().get_node(nid)
+        for nid in causal_target:
+            node = self._graph.get_node(nid)
             if node:
                 all_labels.add(node.label.lower())
                 all_labels.update(k.lower() for k in node.keywords)
@@ -462,8 +517,7 @@ class DepthRecallScheduler:
             return ""
         top = chains[0]
         labels = [n.label for n in top.nodes]
-        arrow = " → " if top.direction == "forward" else " ← "
-        conclusion = f"发现 {len(chains)} 条因果链，核心链路: {arrow.join(labels)}"
+        conclusion = f"发现 {len(chains)} 条因果链，核心链路: {' → '.join(labels)}"
         if shared_factors:
             conclusion += f"，共享因子: {'、'.join(shared_factors)}"
         return conclusion
@@ -478,8 +532,11 @@ class DepthRecallScheduler:
         """
         self._update_stats = {"linked": 0, "boosted": 0}
 
-        # 1. 把佐证事件挂载到因果节点
+        # 1. 把佐证事件挂载到因果节点（挂链守卫：因果关联不足的事件不永久污染因果图）
+        min_rel = _get_min_event_relevance()
         for ev in result.supporting_events:
+            if self._causal_relevance(ev, node_ids) < min_rel:
+                continue
             current_ids = set(ev.causal_node_ids or [])
             new_ids = current_ids | node_ids
             if new_ids != current_ids:
@@ -524,8 +581,8 @@ class DepthRecallScheduler:
 
         # 4. 如果有共享因子，尝试补全新节点（高阶：检查是否已有节点，没有则创建）
         for factor in result.shared_factors:
-            existing = self._graph.find_nodes_by_label(factor)
-            if not existing:
+            existing_nodes = self._graph.find_nodes_by_label(factor)
+            if not existing_nodes:
                 new_node = CausalNode(
                     label=factor,
                     node_type="condition",

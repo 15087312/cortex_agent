@@ -10,6 +10,8 @@ import sqlite3
 import threading
 import time
 
+from typing import Optional
+
 from utils.logger import setup_logger
 
 logger = setup_logger("api_log_store")
@@ -28,7 +30,7 @@ def _db_path() -> str:
 
 
 class ApiLogStore:
-    _instance: "ApiLogStore" = None
+    _instance: Optional["ApiLogStore"] = None
     _lock = threading.Lock()
 
     def __init__(self, path: str = ""):
@@ -78,7 +80,7 @@ class ApiLogStore:
                 self._conn.close()
         except Exception:
             pass
-        self._conn = None
+        self._conn = None  # type: ignore[assignment]
 
     @classmethod
     def get_instance(cls) -> "ApiLogStore":
@@ -136,7 +138,8 @@ class ApiLogStore:
     def query(self, method: str = "", path: str = "", status: int = 0,
               limit: int = 50, offset: int = 0, since_hours: float = 0.0,
               include_body: bool = True) -> list:
-        where, params = [], []
+        where = []
+        params: list = []
         if method:
             where.append("method=?"); params.append(method)
         if path:
@@ -166,7 +169,8 @@ class ApiLogStore:
         return out
 
     def count(self, method: str = "", path: str = "", status: int = 0, since_hours: float = 0.0) -> int:
-        where, params = [], []
+        where = []
+        params: list = []
         if method:
             where.append("method=?"); params.append(method)
         if path:

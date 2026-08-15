@@ -599,7 +599,7 @@ class ModelRunner:
         final_thought = ""
         try:
             snapshot = None
-            control_decision = None
+            control_decision: Any = None
 
             if self._thinker:
                 try:
@@ -1566,13 +1566,13 @@ class ModelRunner:
             engine = get_compression_engine()
             full_context = system_prompt + "\n\n" + user_prompt
             for t in tools_with_control:
-                full_context += "\n" + str(t.get("function", {}).get("description", ""))
-            self._thinker._context_tokens = engine.estimate_tokens(full_context)
+                full_context += "\n" + str(t.get("function", {}).get("description", ""))  # type: ignore[union-attr]  # tools_with_control 混合 str/dict
+            self._thinker._context_tokens = engine.estimate_tokens(full_context)  # type: ignore[union-attr]
         except Exception as e:
             logger.debug(f"[ModelRunner] 上下文 token 估算失败 (非致命): {e}")
 
         last_error = None
-        expert_errors = []  # 收集专家工具调用失败信息，最终附给主管
+        expert_errors: list = []  # 收集专家工具调用失败信息，最终附给主管
         for attempt in range(self.GENERATE_RETRIES):
             try:
                 logger.info(f"[TOOL-LOOP] {self.model_id} 进入工具循环 (max_turns={self.MAX_CHAT_TOOL_TURNS})")
@@ -1813,10 +1813,10 @@ class ModelRunner:
                                         )
                                         if allowed:
                                             self._active_skill = skill
-                                            self._active_skill_tool_rules = skill.tool_rules
+                                            self._active_skill_tool_rules = skill.tool_rules  # type: ignore[union-attr]
                                             logger.info(f"[ModelRunner] 技能已切换: {skill_id}")
-                                            preview = skill.description[:120].replace("\n", " ")
-                                            result = f"【技能已激活】{skill.name}\n{preview}"
+                                            preview = skill.description[:120].replace("\n", " ")  # type: ignore[union-attr]
+                                            result = f"【技能已激活】{skill.name}\n{preview}"  # type: ignore[union-attr]
                                         else:
                                             result = f"【技能不可用】skill_id={skill_id} 不存在、已禁用或当前角色不可用。使用 list_skills 查看可用技能。"
                             elif tc.name == "stop_skill":
@@ -2158,7 +2158,7 @@ class ModelRunner:
                                         # todo 工具：注入当前会话，任务列表按会话隔离（对齐主流 AI 的 per-task todo）
                                         if tc.name == "todo":
                                             args.setdefault("session_id", self.session_id)
-                                        request = ToolCallRequest(
+                                        tool_request = ToolCallRequest(
                                             tool_name=tc.name,
                                             params=args,
                                             caller_role=self.tier,
@@ -2167,7 +2167,7 @@ class ModelRunner:
                                         )
                                         # 同步 MCP execute 会阻塞事件循环（工具可能耗时 20-30s），
                                         # 导致 WebSocket 无法处理 ping 而断开。用 to_thread 避免阻塞。
-                                        mcp_result = await asyncio.to_thread(mcp.execute, request)
+                                        mcp_result = await asyncio.to_thread(mcp.execute, tool_request)
                                         if mcp_result.success:
                                             result = str(mcp_result.result) if mcp_result.result is not None else "(无返回值)"
                                         else:
@@ -2854,7 +2854,7 @@ class ModelRunnerManager:
             logger.warning(f"[ModelRunnerManager] 清理孤儿 runner: {model_id}")
             # 使用 asyncio 同线程安全的方式清理
             with self._lock:
-                runner = self._runners.pop(model_id, None)
+                runner = self._runners.pop(model_id, None)  # type: ignore[arg-type]
                 if runner:
                     self._count_by_tier[runner.tier] = max(
                         0, self._count_by_tier.get(runner.tier, 1) - 1

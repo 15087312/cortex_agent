@@ -26,7 +26,7 @@ import weakref
 from queue import Empty, Queue
 from typing import Optional
 
-from modules.perception.events.bus import get_event_bus
+from modules.perception.events.bus import PerceptionEventBus, get_event_bus
 from modules.perception.events.types import PerceptionEvent, PerceptionEventType
 from modules.perception.difference.sources.base import DifferenceSource
 from config.settings import settings
@@ -50,7 +50,7 @@ class ScreenDiffSource(DifferenceSource):
     活跃实例追踪（weakref）：测试/退出时统一 stop，避免后台线程遗留。
     """
 
-    _all_instances = weakref.WeakSet()
+    _all_instances: "weakref.WeakSet[ScreenDiffSource]" = weakref.WeakSet()
 
     @property
     def source_type(self) -> str:
@@ -68,7 +68,7 @@ class ScreenDiffSource(DifferenceSource):
         self._thread: Optional[threading.Thread] = None
         self._proc: Optional[subprocess.Popen] = None
         self._lock = threading.RLock()  # 可重入：_ensure_process 持锁 → _close_process 需要再次 acquire
-        self._event_bus = None  # 延迟获取，避免循环导入
+        self._event_bus: Optional[PerceptionEventBus] = None  # 延迟获取，避免循环导入
         self._resp_queue: Queue = Queue()  # 跨平台：工作线程读 stdout 放入队列
         self._reader_thread: Optional[threading.Thread] = None
         self._reader_running = False

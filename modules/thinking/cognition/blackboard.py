@@ -507,7 +507,7 @@ class CognitiveBlackboard:
             # 增量读取起点：cursor 为逻辑索引，补偿已清理的头部 observation
             _obs_start = max(0, cursor - self._deleted_obs)
             # 基础字段所有人都能读
-            snapshot_dict = {
+            snapshot_dict: dict = {
                 "goal": self.goal,
                 "current_plan": self.current_plan.copy(),
                 "runtime_state": self.runtime_state.copy(),

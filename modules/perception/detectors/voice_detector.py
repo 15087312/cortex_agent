@@ -56,7 +56,7 @@ class VoiceDetector(PerceptionDetector):
     活跃实例追踪（weakref）：测试/退出时统一 stop，避免后台线程遗留。
     """
 
-    _all_instances = weakref.WeakSet()
+    _all_instances: "weakref.WeakSet[VoiceDetector]" = weakref.WeakSet()
 
     def __init__(
         self,
@@ -83,8 +83,8 @@ class VoiceDetector(PerceptionDetector):
         self._running = False
         self._thread: Optional[threading.Thread] = None
         VoiceDetector._all_instances.add(self)
-        self._recognizer = None
-        self._microphone = None
+        self._recognizer: Any = None
+        self._microphone: Any = None
         self._events: collections.deque = collections.deque(maxlen=100)
         self._events_lock = threading.Lock()
 

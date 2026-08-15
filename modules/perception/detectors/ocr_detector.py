@@ -6,7 +6,7 @@ OCR 检测器 — 屏幕文字识别
 import time
 import threading
 import weakref
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 
@@ -28,14 +28,14 @@ class OCRDetector(PerceptionDetector):
     活跃实例追踪（weakref）：测试/退出时统一 stop，避免后台线程遗留。
     """
 
-    _all_instances = weakref.WeakSet()
+    _all_instances: "weakref.WeakSet[OCRDetector]" = weakref.WeakSet()
 
     def __init__(self, threshold: float = OCR_TRIGGER_THRESHOLD, cooldown: float = 5.0):
         self._threshold = threshold
         OCRDetector._all_instances.add(self)
         self._cooldown = cooldown
         self._running = False
-        self._ocr_engine = None
+        self._ocr_engine: Any = None
         self._last_texts: List[str] = []
         self._last_trigger_time: float = 0.0
         self._sub_id: str = ""
@@ -171,7 +171,7 @@ class OCRDetector(PerceptionDetector):
                 "text_count": len(all_texts),
             },
         )
-        event.description = description
+        event.description = description  # type: ignore[attr-defined]
 
         try:
             bus = get_event_bus()

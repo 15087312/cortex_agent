@@ -114,12 +114,13 @@ def test_build_conclusion_forward():
 
 
 def test_build_conclusion_backward():
+    # 补全锚点后链路节点恒为"因→果"顺序，统一用 → 拼接
     chain = CausalChain(
         nodes=[CausalNode(label="项目延期"), CausalNode(label="需求变更")],
         direction="backward", confidence=0.8,
     )
     out = DepthRecallScheduler._build_conclusion([chain], [])
-    assert "项目延期 ← 需求变更" in out
+    assert "项目延期 → 需求变更" in out
 
 
 # ── CausalChain.summary ─────────────────────────────────────────────────────

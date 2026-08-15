@@ -40,8 +40,7 @@ def format_deep_recall_result(result: DeepRecallResult, max_events: int = 5) -> 
     chain_lines = []
     for chain in result.causal_chains:
         labels = [n.label for n in chain.nodes]
-        direction = "→" if chain.direction == "forward" else "←"
-        chain_lines.append(f"  {direction} {' → '.join(labels)} (置信度 {chain.confidence:.0%})")
+        chain_lines.append(f"  {' → '.join(labels)} (置信度 {chain.confidence:.0%})")
 
     if result.shared_factors:
         chain_lines.append(f"  ★ 共享因果因子: {'、'.join(result.shared_factors)}")

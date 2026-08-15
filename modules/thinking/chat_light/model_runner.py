@@ -50,7 +50,7 @@ class ModelRunner:
 
         # DEBUG: log what we're sending to the model
         for i, m in enumerate(full_messages):
-            logger.info(f"[MSG {i}] role={m.role} content={m.content[:120]}...")
+            logger.info(f"[MSG {i}] role={m.role} content={(m.content or '')[:120]}...")
 
         return await self.client.chat_stream(
             messages=full_messages,

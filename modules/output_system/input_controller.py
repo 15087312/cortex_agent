@@ -34,6 +34,7 @@ class InputController:
     """
     
     def __init__(self, force: bool = False):
+        self._initialized: bool = False
         if hasattr(self, '_initialized') and self._initialized and not force:
             return
         

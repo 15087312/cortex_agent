@@ -1,7 +1,7 @@
 """
 Provider 注册表 — 根据 base_url 推断 API 格式选择适配器
 """
-from typing import Type
+from typing import Optional, Type
 from config.providers.base import ProviderBase
 from config.providers.openai import OpenAIProvider
 from config.providers.anthropic import AnthropicProvider
@@ -33,7 +33,7 @@ class ProviderRegistry:
                 return provider_cls
         return _DEFAULT
 
-    def get_provider_class_by_format(self, fmt: str) -> Type[ProviderBase]:
+    def get_provider_class_by_format(self, fmt: str) -> Optional[Type[ProviderBase]]:
         """按显式格式名取 Provider 类（空/未知回退 URL 推断）"""
         return _FORMAT_MAP.get((fmt or "").lower().strip())
 

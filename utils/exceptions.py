@@ -16,7 +16,7 @@
 """
 
 import logging
-from typing import Any, Awaitable, Callable, Optional, TypeVar
+from typing import Any, Awaitable, Callable, Optional, TypeVar, cast
 
 T = TypeVar("T")
 
@@ -67,7 +67,7 @@ def safe_call(
         return fn()
     except Exception as e:
         (logger or logging.getLogger("safe")).log(level, "%s: %s", msg or getattr(fn, "__name__", "?"), e)
-        return fallback
+        return cast(T, fallback)
 
 
 async def safe_acall(
@@ -81,4 +81,4 @@ async def safe_acall(
         return await awaitable
     except Exception as e:
         (logger or logging.getLogger("safe")).log(level, "%s: %s", msg, e)
-        return fallback
+        return cast(T, fallback)

@@ -81,7 +81,7 @@ def test_format_with_all_sections():
     out = r.format()
     assert "【因果结论】" in out
     assert "【共享因子】" in out
-    assert "因果链 1" in out
+    assert "1. 原因 → 结果" in out
     assert "【佐证事件】" in out
     assert "【反例 / 例外】" in out
 
@@ -91,7 +91,7 @@ def test_format_with_backward_chain():
     chain = CausalChain(nodes=[CausalNode(label="根"), CausalNode(label="果")],
                         direction="backward", confidence=0.5)
     out = _result(causal_chains=[chain]).format()
-    assert "溯源链 1" in out
+    assert "根 → 果" in out
     assert "50%" in out
 
 
@@ -414,7 +414,8 @@ def test_build_conclusion_empty_and_forward():
     assert "共享因子" in out2
     chain_bw = CausalChain(nodes=[CausalNode(label="A"), CausalNode(label="B")],
                            direction="backward", confidence=0.8)
-    assert "←" in s._build_conclusion([chain_bw], [])
+    # 补全锚点后链路恒为因→果顺序，backward 也统一用 →
+    assert "→" in s._build_conclusion([chain_bw], [])
 
 
 # ── _incremental_update 边界 ────────────────────────────────────────────
@@ -469,15 +470,28 @@ def test_incremental_update_event_already_linked(graph, store):
 
 
 def test_incremental_update_node_missing(graph, store):
-    """node_ids 中有不存在的节点 → get_node None 跳过"""
+    """node_ids 中有不存在的节点 → get_node None 跳过；有因果关联的事件仍挂链"""
     node = CausalNode(label="N")
     graph.save_node(node)
-    ev = MemoryEvent(fact="事件", importance=0.8)
+    ev = MemoryEvent(fact="事件", importance=0.8, causal_node_ids=[node.id])
     store.save_event(ev)
     result = DeepRecallResult(success=True, anchor=node, supporting_events=[ev])
     s = _sched(graph, store, None)
-    s._incremental_update(result, {"ghost-node"})
+    s._incremental_update(result, {node.id, "ghost-node"})
     assert s._update_stats.get("linked", 0) == 1
+
+
+def test_incremental_update_no_causal_relevance_skipped(graph, store):
+    """佐证准入守卫：与 node_ids 无因果关联的事件（即使高重要度）不挂链，
+    避免跨场景事件被永久污染进因果图"""
+    node = CausalNode(label="N")
+    graph.save_node(node)
+    ev = MemoryEvent(fact="完全不相关的内容", importance=0.9)
+    store.save_event(ev)
+    result = DeepRecallResult(success=True, anchor=node, supporting_events=[ev])
+    s = _sched(graph, store, None)
+    s._incremental_update(result, {node.id})
+    assert s._update_stats.get("linked", 0) == 0
 
 
 def test_incremental_update_anchor_missing(graph, store):

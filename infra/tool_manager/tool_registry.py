@@ -7,7 +7,7 @@
 3. 自动发现和加载
 4. XML schema 生成 (Claude 风格工具定义)
 """
-from typing import Callable, Dict, Any, Optional, List, Union
+from typing import Callable, Dict, Any, Optional, List, Union, Tuple
 from dataclasses import dataclass, field
 from datetime import datetime
 import inspect
@@ -93,7 +93,7 @@ class ToolInfo:
 
     def _required_params_from_signature(self) -> List[str]:
         """从函数签名推断必填参数，兼容旧的字符串 params 注册方式。"""
-        required = []
+        required: List[str] = []
         try:
             sig = inspect.signature(self.func)
         except Exception as e:
@@ -123,7 +123,7 @@ class ToolInfo:
 
     def _infer_type_from_signature(self, pname: str) -> Optional[str]:
         """从函数签名的类型注解推断 JSON Schema 类型"""
-        if not self.func:
+        if not self.func:  # type: ignore[truthy-function]
             return None
         try:
             sig = inspect.signature(self.func)
@@ -135,8 +135,8 @@ class ToolInfo:
             # Optional[X] → 提取 X
             getattr(annotation, '__origin__', None)
             args = getattr(annotation, '__args__', ())
-            if len(args) == 2 and type(None) in args:
-                annotation = args[0] if args[1] is type(None) else args[1]
+            if len(args) == 2 and type(None) in args:  # type: ignore[misc]
+                annotation = args[0] if args[1] is type(None) else args[1]  # type: ignore[misc]
 
             return self._TYPE_MAP.get(annotation)
         except Exception as e:
@@ -258,7 +258,7 @@ class ToolRegistry:
         cls,
         name: str = None,
         description: str = "",
-        params: Dict[str, str] = None,
+        params: Dict[str, Any] = None,
         source: str = "builtin",
         plugin_name: str = "",
         risk_level: str = "LOW",
@@ -305,7 +305,7 @@ class ToolRegistry:
         name: str,
         func: Callable,
         description: str = "",
-        params: Dict[str, str] = None,
+        params: Dict[str, Any] = None,
         source: str = "dynamic",
         plugin_name: str = "",
         risk_level: str = "LOW",
@@ -442,7 +442,7 @@ class ToolRegistry:
     @classmethod
     def list_by_source(cls) -> Dict[str, List[str]]:
         """按来源分组列出工具"""
-        result = {
+        result: Dict[str, List[str]] = {
             "builtin": [],
             "plugin": [],
             "dynamic": []

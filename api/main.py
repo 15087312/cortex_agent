@@ -980,7 +980,7 @@ async def toggle_agent_active(role: str, body: dict = None):
     if role in builtin_roles:
         agent_tier = builtin_roles[role].get("tier", "")
     elif is_custom:
-        agent_tier = settings.get_custom_agent(role).get("tier", "")
+        agent_tier = (settings.get_custom_agent(role) or {}).get("tier", "")
     # 总指挥层(large)只能有一个激活：激活时自动停用同层其他
     if active and agent_tier == "large":
         settings.deactivate_same_tier(role, agent_tier, builtin_roles)

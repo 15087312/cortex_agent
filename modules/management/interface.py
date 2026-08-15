@@ -14,4 +14,4 @@ class ErrorReporterPort(Protocol):
 def get_error_reporter() -> ErrorReporterPort:
     """工厂函数 - 获取统一错误报告器"""
     from .core.error_reporter import _reporter
-    return _reporter
+    return _reporter  # type: ignore[return-value]  # ErrorReporter 与 Port 的 report 签名差异，调用方用实际方法

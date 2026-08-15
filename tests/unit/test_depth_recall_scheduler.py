@@ -246,6 +246,25 @@ def test_causal_relevance_empty_text(graph):
     assert scheduler._causal_relevance(ev, {node.id}) == 0.0
 
 
+def test_causal_relevance_explicit_assignment_outside(graph):
+    """显式归属守卫：事件被关联到目标集合之外的节点时，
+    即使语义/关键词重叠也不认可因果关联（防止同一天/共有关键词误检）"""
+    node_a = CausalNode(label="例行补丁发布", keywords=["补丁"])
+    graph.save_node(node_a)
+    node_b = CausalNode(label="服务器宕机", keywords=["服务器"])
+    graph.save_node(node_b)
+    ev = MemoryEvent(fact="例行补丁发布，运行无异常", keywords=["补丁", "发布"])
+    ev.causal_node_ids = [node_a.id]
+    scheduler = DepthRecallScheduler(graph=graph, tree=CausalTree(graph))
+    # 目标集合只有 node_b：事件显式归属 node_a（集合外）→ 0.0
+    assert scheduler._causal_relevance(ev, {node_b.id}) == 0.0
+    # 目标集合含 node_a：直接命中 → 正常高分
+    assert scheduler._causal_relevance(ev, {node_a.id}) > 0.4
+    # 未显式归属的事件（causal_node_ids 为空）不受守卫影响
+    ev2 = MemoryEvent(fact="例行补丁发布，运行无异常", keywords=["补丁"])
+    assert scheduler._causal_relevance(ev2, {node_b.id}) >= 0.0
+
+
 # ── _incremental_update ─────────────────────────────────────────────────
 
 def test_incremental_update_links_and_boosts(graph, store):

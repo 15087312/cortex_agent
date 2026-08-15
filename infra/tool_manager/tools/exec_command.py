@@ -236,7 +236,7 @@ def _create_snapshot(command: str, workdir: Optional[str]) -> Optional[Dict[str,
 
         # 2. 解析受影响文件并备份
         targets = _parse_target_files(command, workdir)
-        backed_up: List[Dict[str, str]] = []
+        backed_up: List[Dict[str, Any]] = []
         skipped: List[str] = []
 
         for target in targets:

@@ -3,7 +3,7 @@
 """
 import math
 import operator
-from typing import Union
+from typing import Union, Dict, Callable, Any
 from infra.tool_manager.tool_registry import ToolRegistry
 
 
@@ -51,7 +51,7 @@ def advanced_calc(func: str, value: Union[int, float]) -> str:
     func = func.lower().strip()
     value = float(value)
     
-    func_map = {
+    func_map: Dict[str, Callable[[float], Any]] = {
         "sqrt": math.sqrt,
         "sin": math.sin,
         "cos": math.cos,

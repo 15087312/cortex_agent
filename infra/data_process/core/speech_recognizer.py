@@ -31,7 +31,7 @@ class SpeechRecognizer:
         self.model_name = model_name
         self.language = language
         self.use_local = use_local
-        self.model = None
+        self.model: Any = None
         self._initialized = False
 
     async def initialize(self):

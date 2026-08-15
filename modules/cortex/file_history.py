@@ -23,7 +23,7 @@ _DB_PATH = Path.home() / ".cortex" / "history" / "files.db"
 class FileHistory:
     """文件修改历史 — SQLite 单例"""
 
-    _instance: "FileHistory" = None
+    _instance: Optional["FileHistory"] = None
     _lock = threading.Lock()
 
     def __init__(self, db_path: str = None):

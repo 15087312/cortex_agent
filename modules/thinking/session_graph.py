@@ -112,7 +112,7 @@ class SessionGraphStore:
         if not data or not isinstance(data, dict):
             return
         with self._lock:
-            g = {"nodes": {}, "edges": {}}
+            g: dict = {"nodes": {}, "edges": {}}
             for n in data.get("nodes", []):
                 if isinstance(n, dict) and n.get("id"):
                     g["nodes"][n["id"]] = n

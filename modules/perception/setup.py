@@ -6,7 +6,11 @@
 """
 import threading
 import weakref
-from typing import Optional
+from typing import TYPE_CHECKING, Any, Optional, Union
+
+if TYPE_CHECKING:
+    from modules.perception.detectors.hotkey_voice_detector import HotkeyVoiceDetector
+    from modules.perception.detectors.voice_detector import VoiceDetector
 
 from utils.logger import setup_logger
 
@@ -27,17 +31,17 @@ class PerceptionSystem:
     活跃实例追踪（weakref）：测试/退出时统一 stop，避免非 daemon 线程遗留阻塞退出。
     """
 
-    _all_instances = weakref.WeakSet()
+    _all_instances: "weakref.WeakSet[PerceptionSystem]" = weakref.WeakSet()
 
-    def __init__(self):
+    def __init__(self) -> None:
         PerceptionSystem._all_instances.add(self)
-        self.world_state = None
-        self.event_bus = None
-        self.voice_detector = None
-        self.proactive_trigger = None
-        self.window_detector = None
-        self.ocr_detector = None
-        self._window_detector_thread = None
+        self.world_state: Any = None
+        self.event_bus: Any = None
+        self.voice_detector: Optional[Union["HotkeyVoiceDetector", "VoiceDetector"]] = None
+        self.proactive_trigger: Any = None
+        self.window_detector: Any = None
+        self.ocr_detector: Any = None
+        self._window_detector_thread: Optional[threading.Thread] = None
         self._window_stop_event = threading.Event()
         self._started = False
 

@@ -39,7 +39,7 @@ async def event_query(query: str, top_k: str = "10", min_importance: str = "0.0"
 
         factory = get_capability("event_retrieval")
         if factory is None:
-            return {"error": "事件检索能力未注册", "events": []}
+            return json.dumps({"error": "事件检索能力未注册", "events": [], "count": 0}, ensure_ascii=False)
         retrieval = factory()
         events = await retrieval.retrieve(
             query=query,

@@ -20,7 +20,7 @@
   # 可执行性：由 tool_security_gate.py 统一处理（参数级危险检测 + 风险等级审批）
   # 不再在此类中重复实现
 """
-from typing import List, Any, Tuple
+from typing import List, Any, Dict, Tuple
 from utils.logger import setup_logger
 import threading
 
@@ -127,7 +127,7 @@ class ToolPermissionController:
         """展开 tag: 前缀"""
         from infra.tool_manager.tool_registry import ToolRegistry
 
-        result = []
+        result: list = []
         for item in whitelist:
             if item.startswith("tag:"):
                 tag = item[4:]
@@ -308,7 +308,7 @@ class ToolPermissionController:
     # ── 控制工具可见性 ──────────────────────────────────────────────────
 
     def get_control_tools(self, tier: str, mode: str,
-                          delegation_available: bool) -> List[str]:
+                          delegation_available: bool) -> List[Dict[str, Any]]:
         """返回该 tier+mode 可用的控制工具名列表
 
         由激活的 Skill 的 ToolRules 控制 delegate_task 等工具的可见性。

@@ -84,7 +84,7 @@ def todo(action: str = "list", items: Optional[str] = None, session_id: str = ""
             return {"error": "items 必须是有效的 JSON 字符串"}
 
         todos = _load_todos(session_id)
-        created = []
+        created: list = []
         for item in parsed:
             task = {
                 "id": f"task_{int(time.time())}_{len(todos) + len(created)}",

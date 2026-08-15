@@ -139,7 +139,7 @@ class GlobalErrorBus:
 
     def _handle_thread_exception(self, args: threading.ExceptHookArgs):
         self.report_error(
-            args.exc_value,
+            args.exc_value,  # type: ignore[arg-type]
             ErrorContext(
                 module="thread",
                 function=args.thread.name if args.thread else "unknown_thread",

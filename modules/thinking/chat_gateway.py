@@ -32,7 +32,7 @@ class PetChatRequest(BaseModel):
 class PetMoveRequest(BaseModel):
     dx: float = 0
     dy: float = 0
-    active: bool = None
+    active: Optional[bool] = None
 
 
 _pet_move = {"dx": 0.0, "dy": 0.0, "active": False}
@@ -436,7 +436,7 @@ async def _chatonly_ws(websocket: WebSocket, session_id: str) -> None:
                 # 注册到全局表，供 REST /stream/stop 跨连接取消
                 _CHATONLY_TASKS[session_id] = active_task
                 active_task.add_done_callback(
-                    lambda _t, _sid=session_id: _CHATONLY_TASKS.pop(_sid, None)
+                    lambda _t, _sid=session_id: _CHATONLY_TASKS.pop(_sid, None)  # type: ignore[misc]
                 )
 
             elif msg_type == "ping":
@@ -919,7 +919,7 @@ async def set_outreach_config(session_id: str, body: dict = None):
     # schedule
     sched = cfg.get("schedule")
     if isinstance(sched, dict):
-        cs = {}
+        cs: dict = {}
         if "enabled" in sched:
             cs["enabled"] = bool(sched["enabled"])
         if sched.get("time"):
@@ -986,7 +986,7 @@ async def set_outreach_config(session_id: str, body: dict = None):
         windows = []
         for w in cfg["time_windows"]:
             if isinstance(w, dict) and w.get("start") and w.get("end"):
-                cw = {"start": str(w["start"]).strip(), "end": str(w["end"]).strip()}
+                cw: dict = {"start": str(w["start"]).strip(), "end": str(w["end"]).strip()}
                 if "probability" in w:
                     try:
                         cw["probability"] = max(0.0, min(1.0, float(w["probability"])))

@@ -251,7 +251,7 @@ class SkillManager:
         if not path.exists():
             return False, "技能源文件不存在"
         raw = path.read_text(encoding="utf-8")
-        front = {}
+        front: dict = {}
         body = raw
         if raw.startswith("---"):
             parts = raw.split("---", 2)

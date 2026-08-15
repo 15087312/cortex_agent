@@ -149,7 +149,7 @@ class CDPScanner:
 
     def _parse_dom_node(self, node: Dict, depth: int, max_depth: int, parent_bbox: Optional[List] = None) -> List[Dict]:
         """递归解析 DOM 节点"""
-        elements = []
+        elements: List[Dict] = []
 
         if depth > max_depth:
             return elements

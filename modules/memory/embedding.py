@@ -16,7 +16,7 @@ logger = setup_logger("memory_embedding")
 class EmbeddingEngine:
     """向量化引擎（单例，延迟加载）"""
 
-    _instance: "EmbeddingEngine" = None
+    _instance: Optional["EmbeddingEngine"] = None
     _lock = threading.Lock()
 
     def __init__(self):

@@ -36,7 +36,7 @@ async def _security_gate_check(tool_name: str, params: Dict[str, Any], caller_ro
         raise HTTPException(status_code=403, detail=f"安全门控拦截: {reason}")
 
 
-def require_tool_auth(x_api_key: str = Header(None), caller_role: str = Header(default="expert")) -> tuple:
+def require_tool_auth(x_api_key: str = Header(None), caller_role: str = Header(default="expert")) -> str:
     """统一认证 + 提取调用者角色"""
     require_api_key(x_api_key)
 

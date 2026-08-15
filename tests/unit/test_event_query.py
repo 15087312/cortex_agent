@@ -87,7 +87,7 @@ async def test_query_capability_missing():
     original = get_capability("event_retrieval")
     unregister_capability("event_retrieval")
     try:
-        out = await eq.event_query(query="q")
+        out = json.loads(await eq.event_query(query="q"))
         assert out["error"] == "事件检索能力未注册"
         assert out["events"] == []
     finally:

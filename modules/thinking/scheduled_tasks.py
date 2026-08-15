@@ -202,7 +202,7 @@ class ScheduledTaskManager:
 
     # ── 默认 action: chat —— 复用主动搭话 LLM 逻辑 → 注入会话 → 推送 ──
 
-    async def _handle_chat(self, session_id: str, task: dict) -> str:
+    async def _handle_chat(self, session_id: str, task: dict) -> Optional[str]:  # type: ignore[return]
         # 主动消息统一闸门：全局主动搭话总开关关闭时不发送（与 ProactiveTrigger 一致）
         from config.settings import settings as _cfg
         if not getattr(_cfg, "PROACTIVE_OUTREACH_ENABLED", True):

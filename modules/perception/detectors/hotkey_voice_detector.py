@@ -51,7 +51,7 @@ class HotkeyVoiceDetector(PerceptionDetector):
     活跃实例追踪（weakref）：测试/退出时统一 stop，避免后台线程遗留。
     """
 
-    _all_instances = weakref.WeakSet()
+    _all_instances: "weakref.WeakSet[HotkeyVoiceDetector]" = weakref.WeakSet()
 
     def __init__(
         self,
@@ -78,19 +78,20 @@ class HotkeyVoiceDetector(PerceptionDetector):
         self._event_bus = event_bus
 
         self._running = False
-        self._listener = None
+        self._listener: Any = None
         self._recording = False
         self._stop_recording = threading.Event()
         self._frames: List[bytes] = []
         self._frames_lock = threading.Lock()
         self._record_thread: Optional[threading.Thread] = None
+        self._end_check_thread: Optional[threading.Thread] = None
         HotkeyVoiceDetector._all_instances.add(self)
         self._finish_lock = threading.Lock()
         # 录音会话代号：快速重启时防止旧的结束词检测线程串台到新会话
         self._record_generation = 0
         self._events: collections.deque = collections.deque(maxlen=100)
         self._events_lock = threading.Lock()
-        self._recognizer = None
+        self._recognizer: Any = None
 
         self._available = self._check_availability()
 

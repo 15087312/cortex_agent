@@ -54,8 +54,8 @@ def generate_audit_report(limit: int = 50) -> Dict[str, Any]:
                         try: logs.append(json.loads(line))
                         except Exception as e: logger.debug(f"审计日志行解析失败，跳过: {e}")
         recent = logs[-limit:]
-        roles = {}
-        tools = {}
+        roles: Dict[str, int] = {}
+        tools: Dict[str, int] = {}
         for entry in recent:
             r = entry.get("role", "unknown")
             t = entry.get("tool", "unknown")

@@ -9,7 +9,7 @@ import json
 import os
 import threading
 import time
-from typing import Dict
+from typing import Dict, Optional
 
 from utils.logger import setup_logger
 
@@ -41,7 +41,7 @@ def _state_file() -> str:
 
 
 class PetState:
-    _instance: "PetState" = None
+    _instance: Optional["PetState"] = None
     _lock = threading.Lock()
 
     def __init__(self, path: str = ""):

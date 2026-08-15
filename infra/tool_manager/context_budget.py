@@ -75,7 +75,7 @@ class ContextBudgetManager:
 
     def __init__(self, budget_config: Optional[ContextBudget] = None):
         self.budget = budget_config or ContextBudget()
-        self._token_cache = {}  # {key: estimated_tokens}
+        self._token_cache: Dict[str, int] = {}  # {key: estimated_tokens}
 
     def estimate_tokens(self, text: str) -> int:
         """粗略估计文本的 token 数（中文 ~1.3 字符/token，英文 ~4 字符/token）"""

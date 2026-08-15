@@ -411,7 +411,7 @@ class MultiModelOrchestrator:
         大模型由编排器在用户输入后直接发送 probe_start 激活。
         """
         import time
-        timings = {}
+        timings: dict = {}
         start = time.time()
         timings['开始'] = (0, '多模型思考启动')
 
@@ -602,7 +602,7 @@ class MultiModelOrchestrator:
                 if runner_manager and blackboard:
                     from modules.thinking.communication.message_bus import Message, MessageType, get_message_bus
                     bus = get_message_bus()
-                    msg = Message(
+                    probe_start_msg = Message(
                         msg_type=MessageType.SYSTEM,
                         sender="orchestrator",
                         recipient=f"model_runner_manager_{str(session_id)[:8]}",
@@ -620,7 +620,7 @@ class MultiModelOrchestrator:
                             "skill_id": skill_id,
                         },
                     )
-                    await bus.send(msg)
+                    await bus.send(probe_start_msg)
                     logger.info(f"[编排器] 直接激活大模型: session={str(session_id)[:8]}")
                 else:
                     logger.warning("[编排器] runner_manager 或 blackboard 不可用，跳过直接激活")
@@ -865,7 +865,7 @@ class MultiModelOrchestrator:
                 api_url=settings.SMALL_MODEL_API_URL or settings.LARGE_MODEL_API_URL,
             )
             cons._model_client = client
-            await cons.review_and_evolve(
+            await cons.review_and_evolve(  # type: ignore[attr-defined]
                 full_dialog=f"用户: {user_input}\n助手: {response}",
                 trigger_reason="检测到高风险关键词",
             )

@@ -117,7 +117,7 @@ def get_frame_bytes(
     timeout: float = DEFAULT_TIMEOUT,
 ) -> Optional[bytes]:
     """从 daemon 取最新帧，返回 PNG bytes；失败返回 None。"""
-    params = {"max_width": max_width}
+    params: dict = {"max_width": max_width}
     if region and len(region) == 4:
         params["region"] = list(region)
     resp = _rpc("frame", params, timeout=timeout)
@@ -135,7 +135,7 @@ def get_frame_base64(
     timeout: float = DEFAULT_TIMEOUT,
 ) -> Optional[str]:
     """从 daemon 取最新帧，返回 base64 PNG；失败返回 None。"""
-    params = {"max_width": max_width}
+    params: dict = {"max_width": max_width}
     if region and len(region) == 4:
         params["region"] = list(region)
     resp = _rpc("frame", params, timeout=timeout)

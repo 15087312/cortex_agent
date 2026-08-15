@@ -74,7 +74,7 @@ class ScreenContext:
 
         if self.elements:
             # 按类型分组统计
-            by_type = {}
+            by_type: Dict[str, List[UIElement]] = {}
             for e in self.elements:
                 by_type.setdefault(e.type, []).append(e)
             type_info = ", ".join(f"{t}:{len(items)}" for t, items in by_type.items())

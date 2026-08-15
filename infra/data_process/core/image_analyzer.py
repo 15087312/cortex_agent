@@ -34,7 +34,7 @@ _MODEL_CACHE = {
 class ImageAnalyzer:
     """图像分析器 - 单例模式避免重复初始化"""
 
-    _instance: 'ImageAnalyzer' = None  # 单例实例
+    _instance: Optional['ImageAnalyzer'] = None  # 单例实例
 
     def __new__(cls, model_type: str = "auto", local_model: str = None):
         """单例工厂 — 返回已有实例，参数不匹配时记录警告"""
@@ -68,8 +68,8 @@ class ImageAnalyzer:
         self.model_type = model_type
         self._init_model_type = model_type  # 记录初始化时的参数，用于检测参数不匹配
         self.local_model = local_model
-        self.model = None
-        self.processor = None
+        self.model: Any = None
+        self.processor: Any = None
         self._initialized = False
         self._init_done = True
 
@@ -439,7 +439,7 @@ class ImageAnalyzer:
                 "format": "unavailable"
             }
         else:
-            return await self._analyze_mock(image_data, prompt)
+            return await self._analyze_mock(image_data, prompt)  # type: ignore[attr-defined]
 
     async def _analyze_qwen_vl(
         self,
@@ -553,7 +553,7 @@ class ImageAnalyzer:
 
             if is_deepseek:
                 # DeepSeek: 使用 base64 图片内联在 content 中
-                messages = [{
+                messages: List[Dict[str, Any]] = [{
                     "role": "user",
                     "content": f"[image: data:image/jpeg;base64,{image_b64}]\n{prompt}"
                 }]
@@ -615,8 +615,8 @@ class ImageAnalyzer:
         """关闭模型"""
         if self.model is not None:
             del self.model
-            self.model = None
-        self.processor = None
+        self.model: Any = None
+        self.processor: Any = None
         if hasattr(self, '_mlx_generate'):
             self._mlx_generate = None
         self._initialized = False
@@ -672,11 +672,11 @@ class ImageAnalyzer:
             await self.initialize()
         
         if self.model_type in ("qwen_vl", "mlx_vlm"):
-            return await self._detect_ui_qwen_vl(image_data, element_types)
+            return await self._detect_ui_qwen_vl(image_data, element_types or [])
         elif self.model_type == "openai":
-            return await self._detect_ui_openai(image_data, element_types)
+            return await self._detect_ui_openai(image_data, element_types or [])
         else:
-            return await self._detect_ui_mock(image_data, element_types)
+            return await self._detect_ui_mock(image_data, element_types or [])
 
     async def _detect_ui_qwen_vl(
         self,
@@ -756,7 +756,7 @@ class ImageAnalyzer:
 
             if is_deepseek:
                 # DeepSeek: 使用 base64 图片内联在 content 中
-                messages = [{
+                messages: List[Dict[str, Any]] = [{
                     "role": "user",
                     "content": f"[image: data:image/jpeg;base64,{image_b64}]\n{prompt}"
                 }]
@@ -931,8 +931,8 @@ class UIClickHelper:
 
     def __init__(self, analyzer: ImageAnalyzer = None):
         self.analyzer = analyzer or ImageAnalyzer()
-        self._elements = []
-        self._image_data = None
+        self._elements: List[Dict] = []
+        self._image_data: Optional[bytes] = None
 
     async def detect_from_image(self, image_data: bytes) -> List[Dict]:
         """从图像检测UI元素"""
@@ -1013,7 +1013,7 @@ class UIClickHelper:
                 "coordinates": {"x": 100, "y": 200}
             }
         """
-        elements = await self.detect_ui_elements(image_data)
+        elements = await self.detect_ui_elements(image_data)  # type: ignore[attr-defined]
         
         analysis_prompt = f"""{query}
 
@@ -1022,11 +1022,11 @@ class UIClickHelper:
 
 请根据以上元素信息回答问题，引用具体的坐标和颜色。"""
 
-        if self.model_type == "openai":
-            result = await self._analyze_openai(image_data, analysis_prompt)
+        if self.model_type == "openai":  # type: ignore[attr-defined]
+            result = await self._analyze_openai(image_data, analysis_prompt)  # type: ignore[attr-defined]
             answer = result.get("description", "")
         else:
-            result = await self._analyze_mock(image_data, analysis_prompt)
+            result = await self._analyze_mock(image_data, analysis_prompt)  # type: ignore[attr-defined]
             answer = result.get("description", "")
         
         return {

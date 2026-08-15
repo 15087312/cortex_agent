@@ -4,7 +4,7 @@
 from .base_model import BaseModelClient, ChatMessage, ChatResponse, ToolCall
 import asyncio
 import json
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 from config.settings import settings
 from utils.error_reporter import report_exception
 from utils.logger import setup_logger
@@ -70,7 +70,7 @@ class MediumModelClient(BaseModelClient):
         # api_messages 序列化保留客户端（reasoning_content 回传 / tool_calls / tool_call_id）
         api_messages = []
         for msg in messages:
-            d = {"role": msg.role, "content": msg.content or ""}
+            d: Dict[str, Any] = {"role": msg.role, "content": msg.content or ""}
             if msg.reasoning_content:
                 d["reasoning_content"] = msg.reasoning_content
             if msg.tool_calls:
@@ -94,7 +94,7 @@ class MediumModelClient(BaseModelClient):
 
         max_retries = kwargs.get("max_retries", 2)
         last_error = None
-        data = None
+        data: Any = None
 
         for attempt in range(1, max_retries + 1):
             try:
@@ -144,7 +144,7 @@ class MediumModelClient(BaseModelClient):
             usage={"prompt_tokens": data.get("usage", {}).get("prompt_tokens", 0), "completion_tokens": data.get("usage", {}).get("completion_tokens", 0)},
         )
 
-    async def generate(self, prompt: str, *, system_prompt: str, **kwargs) -> str:
+    async def generate(self, prompt: str, *, system_prompt: str, **kwargs) -> str:  # type: ignore[override]
         """生成响应（支持 OpenAI / Anthropic）
 
         Args:

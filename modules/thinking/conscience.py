@@ -13,7 +13,7 @@
 """
 import re
 from dataclasses import dataclass
-from typing import Optional, List
+from typing import Optional, List, Set, Dict
 from utils.logger import setup_logger
 
 logger = setup_logger("conscience")
@@ -170,13 +170,13 @@ class Conscience:
                 return []
 
             # 从事件中提取 causal_node_ids，按出现频率排序
-            node_id_counts = {}
+            node_id_counts: Dict[str, int] = {}
             for ev in events:
                 for nid in (ev.causal_node_ids or []):
                     node_id_counts[nid] = node_id_counts.get(nid, 0) + 1
 
             # 按频率降序，取 top 5
-            sorted_ids = sorted(node_id_counts, key=node_id_counts.get, reverse=True)
+            sorted_ids = sorted(node_id_counts, key=lambda k: node_id_counts[k], reverse=True)
             return sorted_ids[:5]
 
         except Exception as e:
@@ -188,7 +188,7 @@ class Conscience:
         """提取中英文关键词"""
         if not text:
             return []
-        keywords = set()
+        keywords: Set[str] = set()
         eng = re.findall(r'[a-zA-Z_][a-zA-Z0-9_]{1,}', text)
         keywords.update(w.lower() for w in eng if len(w) >= 2)
         chn = re.findall(r'[\u4e00-\u9fff]{2,}', text)
