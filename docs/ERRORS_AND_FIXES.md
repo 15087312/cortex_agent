@@ -1772,3 +1772,24 @@ def add_to_dialog(self, role, text):       # 无 session 参数
 **验证：** 统一人设防御测试 8 项 + 反馈池隔离测试 + leak 12 项 + 相关 329 项通过。
 
 **教训：** ① "改一处人设，两处生效"必须统一读取入口（用户自定义优先 + 内置回退），而不是让各消费方各读各的源；② 全局单例的可变状态（哪怕是瞬态的"本轮分析节点"）在多会话并发下也会串——**快照按 session 存**是标准解法；③ 新增有界/可清理的状态（对话缓存）要配套清理方法 + 泄漏测试。
+
+---
+
+## 43. 文件感知功能实际无效 —— 采集端与消费端管道断（后端）
+
+**现象：** 修改项目根文件后，感知池仍返回"当前无感知数据"——文件变化从未进入模型上下文。
+
+**根因：** `FileDifferenceSource.detect()` 只产生 `Difference`（供 detector 存储/高强度回调），**从不发布 `FILE_CHANGE` 感知事件**；感知池订阅了 `FILE_CHANGE` 但**没有任何发布者**。且 `file_modified` intensity 25 < 阈值 50，也不触发 high_intensity 回调。采集端（检测到差异）与消费端（感知池→模型）之间的管道是断的。
+
+**为什么没被测试发现（系统性盲区）：**
+- 单测验证组件各自正确：`detect()` 返回 Difference ✓ / detector 注册 ✓ / integration 格式化 ✓——但**组件间的"数据管道"（谁把 Difference 发布成感知事件）无人测**
+- 模块覆盖清单只证明"被 import 执行"，不证明"数据到达消费者"
+- 这是 §42（感知注入消费端断）的同类模式——生产端也断
+
+**处理：** 删除文件感知功能（采集端本无真实发布者，链路不完整）：
+- 删除 `FileDifferenceSource` 模块 + `test_file_source_ext.py`
+- detector 移除注册；integration 移除 FILE_CHANGE 订阅/格式化
+- settings 移除 `PERCEPTION_FILE_ENABLED`；前端设置页移除文件监控开关
+- 相关 mock 测试更新（test_difference_detector / test_perception_integration_ext）
+
+**防再犯：** 补感知数据链路端到端测试（真实发布事件 → 感知池 → collect → 断言内容），任何"采集正常但管道断"都会被捕获。

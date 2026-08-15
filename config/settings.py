@@ -45,7 +45,7 @@ class Settings(BaseSettings):
 
         # ── 感知系统模块开关 ──
         "PERCEPTION_ENABLED", "PERCEPTION_SCREEN_ENABLED",
-        "PERCEPTION_FILE_ENABLED", "PERCEPTION_MCP_ENABLED",
+        "PERCEPTION_MCP_ENABLED",
         "PERCEPTION_INTERNAL_ENABLED", "SCREEN_DIFF_ENABLED",
         "PERCEPTION_TRIGGER_THINK",
         "PERCEPTION_TRIGGER_COOLDOWN", "PERCEPTION_TRIGGER_MIN_INTENSITY",
@@ -674,9 +674,8 @@ class Settings(BaseSettings):
     PERCEPTION_ENABLED: bool = True
 
     # ── 被动感知（环境数据采集） ──────────────────────────
-    # 负责从环境中采集原始数据：截图、OCR、文件监控、对话监控、语音
+    # 负责从环境中采集原始数据：截图、OCR、对话监控、语音
     PERCEPTION_SCREEN_ENABLED: bool = True             # 屏幕感知（帧差+OCR+UI+窗口）
-    PERCEPTION_FILE_ENABLED: bool = True               # 文件变化感知（watchdog）
     PERCEPTION_MCP_ENABLED: bool = True                # MCP 资源感知（通过 MCP 协议获取外部数据）
     PERCEPTION_VOICE_ENABLED: bool = False             # 语音感知（麦克风+Whisper STT）
     PERCEPTION_VOICE_MODE: str = "hotkey"              # 语音触发模式: hotkey=热键开关 / wakeword=唤醒词监听

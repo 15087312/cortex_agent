@@ -197,7 +197,6 @@ const maxWorkers = numCfg('MAX_WORKERS', 4)
 const perceptionEnabled = boolCfg('PERCEPTION_ENABLED', true)
 const perceptionScreen = boolCfg('PERCEPTION_SCREEN_ENABLED', true)
 const screenDiff = boolCfg('SCREEN_DIFF_ENABLED', true)
-const perceptionFile = boolCfg('PERCEPTION_FILE_ENABLED', true)
 const perceptionMcp = boolCfg('PERCEPTION_MCP_ENABLED', true)
 const perceptionInternal = boolCfg('PERCEPTION_INTERNAL_ENABLED', true)
 const triggerThink = boolCfg('PERCEPTION_TRIGGER_THINK', true)
@@ -635,10 +634,6 @@ onMounted(async () => {
           <div class="setting-row">
             <div class="lbl"><div class="t">屏幕差异检测</div></div>
             <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="screenDiff" @change="screenDiff = !screenDiff" /><span class="toggle-slider"></span></label></div>
-          </div>
-          <div class="setting-row">
-            <div class="lbl"><div class="t">文件监控</div><div class="d">监控工作目录文件变化</div></div>
-            <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="perceptionFile" @change="perceptionFile = !perceptionFile" /><span class="toggle-slider"></span></label></div>
           </div>
           <div class="setting-row">
             <div class="lbl"><div class="t">MCP 感知</div><div class="d">通过 MCP 服务器采集屏幕/界面</div></div>

@@ -43,7 +43,6 @@ class PerceptionIntegrator:
                 PerceptionEventType.SCREEN_DIFF,
                 PerceptionEventType.SCREEN_WINDOW,
                 PerceptionEventType.SCREEN_OCR,
-                PerceptionEventType.FILE_CHANGE,
                 PerceptionEventType.SPEECH_DETECTED,
                 PerceptionEventType.DIFFERENCE_DETECTED,
             ]:
@@ -103,11 +102,6 @@ class PerceptionIntegrator:
                 desc = payload.get("description", "")
                 count = payload.get("element_count", 0)
                 return f"屏幕UI: {count}个元素" + (f", {desc}" if desc else "")
-
-            elif event_type == "file.change":
-                change = payload.get("change", "")
-                path = payload.get("path", "")
-                return f"文件{change}: {path}" if change and path else f"文件变化: {path or '未知'}"
 
             elif event_type == "speech.detected":
                 text = payload.get("text", "")

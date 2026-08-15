@@ -32,20 +32,11 @@ def _src(diffs=None, source_type="fake"):
     return s
 
 
-# ── __init__：文件差异源分支 ────────────────────────────────────────────────
+# ── __init__ ─────────────────────────────────────────────────────────────────
 
-def test_init_file_source_disabled(monkeypatch):
-    monkeypatch.setattr(settings, "PERCEPTION_FILE_ENABLED", False)
+def test_init_registers_time_source():
     d = DifferenceDetector()
-    assert "file" not in d.registry.registered_types
     assert "time" in d.registry.registered_types
-
-
-def test_init_file_source_import_error(monkeypatch):
-    monkeypatch.setattr(settings, "PERCEPTION_FILE_ENABLED", True)
-    monkeypatch.setitem(sys.modules, "modules.perception.difference.sources.file_source", None)
-    d = DifferenceDetector()  # 51-52 注册失败被捕获
-    assert "file" not in d.registry.registered_types
 
 
 # ── scan 全路径 ──────────────────────────────────────────────────────────────

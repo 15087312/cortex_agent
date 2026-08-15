@@ -21,7 +21,7 @@ def test_start_auto_monitoring(monkeypatch):
     intg.start()
     ps.setup.assert_called_once()
     ps.start.assert_called_once()
-    assert bus.subscribe.call_count >= 6
+    assert bus.subscribe.call_count >= 5
 
 
 def test_start_when_already_started(monkeypatch):
@@ -34,7 +34,7 @@ def test_start_when_already_started(monkeypatch):
     intg.start()
     ps.setup.assert_not_called()
     ps.start.assert_not_called()
-    assert bus.subscribe.call_count >= 6
+    assert bus.subscribe.call_count >= 5
 
 
 def test_start_auto_monitoring_disabled(monkeypatch):
@@ -141,12 +141,6 @@ def test_format_ui():
     assert "3个元素" in out and "两个按钮" in out
     assert f("screen.ui", {"element_count": 0}) == "屏幕UI: 0个元素"
 
-
-def test_format_file_change():
-    f = PerceptionIntegrator._format_description
-    assert f("file.change", {"change": "修改", "path": "/a/b"}) == "文件修改: /a/b"
-    assert f("file.change", {"path": "/a/b"}) == "文件变化: /a/b"
-    assert f("file.change", {}) == "文件变化: 未知"
 
 
 def test_format_speech_and_difference():
