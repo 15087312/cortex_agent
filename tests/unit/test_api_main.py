@@ -446,6 +446,18 @@ def test_register_module_routers_includes_all():
     app = FastAPI()
     register_module_routers(app)
     paths = {getattr(r, "path", "") for r in app.routes}
+    # /tools 缺失时先输出完整诊断（tool_router 身份 / api.main 引用 / 已注册路径），再断言
+    if not any(p.startswith("/tools") for p in paths):
+        import api.main as _am
+        import infra.tool_manager.api as _tma
+        print("\n[DIAG] /tools 缺失诊断：")
+        print(f"  test tool_router id={id(tool_router)} routes={len(tool_router.routes)}")
+        am_tr = getattr(_am, "tool_router", None)
+        print(f"  api.main.tool_router id={id(am_tr)} "
+              f"routes={len(am_tr.routes) if am_tr else 'N/A'}")
+        print(f"  infra.tool_manager.api.router id={id(_tma.router)} routes={len(_tma.router.routes)}")
+        print(f"  app.routes paths={sorted(paths)[:20]}")
+        print(f"  data-process 已注册: {any(p.startswith('/data-process') for p in paths)}")
     # 核心路由必须注册
     for prefix in ("/tools", "/stream", "/management", "/output", "/security", "/differences"):
         assert any(p.startswith(prefix) for p in paths), prefix

@@ -57,9 +57,10 @@ def test_spatial_prompt_not_injected_when_disabled(monkeypatch, fake_causal):
 
 
 def test_conscience_prompt_format():
-    """CONSCIENCE_PROMPT 必须能 format（含 spatial_enhancement 占位）"""
+    """CONSCIENCE_PROMPT 必须能 format（含 role_intro/persona/role_name/spatial 占位）"""
     from modules.thinking.conscience import CONSCIENCE_PROMPT
     s = CONSCIENCE_PROMPT.format(
+        role_intro="你是总指挥", persona="", role_name="总指挥",
         causal_knowledge="c", values="v", recent_dialog="r",
         spatial_enhancement="", user_input="u",
     )
