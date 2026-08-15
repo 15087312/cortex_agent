@@ -296,7 +296,9 @@ cd frontend && npm test
 ### 关键工程实践
 
 - **内存安全**：检测（`[LEAK-DETECT]` 报告）+ 验证（`tests/leak/` 10 类泄漏测试，10/10 识别）+ 定位（`leak_check.py` RSS 监控）+ 终止（看门狗）。模块覆盖清单证明所有生产模块（含前端代理层）均被测试执行。
-- **测试盲区教训**：`frontend/server.py` 曾因"Python 但属 frontend"而无测试归属，导致 IPv6 `localhost→::1` 代理 502 未被捕获（详见 `docs/ERRORS_AND_FIXES.md` §40）。**任何 Python 代码都须有明确测试归属并纳入覆盖清单**，不能因目录归属而脱离测试体系。
+- **依赖注入**：`infra/tool_manager/service_registry.py` 能力端口 + `bootstrap.py` 装配层 + 启动期缺失校验——`infra→modules` 逆向依赖归零。
+- **MCP 生命周期**：独立热插拔（`remove_server`/`replace_server`）+ 断线指数退避自动重连——对齐 dsh mcp-client。
+- **后台线程安全**：屏幕源/事件总线/语音检测等类级 `weakref` 注册表 + conftest 统一清理，杜绝测试随机挂起。
 - **依赖注入**：`infra/tool_manager/service_registry.py` 能力端口 + `bootstrap.py` 装配层 + 启动期缺失校验——`infra→modules` 逆向依赖归零。
 - **MCP 生命周期**：独立热插拔（`remove_server`/`replace_server`）+ 断线指数退避自动重连——对齐 dsh mcp-client。
 - **后台线程安全**：屏幕源/事件总线/语音检测等类级 `weakref` 注册表 + conftest 统一清理，杜绝测试随机挂起。
