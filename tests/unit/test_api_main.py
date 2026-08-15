@@ -454,6 +454,7 @@ def test_register_module_routers_includes_all():
             am_tr = getattr(_am, "tool_router", None)
             # 手动验证：独立 app 直接 include tool_router，区分"register_module_routers 未生效" vs "include_router 异常"
             _probe = FastAPI()
+            _ir_is_orig = getattr(getattr(_probe, "include_router", None), "__func__", None) is FastAPI.include_router
             _probe.include_router(tool_router)
             _probe_paths = {getattr(r, "path", "") for r in _probe.routes}
             _manual_ok = any(p.startswith("/tools") for p in _probe_paths)
@@ -463,6 +464,9 @@ def test_register_module_routers_includes_all():
                 f" | infra.tool_manager.api.router id={id(_tma.router)} routes={len(_tma.router.routes)}"
                 f" | app.routes[:10]={sorted(paths)[:10]}"
                 f" | 手动 include_router /tools 是否成功={_manual_ok}"
+                f" | include_router 是否原始 FastAPI 方法={_ir_is_orig}"
+                f" | app.router type={type(_probe.router)}"
+                f" | FastAPI module={FastAPI.__module__}"
                 f" | register_module_routers={getattr(register_module_routers, '__module__', 'N/A')}"
             )
             assert any(p.startswith(prefix) for p in paths), _msg
