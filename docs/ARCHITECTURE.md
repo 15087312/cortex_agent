@@ -545,6 +545,42 @@ infra/mcp/
 - 工具名冲突时优先保留内置 ToolRegistry 工具，跳过同名 MCP 工具
 - `ToolManagerPermissionAdapter` 包装 MCP 执行器，确保通过 `_check_tool_permission()` 进行安全审批
 
+#### 10.2.1 MCP 生命周期管理（热插拔 + 自动重连）
+
+```
+MCPServerManager
+├── start_all() / add_server()      # 连接 + 索引工具 + 启动重连监控
+├── remove_server(name)             # 独立热卸载：先摘工具 → 关连接 → 清索引
+├── replace_server(name, ...)       # 热替换（等价 dsh HMR：dispose 旧 + 建新）
+├── _watch_connection(name)         # 后台监控任务：周期检测 is_connected
+├── _reconnect_with_backoff()       # 断线指数退避：base_delay × 2^(attempt-1)
+└── _refresh_tools(name)            # 重连成功后刷新工具索引（模型可见列表即时更新）
+```
+
+- **独立热插拔**：`remove_server` 逆序清理（先摘工具让模型立刻看不到 → 断开 → 清索引），不影响其他 server；`replace_server` 改配置热替换
+- **自动重连**：`MCPServerConfig.reconnect` 配置开启，断线后指数退避自愈，重连成功后重新 list_tools
+- **防任务遗留**：`remove_server`/`shutdown` 停止全部监控任务（asyncio task cancel + 停止事件），杜绝后台任务泄漏
+
+#### 10.2.2 依赖注入端口（能力注册表）
+
+工具层与业务模块的解耦通过 **Service Locator 式依赖注入**实现：
+
+```
+infra/tool_manager/service_registry.py
+├── register_capability(name, provider)   # modules 侧注册（bootstrap 装配层）
+└── get_capability(name)                  # 工具层获取；缺失返回 None 优雅降级
+
+bootstrap.py  register_business_capabilities()
+   └── 9 个能力：blackboard_query / skill_manager / event_retrieval /
+       file_history / touchpoint_detector / detector_router /
+       value_formatter / tool_security_gate / turn_images
+   └── 启动期校验：_report_capability_status 报告缺失/失败能力（fail-fast）
+```
+
+- 依赖方向：`modules → infra`（逆向依赖 `infra→modules` 已归零）
+- 工具通过端口取服务，缺失时返回显式错误信息（而非 ImportError）
+- 测试经 `register_capability(name, fake)` 注入 mock
+
 ### 10.3 AI 自创工具
 
 ```

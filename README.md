@@ -18,7 +18,7 @@ Cortex Agent 是一套可编排的多模型 Agent 工具，而不是一个简单
 | **多端交互** | Web / Qt 桌面 / 桌宠 / TUI | Vue 3 Web UI、PyQt6 桌面客户端、Live2D 桌宠、Textual 终端 |
 | **安全 fail-closed** | 分级审批 + 全链路审计 | 工具调用分级门控（LOW/HIGH/CRITICAL），权限/拦截异常一律拒绝（不静默放行） |
 | **工具系统** | 85 内置 + MCP + 运行时自建 | 文件/搜索/感知/代码执行/UI 检测；MCP 服务器扩展；模型运行时自建工具 |
-| **测试保障** | 1700+ 项测试 | unit/integration 分层，临时库隔离、零触碰生产、禁吞错掩盖，多轮补测覆盖 0% 模块 |
+| **工程保障** | **5800+ 测试 · 99% 覆盖率 · mypy 0 errors** | 内存泄漏检测默认开启 + 看门狗；MCP 独立热插拔 + 自动重连；依赖注入端口；CI 五道门禁 |
 
 ---
 
@@ -251,23 +251,45 @@ ai_backend/
 
 ---
 
-## 测试
+## 测试与工程质量
 
-**137 个测试文件，全量 1700+ 项通过**（unit / integration / external 分层）。
+**全量 5800+ 项测试通过，代码覆盖率 99%**（unit / integration 分层，20+ 核心文件 100%）。
 
 ```bash
 # 后端全量（推荐）
 pytest tests/ -m "not external and not slow"
 
+# 类型检查（CI 门禁，229 源文件 0 errors）
+mypy modules/ infra/ config/ utils/ api/
+
+# 泄漏检测能力验证（10 类泄漏测试）
+python scripts/verify_leak_detection.py
+
+# 内存泄漏精确定位
+python scripts/leak_check.py tests/unit/test_xxx.py
+
 # 前端
 cd frontend && npm test
 ```
 
-**隔离原则**：绝不触碰生产库（临时 SQLite + monkeypatch 单例）；重库加载放宽 timeout；
-后台线程类提供 `stop()`；禁 `except: pass` 吞错掩盖；测试假对象须与真实模型字段一致。
+### 质量体系（五道 CI 门禁）
 
-**覆盖亮点**：utils / config.providers / identity_loader / values_store / tool_discovery /
-context_budget / ModelRunnerManager 从 0% 补到覆盖；management 全端点；安全 fail-closed 回归。
+| 门禁 | 内容 |
+|---|---|
+| **单元测试** | `pytest tests/unit`（5800+ 用例，随机挂起已根治） |
+| **覆盖率门禁** | `--cov-fail-under=70`（实际 99%） |
+| **类型检查** | `mypy` 0 errors（配置见 `pyproject.toml [tool.mypy]`） |
+| **泄漏检测** | 默认开启：muppy 字节采样趋势判定 + pympler 类型 diff（含 bytes/numpy 原始内存） |
+| **内存看门狗** | 超 `CORTEX_TEST_MEM_LIMIT_MB`（默认 4096）自动终止，防拖垮本机/CI |
+
+### 关键工程实践
+
+- **内存安全**：检测（`[LEAK-DETECT]` 报告）+ 验证（`tests/leak/` 10 类泄漏测试，10/10 识别）+ 定位（`leak_check.py` RSS 监控）+ 终止（看门狗）。模块覆盖清单证明 195/195 生产模块均被测试执行（`[MODULE-COVERAGE]`）。
+- **依赖注入**：`infra/tool_manager/service_registry.py` 能力端口 + `bootstrap.py` 装配层 + 启动期缺失校验——`infra→modules` 逆向依赖归零。
+- **MCP 生命周期**：独立热插拔（`remove_server`/`replace_server`）+ 断线指数退避自动重连——对齐 dsh mcp-client。
+- **后台线程安全**：屏幕源/事件总线/语音检测等类级 `weakref` 注册表 + conftest 统一清理，杜绝测试随机挂起。
+- **隔离原则**：绝不触碰生产库（临时 SQLite + monkeypatch 单例）；重库加载放宽 timeout；禁 `except: pass` 吞错掩盖；测试假对象须与真实模型字段一致。
+- **Bug 记录**：`docs/ERRORS_AND_FIXES.md`（§1-38 含系统性模式审计）；内存安全体系见 `docs/MEMORY_LEAK_TESTING.md`。
 
 ---
 
