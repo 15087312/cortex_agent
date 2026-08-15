@@ -13,12 +13,26 @@ const attachments = ref([])
 const dragging = ref(false)
 const fieldRef = ref(null)
 
+// 输入框最大高度（超出滚动），自动随输入文字增长/收缩
+const MAX_INPUT_H = 160
+
+function autoResize() {
+  const el = fieldRef.value
+  if (!el) return
+  el.style.height = 'auto'
+  el.style.height = Math.min(el.scrollHeight, MAX_INPUT_H) + 'px'
+  el.style.overflowY = el.scrollHeight > MAX_INPUT_H ? 'auto' : 'hidden'
+}
+
 function _focusField() {
   if (fieldRef.value) { fieldRef.value.focus(); fieldRef.value.setSelectionRange?.(fieldRef.value.value.length, fieldRef.value.value.length) }
 }
 function _onFocusRequest() { _focusField() }
 
-onMounted(() => window.addEventListener('cortex-focus-input', _onFocusRequest))
+onMounted(() => {
+  window.addEventListener('cortex-focus-input', _onFocusRequest)
+  autoResize()
+})
 onUnmounted(() => window.removeEventListener('cortex-focus-input', _onFocusRequest))
 
 function handleSend() {
@@ -29,6 +43,7 @@ function handleSend() {
   emit('send', { text, attachments: atts.map(a => ({ type: a.type, name: a.name, data: a.data })) })
   input.value = ''
   attachments.value = []
+  autoResize()
 }
 
 function handleKeydown(e) {
@@ -117,6 +132,8 @@ function removeAttachment(i) {
         v-model="input"
         :placeholder="processing ? 'AI 思考中，请稍候...' : '输入消息... (Enter发送, Shift+Enter换行)'"
         rows="1"
+        style="resize: none; overflow-y: hidden; line-height: 1.5; box-sizing: border-box;"
+        @input="autoResize"
         @keydown="handleKeydown"
         @paste="handlePaste"
       ></textarea>
