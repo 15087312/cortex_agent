@@ -271,8 +271,14 @@ class Settings(BaseSettings):
         if speaking_style:
             parts.append(f"【风格】{speaking_style}")
         if expertise:
-            ex = expertise if isinstance(expertise, list) else [str(expertise)]
-            parts.append(f"【擅长】{'、'.join(ex for ex in ex if ex)}")
+            if isinstance(expertise, str):
+                ex = [x.strip() for x in expertise.split(",") if x.strip()]
+            elif isinstance(expertise, list):
+                ex = [str(x).strip() for x in expertise if x]
+            else:
+                ex = [str(expertise)]
+            if ex:
+                parts.append(f"【擅长】{'、'.join(ex)}")
         return "\n".join(x for x in parts if x and x.strip())
 
     def get_role_persona(self, role: str) -> str:

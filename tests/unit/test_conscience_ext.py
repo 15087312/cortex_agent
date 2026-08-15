@@ -62,6 +62,58 @@ def test_extract_keywords():
     assert len(kws) <= 10
 
 
+def test_build_role_context_uses_unified_persona(monkeypatch):
+    """心理活动人设走统一入口 get_role_persona（用户自定义优先），与对话同源"""
+    from config.settings import Settings
+    monkeypatch.setattr(Settings, "get_role_persona",
+                        lambda self, role: "统一的自定义人设文本")
+    c = Conscience(model_client=None)
+    intro, persona, name = c._build_role_context("large_primary")
+    assert persona == "统一的自定义人设文本"
+    assert name == "总指挥"
+
+
+def test_build_role_context_fallback_builtin(monkeypatch):
+    """统一入口为空时回退 roles.yaml 内置人设（settings 异常兜底）"""
+    c = Conscience(model_client=None)
+    intro, persona, name = c._build_role_context("large_primary")
+    # roles.yaml 内置总指挥（用户无自定义时）
+    assert "用户与系统之间的唯一桥梁" in persona
+    assert name == "总指挥"
+
+
+def test_build_role_context_settings_error_fallback(monkeypatch):
+    """settings.get_role_persona 抛异常 → 回退 roles.yaml 内置字段（防御）"""
+    from config.settings import Settings
+    def boom(self, role):
+        raise RuntimeError("settings 异常")
+    monkeypatch.setattr(Settings, "get_role_persona", boom)
+    c = Conscience(model_client=None)
+    _, persona, name = c._build_role_context("large_primary")
+    assert "用户与系统之间的唯一桥梁" in persona
+    assert name == "总指挥"
+
+
+def test_resolve_role_unknown_owner():
+    """未知 owner → 默认 orchestrator（总指挥）（防御）"""
+    c = Conscience(model_client=None)
+    assert c._resolve_role("custom_xyz").get("role") == "orchestrator"
+    assert c._resolve_role("").get("role") == "orchestrator"
+    assert c._resolve_role(None).get("role") == "orchestrator"
+
+
+def test_resolve_role_roles_yaml_failure(monkeypatch):
+    """roles.yaml 解析失败 → roles 空 → 默认总指挥，不崩（防御）"""
+    import yaml as _yaml
+    def boom(*a, **k):
+        raise RuntimeError("roles.yaml 损坏")
+    monkeypatch.setattr(_yaml, "safe_load", boom)
+    c = Conscience(model_client=None)
+    _, persona, name = c._build_role_context("large_primary")
+    assert name == "总指挥"
+    assert persona == ""
+
+
 # ── 因果知识提取 ───────────────────────────────────────────────────────
 
 def test_get_causal_knowledge_from_events(monkeypatch, tmp_path):

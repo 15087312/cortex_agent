@@ -1751,3 +1751,24 @@ def add_to_dialog(self, role, text):       # 无 session 参数
 **验证：** 两处注入均生效（mock PerceptionSource → system_prompt 含环境感知）；新增 `test_perception_injection.py`（4 用例）；相关 266 passed。
 
 **教训：** 大规模重构（上下文/提示词系统）后必须回归"数据→prompt"完整链路；感知这类"采集端正常但注入端断"的问题，代码审查难发现，需注入链路测试。
+
+## 56. 人设存储两套来源 + 反馈闭环节点集合未按会话隔离（后端）
+
+**现象：** 用户在编排/设置页改人设，对话 system prompt 生效但**心理活动（内心独白）不生效**——心理活动仍用 roles.yaml 内置模板。另：多会话并发时心理活动的反馈闭环（analyze_feedback 调整因果图置信度）可能用到**其它会话**的因果节点。
+
+**根因（两个）：**
+1. **人设两套来源**：对话用 `personas.yaml`（get_persona 用户自定义，core 模式 composer.py:139 也 get_persona 覆盖），心理活动用 `config/prompts/roles.yaml` 内置（conscience._resolve_role 直接读 roles.yaml）——改一处，另一处不变。
+2. **`conscience._last_analyzed_node_ids` 是全局单例可变状态**（§49 同类）：多会话并发 think 时互相覆盖，analyze_feedback（fire-and-forget 异步）可能用错会话的节点调整因果图置信度。
+
+**修复：**
+- 新增统一人设入口 `settings.get_role_persona(role)`：用户自定义 `personas.yaml personas[role]` → 自定义 agent（personality+风格+擅长）→ `roles.yaml` 内置 → 空。`conscience._build_role_context` 改用它——**对话与心理活动同源，改一套人设同时生效**（心理活动仍只取人设文本，不含工具段）
+- `_compose_persona` 兼容 expertise 为逗号字符串（拆列表）
+- 反馈闭环节点集合按 session 隔离：think 结束时把本轮节点**快照**到 `_pending_feedback_by_session[session_id]`，`analyze_feedback(owner_id=session_id)` 用对应会话快照，用完清理；直接调用（测试）回退 `_last_analyzed_node_ids`（向后兼容）
+
+**内存安全：**
+- `Conscience` 新增 `clear_session()` / `clear_all_dialogs()`（会话删除时释放对话缓存，防无界增长）
+- 新增 `tests/leak/test_leak_conscience_dialogs.py`（每会话有界 20 条 + 会话可清理 + 大量会话可整体清空）和 `tests/leak/test_leak_client_rebuild.py`（client 配置指纹重建时旧 aiohttp session 被 close，防泄漏）
+
+**验证：** 统一人设防御测试 8 项 + 反馈池隔离测试 + leak 12 项 + 相关 329 项通过。
+
+**教训：** ① "改一处人设，两处生效"必须统一读取入口（用户自定义优先 + 内置回退），而不是让各消费方各读各的源；② 全局单例的可变状态（哪怕是瞬态的"本轮分析节点"）在多会话并发下也会串——**快照按 session 存**是标准解法；③ 新增有界/可清理的状态（对话缓存）要配套清理方法 + 泄漏测试。

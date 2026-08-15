@@ -396,3 +396,23 @@ def test_think_uses_role_persona(monkeypatch):
     prompt_arg = client.generate.call_args[0][0]
     assert "实现专家" in prompt_arg
     assert "工具" not in prompt_arg.split("【你过去的经验】")[0]
+
+
+async def test_analyze_feedback_uses_session_snapshot(monkeypatch, tmp_path):
+    """反馈池按 session 隔离：analyze_feedback 只用对应会话快照，不串其它会话（§49）"""
+    g = _mk_graph(tmp_path, [("A", 0.5), ("B", 0.5)])
+    ids = {n.label: n for n in g.list_nodes()}
+    monkeypatch.setattr(CausalGraph, "get_instance", staticmethod(lambda: g))
+    text = '{"confirmed": ["%s"], "contradicted": []}' % ids["A"].id
+    reducer = EventReducer(model_client=_client(text))
+    monkeypatch.setattr(er_mod, "_reducer_instance", reducer)
+    c = cons_mod.Conscience()
+    # 生产路径：think 后按 session 快照，_last_analyzed_node_ids 已清空
+    c._last_analyzed_node_ids = []
+    c._pending_feedback_by_session["sess_a"] = [ids["A"].id]
+    c._pending_feedback_by_session["sess_b"] = [ids["B"].id]
+    await c.analyze_feedback("q", "r", owner_id="sess_a")
+    assert g.get_node(ids["A"].id).confidence > 0.5   # 会话 A 的节点被确认
+    assert g.get_node(ids["B"].id).confidence == 0.5  # 会话 B 的节点不受影响（隔离）
+    assert "sess_a" not in c._pending_feedback_by_session  # 用完清理
+    assert c._last_analyzed_node_ids == []  # 快照消费后清空

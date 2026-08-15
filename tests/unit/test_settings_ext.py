@@ -99,6 +99,63 @@ class TestPersonasYaml:
     def test_get_persona_unknown_role(self, tmp_path, monkeypatch):
         assert _new_settings(tmp_path, monkeypatch).get_persona("ghost") == ""
 
+    def test_get_role_persona_user_override_priority(self, tmp_path, monkeypatch):
+        """统一人设入口：用户自定义优先于内置 roles.yaml"""
+        s = _new_settings(tmp_path, monkeypatch,
+                          personas_yaml="personas:\n  orchestrator: 我的自定义总指挥\n")
+        p = s.get_role_persona("orchestrator")
+        assert p == "我的自定义总指挥"
+
+    def test_get_role_persona_custom_agent_fallback(self, tmp_path, monkeypatch):
+        """无 personas[role] → 回退 custom_agents 的 personality"""
+        s = _new_settings(tmp_path, monkeypatch, personas_yaml=(
+            "custom_agents:\n"
+            "  code_writer:\n"
+            "    name: 写码\n"
+            "    personality: 专注代码实现\n"
+            "    speaking_style: 简洁\n"
+            "    expertise: [python]\n"))
+        p = s.get_role_persona("code_writer")
+        assert "专注代码实现" in p
+        assert "【风格】简洁" in p
+        assert "【擅长】python" in p
+
+    def test_get_role_persona_builtin_fallback(self, tmp_path, monkeypatch):
+        """无自定义 → 回退 roles.yaml 内置"""
+        s = _new_settings(tmp_path, monkeypatch)
+        p = s.get_role_persona("orchestrator")
+        assert "用户与系统之间的唯一桥梁" in p  # roles.yaml 内置总指挥
+
+    def test_get_role_persona_unknown(self, tmp_path, monkeypatch):
+        assert _new_settings(tmp_path, monkeypatch).get_role_persona("ghost") == ""
+
+    def test_get_role_persona_roles_yaml_corrupt(self, tmp_path, monkeypatch):
+        """roles.yaml 读取失败 → 内置兜底为空，不崩（防御）"""
+        import yaml as _yaml
+        def boom(*a, **k):
+            raise RuntimeError("roles.yaml 损坏")
+        monkeypatch.setattr(_yaml, "safe_load", boom)
+        s = _new_settings(tmp_path, monkeypatch)
+        assert s.get_role_persona("orchestrator") == ""
+
+    def test_get_role_persona_custom_agent_expertise_string(self, tmp_path, monkeypatch):
+        """custom_agent.expertise 为逗号分隔字符串 → 拆成列表（防御）"""
+        s = _new_settings(tmp_path, monkeypatch, personas_yaml=(
+            "custom_agents:\n"
+            "  code_writer:\n"
+            "    name: 写码\n"
+            "    personality: 专注代码\n"
+            "    expertise: python,测试\n"))
+        p = s.get_role_persona("code_writer")
+        assert "【擅长】python、测试" in p
+
+    def test_compose_persona_empty(self, tmp_path, monkeypatch):
+        """全空字段 → 返回空串（防御）"""
+        s = _new_settings(tmp_path, monkeypatch)
+        assert s._compose_persona("", "", None) == ""
+        assert s._compose_persona("  ", "") == ""
+        assert s._compose_persona("人格", "", []) == "人格"
+
     def test_set_persona_writes_and_returns(self, tmp_path, monkeypatch):
         s = _new_settings(tmp_path, monkeypatch)
         assert s.set_persona("user", " 你好 ") == "你好"

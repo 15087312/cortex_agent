@@ -294,7 +294,8 @@ class MultiModelOrchestrator:
         final_response = await self._review_output(raw_response, user_input, expert_guidance, blackboard)
 
         # ---- 6. 反馈闭环：良知系统分析模型回应，调整因果图置信度 ----
-        asyncio.create_task(self._conscience_feedback(user_input, final_response))
+        asyncio.create_task(self._conscience_feedback(
+            user_input, final_response, session_id=session_id or "large_primary"))
 
         # ---- 7. 价值观演化 (fire-and-forget, 不阻塞主流程) ----
         asyncio.create_task(self._maybe_evolve_values(user_input, final_response))
@@ -837,12 +838,13 @@ class MultiModelOrchestrator:
     # 工具方法
     # ------------------------------------------------------------------
 
-    async def _conscience_feedback(self, user_input: str, model_response: str):
+    async def _conscience_feedback(self, user_input: str, model_response: str,
+                                   session_id: str = "large_primary"):
         """良知反馈闭环（fire-and-forget）：分析模型回应是否采纳因果建议"""
         try:
             from modules.thinking.conscience import get_conscience
             cons = get_conscience()
-            await cons.analyze_feedback(user_input, model_response)
+            await cons.analyze_feedback(user_input, model_response, owner_id=session_id or "large_primary")
         except Exception as e:
             logger.debug(f"[良知反馈] 非致命错误: {e}")
 

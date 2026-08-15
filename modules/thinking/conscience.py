@@ -72,8 +72,11 @@ class Conscience:
         # 心理活动对话缓存按 session 隔离（owner_id/session_id → buffer），
         # 避免切换会话后心理活动仍引用其它会话的"最近对话"导致跨会话累计
         self._dialog_buffers: Dict[str, list] = {}
-        # 记录本轮参与分析的节点 ID，用于反馈闭环
+        # 本轮参与分析的节点 ID（think 后清空，analyze_feedback 前由快照接管）
         self._last_analyzed_node_ids: List[str] = []
+        # 按 session 的反馈闭环节点快照：think 结束时捕获，analyze_feedback 用快照，
+        # 防多会话并发时互相覆盖（§49 同类：全局单例可变状态按 session 隔离）
+        self._pending_feedback_by_session: Dict[str, List[str]] = {}
 
     def add_to_dialog(self, role: str, text: str, session_id: str = "large_primary"):
         if role in ("user", "assistant") and text:
@@ -82,6 +85,15 @@ class Conscience:
             buf.append(f"{'用户' if role == 'user' else '助手'}: {text[:300]}")
             if len(buf) > 20:
                 del buf[:len(buf) - 20]
+
+    def clear_session(self, session_id: str) -> None:
+        """清除指定会话的心理活动对话缓存（会话删除/切换时调用，防无界增长）"""
+        key = session_id or "large_primary"
+        self._dialog_buffers.pop(key, None)
+
+    def clear_all_dialogs(self) -> None:
+        """清空所有会话的心理活动对话缓存"""
+        self._dialog_buffers.clear()
 
     def _resolve_role(self, owner_id: str) -> dict:
         """从 model_id 推断角色（orchestrator 总指挥 / supervisor 主管 / expert 专家）。
@@ -257,12 +269,16 @@ class Conscience:
                         keywords.add(bigram)
         return list(keywords)[:10]
 
-    async def analyze_feedback(self, user_input: str, model_response: str):
+    async def analyze_feedback(self, user_input: str, model_response: str,
+                               owner_id: str = "large_primary"):
         """反馈闭环：复用 EventReducer 的模型分析回应，确认/修正因果关系
 
-        在模型回应后异步执行，不阻塞主流程。
+        在模型回应后异步执行，不阻塞主流程。节点集合取 think 结束时按 session
+        捕获的快照（多会话并发互不覆盖）；直接调用（测试）回退 _last_analyzed_node_ids。
         """
-        if not self._last_analyzed_node_ids:
+        key = owner_id or "large_primary"
+        nids = self._pending_feedback_by_session.get(key) or list(self._last_analyzed_node_ids)
+        if not nids:
             return
 
         try:
@@ -276,7 +292,7 @@ class Conscience:
             # 获取节点标签供 LLM 理解
             graph = CausalGraph.get_instance()
             known_nodes = {}
-            for nid in self._last_analyzed_node_ids:
+            for nid in nids:
                 node = graph.get_node(nid)
                 if node:
                     known_nodes[nid] = node.label
@@ -330,7 +346,7 @@ class Conscience:
 
             for nid in confirmed:
                 node = graph.get_node(nid)
-                if node and nid in self._last_analyzed_node_ids:
+                if node and nid in nids:
                     node.confidence = min(0.99, node.confidence + 0.05)
                     graph.save_node(node)
                     for pred in graph.get_predecessors(nid):
@@ -343,7 +359,7 @@ class Conscience:
 
             for nid in contradicted:
                 node = graph.get_node(nid)
-                if node and nid in self._last_analyzed_node_ids:
+                if node and nid in nids:
                     node.confidence = max(0.1, node.confidence - 0.1)
                     graph.save_node(node)
                     adjustments += 1
@@ -354,6 +370,7 @@ class Conscience:
         except Exception as e:
             logger.debug(f"[Conscience] 反馈闭环失败: {e}")
         finally:
+            self._pending_feedback_by_session.pop(key, None)
             self._last_analyzed_node_ids = []
 
     async def think(self, user_input: str, owner_id: str = "large_primary") -> str:
@@ -374,9 +391,9 @@ class Conscience:
             except Exception:
                 pass
 
-            # 1. 从因果图提取相关知识
+            # 1. 从因果图提取相关知识（先清本轮残留，防 analyze_feedback 未跑时累积）
+            self._last_analyzed_node_ids = []
             causal_knowledge = self._get_causal_knowledge(user_input, owner_id=owner_id)
-            
             # 2. 读取静态价值观
             values_text = ""
             try:
@@ -441,6 +458,9 @@ class Conscience:
                     logger.info(f"[Conscience] 生成内心独白：{inner_thoughts[:100]}...")
                     # 添加到对话历史（用于下一轮，按 session 隔离）
                     self.add_to_dialog("assistant", f"[良知]{inner_thoughts}", session_id=owner_id)
+                # 快照本轮分析节点到按 session 的反馈池，防多会话并发互相覆盖（§49）
+                self._pending_feedback_by_session[owner_id or "large_primary"] = list(self._last_analyzed_node_ids)
+                self._last_analyzed_node_ids = []
                 return inner_thoughts
             except Exception as e:
                 logger.debug(f"[Conscience] LLM 生成失败：{e}")
