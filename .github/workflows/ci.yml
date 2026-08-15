@@ -36,12 +36,16 @@ jobs:
       # unit / integration 分两个进程跑：合并在同一进程会因非 daemon 线程在退出时挂住
       - name: Run unit tests
         shell: bash
+        env:
+          CORTEX_TEST_MEM_LIMIT_MB: "4096"
         run: |
           pytest tests/unit -q -p no:cacheprovider
 
       # 覆盖率门禁：低于阈值 CI 失败（阈值随覆盖提升逐步上调）
       - name: Coverage gate
         shell: bash
+        env:
+          CORTEX_TEST_MEM_LIMIT_MB: "4096"
         run: |
           pytest tests/unit -q -p no:cacheprovider \
             --cov=modules --cov=infra --cov=config --cov=api --cov=utils \

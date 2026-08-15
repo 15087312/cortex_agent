@@ -20,21 +20,21 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 # ---------------------------------------------------------------------------
-# 内存上限保护：超预期内存占用自动终止测试进程（默认开启）
+# 内存上限保护：超预期内存占用自动终止测试进程（默认关闭，显式启用）
 #
 # 原理: 看门狗线程周期采样当前进程 RSS（psutil），超过上限立即 os._exit(1)。
 #   - 进程内无法用 RLIMIT_AS（macOS 不允许设低于当前已用地址空间）
-#   - 看门狗直接杀进程，避免内存失控拖垮整台机器/CI runner
+#   - 仅在本文件（tests/conftest.py）内由 pytest 加载时生效，生产/后端进程
+#     不加载本文件，绝不会触发
 #
-# 环境变量可调:
-#   CORTEX_TEST_MEM_LIMIT_MB  上限 MB（默认 4096，当前全量峰值 ~1.1GB RSS）
-#   设为 0 关闭本保护
+# 环境变量: CORTEX_TEST_MEM_LIMIT_MB  上限 MB；**必须显式设置才启用**
+#   （默认 0=关闭；CI 显式设 4096；设为 0 或未设一律不启动看门狗）
 # ---------------------------------------------------------------------------
-_MEM_LIMIT_MB = int(os.environ.get("CORTEX_TEST_MEM_LIMIT_MB", "4096"))
+_MEM_LIMIT_MB = int(os.environ.get("CORTEX_TEST_MEM_LIMIT_MB", "0") or "0")
 
 
 def _mem_watchdog() -> None:
-    """看门狗线程：RSS 超上限立即终止进程。"""
+    """看门狗线程：RSS 超上限立即终止进程（仅测试进程，见上方说明）。"""
     import time
     try:
         import psutil
@@ -49,7 +49,7 @@ def _mem_watchdog() -> None:
     while True:
         try:
             if _get_rss() > limit:
-                print(f"\n[MEM-LIMIT] 内存超限 {_MEM_LIMIT_MB}MB，自动终止测试进程",
+                print(f"\n[TEST-MEM-WATCHDOG] 测试进程内存超限 {_MEM_LIMIT_MB}MB，自动终止",
                       file=sys.stderr, flush=True)
                 os._exit(1)
         except Exception:
@@ -64,7 +64,7 @@ def _memory_limit():
         return
     import threading
     threading.Thread(target=_mem_watchdog, daemon=True).start()
-    print(f"\n[MEM-LIMIT] 测试进程内存上限: {_MEM_LIMIT_MB} MB（超限自动终止）",
+    print(f"\n[TEST-MEM-WATCHDOG] 测试进程内存上限: {_MEM_LIMIT_MB} MB（超限自动终止）",
           file=sys.stderr, flush=True)
     yield
 
