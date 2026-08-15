@@ -268,8 +268,12 @@ def pytest_sessionfinish(session, exitstatus):
 #   CORTEX_TEST_MODULE_UNCOVERED_MAX  允许未覆盖的生产模块数（默认 10，
 #      超限在报告中标 ⚠；设 -1 关闭检查）
 # ---------------------------------------------------------------------------
-_PRODUCTION_DIRS = ("modules", "infra", "utils", "config", "api", "cortex")
+_PRODUCTION_DIRS = ("modules", "infra", "utils", "config", "api", "cortex", "frontend")
 _MODULE_UNCOVERED_MAX = int(os.environ.get("CORTEX_TEST_MODULE_UNCOVERED_MAX", "10"))
+
+# frontend 下依赖 GUI 的启动器：无显示环境（CI）无法测试，清单豁免（前端代理层 server.py
+# 与 pet_widget.py 纳入覆盖，Qt 启动器 main/pet_launch 豁免）
+_FRONTEND_EXCLUDE = ("frontend/main.py", "frontend/pet_launch.py")
 
 
 def _all_production_modules() -> set:
@@ -283,6 +287,8 @@ def _all_production_modules() -> set:
             for f in files:
                 if f.endswith(".py") and f != "__init__.py":
                     rel = os.path.relpath(os.path.join(root, f))
+                    if rel in _FRONTEND_EXCLUDE:
+                        continue
                     found.add(rel[:-3].replace(os.sep, "."))
     return found
 
