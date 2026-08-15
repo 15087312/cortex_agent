@@ -13,6 +13,8 @@ def _composer():
 def _patch(monkeypatch, override="", persona=""):
     monkeypatch.setattr(S, "get_system_override", lambda self, role: override)
     monkeypatch.setattr(S, "get_persona", lambda self, role: persona)
+    # 确定化：mock get_agent_active，避免被用户真实 personas.yaml 的编排状态影响
+    monkeypatch.setattr(S, "get_agent_active", lambda self, role: True)
     monkeypatch.setattr(pc.settings, "ASSISTANT_NAME", "助手")
     monkeypatch.setattr(pc.settings, "USER_NAME", "用户")
 
@@ -72,6 +74,8 @@ def test_build_system_falls_back_to_large_custom_agent(monkeypatch):
     monkeypatch.setattr(type(settings), "get_persona", fake_get_persona)
     monkeypatch.setattr(type(settings), "get_custom_agents", fake_get_custom_agents)
     monkeypatch.setattr(type(settings), "get_system_override", lambda self, role: "")
+    # 确定化：全部激活，不依赖真实 personas.yaml 的编排状态
+    monkeypatch.setattr(type(settings), "get_agent_active", lambda self, role: True)
 
     sp = PromptComposer().build_system("")
     assert "【自定义总指挥】" in sp
@@ -95,6 +99,8 @@ def test_build_system_orchestrator_persona_priority(monkeypatch):
     monkeypatch.setattr(type(settings), "get_persona", fake_get_persona)
     monkeypatch.setattr(type(settings), "get_custom_agents", fake_get_custom_agents)
     monkeypatch.setattr(type(settings), "get_system_override", lambda self, role: "")
+    # 确定化：orchestrator 激活，否则依赖真实 personas.yaml 编排状态会 flaky
+    monkeypatch.setattr(type(settings), "get_agent_active", lambda self, role: True)
 
     sp = PromptComposer().build_system("")
     assert "【总指挥人设】" in sp

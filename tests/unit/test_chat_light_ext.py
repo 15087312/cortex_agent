@@ -149,6 +149,8 @@ def test_prompt_composer_custom_persona(monkeypatch):
     monkeypatch.setattr(Settings, "get_system_override", lambda self, role: "")
     monkeypatch.setattr(Settings, "get_persona", lambda self, role: "自定义{assistant_name}人设")
     monkeypatch.setattr(Settings, "get_custom_agents", lambda self: [])
+    # 确定化：orchestrator 激活，避免依赖真实 personas.yaml 编排状态
+    monkeypatch.setattr(Settings, "get_agent_active", lambda self, role: True)
     monkeypatch.setattr(settings, "ASSISTANT_NAME", "小助手")
     c = PromptComposer()
     out = c.build_system()
@@ -160,6 +162,7 @@ def test_prompt_composer_persona_format_error(monkeypatch):
     monkeypatch.setattr(Settings, "get_system_override", lambda self, role: "")
     monkeypatch.setattr(Settings, "get_persona", lambda self, role: "带{花括号的人设")
     monkeypatch.setattr(Settings, "get_custom_agents", lambda self: [])
+    monkeypatch.setattr(Settings, "get_agent_active", lambda self, role: True)
     c = PromptComposer()
     out = c.build_system()
     assert "花括号" in out  # 原样使用

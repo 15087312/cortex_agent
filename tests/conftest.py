@@ -100,6 +100,34 @@ def block_real_native_libs():
 
 
 @pytest.fixture(scope="session", autouse=True)
+def mock_pyqt6_if_missing():
+    """PyQt6 不可用（CI/无桌面依赖环境）时注入假模块，使 frontend.pet_widget 可导入。
+
+    pet_widget 是 Qt 桌宠窗口，顶层 import PyQt6；测试只读其 BACKEND_URL（端口发现逻辑），
+    不实例化 Qt 控件——因此环境缺 PyQt6 时用 MagicMock 模块树顶替即可。
+    """
+    try:
+        import PyQt6  # noqa: F401
+        yield
+        return
+    except ImportError:
+        pass
+
+    from unittest.mock import MagicMock
+
+    root = MagicMock()
+    sys.modules["PyQt6"] = root
+    _SUBS = ("QtCore", "QtGui", "QtWebChannel", "QtWebEngineCore",
+             "QtWebEngineWidgets", "QtWidgets")
+    for sub in _SUBS:
+        sys.modules[f"PyQt6.{sub}"] = MagicMock()
+    yield
+    sys.modules.pop("PyQt6", None)
+    for sub in _SUBS:
+        sys.modules.pop(f"PyQt6.{sub}", None)
+
+
+@pytest.fixture(scope="session", autouse=True)
 def register_capabilities():
     """注册业务能力到 infra 端口。
 
