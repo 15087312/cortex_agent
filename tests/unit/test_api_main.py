@@ -437,6 +437,12 @@ def test_dashboard_not_found(client, reset_rate_limit, monkeypatch, tmp_path):
 def test_register_module_routers_includes_all():
     from api.main import register_module_routers
     from infra.data_process.api import router as dp_router
+    from infra.tool_manager.api import router as tool_router
+    # 诊断守卫：若 tool_router 被并发测试/重导入清空，先给出明确原因，
+    # 而非笼统的 "/tools 缺失"
+    assert tool_router.routes, (
+        "tool_router 无路由（infra.tool_manager.api 被重导入或全局状态污染）"
+    )
     app = FastAPI()
     register_module_routers(app)
     paths = {getattr(r, "path", "") for r in app.routes}

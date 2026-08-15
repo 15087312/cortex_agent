@@ -279,7 +279,10 @@ def test_merge_vision_sync_no_running_loop():
     base.elements = []
     import asyncio
     new_loop = asyncio.new_event_loop()
-    old = asyncio.get_event_loop_policy().get_event_loop()
+    try:
+        old = asyncio.get_event_loop_policy().get_event_loop()
+    except RuntimeError:
+        old = None  # 3.13：无当前 loop 属正常（get_event_loop 不再隐式创建），None 表示原本就没有
     asyncio.set_event_loop(new_loop)
     try:
         result = r._merge_with_vision(base)

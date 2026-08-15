@@ -314,6 +314,10 @@ def test_reject_session_user_responses():
     # 显式创建事件循环：CI(3.11) 同步测试线程无当前 loop，asyncio.Future() 会 RuntimeError；
     # 保持 loop 活跃到测试结束（fut.set_result 需要 loop 调度）
     _loop = asyncio.new_event_loop()
+    try:
+        old_loop = asyncio.get_event_loop_policy().get_event_loop()
+    except RuntimeError:
+        old_loop = None  # 3.13：无当前 loop 属正常（py3.13 get_event_loop 不再隐式创建）
     asyncio.set_event_loop(_loop)
     try:
         fut = asyncio.Future()
@@ -329,4 +333,6 @@ def test_reject_session_user_responses():
             mr._runner_managers = orig
     finally:
         _loop.close()
-        asyncio.set_event_loop(None)
+        # 还原之前的 loop（而不是 set_event_loop(None)）：
+        # 若残留 None，后续测试调用 get_event_loop_policy().get_event_loop() 会 RuntimeError
+        asyncio.set_event_loop(old_loop)
