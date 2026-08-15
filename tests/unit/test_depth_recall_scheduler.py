@@ -265,6 +265,20 @@ def test_causal_relevance_explicit_assignment_outside(graph):
     assert scheduler._causal_relevance(ev2, {node_b.id}) >= 0.0
 
 
+def test_causal_relevance_connected_assignment(graph):
+    """同链关联：事件归属节点与目标集合 1 跳相连（同一因果链）→ 视为同链佐证，
+    基础分 0.4+（不应因不在目标集合内就被守卫误杀）"""
+    a = CausalNode(label="新功能上线", keywords=["功能"])
+    graph.save_node(a)
+    b = CausalNode(label="功能回归", keywords=["回归"])
+    graph.save_node(b)
+    graph.save_edge(CausalEdge(from_id=a.id, to_id=b.id, confidence=0.7))
+    ev = MemoryEvent(fact="上线三天后出现回归，接口报错", causal_node_ids=[b.id])
+    scheduler = DepthRecallScheduler(graph=graph, tree=CausalTree(graph))
+    # 目标集合 {a}，事件归属 b（b 与 a 因果相连）→ 同链，得分应过准入线
+    assert scheduler._causal_relevance(ev, {a.id}) >= 0.4
+
+
 # ── _incremental_update ─────────────────────────────────────────────────
 
 def test_incremental_update_links_and_boosts(graph, store):

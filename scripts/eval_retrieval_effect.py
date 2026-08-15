@@ -132,6 +132,10 @@ _NODES = [
     # 干扰节点（孤立，不连入任何因果链）
     CausalNode(id="n_patch", label="例行补丁发布", node_type="cause", keywords=["补丁"],                importance=0.4, confidence=0.40),
     CausalNode(id="n_db",    label="数据库慢查询", node_type="cause", keywords=["数据库", "慢查询"],     importance=0.5, confidence=0.50),
+    # 场景 F: 代码质量回归（新功能 → 功能回归 → 紧急修复）
+    CausalNode(id="n_feature",   label="新功能上线", node_type="cause",  keywords=["功能", "上线"],    importance=0.7, confidence=0.75),
+    CausalNode(id="n_regression", label="功能回归",  node_type="effect", keywords=["回归", "报错"],     importance=0.8, confidence=0.80),
+    CausalNode(id="n_hotfix",    label="紧急修复",   node_type="effect", keywords=["热修复", "紧急"],   importance=0.7, confidence=0.70),
 ]
 
 _EDGES = [
@@ -143,6 +147,8 @@ _EDGES = [
     CausalEdge(id="e6", from_id="n_server",  to_id="n_complaint", relation="causes", confidence=0.70),
     CausalEdge(id="e7", from_id="n_campaign", to_id="n_sales",  relation="causes", confidence=0.75),
     CausalEdge(id="e8", from_id="n_sales",    to_id="n_inventory", relation="causes", confidence=0.70),
+    CausalEdge(id="e9", from_id="n_feature",  to_id="n_regression", relation="causes", confidence=0.70),
+    CausalEdge(id="e10", from_id="n_regression", to_id="n_hotfix", relation="causes", confidence=0.65),
 ]
 
 _EVENTS = [
@@ -184,6 +190,20 @@ _EVENTS = [
     # 场景 E: 时间相隔很远且无因果的事件
     dict(id="ev_old_db", fact="年初数据库慢查询优化，DBA花了一周",
          keywords=["数据库", "慢查询"], importance=0.50, time="2026-02-10T10:00:00", causal=["n_db"], type="strategy"),
+    # 场景 F: 代码质量回归（时间相近但有因果）
+    dict(id="ev_feature_launch", fact="新功能v2.1正式上线，覆盖全部用户",
+         keywords=["功能", "上线"], importance=0.70, time="2026-07-30T10:00:00", causal=["n_feature"], type="fact"),
+    dict(id="ev_regression", fact="上线三天后老功能出现回归，接口批量报错",
+         keywords=["回归", "报错"], importance=0.80, time="2026-08-02T10:00:00", causal=["n_regression"], type="fact"),
+    dict(id="ev_hotfix", fact="紧急发布热修复版本，问题基本平息",
+         keywords=["热修复", "紧急"], importance=0.70, time="2026-08-05T10:00:00", causal=["n_hotfix"], type="strategy"),
+    # 更多时间/语义干扰项
+    dict(id="ev_old_fail", fact="三个月前支付接口曾出现超时，后自动恢复",
+         keywords=["支付", "超时"], importance=0.45, time="2026-05-20T10:00:00", causal=[], type="fact"),
+    dict(id="ev_docs", fact="接口文档本周例行更新",
+         keywords=["文档"], importance=0.30, time="2026-08-08T10:00:00", causal=[], type="fact"),
+    dict(id="ev_budget", fact="Q3预算审批通过，采购额度放宽",
+         keywords=["预算", "审批"], importance=0.40, time="2026-08-03T10:00:00", causal=[], type="fact"),
 ]
 
 _QUERIES = [
@@ -193,6 +213,7 @@ _QUERIES = [
     dict(q="项目延期的共同规律", intent="generalize", noise=False, exp_shallow={"ev_demand_change", "ev_staff_leave", "ev_review_rework"}, exp_deep=set()),
     dict(q="服务器为什么宕机", intent="trace", noise=False, exp_shallow={"ev_deploy_crash", "ev_server_down"}, exp_deep={"ev_deploy_crash", "ev_server_down"}),
     dict(q="销量为什么大涨", intent="trace", noise=False, exp_shallow={"ev_campaign", "ev_sales"}, exp_deep={"ev_campaign", "ev_sales"}),
+    dict(q="新功能上线后为什么出现回归", intent="trace", noise=False, exp_shallow={"ev_feature_launch", "ev_regression"}, exp_deep={"ev_feature_launch", "ev_regression"}),
     dict(q="今天午饭吃什么", intent="shallow", noise=True, exp_shallow=set(), exp_deep=set()),
     dict(q="今天天气怎么样", intent="shallow", noise=True, exp_shallow=set(), exp_deep=set()),
 ]
@@ -418,7 +439,13 @@ def run_time_causal_matrix(store, graph, retrieval, scheduler):
             "title": "② 时间相同但无因果 → 不应召回(防误检)",
             "query": "服务器为什么宕机",
             "must_include": {"ev_deploy_crash", "ev_server_down"},
-            "must_exclude": {"ev_patch_day", "ev_daily_op", "ev_old_db"},
+            "must_exclude": {"ev_patch_day", "ev_daily_op", "ev_old_db", "ev_old_fail"},
+        },
+        {
+            "title": "③ 时间相近但有因果 → 应召回(正向对照)",
+            "query": "新功能上线后为什么出现回归",
+            "must_include": {"ev_feature_launch", "ev_regression"},
+            "must_exclude": set(),
         },
     ]
 
@@ -473,6 +500,36 @@ def run_time_causal_matrix(store, graph, retrieval, scheduler):
             print("  → 时间因素未误导因果判定：有因果的(哪怕时间错开)被召回，无因果的(哪怕时间相同)被排除")
 
 
+def run_causal_edit_demo(graph, retrieval, scheduler):
+    """因果图编辑工具演示：删除一条错误因果边，深度回忆随即不再输出该链路"""
+    print(f"\n{'=' * 62}")
+    print("  因果图编辑工具演示 (causal_graph_edit)")
+    print(f"{'=' * 62}")
+    print("  场景: AI 认为「评审返工多 → 项目延期」这条因果是错的，用工具删除")
+    try:
+        from infra.tool_manager.tools import causal_graph_edit
+    except Exception as e:  # pragma: no cover
+        print(f"  !! 工具导入失败: {e}")
+        return
+
+    scheduler.invalidate_cache()
+    before = [c.summary() for c in asyncio.run(
+        scheduler.deep_recall("项目为什么延期", max_results=5)).causal_chains]
+
+    out = causal_graph_edit.causal_graph_edit(
+        action="delete_edge", from_label="评审返工多", to_label="项目延期")
+
+    scheduler.invalidate_cache()
+    after = [c.summary() for c in asyncio.run(
+        scheduler.deep_recall("项目为什么延期", max_results=5)).causal_chains]
+
+    print(f"  删除前因果链: {before}")
+    print(f"  工具返回: {out}")
+    print(f"  删除后因果链: {after}")
+    removed = any("评审返工多" in c for c in before) and not any("评审返工多" in c for c in after)
+    print(f"  → 「评审返工多」链路已从深度回忆中消除: {'✓' if removed else '✗'}")
+
+
 def main():
     store, graph, retrieval, scheduler = build_env()
     print(f"[setup] 种子数据: {store.count_events()} 事件, "
@@ -506,6 +563,11 @@ def main():
         run_time_causal_matrix(store, graph, retrieval, scheduler)
     except Exception as e:  # pragma: no cover
         print(f"  !! 时间×因果矩阵失败: {e}")
+
+    try:
+        run_causal_edit_demo(graph, retrieval, scheduler)
+    except Exception as e:  # pragma: no cover
+        print(f"  !! 因果图编辑演示失败: {e}")
 
     # ── 汇总表 ──
     print(f"\n{'=' * 62}")

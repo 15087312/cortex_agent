@@ -444,16 +444,22 @@ class DepthRecallScheduler:
         且会被增量更新永久挂链、自我强化。
         """
         causal_target = set(causal_node_ids or [])
+        assigned = set(event.causal_node_ids or [])
 
         # 直接命中：事件已显式关联到这些因果节点
-        if causal_target and event.causal_node_ids:
-            direct_hits = len(set(event.causal_node_ids) & causal_target)
+        if causal_target and assigned:
+            direct_hits = len(assigned & causal_target)
             if direct_hits > 0:
                 return min(1.0, 0.4 + 0.6 * direct_hits / max(len(causal_target), 1))
 
-        # 显式归属守卫：事件的所有显式关联都落在目标集合之外 → 与目标集合无因果关联
-        if event.causal_node_ids and not (set(event.causal_node_ids) & causal_target):
-            return 0.0
+        # 显式归属守卫：事件的所有显式关联都落在目标集合之外 → 检查图上连通性。
+        # 若事件归属节点与目标集合在同一因果链（1 跳邻接），视为同链佐证（强信号）；
+        # 若属完全独立的节点（如孤立的"补丁发布"），则与目标集合无因果关联。
+        connected = False
+        if assigned and not (assigned & causal_target):
+            if not any(self._node_connected_to_set(a, causal_target) for a in assigned):
+                return 0.0
+            connected = True
 
         # 向量匹配：计算事件向量与节点向量的余弦相似度
         try:
@@ -474,7 +480,8 @@ class DepthRecallScheduler:
                                 sim = sum(a * b for a, b in zip(event_vec, node_vec))
                                 max_sim = max(max_sim, sim)
                     if max_sim > 0:
-                        return min(1.0, max_sim)
+                        # 同链关联：基础 0.4（与直接命中同档）+ 语义调节
+                        return min(1.0, 0.4 + 0.6 * max_sim) if connected else min(1.0, max_sim)
         except Exception:
             pass
 
@@ -494,7 +501,23 @@ class DepthRecallScheduler:
             return 0.0
 
         hits = sum(1 for label in all_labels if label in text)
-        return min(1.0, hits / max(len(all_labels), 1) * 2.0)
+        text_score = min(1.0, hits / max(len(all_labels), 1) * 2.0)
+        # 同链关联：基础 0.4 + 文本匹配调节
+        return min(1.0, 0.4 + 0.6 * text_score) if connected else text_score
+
+    def _node_connected_to_set(self, node_id: str, target: set, depth: int = 1) -> bool:
+        """判断节点是否与目标节点集合在图上有邻接关系（同一因果链）
+
+        用于显式归属守卫：事件归属节点即便不在目标集合内，
+        只要与目标集合 1 跳相连，仍视为同链相关而非跨场景噪声。
+        """
+        if node_id in target:
+            return True
+        try:
+            neighbors = self._graph.get_neighbors(node_id, hops=depth)
+            return any(n.id in target for n, _, _ in neighbors)
+        except Exception:
+            return False
 
     @staticmethod
     def _time_decay(iso_time: str) -> float:
