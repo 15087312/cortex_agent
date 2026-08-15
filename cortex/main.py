@@ -176,6 +176,12 @@ def main():
     # 启动后端
     print(f"🚀 启动 Cortex Agent (:{args.port})...")
     backend_proc = start_backend(args)
+    # 端口同步：写入发现文件，供前端代理/WS/pet 动态读取（后端可能回退端口）
+    try:
+        from utils.port_discovery import save_backend_port
+        save_backend_port(args.port)
+    except Exception:
+        pass
 
     # 读取后端初始化日志（配置目录创建、WARNING 等）
     import threading

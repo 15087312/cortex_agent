@@ -25,7 +25,7 @@ try:
     _BACKEND_PORT = read_backend_port()
 except Exception:
     _BACKEND_PORT = 8080
-BACKEND_URL = os.environ.get("CORTEX_BACKEND_URL", f"http://localhost:{_BACKEND_PORT}")
+BACKEND_URL = os.environ.get("CORTEX_BACKEND_URL", f"http://127.0.0.1:{_BACKEND_PORT}")
 _PET_DIR = os.path.dirname(os.path.abspath(__file__))
 
 PET_W, PET_H = 300, 470

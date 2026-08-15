@@ -24,7 +24,7 @@ def _resolve_backend_port() -> int:
 
 
 BACKEND_PORT = _resolve_backend_port()
-BACKEND_URL = f"http://localhost:{BACKEND_PORT}"
+BACKEND_URL = f"http://127.0.0.1:{BACKEND_PORT}"
 
 _MISSING_DIST_PAGE = """<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="UTF-8"><title>Cortex Agent</title></head>
@@ -48,7 +48,12 @@ class ProxyHandler(http.server.SimpleHTTPRequestHandler):
 
     def _proxy_request(self, method):
         path = self.path[4:]
-        url = f"{BACKEND_URL}{path}"
+        # 动态读后端端口：后端可能回退/重启到不同端口（见 utils/port_discovery），
+        # 每次请求实时读取发现文件，避免启动时固定的 BACKEND_URL 与后端脱节
+        # 用 127.0.0.1 而非 localhost：macOS 上 localhost 可能解析 ::1(IPv6)，
+        # 而后端只绑 IPv4 → 代理 502
+        from utils.port_discovery import read_backend_port
+        url = f"http://127.0.0.1:{read_backend_port()}{path}"
         content_length = int(self.headers.get('Content-Length', 0))
         body = self.rfile.read(content_length) if content_length else None
         req = urllib.request.Request(url, data=body, method=method)
