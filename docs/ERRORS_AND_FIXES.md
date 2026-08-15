@@ -1657,3 +1657,29 @@ def add_to_dialog(self, role, text):       # 无 session 参数
 **验证：** 后端 212 passed + 前端 chat store 27 passed；mental 以 `role="mental"` 持久化、恢复上下文被过滤。
 
 **注意：** `chat_gateway` 中 conscience 逐段 mental（流式 token 中间态）仍不持久化——主要心理活动（orchestrator 整合的内心独白）已持久化可见。
+
+## 52. CI 测试失败排查：PyQt6 环境缺失 + 测试依赖真实用户配置（测试/环境）
+
+**现象：** CI（ubuntu，Python 3.11）全量失败 3 项：
+- `test_frontend_server.py::test_pet_widget_*`（2 项）—— `ModuleNotFoundError: No module named 'PyQt6'`
+- `test_api_main.py::test_register_module_routers_includes_all` —— `AssertionError: /tools`（历史 flaky，§45，诊断守卫已加）
+
+**根因 1（PyQt6 环境缺失）：** `frontend/pet_widget.py` 顶层 `from PyQt6.QtCore import ...`，但 `requirements.txt`/`pyproject.toml` **没有 PyQt6**——本地 macOS 装了所以本地过，CI ubuntu 没装 → 测试 import pet_widget 失败。测试只读 `BACKEND_URL`（端口发现），不实例化 Qt。
+
+**修复：** `tests/conftest.py` 新增 session autouse fixture `mock_pyqt6_if_missing`——PyQt6 不可用时向 `sys.modules` 注入 MagicMock 模块树（QtCore/QtGui/QtWebChannel/QtWebEngineCore/QtWebEngineWidgets/QtWidgets），pet_widget 可正常导入；真实环境（本地有 PyQt6）不 mock。验证：无 PyQt6 环境下 pet_widget 导入成功且 BACKEND_URL 正确。
+
+**根因 2（conscience 属性改名未同步 integration 测试）：** 心理活动对话缓存改 `_dialog_buffers`（§49）时只更新了 `tests/unit/test_conscience_ext.py`，`tests/integration/test_conscience.py` 仍引用 `_last_dialog_buffer` → AttributeError。
+
+**修复：** 同步 integration 测试到 `_dialog_buffers`。
+
+**根因 3（reasoning 兜底默认改 False 未同步全部测试）：** `fallback_to_reasoning` 默认改 False（§51）时只更新了 `test_large_model_client_ext.py` / `test_small_model_client_ext.py` / `test_medium_model_client.py`，遗漏 `test_model_client_chat.py::test_generate_reasoning_fallback`。
+
+**修复：** 同步该测试（默认不返回思维链 + 显式 True 兜底）。
+
+**根因 4（prompt_composer 测试依赖真实 personas.yaml）：** 纯对话人设尊重编排 active 后（§47），`test_chat_light_prompt.py` / `test_chat_light_ext.py` 的 composer 测试**没 mock `get_agent_active`** → 依赖用户真实 `~/.cortex/personas.yaml` 的编排状态（orchestrator 激活与否），用户改配置即 flaky——正是 §47 教训"测试吃真实默认值"的复现。
+
+**修复：** 相关测试 mock `Settings.get_agent_active`（确定化），不依赖真实用户配置。
+
+**验证：** 相关 226 项测试通过；`pytest tests/unit` 全量通过（PyQt6 mock / conscience / reasoning / get_agent_active 修复均生效）。
+
+**教训：** ① 测试 import 被测模块时，环境缺桌面/原生依赖（PyQt6 等）必须在 conftest 统一 mock，不能依赖"本地恰好装了"；② 改内部属性/默认值时，要全局搜索所有引用（含 integration 测试）；③ 任何读用户真实配置文件（personas.yaml/settings.json）的测试都必须 mock 读取层，否则用户改配置即 flaky。
