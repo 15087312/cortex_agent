@@ -1,5 +1,7 @@
 # Web 框架
-fastapi>=0.104.1
+# fastapi 锁定版本：0.141+ 的 include_router 改为惰性 _IncludedRouter（§54），
+# >= 会导致 CI 装最新、本地停旧版的版本漂移（见 §55）。锁到已验证的 0.141.1。
+fastapi==0.141.1
 uvicorn[standard]>=0.24.0
 python-multipart>=0.0.6
 pydantic>=2.5.0
