@@ -108,19 +108,29 @@ class Conscience:
     def _build_role_context(self, owner_id: str) -> tuple:
         """构建角色人设上下文（intro + 人设 + 角色名）。
 
-        只含人设/风格/擅长等身份信息与对应记忆，**不含工具定义/能力表**
-        ——心理活动是内心独白，不需要工具上下文。
+        人设走统一入口 get_role_persona（用户自定义优先，回退 roles.yaml 内置），
+        与对话 system prompt 同源——改一套人设，对话与心理活动同时生效。
+        只含人设文本，**不含工具定义/能力表**。
         """
         role = self._resolve_role(owner_id)
         name = role.get("name", "总指挥")
-        lines = []
-        if role.get("personality"):
-            lines.append(f"【人格】{role['personality']}")
-        if role.get("speaking_style"):
-            lines.append(f"【风格】{role['speaking_style']}")
-        if role.get("expertise"):
-            lines.append(f"【擅长】{'、'.join(role['expertise'])}")
-        return f"你是{name}", "\n".join(lines), name
+        persona = ""
+        try:
+            from config.settings import settings as _s
+            persona = _s.get_role_persona(role.get("role") or "")
+        except Exception:
+            persona = ""
+        if not persona:
+            # 回退：roles.yaml 内置字段（settings 异常时兜底）
+            lines = []
+            if role.get("personality"):
+                lines.append(f"【人格】{role['personality']}")
+            if role.get("speaking_style"):
+                lines.append(f"【风格】{role['speaking_style']}")
+            if role.get("expertise"):
+                lines.append(f"【擅长】{'、'.join(role['expertise'])}")
+            persona = "\n".join(lines)
+        return f"你是{name}", persona, name
 
     def _get_causal_knowledge(self, user_input: str, owner_id: str = "large_primary") -> str:
         """从因果图中提取与当前输入相关的经验知识
@@ -355,6 +365,14 @@ class Conscience:
         3. 调用 LLM 生成内心独白
         """
         try:
+
+            # 0. 心理活动开关：关闭则不生成/不推送内心独白
+            try:
+                from config.settings import settings as _cfg
+                if not getattr(_cfg, "MENTAL_ACTIVITY_ENABLED", True):
+                    return ""
+            except Exception:
+                pass
 
             # 1. 从因果图提取相关知识
             causal_knowledge = self._get_causal_knowledge(user_input, owner_id=owner_id)

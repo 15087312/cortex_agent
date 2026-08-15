@@ -157,6 +157,8 @@ async function saveGlobalDefault() {
   } catch { toast.show('保存失败', 'error') }
 }
 const ttsEnabled = boolCfg('OUTPUT_TTS_ENABLED', false)
+const mentalEnabled = boolCfg('MENTAL_ACTIVITY_ENABLED', true)
+const memorySummaryEnabled = boolCfg('MEMORY_SUMMARY_ENABLED', true)
 const petEnabled = boolCfg('DESKTOP_PET_ENABLED', true)
 const petSessionId = txtCfg('DESKTOP_PET_SESSION_ID', 'pet_main')
 
@@ -661,6 +663,14 @@ onMounted(async () => {
           <div class="setting-row">
             <div class="lbl"><div class="t">空间增强</div><div class="d">心理活动额外输出当前空间位置/动作序列</div></div>
             <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="spatialEnhancement" @change="spatialEnhancement = !spatialEnhancement" /><span class="toggle-slider"></span></label></div>
+          </div>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">心理活动</div><div class="d">良知系统内心独白（随对应模型人设变化）</div></div>
+            <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="mentalEnabled" @change="mentalEnabled = !mentalEnabled" /><span class="toggle-slider"></span></label></div>
+          </div>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">记忆总结</div><div class="d">会话结束后自动提炼为事件记忆（EventReducer）</div></div>
+            <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="memorySummaryEnabled" @change="memorySummaryEnabled = !memorySummaryEnabled" /><span class="toggle-slider"></span></label></div>
           </div>
         </div>
 

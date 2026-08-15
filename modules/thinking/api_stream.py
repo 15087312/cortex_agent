@@ -1158,6 +1158,14 @@ class StreamThinkingSystem:
                 except Exception:
                     pass
 
+            # 记忆总结开关：关闭则跳过自动提炼事件记忆（EventReducer）
+            try:
+                from config.settings import settings as _cfg
+                if not getattr(_cfg, "MEMORY_SUMMARY_ENABLED", True):
+                    return
+            except Exception:
+                pass
+
             events = await reducer.reduce(session_id, conversation_text, owner_id=owner_id)
             if events:
                 logger.info(f"[事件记忆] 会话 {session_id} 提取 {len(events)} 个事件 (hash={text_hash})")

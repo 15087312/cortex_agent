@@ -50,6 +50,8 @@ class Settings(BaseSettings):
         "PERCEPTION_TRIGGER_THINK",
         "PERCEPTION_TRIGGER_COOLDOWN", "PERCEPTION_TRIGGER_MIN_INTENSITY",
         "SPATIAL_ENHANCEMENT_ENABLED",
+        "MENTAL_ACTIVITY_ENABLED",   # 心理活动开关（良知内心独白）
+        "MEMORY_SUMMARY_ENABLED",    # 记忆总结开关（EventReducer 自动提炼事件记忆）
 
         # ── 语音识别（Whisper）──
         "PERCEPTION_VOICE_ENABLED",
@@ -260,6 +262,55 @@ class Settings(BaseSettings):
             personas.pop(role, None)
         self._save_personas_yaml(data)
         return personas.get(role, "")
+
+    @staticmethod
+    def _compose_persona(personality: str, speaking_style: str = "",
+                         expertise=None) -> str:
+        """把人设字段（人格/风格/擅长）拼成文本（统一人设存储的展示格式）"""
+        parts = [personality or ""]
+        if speaking_style:
+            parts.append(f"【风格】{speaking_style}")
+        if expertise:
+            ex = expertise if isinstance(expertise, list) else [str(expertise)]
+            parts.append(f"【擅长】{'、'.join(ex for ex in ex if ex)}")
+        return "\n".join(x for x in parts if x and x.strip())
+
+    def get_role_persona(self, role: str) -> str:
+        """统一角色人设入口——对话与心理活动共用（一套人设，改一处生效）。
+
+        优先级：用户自定义 personas.yaml personas[role] → 自定义 agent
+        （personality+风格+擅长）→ roles.yaml 内置 → 空。
+        只返回人设文本（身份描述），不含工具定义/能力表。
+        """
+        p = self.get_persona(role)
+        if p:
+            return p
+        ca = self.get_custom_agent(role)
+        if ca:
+            text = self._compose_persona(
+                ca.get("personality", ""),
+                ca.get("speaking_style", ""),
+                ca.get("expertise") or [],
+            )
+            if text:
+                return text
+        return self._roles_yaml_persona(role)
+
+    def _roles_yaml_persona(self, role: str) -> str:
+        """roles.yaml 内置角色人设（兜底）"""
+        try:
+            import yaml
+            from pathlib import Path
+            roles_file = Path(__file__).resolve().parents[1] / "config" / "prompts" / "roles.yaml"
+            data = yaml.safe_load(roles_file.read_text(encoding="utf-8"))
+            r = data.get("roles", {}).get(role, {})
+            return self._compose_persona(
+                r.get("personality", ""),
+                r.get("speaking_style", ""),
+                r.get("expertise") or [],
+            )
+        except Exception:
+            return ""
 
     def get_system_override(self, role: str) -> str:
         """获取指定角色的完整系统提示词覆盖（未设置返回空串）"""
@@ -640,6 +691,10 @@ class Settings(BaseSettings):
     PERCEPTION_VOICE_API_KEY: str = ""                 # 云端 STT API Key
     PERCEPTION_VOICE_API_URL: str = ""                 # 云端 STT 地址（留空用 https://api.openai.com/v1/audio/transcriptions）
     PERCEPTION_VOICE_API_MODEL: str = ""               # 云端 STT 模型名（留空用 whisper-1）
+
+    # ── 思考辅助（可自由开关）────────────────────────────────
+    MENTAL_ACTIVITY_ENABLED: bool = True                 # 心理活动：良知系统内心独白（生成+推送）
+    MEMORY_SUMMARY_ENABLED: bool = True                  # 记忆总结：会话结束后自动提炼为事件记忆（EventReducer）
 
     # ── 语音输出（TTS） ──────────────────────────────────────
     OUTPUT_TTS_ENABLED: bool = True                      # TTS 输出总开关（文本转语音）
