@@ -1233,6 +1233,15 @@ class ModelRunner:
 
         system_prompt = self._build_system_prompt_for_mode()
 
+        # 环境感知注入（agent 模式：感知系统实时采集 → PerceptionPool → 此处注入模型上下文）
+        try:
+            from modules.thinking.context.sources.perception_source import PerceptionSource
+            _frag = await PerceptionSource().collect()
+            if _frag and _frag.content:
+                system_prompt += f"\n\n【环境感知】\n{_frag.content}"
+        except Exception as e:
+            logger.debug(f"[ModelRunner] 感知上下文收集失败: {e}")
+
         # 大模型注入时间感知 + 用户身份（专家/主管不需要）
         if self.tier == "large":
             system_prompt = f"{system_prompt}\n\n{self._build_time_context()}"

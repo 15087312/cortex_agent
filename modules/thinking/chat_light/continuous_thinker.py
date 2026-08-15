@@ -94,6 +94,15 @@ class ContinuousThinker:
                 except Exception:
                     pass
 
+                # 3.6 环境感知注入（纯对话：感知系统实时采集 → PerceptionPool → 注入模型上下文）
+                try:
+                    from modules.thinking.context.sources.perception_source import PerceptionSource
+                    _frag = await PerceptionSource().collect()
+                    if _frag and _frag.content:
+                        system_prompt += f"\n\n【环境感知】\n{_frag.content}"
+                except Exception as e:
+                    logger.debug(f"[ChatLight] 感知上下文收集失败: {e}")
+
                 # 4. Stream response
                 full_response = []
 

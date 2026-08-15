@@ -1734,3 +1734,20 @@ def add_to_dialog(self, role, text):       # 无 session 参数
 **验证：** 本地/CI 统一 fastapi 0.141.1 后行为一致；§54 测试在 0.141.1 下通过。
 
 **教训：** `>=` 版本约束在"每次全新安装"的场景（CI/部署/新机器）天然漂移——**CI 装到最新、旧环境停在旧版**，任何框架行为变化都会变成"CI 红、本地绿"。核心 Web/运行时依赖应**锁定 `==`**（或引入 lock 文件），CI 与本地用同一版本验证。
+
+---
+
+## 42. 环境感知未注入大模型上下文 —— dd1ee8b 重构回归（后端）
+
+**现象：** agent 模式（model_runner）与纯对话（chat_light）下，模型的 system prompt 里没有【环境感知】——感知系统在运行（窗口/屏幕/OCR），但模型看不到环境。
+
+**根因：** `dd1ee8b`（2026-06-27）重构"上下文和提示词系统"时**移除了编排器的 `get_context_summary()` 感知注入调用**；重构后的新机制（`PerceptionSource`→`PerceptionPool`）只接入了桌宠/连续思考（core）/主动搭话，**未接入 `model_runner`（agent）与 `chat_light`（纯对话）**——感知注入从此断了约 2 个月。
+
+**修复：**
+1. `model_runner._build_system_prompt_for_mode` 调用处：`PerceptionSource().collect()` → 追加【环境感知】块
+2. `chat_light/continuous_thinker`：心理活动注入后同样追加【环境感知】
+3. 均 try/except 容错（感知未初始化/异常不影响正常对话）
+
+**验证：** 两处注入均生效（mock PerceptionSource → system_prompt 含环境感知）；新增 `test_perception_injection.py`（4 用例）；相关 266 passed。
+
+**教训：** 大规模重构（上下文/提示词系统）后必须回归"数据→prompt"完整链路；感知这类"采集端正常但注入端断"的问题，代码审查难发现，需注入链路测试。
