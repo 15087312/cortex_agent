@@ -1466,3 +1466,29 @@ _run_task/_think_loop）、`api_stream` 完整 WS 流、`output_system` 深路�
 
 **后续：** 若 CI 再次出现，依据诊断信息定位污染源；本地 `tests/unit` 全量 5834 通过可作基线。
 
+
+---
+
+## 40. 前端连不上后端：IPv6 localhost 陷阱 + 前端代理层测试盲区（前端/后端）
+
+**现象：** 前端页面点击功能显示"正在等待后端启动"；桌宠/前端进程随后退出。后端 `curl :8080/health` 正常，但前端轮询 `/api/health` 一直失败。
+
+**根因（两个）：**
+1. **IPv6 `localhost` 陷阱**：`frontend/server.py` 代理用 `http://localhost:{port}`——macOS 上 `localhost` 解析为 `::1`（IPv6），而后端只绑 `127.0.0.1`（IPv4，`--host 127.0.0.1`）→ urllib 走 IPv6 端口 → **502**。`curl` 优先 IPv4 所以直接测 8080 正常，误导排查。
+2. **前端端口固定不同步**：server.py 启动时固定 `BACKEND_URL`，后端端口回退/重启后脱节；cortex 启动后端也不写端口发现文件。
+
+**修复：**
+1. 代理改用显式 `127.0.0.1`（IPv4），`pet_widget.py` 同步
+2. 代理每次请求**动态读** `read_backend_port()`（端口变化后前端跟随）
+3. cortex 启动后端时 `save_backend_port` 同步端口发现文件
+
+**验证：** `8765/api/health` 从 502 → 200。
+
+**测试盲区（为什么没测出来）：** `frontend/server.py`（Python 代理层）此前**零测试**，且：
+- pytest 只测 `tests/`（后端），vitest 只测 JS——Python 代理层"无人认领"
+- 模块覆盖清单 `_PRODUCTION_DIRS` 不含 `frontend` → "全覆盖"证明只覆盖后端
+- IPv6 localhost 是运行时解析行为，单测用 127.0.0.1 直接连不会触发
+
+**修复盲区：** 新增 `tests/unit/test_frontend_server.py`（10 用例：IPv4 回归、动态端口、/api 剥离、错误透传）；覆盖清单纳入 `frontend/`（server.py/pet_widget.py，Qt GUI 启动器豁免）。
+
+**教训：** 任何 Python 代码都须有**明确测试归属**并纳入覆盖清单，不能因"目录属于前端"而脱离测试体系。环境类 bug（DNS/IPv6 解析）需在测试中显式 mock 固定行为。
