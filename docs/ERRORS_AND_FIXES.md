@@ -1492,3 +1492,131 @@ _run_task/_think_loop）、`api_stream` 完整 WS 流、`output_system` 深路�
 **修复盲区：** 新增 `tests/unit/test_frontend_server.py`（10 用例：IPv4 回归、动态端口、/api 剥离、错误透传）；覆盖清单纳入 `frontend/`（server.py/pet_widget.py，Qt GUI 启动器豁免）。
 
 **教训：** 任何 Python 代码都须有**明确测试归属**并纳入覆盖清单，不能因"目录属于前端"而脱离测试体系。环境类 bug（DNS/IPv6 解析）需在测试中显式 mock 固定行为。
+
+---
+
+## 46. 模型 client 缓存旧配置 → 改 API URL/Key 不生效（后端/实时生效缺失）
+
+**现象：** 用户在设置页修改模型 API URL/Key 后，**对话仍请求旧 URL**（404），但**心理活动却能用新配置**；只有重启后端才生效。
+
+**根因：**
+- `chat_light/ModelRunner.client`（model_runner.py:22-24）与 `ContextSlicer._get_client` 懒建一次并**缓存** `LargeModelClient` 实例
+- 配置变更前已构建的 client 持有旧 `api_url/api_key`，之后一直复用 → 请求旧地址
+- 心理活动每次 think **新建** `SmallModelClient`（continuous_thinker.py:77-80）→ 读最新 settings → 故能立即生效。两者行为不一致，暴露"缓存旧配置"问题
+- 设置页保存（`update_config`）只更新**运行中内存 settings + 重建 model_factory 实例**，但 chat_light 的独立 client 缓存不在 factory 管辖内
+
+**修复（配置指纹热重载，无需重启）：**
+- 新增 `infra/model/config_fingerprint.py`：`model_config_fingerprint(tier)` 返回 URL/Key/名称/格式指纹；`close_client_session()` 关闭旧 aiohttp session
+- `ModelRunner.client` / `ContextSlicer._get_client`：每次获取比对指纹，变化即重建 client
+- `PromptComposer`：按 `base.yaml` mtime 热重载 identity（改提示词实时生效）
+
+**同类排查（A 类：懒建缓存 client 不感知配置变更）：** 全仓库搜 `XxxModelClient()` 构造处，共 3 处——
+1. `chat_light/ModelRunner.client` → 已修
+2. `chat_light/ContextSlicer._get_client` → 已修
+3. `desktop_pet/pet_engine._build_messages`（桌宠懒建缓存 LargeModelClient）→ **本轮同样加配置指纹重建**（pet_engine.py）
+
+其余 client 均每次新建（心理活动/价值观演化 `SmallModelClient(...)` 按需 new）或由 `model_factory` 统一管理（`update_config` 会 `reload_from_config()` 重建），无此问题。
+
+**验证：** 新增 `tests/unit/test_config_hot_reload.py`（指纹变化/复用、ModelRunner 重建、ContextSlicer 重建、base.yaml 热重载），相关 119 项测试通过。
+
+**注意：** 设置页保存（`update_config` 更新内存）才实时生效；**直接编辑 `~/.cortex/settings.json` 文件**仍须重启（`_load_user_config` 只在进程启动时读一次）。
+
+**教训：** 任何"懒建并缓存"的模型/外部 client，都必须感知配置变更（指纹/版本号），否则用户改配置会被缓存"吞掉"。判断标准：**同一类调用，有的每次新建、有的缓存复用**，就是这类 bug 的信号。
+
+---
+
+## 47. 纯对话人设无视编排 active 状态 → 强制套用已停用 agent 的人设（后端）
+
+**现象：** 用户在编排页把自定义 agent `123` 停用、`orchestrator` 激活，但纯对话模式仍被强制套用 `123` 的自定义人设（"芙宁娜"），改其它提示词也"不生效"。
+
+**根因：** `chat_light/prompt_composer.build_system` 硬编码选择纯对话人设：
+```python
+custom_persona = get_persona("orchestrator")
+if not custom_persona:
+    for ca in get_custom_agents():
+        if ca.get("tier") == "large" and ca.get("role"):
+            custom_persona = get_persona(ca["role"])  # 取"第一个" large agent
+            if custom_persona: break
+```
+**无视 `get_agent_active()`**——即使用户在编排里停用了某个 agent，只要它是"第一个 large 自定义 agent"就会被套用。用户"设置了哪个启动哪个"被硬编码优先级覆盖。
+
+**修复（prompt_composer.py）：** 尊重编排的 active 状态，只从激活的 agent 选取：
+1. `orchestrator` 激活且有自定义人设 → 优先
+2. 否则 → **激活的** large-tier 自定义 agent 人设（`get_agent_active(role)` 过滤）
+3. 否则 → 内置 `base.yaml` identity
+（`persona_override` 高级修改仍最高，用户显式设置）
+
+**验证：** 用户真实配置（`agent_active={'orchestrator': True, '123': False}`）下，`build_system` 从"芙宁娜人设"变为内置 "你的名字是 Cortex。"。新增 3 项测试覆盖（停用不套用/激活优先/高级修改最高）。
+
+**为什么之前没测到（测试盲区）：**
+1. 现有测试 mock 了 `get_persona`/`get_custom_agents`/`get_system_override`，但**从不 mock `get_agent_active`** → 走真实默认值 `True`（settings.py `active_map.get(role, True)`）→ mock 的 agent 全部"默认激活"
+2. 只有**正向测试**（"选谁优先"），**没有负向测试**（"谁应被排除"）——停用分支从未被覆盖
+3. 用户真实场景（`active_map` 显式写 `False`）在测试里从未出现
+
+**教训：** 测试不能只 mock 关心的方法而让其它逻辑吃真实默认值——默认值会掩盖分支 bug。用户真实操作产生的**状态分支**（停用/激活）必须有显式负向测试。
+
+---
+
+## 48. 同类问题排查：人设选择硬编码 / 配置缓存的系统性审计
+
+**背景：** §47 修复"纯对话无视编排 active"后，按两类根因模式做全仓库排查。
+
+**B 类（硬编码选人设 / 无视 active 状态）：**
+| 位置 | 结论 |
+|---|---|
+| `core/model_runner.py:2451` ModelRunnerManager.start_runner | ✅ **已正确**——启动时检查 `get_agent_active()`，停用的 agent 拒绝启动 |
+| `chat_light/prompt_composer.build_system` | ⚠️ 曾硬编码取第一个 large agent → **已修**（§47） |
+| `identity.py` 合并自定义 agent 到 roles | ✅ 提供模板给 start_runner，调度层已拦停用；无强制套用 |
+| `management/api.py` / `api/main.py` 读取展示 | ✅ 仅读状态，无选择逻辑 |
+
+结论：B 类仅 chat_light 一处漏网，已修复；agent 模式调度从设计上就尊重 active。
+
+**C 类（缓存导致配置改动不生效）：**
+| 位置 | 结论 |
+|---|---|
+| `identity.get_identities()` 缓存 `_merged_identities` | ⚠️ 直接编辑 personas.yaml 不重载；但 `set_custom_agent`/`delete_custom_agent` 会 `_invalidate_identity_cache`——设置页操作实时，属"改文件需重启"同类（§46 已注明） |
+
+**验证：** 相关 119 项测试通过。
+
+---
+
+## 49. 心理活动（conscience）对话缓存跨会话累计（后端）
+
+**现象：** 用户反馈"切换会话后实际注入的上下文没变化反而一直累计"。排查对话历史按 session 隔离无误，但**心理活动**（内心独白）仍引用其它会话的对话。
+
+**根因：** `Conscience` 是**全局单例**（`get_conscience()`），其对话缓存 `_last_dialog_buffer` 是**实例级、不分 session**（conscience.py:70-78）：
+```python
+def add_to_dialog(self, role, text):       # 无 session 参数
+    self._last_dialog_buffer.append(...)    # 所有会话共用一个 buffer
+```
+`think()` 取 `recent_dialog = self._last_dialog_buffer[-6:]` → 切换到新会话，心理活动的"最近对话"仍是旧会话的，跨会话累计。这是与 §47 同类的"单例状态未按 session 隔离"问题。
+
+（对照：`_get_causal_knowledge`/`_get_node_ids_from_events` 已按 `owner_id` 隔离事件检索，唯独 dialog buffer 漏了。）
+
+**修复（conscience.py）：** 对话缓存改为**按 session 隔离**：
+- `_last_dialog_buffer` → `_dialog_buffers: Dict[str, list]`（owner_id/session_id → buffer）
+- `add_to_dialog(role, text, session_id="large_primary")`：默认值向后兼容旧调用
+- `think()` 的 `recent_dialog` 与内部 `add_to_dialog("assistant", ...)` 都按 `owner_id` 取对应 buffer
+- `continuous_thinker.py` 调用处传 `session_id`
+
+**验证：** 新增 `test_add_to_dialog_session_isolated`（不同 session 互不累计），更新 3 处旧断言到新属性；相关 155 项测试通过。
+
+**排查信号：** "某功能是全局单例 + 内部有实例级可变状态（list/dict）缓存" 而该状态本应按会话隔离——`add_to_dialog` 无 session 参数即是可疑点。同类：`_recall_memories` 注入的全局事件记忆【曾经发生的事】也是跨会话累计源（设计为跨会话经验复用，如需严格隔离可后续加开关）。
+
+
+
+## 50. 因果图不跟记忆库走 → 多记忆库因果知识跨库污染（后端）
+
+**现象：** 切换记忆库后事件库（EventStore/FAISS）随库切换，但因果图仍全局共享（`data/causal.db`）——不同人格/体系的记忆库提炼的因果知识互相污染，深度回忆用 A 库的因果链佐证 B 库的事件。
+
+**根因：** `switch_memory_lib`（settings.py）只切换 `MEMORY_DB_PATH / MEMORY_FAISS_INDEX / MEMORY_ID_MAP` 三个事件库路径，**不切换 `CAUSAL_DB_PATH`**；`CausalGraph` 全局单例固定用 `data/causal.db`，`_reset_memory_singletons` 也不重置因果图单例。
+
+**修复（因果图跟记忆库走）：**
+- 每个记忆库配独立因果图路径：`lib["causal"] = data/causal_{safe}.db`（与事件库同目录，同名派生）
+- `get_memory_libs` 默认库、`create_memory_lib`、`delete_memory_lib` 默认重建均带 `causal` 字段
+- `switch_memory_lib` / `_apply_current_memory_lib`（启动时）同步设置 `CAUSAL_DB_PATH`，且**兼容旧库**（无 causal 字段时按库名派生并补写 memory_libs.json）
+- `_reset_memory_singletons` 重置 `CausalGraph._instance`，切库后按新路径重新加载
+
+**验证：** 新增 5 项测试（切换因果路径 / 旧库派生兼容 / 创建带 causal / 启动应用 / CausalGraph 单例重置），相关 403 项测试通过。
+
+**教训：** "多套隔离存储"（记忆库）必须**完整复制隔离维度**——只隔离事件库而遗漏因果图/向量索引/单例，会让看似隔离的体系在推理层串味。审计点：隔离库的**所有**路径型配置 + 相关单例是否一起切换。
