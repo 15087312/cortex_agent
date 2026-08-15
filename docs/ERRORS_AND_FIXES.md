@@ -1358,3 +1358,17 @@ _run_task/_think_loop）、`api_stream` 完整 WS 流、`output_system` 深路�
 **修复：** 对齐 `event_store.__del__` 防护模式：`is_finalizing()` 提前返回 + try/except 吞异常。验证 171 passed。
 
 **经验：** 把已知 bug 的根因做成"可搜索模式"清单（`sys.modules` 污染 / `__del__` 无防护 / 缺 import / 版本硬编码），每次审计按清单批量 grep，能高效发现同类问题。
+
+---
+
+## 39. mypy 修复引入回归：input_controller 幂等被破坏（后端）
+
+**现象：** 全量测试 `test_input_controller.py::test_init_idempotent_and_force` 失败（`PyAutoGUIController` 被创建 2 次，期望 1 次）。全量 5833 passed / 1 failed。
+
+**根因：** mypy 自动修复时，为消除 `_initialized` 的 var-annotated 错误，在 `hasattr(self, '_initialized')` **判断之前**加了 `self._initialized: bool = False`——赋值语句每次 `__init__` 都重置标志为 False，使幂等短路 `hasattr(...) and self._initialized and not force` 永远为假 → 二次 init 重新创建 controller。
+
+**修复：** 改为**仅声明不赋值** `self._initialized: bool`（mypy 满足声明，运行时不再重置标志），幂等逻辑恢复。
+
+**验证：** `test_input_controller.py` 24 passed；`mypy modules/output_system/input_controller.py` 0 errors。
+
+**教训：** 自动类型修复（加声明/注解）可能引入**行为变化**——"加一行初始化"≠"加注解"。mypy 修复后必须跑**该文件的全部测试**（不只 mypy 0 errors）验证行为不变。

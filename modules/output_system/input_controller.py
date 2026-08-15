@@ -34,7 +34,8 @@ class InputController:
     """
     
     def __init__(self, force: bool = False):
-        self._initialized: bool = False
+        # 仅声明不赋值：赋值会重置标志，破坏"二次 init 幂等"（hasattr 判断首次初始化）
+        self._initialized: bool
         if hasattr(self, '_initialized') and self._initialized and not force:
             return
         
