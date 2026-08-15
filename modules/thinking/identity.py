@@ -90,7 +90,8 @@ def load_external_identities(directory: str = None) -> Dict[str, dict]:
 
 DEFAULT_TOOL_WHITELISTS: Dict[str, List[str]] = {
     "large": [
-        "web_search", "web_fetch", "memory_match", "event_query", "exec_command",
+        "web_search", "web_fetch", "memory_match", "event_query", "deep_recall",
+        "causal_graph_edit", "exec_command",
         "transcribe_audio", "understand_screen", "detect_ui_elements", "calc", "todo",
         "tools_search", "open_app",
         "mouse_click", "mouse_move", "mouse_double_click", "mouse_scroll", "mouse_drag",
@@ -99,9 +100,10 @@ DEFAULT_TOOL_WHITELISTS: Dict[str, List[str]] = {
         "create_tool", "list_my_tools", "delete_tool", "edit_tool",
         "create_skill", "*",
     ],
-    "orchestrator": ["web_search", "web_fetch", "memory_match", "event_query", "exec_command", "*"],
+    "orchestrator": ["web_search", "web_fetch", "memory_match", "event_query", "deep_recall", "exec_command", "*"],
     "supervisor": [
-        "web_search", "web_fetch", "memory_match", "event_query",
+        "web_search", "web_fetch", "memory_match", "event_query", "deep_recall",
+        "causal_graph_edit",
         "directory_tree", "list_directory", "read_text_file", "todo",
     ],
     "expert_code_reviewer": ["memory_match", "event_query", "directory_tree", "list_directory", "read_text_file", "todo"],

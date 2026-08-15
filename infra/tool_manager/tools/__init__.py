@@ -21,6 +21,14 @@ for _module_info in pkgutil.iter_modules([str(_package_dir)]):
     importlib.import_module(f".{_module_info.name}", package=__name__)
     _imported.append(_module_info.name)
 
+# 记忆/因果探针工具（deep_recall 等）随工具集启动注册，
+# 使大模型在默认工具中直接可见（core=True，完整参数 schema）
+try:
+    import modules.thinking.probes.probe_tools  # noqa: F401  触发 @ToolRegistry.register
+    _imported.append("probe_tools")
+except Exception as e:
+    logger.warning(f"探针工具注册失败: {e}")
+
 # 加载分类记忆工具（位于 modules/memory/tools/）
 # 旧架构遗留：classified_memory_tool 已在仓库重构时移除，其功能被
 # memory_match / memory_score / memory_batch_filter / event_query 取代。

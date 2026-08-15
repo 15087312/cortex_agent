@@ -42,6 +42,7 @@ def set_session_guidance(session_id: str, guidance: Dict[str, str], model_id: st
     risk_level="LOW",
     category="query",
     tags=["memory", "causal"],
+    core=True,
 )
 def deep_recall(
     query: str, depth_level: int = 1, max_events: int = 5, **kwargs
