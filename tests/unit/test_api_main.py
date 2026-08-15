@@ -452,11 +452,18 @@ def test_register_module_routers_includes_all():
             import api.main as _am
             import infra.tool_manager.api as _tma
             am_tr = getattr(_am, "tool_router", None)
+            # 手动验证：独立 app 直接 include tool_router，区分"register_module_routers 未生效" vs "include_router 异常"
+            _probe = FastAPI()
+            _probe.include_router(tool_router)
+            _probe_paths = {getattr(r, "path", "") for r in _probe.routes}
+            _manual_ok = any(p.startswith("/tools") for p in _probe_paths)
             _msg = (
                 f"缺失路由 {prefix} | test tool_router id={id(tool_router)} routes={len(tool_router.routes)}"
                 f" | api.main.tool_router id={id(am_tr)} routes={len(am_tr.routes) if am_tr else 'N/A'}"
                 f" | infra.tool_manager.api.router id={id(_tma.router)} routes={len(_tma.router.routes)}"
                 f" | app.routes[:10]={sorted(paths)[:10]}"
+                f" | 手动 include_router /tools 是否成功={_manual_ok}"
+                f" | register_module_routers={getattr(register_module_routers, '__module__', 'N/A')}"
             )
             assert any(p.startswith(prefix) for p in paths), _msg
     # data-process：router 自身有路由且被 include（失败时输出诊断，便于 CI 定位）
