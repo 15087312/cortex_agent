@@ -1620,3 +1620,40 @@ def add_to_dialog(self, role, text):       # 无 session 参数
 **验证：** 新增 5 项测试（切换因果路径 / 旧库派生兼容 / 创建带 causal / 启动应用 / CausalGraph 单例重置），相关 403 项测试通过。
 
 **教训：** "多套隔离存储"（记忆库）必须**完整复制隔离维度**——只隔离事件库而遗漏因果图/向量索引/单例，会让看似隔离的体系在推理层串味。审计点：隔离库的**所有**路径型配置 + 相关单例是否一起切换。
+
+## 51. 心理活动显示思维链而非内心独白（后端）
+
+**现象：** 心理活动（内心独白）输出变成大段思维链——"用户让我回忆过去的经验…让我组织语言…构思：…让我检查…"，而不是括号包裹的简短独白。
+
+**根因（两层）：**
+1. **`max_tokens=500` 太小**：思考型（Reasoner）模型（deepseek-v4-flash）会先输出长思维链再产出正式独白。心理活动 prompt 含因果知识+历史对话，模型思考超过 500 token 被截断在思考阶段 → `content` 为空。
+2. **`small_model_client.generate` 的 reasoning 兜底把思维链当输出**：`if not content and "reasoning_content" in message: content = reasoning`（small_model_client.py:186-189）——content 为空时把完整思维链当作正式输出返回。
+
+实测：模型对心理活动请求，正常时 `content` 是干净的"（我记得…）"独白（500→128字、1500→149字）；只有思考被截断（content 空）时才触发 reasoning 兜底显示思维链。
+
+**修复：**
+- `conscience.think`：`max_tokens` 500 → **1500**（给思考留足空间，产出正式 content）
+- 三个模型 client 的 `generate()` reasoning 兜底全部改为 `fallback_to_reasoning: bool = False` **默认关闭**：
+  - `small_model_client.generate`、`large_model_client.generate`、`medium_model_client.generate`
+  - 思考过程（思维链）**永远不冒充正式输出**——content 为空即返回空，由调用方降级；仅显式开 `True` 的极少数"以思维链为产物"场景才兜底
+  - 全仓库确认**无非测试调用方传 True**；流式路径（large chat_stream）本就正确分离 `reasoning_content` 到思考区
+
+**验证：** 更新三个 client 的默认行为测试（`test_reasoning_not_used_by_default` / `test_generate_does_not_use_reasoning_by_default`）+ 显式 True 测试；相关 299 项测试通过。
+
+**教训：** 思考过程与正式输出是**两个独立通道**——`content` 是产物、`reasoning_content` 是过程，**永远不应混用**。模型截断/异常时宁可返回空让调用方降级，也不能把思维链塞进正式输出；"兜底"默认必须关闭，需显式选择才启用。
+
+---
+
+## 41. 切换会话后心理活动框消失 —— mental 事件不持久化（前端/后端）
+
+**现象：** 前端切换会话窗口后，"心理活动"框消失（该会话的心理活动记录不可见）。
+
+**根因：** 心理活动（`msg_type='mental'`，conscience 内心独白）此前**只做实时 WS 推送、不持久化**（`push_content(persist=False)`，设计为避免污染 AI 上下文）——切换会话后历史加载无 mental 消息 → 框为空。
+
+**修复：**
+1. 后端：`multi_model_orchestrator` 心理活动持久化为 `role="mental"`（`persist=True`）；`api_stream` 恢复上下文时过滤 `mental`（同 thought，不污染模型输入）
+2. 前端：`chat.js` 切换会话历史加载时渲染 `role="mental"` → `kind:'mental'` 心理活动框（与实时事件一致）
+
+**验证：** 后端 212 passed + 前端 chat store 27 passed；mental 以 `role="mental"` 持久化、恢复上下文被过滤。
+
+**注意：** `chat_gateway` 中 conscience 逐段 mental（流式 token 中间态）仍不持久化——主要心理活动（orchestrator 整合的内心独白）已持久化可见。

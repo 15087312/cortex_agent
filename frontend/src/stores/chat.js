@@ -95,6 +95,16 @@ export const useChatStore = defineStore('chat', () => {
     messages.value = msgs.map(d => {
       const et = d.type || ''
       const tier = d.tier || ''
+      // 持久化的心理活动（mental）→ 渲染为心理活动框（与运行时 mental 事件一致）
+      if (d.role === 'mental') {
+        return {
+          _id: uid(),
+          kind: 'mental',
+          role: 'system',
+          content: d.content || '',
+          id: d.id || '',
+        }
+      }
       // 持久化的思考/对话步骤 → 渲染为思考气泡（与运行时 addThinkingStep 一致）
       if (d.role === 'thought') {
         const trole = (d.tier && d.tier !== 'thinking') ? d.tier : 'thinking'

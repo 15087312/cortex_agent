@@ -263,8 +263,8 @@ class StreamThinkingSystem:
                     try:
                         recent = repo.get_recent_messages(session_id, limit=50)
                         if recent:
-                            # 过滤思考步骤（thought），只恢复真实对话，避免污染模型上下文
-                            recent = [m for m in recent if m["role"] != "thought"]
+                            # 过滤思考步骤（thought）与心理活动（mental），只恢复真实对话，避免污染模型上下文
+                            recent = [m for m in recent if m["role"] not in ("thought", "mental")]
                             self.sessions[session_id]["messages"] = [
                                 {"role": m["role"], "content": m["content"], "timestamp": 0,
                                  "id": m.get("id", "")}

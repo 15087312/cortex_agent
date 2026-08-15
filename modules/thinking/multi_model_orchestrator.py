@@ -582,16 +582,17 @@ class MultiModelOrchestrator:
                         role="system",
                         data={"label": "心理活动"},
                     )
-                    # 统一推送出口（心理活动为思考过程，不持久化进会话/AI 上下文）
+                    # 统一推送出口（心理活动持久化为 role="mental"：前端切会话后可见历史；
+                    # 恢复 AI 上下文时按 role 过滤，不污染模型输入——见 api_stream）
                     from modules.thinking.frontend_channel import push_content
                     await push_content(
                         session_id or "",
                         msg_type="mental",
                         event="mental",
                         content=inner_thoughts,
-                        role="system",
+                        role="mental",
                         data={"label": "心理活动"},
-                        persist=False,
+                        persist=True,
                     )
                 except Exception as e:
                     logger.debug(f"[编排器] 心理活动推送失败 (非致命): {e}")
