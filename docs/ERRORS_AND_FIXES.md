@@ -1372,3 +1372,97 @@ _run_task/_think_loop）、`api_stream` 完整 WS 流、`output_system` 深路�
 **验证：** `test_input_controller.py` 24 passed；`mypy modules/output_system/input_controller.py` 0 errors。
 
 **教训：** 自动类型修复（加声明/注解）可能引入**行为变化**——"加一行初始化"≠"加注解"。mypy 修复后必须跑**该文件的全部测试**（不只 mypy 0 errors）验证行为不变。
+
+---
+
+## 40. 深度回忆无噪声守卫 → 无关查询臆造因果链（后端）
+
+**现象：** 对 `deep_recall("今天天气怎么样")`、`deep_recall("今天午饭吃什么")` 等完全无关的查询，深度回忆仍**成功**返回锚点 + 因果链 + 佐证事件（如把"午饭吃什么"锚到「人手不足」并输出 6 条因果链）。评测矩阵暴露：`find_anchor_nodes` 对噪声查询返回锚点「库存告急」0.356。
+
+**根因（两层）：**
+1. `causal_graph.find_anchor_nodes` 语义分用**除以最大值归一化**（`sim / max_sem_score`）——无关查询也会把"语义最近"的节点抬到固定 `0.4×1.0=0.40`，属于"矮子里拔将军"；
+2. `deep_recall` 拿到锚点后**无任何置信度下限校验**（depth_recall.py 原 `anchors[0][1]` 直接使用），0.40 分照样继续跑。
+
+**修复：**
+- `find_anchor_nodes`：语义分改用**绝对余弦相似度**；无关键词命中的节点必须 `abs_sem ≥ 0.30`（`_MIN_ANCHOR_SEMANTIC_SIMILARITY`）才构成锚点，得分直接用 `abs_sem`
+- `deep_recall`：新增锚点置信度守卫 `CAUSAL_MIN_ANCHOR_CONFIDENCE`，低于阈值回退浅层（`low_anchor_confidence`）
+- 阈值校准（实测）：真实语义匹配 ≥0.53、闲聊噪声 ≤0.37 → 锚点下限定为 **0.50**（`config/settings.py`）
+
+**验证：** 噪声查询全部正确回退（`no_anchor_nodes` / `low_anchor_confidence`），深度佐证 0 误召回；正常查询锚点置信度从虚高的 1.0/0.40 变为真实的 0.90-0.94。
+
+**经验：** 归一化分数在"候选集无相关项"时必然产出高分，任何打分环节都要考虑**绝对阈值**而非相对归一化。
+
+---
+
+## 41. 跨场景事件污染佐证 + 增量挂链自我强化（后端）
+
+**现象：** 「服务器宕机」事件 `ev_server_down` 反复混入「项目延期」场景的深度回忆佐证事件；且一旦混入，`_incremental_update` 会把它**永久挂到延期因果节点**上（写 `causal_node_ids`），下次直接命中 1.0，误检被自我强化。
+
+**根因：** `depth_recall._causal_relevance` 的向量匹配兜底太宽松——`ev_server_down`（"故障持续三小时…"）与目标节点「发布事故」余弦 **0.402** 过 0.35 准入线；同时 `_recall_events` 的语义分只有 `0/0.5` 两档，`_incremental_update` 对佐证事件**无因果门槛**一律挂链。
+
+**修复（depth_recall.py）：**
+1. `_recall_events` 增加**佐证准入门槛** `CAUSAL_MIN_EVENT_RELEVANCE=0.35`：因果关联不足的事件不得冒充因果佐证
+2. `_incremental_update` 增加**挂链守卫**：`_causal_relevance < 0.35` 的事件不进因果图
+3. `_causal_relevance` 改用注入的 `self._graph`（替代 `CausalGraph.get_instance()` 单例，生产等价、测试更稳）
+
+**验证：** 延期场景佐证不再出现服务器事件；单测 `test_incremental_update_no_causal_relevance_skipped` 覆盖。
+
+**经验：** "语义相关" ≠ "因果相关"。佐证事件必须有**显式关联或词项证据**支撑，纯语义相似度不能冒充因果佐证；且**写入型副作用**（挂链）必须有独立门槛，不能依赖"进了结果列表"。
+
+---
+
+## 42. 显式归属守卫过度杀伤同链事件（后端）
+
+**现象：** 新增矩阵场景后，`deep_recall("新功能上线后为什么出现回归")` 漏掉佐证事件 `ev_regression`（挂「功能回归」节点，与锚点「新功能上线」同因果链但不在目标集合内）。
+
+**根因：** §41 引入的"显式归属守卫"（事件所有显式关联都在目标集合外 → 返回 0）**一刀切**——把同链下游事件也误杀了：锚点集合只有 `{n_feature}`，`ev_regression` 归属 `n_regression` 不在集合内 → 0。
+
+**修复：** 守卫改为**图上连通性判断**：事件归属节点若与目标集合 1 跳邻接（同一因果链，`_node_connected_to_set`）视为同链相关，不再零分；同链关联给**基础分 `0.4 + 0.6×信号`**（与直接命中同档，向量/文本信号调节）。孤立节点（如「补丁发布」）仍返回 0，跨场景防护不受影响。
+
+**验证：** `ev_regression` 因果关联从 0.000 → 1.000 正常召回；`ev_patch_day` 仍被排除。新增单测 `test_causal_relevance_connected_assignment`。
+
+**经验：** 用"不在集合内"判定"无关"是**欠考虑**的——因果图里集合外的邻居可能是同链相关。负向判定要基于**图结构**（连通性）而非**集合成员**。
+
+---
+
+## 43. 因果链单节点噪点与重复刷屏（后端/展示）
+
+**现象：** 深度回忆输出大量**单节点链**（如 `人手不足 (85%)`，没有箭头、看不到与锚点的关系），且同一链路重复出现多次（如「人手不足」出现 2 次）；溯源链方向用 `←` 拼接，语义混乱。
+
+**根因：** `causal_tree.trace_up/trace_down` 的 `path_nodes` **不含起点节点**——单跳因果只回传一个前驱节点；`deep_recall` 对锚点 + 每个邻居都调 `trace_up`，不同入口产出相同链路不去重。
+
+**修复（depth_recall.py）：**
+- 收集链后**补全锚点**：溯源链尾部补锚点、预测链头部补锚点 → 单跳因果显示完整路径「人手不足 → 项目延期」
+- 按节点序列**去重**
+- 展示统一为因→果顺序 ` → ` 拼接（`DeepRecallResult.format` / `result_fusion.format_deep_recall_result` / `_build_conclusion`）
+
+**验证：** 因果链从"6 条单节点链（重复）"变为"3 条完整路径（去重）"；结论「核心链路: 人手不足 → 项目延期」。相关展示断言同步更新。
+
+---
+
+## 44. CI 全量随机 flaky —— `set_event_loop(None)` 残留污染（测试）
+
+**现象：** CI 全量（`pytest tests`，随机顺序）偶发 `test_screen_router_ext.py::test_merge_vision_sync_no_running_loop` 报 `RuntimeError: There is no current event loop in thread 'MainThread'`；单跑/按目录跑均通过，无法本地稳定复现。
+
+**根因：** `test_model_runner_ext.py::test_reject_session_user_responses` 结束时 `asyncio.set_event_loop(None)` **不还原**先前的 loop。Python 3.13 下 `asyncio.get_event_loop_policy().get_event_loop()` 在无当前 loop 时直接抛 RuntimeError（不再隐式创建）。随机顺序下该污染测试落在 `test_screen_router_ext` 之前即触发。
+
+**修复：**
+- 污染源：保存并还原先前的 event loop（`except RuntimeError → old=None` 处理 3.13 无 loop 情形），不再残留 `set_event_loop(None)`
+- 受害者：`test_screen_router_ext` 保存旧 loop 同样容错 `RuntimeError → None`
+
+**验证：** 两文件 + 相关 381 项测试通过；污染机理本地直接验证（`set_event_loop(None)` 后 `get_event_loop_policy().get_event_loop()` 必抛）。
+
+**教训：** 任何"切走"全局单例（事件循环、sys.modules、环境变量）的测试**必须还原**，且还原代码要考虑 Python 版本行为差异（3.13 不再隐式创建 loop）。
+
+---
+
+## 45. CI 全量随机 flaky —— `/tools` 路由断言（测试，根因未复现）
+
+**现象：** CI 全量偶发 `test_api_main.py::test_register_module_routers_includes_all` 报 `AssertionError: /tools`（`register_module_routers` 挂载后无 `/tools` 路由）；单跑/HEAD/按目录跑全部通过。
+
+**根因：** 未能在本地复现。`infra.tool_manager.api` 的 `router` 是**静态定义**（`APIRouter(prefix="/tools")` + 大量固定端点），无任何条件注册；已排查 `sys.modules` 重导入、`include_router`/`tool_router` 被替换等污染途径均无果。推断与 §44 同类——随机顺序下的全局状态污染，污染源待复现。
+
+**处理：** 在断言前加**诊断守卫** `assert tool_router.routes`（给出明确信息"router 被重导入或污染"），使复发时能立即定位，而非笼统的 `/tools` 缺失。
+
+**后续：** 若 CI 再次出现，依据诊断信息定位污染源；本地 `tests/unit` 全量 5834 通过可作基线。
+
