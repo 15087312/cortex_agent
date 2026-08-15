@@ -144,12 +144,16 @@ class SmallModelClient(BaseModelClient):
             usage={"prompt_tokens": data.get("usage", {}).get("prompt_tokens", 0), "completion_tokens": data.get("usage", {}).get("completion_tokens", 0)},
         )
 
-    async def generate(self, prompt: str, *, system_prompt: str, max_retries: int = 3, **kwargs) -> str:  # type: ignore[override]
+    async def generate(self, prompt: str, *, system_prompt: str, max_retries: int = 3,
+                       fallback_to_reasoning: bool = False, **kwargs) -> str:  # type: ignore[override]
         """生成响应 - 使用 OpenAI / Anthropic 兼容 API，带重试机制
 
         Args:
             system_prompt: 系统提示词（必填）。单次调用不注入默认 agent 人设，
                 调用方必须显式给出本次任务的身份/指令；缺失时抛 TypeError。
+            fallback_to_reasoning: content 为空时是否用 reasoning_content 兜底。
+                默认 False：思考过程（思维链）永远不冒充正式输出——content 为空即返回空，
+                由调用方降级。仅当明确需要"以思维链为产物"的极少数场景才显式开 True。
         """
         if not system_prompt:
             raise TypeError("generate() 的 system_prompt 为必填参数，不能为空")
@@ -182,8 +186,9 @@ class SmallModelClient(BaseModelClient):
                         if choices:
                             message = choices[0].get("message", {})
                             content = message.get("content", "").strip()
-                            # 处理 Reasoner 模型响应：如果 content 为空但有 reasoning_content，使用推理内容
-                            if not content and "reasoning_content" in message:
+                            # 处理 Reasoner 模型响应：content 为空时用 reasoning_content 兜底
+                            #（需正式输出的场景调用方可传 fallback_to_reasoning=False，避免思维链当结果）
+                            if not content and fallback_to_reasoning and "reasoning_content" in message:
                                 reasoning = message.get("reasoning_content", "")
                                 if reasoning:
                                     content = reasoning.strip()

@@ -200,12 +200,23 @@ class TestGenerate:
         assert body["messages"][0]["content"] == "sys"
         assert body["messages"][1]["content"] == "hi"
 
-    def test_reasoning_fallback(self):
+    def test_reasoning_not_used_by_default(self):
+        """默认：content 为空时不返回思维链（思考过程≠正式输出，§51）"""
         client = _make_client()
         _attach(client, responses=[_MockResponse(status=200, data={
             "choices": [{"message": {"role": "assistant", "content": "", "reasoning_content": "think"}}],
         })])
         out = asyncio.run(client.generate("hi", system_prompt="sys", max_retries=1))
+        assert out == ""
+
+    def test_reasoning_fallback_explicit_true(self):
+        """显式 fallback_to_reasoning=True 才用思维链兜底"""
+        client = _make_client()
+        _attach(client, responses=[_MockResponse(status=200, data={
+            "choices": [{"message": {"role": "assistant", "content": "", "reasoning_content": "think"}}],
+        })])
+        out = asyncio.run(client.generate("hi", system_prompt="sys", max_retries=1,
+                                          fallback_to_reasoning=True))
         assert out == "think"
 
     def test_anthropic_joins_text(self):

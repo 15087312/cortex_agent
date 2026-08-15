@@ -365,7 +365,9 @@ class Conscience:
             try:
                 inner_thoughts = await self._model_client.generate(
                     prompt,
-                    max_tokens=500,
+                    # max_tokens 给足空间：思考型（Reasoner）模型会先输出长思维链再产出正式独白，
+                    # 500 太小会在思考阶段被截断 → content 为空 → 默认不再用思维链兜底（§51）
+                    max_tokens=1500,
                     temperature=0.7,
                     system_prompt=CONSCIENCE_SYSTEM_PROMPT,
                 )

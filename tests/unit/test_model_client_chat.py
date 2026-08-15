@@ -125,11 +125,21 @@ def test_generate_success():
     assert out == "你好"
 
 
-def test_generate_reasoning_fallback():
+def test_generate_reasoning_not_used_by_default():
+    """默认：content 为空时不返回思维链（思考过程≠正式输出，§51）"""
     c = _make_client()
     data = {"choices": [{"message": {"content": "", "reasoning_content": "推理内容"}, "finish_reason": "stop"}]}
     c._get_session = AsyncMock(return_value=_FakeSession(_FakeResp(data=data)))
     out = asyncio.run(c.generate("hi", system_prompt="你", max_retries=1))
+    assert out == ""
+
+
+def test_generate_reasoning_fallback_explicit_true():
+    """显式 fallback_to_reasoning=True 才用思维链兜底"""
+    c = _make_client()
+    data = {"choices": [{"message": {"content": "", "reasoning_content": "推理内容"}, "finish_reason": "stop"}]}
+    c._get_session = AsyncMock(return_value=_FakeSession(_FakeResp(data=data)))
+    out = asyncio.run(c.generate("hi", system_prompt="你", max_retries=1, fallback_to_reasoning=True))
     assert out == "推理内容"
 
 

@@ -224,12 +224,23 @@ class TestGenerate:
         assert body["messages"][0] == {"role": "system", "content": "sys"}
         assert body["messages"][1] == {"role": "user", "content": "hi"}
 
-    def test_reasoning_fallback(self):
+    def test_reasoning_not_used_by_default(self):
+        """默认：content 为空时返回空，思维链不冒充正式输出（思考过程≠输出）"""
+        client = _make_client()
+        _attach(client, responses=[_MockResponse(status=200, data={
+            "choices": [{"message": {"content": "", "reasoning_content": "思维链不该当输出"}}],
+        })])
+        out = asyncio.run(client.generate("hi", system_prompt="sys", max_retries=1))
+        assert out == ""
+
+    def test_reasoning_fallback_explicit_true(self):
+        """显式 fallback_to_reasoning=True 时才用思维链兜底（极少数以思维链为产物的场景）"""
         client = _make_client()
         _attach(client, responses=[_MockResponse(status=200, data={
             "choices": [{"message": {"content": "", "reasoning_content": "reasoned "}}],
         })])
-        out = asyncio.run(client.generate("hi", system_prompt="sys", max_retries=1))
+        out = asyncio.run(client.generate("hi", system_prompt="sys", max_retries=1,
+                                          fallback_to_reasoning=True))
         assert out == "reasoned"
 
     def test_empty_reasoning_returns_empty(self):

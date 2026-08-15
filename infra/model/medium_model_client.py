@@ -144,12 +144,15 @@ class MediumModelClient(BaseModelClient):
             usage={"prompt_tokens": data.get("usage", {}).get("prompt_tokens", 0), "completion_tokens": data.get("usage", {}).get("completion_tokens", 0)},
         )
 
-    async def generate(self, prompt: str, *, system_prompt: str, **kwargs) -> str:  # type: ignore[override]
+    async def generate(self, prompt: str, *, system_prompt: str,
+                       fallback_to_reasoning: bool = False, **kwargs) -> str:  # type: ignore[override]
         """生成响应（支持 OpenAI / Anthropic）
 
         Args:
             system_prompt: 系统提示词（必填）。单次调用不注入默认 agent 人设，
                 调用方必须显式给出本次任务的身份/指令；缺失时抛 TypeError。
+            fallback_to_reasoning: content 为空时是否用 reasoning_content 兜底。
+                默认 False：思考过程不冒充正式输出，content 为空即返回空（§51）。
         """
         if not system_prompt:
             raise TypeError("generate() 的 system_prompt 为必填参数，不能为空")
@@ -176,7 +179,8 @@ class MediumModelClient(BaseModelClient):
                     if choices:
                         message = choices[0].get("message", {})
                         content = message.get("content", "")
-                        if not content and "reasoning_content" in message:
+                        # 默认不兜底：思考过程（reasoning_content）不冒充正式输出
+                        if not content and fallback_to_reasoning and "reasoning_content" in message:
                             reasoning = message.get("reasoning_content", "")
                             if reasoning:
                                 content = reasoning

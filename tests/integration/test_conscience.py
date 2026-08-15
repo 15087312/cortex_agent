@@ -231,8 +231,9 @@ def test_add_to_dialog():
     c = Conscience(model_client=None)
     c.add_to_dialog("user", "你好")
     c.add_to_dialog("assistant", "在的")
-    assert any("用户: 你好" in x for x in c._last_dialog_buffer)
-    assert any("助手: 在的" in x for x in c._last_dialog_buffer)
+    buf = c._dialog_buffers["large_primary"]
+    assert any("用户: 你好" in x for x in buf)
+    assert any("助手: 在的" in x for x in buf)
 
 
 def test_analyze_feedback_no_nodes():
