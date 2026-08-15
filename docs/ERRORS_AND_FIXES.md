@@ -1700,3 +1700,20 @@ def add_to_dialog(self, role, text):       # 无 session 参数
 **验证：** 相关 287 项测试通过；无 API key 环境下显式注入的 client 不再被覆盖、mock 正常生效。
 
 **教训：** ① "懒建缓存 + 配置指纹重建"必须**尊重显式注入**（`_client_cfg` 缺失≠需要重建，可能只是外部设置的实例）；② 模块级 `from X import Y` 会把 Y 绑定到本命名空间，测试 mock 源模块属性不生效——**需要在函数内 import 或通过模块引用访问**才能被 patch。
+
+## 54. CI `/tools` 路由断言失败——fastapi 0.141 惰性 `_IncludedRouter`（测试）
+
+**现象：** CI（ubuntu/Python 3.11）`test_api_main.py::test_register_module_routers_includes_all` 稳定失败 `AssertionError: /tools`，本地（3.13）从不失败。诊断：tool_router routes=17 非空、include_router 是原始方法、app.router 正常，但 `app.routes` 里全是默认路由（/docs 等）+ 一个 `''`，手动 include 也"失败"。
+
+**根因：fastapi 版本行为变化（非污染）：**
+- **fastapi 0.141+**（CI 装 `fastapi>=0.104.1` → 最新 0.141）的 `include_router` **不再立即展开 APIRoute**，而是封装成惰性的 `fastapi.routing._IncludedRouter`（自身无 `.path`，实际路由在 `original_router.routes` 里）
+- 测试用 `getattr(r, "path", "")` 判断路由 → `_IncludedRouter` 无 `.path` → 返回 `''` → 断言 `/tools` 缺失
+- 本地 fastapi 0.135.2 是**展开**行为 → 测试通过。本地 3.11 venv 装 0.141.1 复现，确认是版本差异
+
+**修复（tests/unit/test_api_main.py）：**
+- 新增 `_collect_route_paths(routes)`：递归展开 `_IncludedRouter.original_router.routes` 收集真实 path，兼容 fastapi 0.135（展开）与 0.141+（惰性封装）
+- `test_register_module_routers_includes_all` / `test_register_module_routers_skips_difference_when_disabled` 改用该 helper
+
+**验证：** 3.11 venv（fastapi 0.141.1，CI 同版本）下 `/tools` 测试通过；本地 3.13 120 项通过。
+
+**教训：** Web 框架版本升级可能改变"看似稳定"的行为（include_router 展开→惰性封装）。测试对 `app.routes` 的路径断言要用**递归收集**（兼容 `_IncludedRouter`/`Mount` 等包装），不能假设路由对象都有 `.path`；且本地与 CI 的 fastapi 版本差异会掩盖这类问题——**应在与 CI 相同的 Python/依赖版本下验证**。

@@ -90,6 +90,25 @@ def _cleanup_route(app, path):
     app.routes[:] = [r for r in app.routes if getattr(r, "path", None) != path]
 
 
+def _collect_route_paths(routes) -> list:
+    """递归收集路由 path（兼容 fastapi>=0.140 惰性 _IncludedRouter）
+
+    fastapi 0.141+ 的 include_router 不再立即展开 APIRoute，而是封装成
+    `fastapi.routing._IncludedRouter`（自身无 .path，实际路由在 original_router.routes 里）。
+    递归展开 original_router，两种 fastapi 行为都能拿到真实路径。
+    """
+    paths = []
+    for r in routes:
+        inner = getattr(r, "original_router", None)
+        if inner is not None:
+            paths.extend(_collect_route_paths(getattr(inner, "routes", None) or []))
+        else:
+            p = getattr(r, "path", None)
+            if p:
+                paths.append(p)
+    return paths
+
+
 # ---------------------------------------------------------------------------
 # 辅助函数（_sanitize_body / _truncate_body / _get_client_ip / _cleanup_request_counts）
 # ---------------------------------------------------------------------------
@@ -445,31 +464,13 @@ def test_register_module_routers_includes_all():
     )
     app = FastAPI()
     register_module_routers(app)
-    paths = {getattr(r, "path", "") for r in app.routes}
-    # 核心路由必须注册（/tools 缺失时把诊断拼进断言消息，任何 --tb 级别都可见）
+    paths = set(_collect_route_paths(app.routes))
+    # 核心路由必须注册（fastapi>=0.140 惰性 _IncludedRouter 由 _collect_route_paths 展开）
     for prefix in ("/tools", "/stream", "/management", "/output", "/security", "/differences"):
-        if not any(p.startswith(prefix) for p in paths):
-            import api.main as _am
-            import infra.tool_manager.api as _tma
-            am_tr = getattr(_am, "tool_router", None)
-            # 手动验证：独立 app 直接 include tool_router，区分"register_module_routers 未生效" vs "include_router 异常"
-            _probe = FastAPI()
-            _ir_is_orig = getattr(getattr(_probe, "include_router", None), "__func__", None) is FastAPI.include_router
-            _probe.include_router(tool_router)
-            _probe_paths = {getattr(r, "path", "") for r in _probe.routes}
-            _manual_ok = any(p.startswith("/tools") for p in _probe_paths)
-            _msg = (
-                f"缺失路由 {prefix} | test tool_router id={id(tool_router)} routes={len(tool_router.routes)}"
-                f" | api.main.tool_router id={id(am_tr)} routes={len(am_tr.routes) if am_tr else 'N/A'}"
-                f" | infra.tool_manager.api.router id={id(_tma.router)} routes={len(_tma.router.routes)}"
-                f" | app.routes[:10]={sorted(paths)[:10]}"
-                f" | 手动 include_router /tools 是否成功={_manual_ok}"
-                f" | include_router 是否原始 FastAPI 方法={_ir_is_orig}"
-                f" | app.router type={type(_probe.router)}"
-                f" | FastAPI module={FastAPI.__module__}"
-                f" | register_module_routers={getattr(register_module_routers, '__module__', 'N/A')}"
-            )
-            assert any(p.startswith(prefix) for p in paths), _msg
+        assert any(p.startswith(prefix) for p in paths), (
+            f"缺失路由 {prefix} | tool_router routes={len(tool_router.routes)}"
+            f" | app.routes[:10]={sorted(paths)[:10]}"
+        )
     # data-process：router 自身有路由且被 include（失败时输出诊断，便于 CI 定位）
     assert dp_router.routes, "data_process router 无路由（模块注册被跳过）"
     assert any(p.startswith("/data-process") for p in paths), (
@@ -483,7 +484,7 @@ def test_register_module_routers_skips_difference_when_disabled(monkeypatch):
     monkeypatch.setattr("api.main.settings.DIFFERENCE_DETECTOR_ENABLED", False)
     app = FastAPI()
     register_module_routers(app)
-    paths = {getattr(r, "path", "") for r in app.routes}
+    paths = set(_collect_route_paths(app.routes))
     assert not any(p.startswith("/differences") for p in paths)
 
 
