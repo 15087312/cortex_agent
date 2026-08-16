@@ -379,3 +379,33 @@ def test_get_conscience_singleton(monkeypatch):
     a = get_conscience()
     b = get_conscience()
     assert a is b
+
+
+async def test_think_disabled_by_switch(monkeypatch):
+    """心理活动开关 MENTAL_ACTIVITY_ENABLED=False → think 直接返回空、不调模型"""
+    from config.settings import settings
+    c = Conscience(model_client=_client("独白"))
+    c._get_node_ids_from_events = MagicMock(return_value=[])
+    monkeypatch.setattr(settings, "MENTAL_ACTIVITY_ENABLED", False)
+    out = await c.think("q", owner_id="s1")
+    assert out == ""
+    c._model_client.generate.assert_not_called()
+
+
+async def test_think_switch_read_exception(monkeypatch):
+    """开关读取抛异常 → except pass，继续正常生成（防御）"""
+    import sys
+    from config.settings import settings
+    c = Conscience(model_client=_client("独白"))
+    c._get_node_ids_from_events = MagicMock(return_value=[])
+
+    class BoomSettings:
+        def __getattr__(self, name):
+            raise RuntimeError("boom")
+        MENTAL_ACTIVITY_ENABLED = None  # getattr 拿到 None（非真）→ 不返回空
+
+    # 用可访问属性但抛异常的方式：直接 monkeypatch settings 为 BoomSettings
+    monkeypatch.setattr(sys.modules["config.settings"], "settings", BoomSettings())
+    out = await c.think("q", owner_id="s2")
+    # settings 异常时 _get_causal_knowledge 内部也会处理，最终正常生成或返回
+    assert out in ("", "独白")

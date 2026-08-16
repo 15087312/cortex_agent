@@ -197,3 +197,31 @@ def test_pet_engine_real_init():
     assert pe._sub_id == ""
     pe2 = PetEngine(event_bus=MagicMock())
     assert pe2._event_bus is not None
+
+
+def test_build_messages_rebuild_on_config_change(monkeypatch, pet_repo):
+    """模型配置变更 → _build_messages 按配置指纹重建 client（§53/§46）"""
+    created = []
+    def _make(*a, **k):
+        c = MagicMock()
+        created.append(c)
+        return c
+    # pet_engine._build_messages 函数内 from ... import LargeModelClient → patch 源模块
+    monkeypatch.setattr("infra.model.large_model_client.LargeModelClient", _make)
+    pe = _engine()
+    pe._client = MagicMock()
+    pe._client_cfg = ("http://old/v1", "old-key", "old-name", "")
+    monkeypatch.setattr(settings, "LARGE_MODEL_API_URL", "http://changed/v1")
+    pe._build_messages("hi")
+    assert len(created) == 1  # 配置变化 → 重建新 client
+    assert pe._client is created[0]
+
+
+def test_build_messages_keeps_injected_client(monkeypatch, pet_repo):
+    """显式注入的 client（_client_cfg 未记录）不重建，仅记录指纹（§53）"""
+    pe = _engine()
+    injected = MagicMock()
+    pe._client = injected
+    pe._build_messages("hi")
+    assert pe._client is injected  # 不重建
+    assert pe._client_cfg is not None  # 记录了当前指纹
