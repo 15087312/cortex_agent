@@ -624,3 +624,12 @@ textarea.input { resize: vertical; min-height: 60px; font-family: var(--font-mon
 .text-sm { font-size: 13px; }
 .ml-6 { margin-left: 6px; }
 .grid-3-fixed { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+
+/* ── 运行轨迹：工具调用/委托等中间步骤（借鉴 dsh，从对话流分离）── */
+.chat-traces { margin: 8px 16px 0; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-tertiary); font-size: 12px; overflow: hidden; }
+.chat-traces-header { display: flex; align-items: center; justify-content: space-between; padding: 6px 12px; cursor: pointer; color: var(--text-secondary); user-select: none; }
+.chat-traces-header:hover { background: var(--bg-hover, rgba(255,255,255,0.04)); }
+.chat-traces-header .chevron { font-size: 11px; }
+.chat-traces-body { max-height: 180px; overflow-y: auto; border-top: 1px solid var(--border); padding: 4px 0; }
+.trace-item { display: flex; align-items: baseline; gap: 8px; padding: 3px 12px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.trace-item .trace-dot { flex-shrink: 0; width: 6px; height: 6px; border-radius: 50%; background: var(--accent, #4caf50); align-self: center; }

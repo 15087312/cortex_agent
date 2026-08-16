@@ -28,6 +28,7 @@ const sessionListCollapsed = ref(false)
 const showSettings = ref(false)
 const todos = ref([])
 const showTodos = ref(false)
+const tracesOpen = ref(false)
 let todoTimer = null
 const todoDone = computed(() => todos.value.filter((t) => t.status === 'completed').length)
 // 上下文窗口占用（估算 token，由 thinking_progress 状态事件填充）
@@ -484,6 +485,19 @@ function handleAnswerIntent(requestId, answer) {
 
         <!-- 思考循环状态面板：大循环（指挥→主管→专家）/ 连续思考 / 工具循环 -->
         <ThinkingStatusPanel v-if="chat.processing && chat.runners.length" :runners="chat.runners" :elapsed="chat.elapsed" :context-tokens="contextTokens" :context-window-size="contextWindowSize" />
+
+        <!-- 运行轨迹：工具调用/委托等中间步骤（借鉴 dsh，从对话流分离） -->
+        <div v-if="chat.traces.length" class="chat-traces">
+          <div class="chat-traces-header" @click="tracesOpen = !tracesOpen">
+            <span>运行轨迹（{{ chat.traces.length }}）</span>
+            <span class="chevron">{{ tracesOpen ? '收起 ▲' : '展开 ▼' }}</span>
+          </div>
+          <div v-if="tracesOpen" class="chat-traces-body">
+            <div v-for="(tr, i) in chat.traces" :key="i" class="trace-item">
+              <span class="trace-dot"></span>{{ tr.text }}
+            </div>
+          </div>
+        </div>
 
         <!-- 其他会话正在思考中（切走后仍显示横幅 + 停止按钮，可停止处理中的会话） -->
         <div v-if="chat.processing && chat.processingSid && chat.processingSid !== session.sessionId" class="chat-other-processing">

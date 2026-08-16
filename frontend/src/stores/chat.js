@@ -10,6 +10,13 @@ function uid() { return 'm' + (++_uid) }
 // ── 身份系统（对齐 js/pages/chat.js） ──
 const _nameForRole = { user: '我', supervisor: '主管', expert: '专家' }
 
+// 工具调用记录识别（借鉴 dsh 轨迹：工具/委托等中间步骤从对话流分离到轨迹面板）
+function _isToolTrace(text) {
+  return /^[a-z_]+: (done|ok|error|→|exit=)/.test(text) ||
+    /: done \(\d+ chars\)/.test(text) ||
+    /^【(委托|创建主管|主管异常)/.test(text)
+}
+
 function _cleanThinking(text) {
   return String(text || '')
     .replace(/^[\s\u{2600}-\u{27BF}\u{1F000}-\u{1FAFF}\u{2B00}-\u{2BFF}]+/u, '')
@@ -49,6 +56,8 @@ export const useChatStore = defineStore('chat', () => {
   const _connectedSid = ref(null)
   // 思考循环在线模型状态（由 thinking_progress 解析）：[{model_id, tier, name, status, status_detail, round, max_turns, supervisor, last_thought}]
   const runners = ref([])
+  // 运行轨迹：工具调用/委托等中间步骤（借鉴 dsh，从对话流分离）
+  const traces = ref([])
 
   async function init() {
     // 新建会话：断开旧 WS、清空会话 id 与消息（懒创建，首条消息发送时才建新会话）
@@ -65,6 +74,7 @@ export const useChatStore = defineStore('chat', () => {
     _processingSid.value = null
     _connectedSid.value = null
     runners.value = []
+    traces.value = []
     ws.reset()
   }
 
@@ -107,6 +117,12 @@ export const useChatStore = defineStore('chat', () => {
       }
       // 持久化的思考/对话步骤 → 渲染为思考气泡（与运行时 addThinkingStep 一致）
       if (d.role === 'thought') {
+        // 工具调用/委托等中间步骤 → 运行轨迹（切换会话后历史恢复也不混入消息流）
+        const thoughtText = _stripReplyText(_cleanThinking(d.content || ''))
+        if (_isToolTrace(thoughtText)) {
+          traces.value.push({ text: thoughtText.slice(0, 200), time: Date.now() })
+          return null
+        }
         const trole = (d.tier && d.tier !== 'thinking') ? d.tier : 'thinking'
         return {
           _id: uid(),
@@ -114,7 +130,7 @@ export const useChatStore = defineStore('chat', () => {
           role: trole,
           name: _nameFor(trole),
           avatarCls: _avatarCls(trole),
-          content: _stripReplyText(_cleanThinking(d.content || '')),
+          content: thoughtText,
           id: d.id || '',
         }
       }
@@ -131,7 +147,7 @@ export const useChatStore = defineStore('chat', () => {
         id: d.id || '',
         identity_name: d.metadata?.identity_name || '',
       }
-    })
+    }).filter(Boolean)
     const found = session.sessions.find(x => x.session_id === sid)
     session.currentTitle = found?.title || found?.name || (sid.slice(0, 12) + '...')
     ws.reset()
@@ -165,6 +181,11 @@ export const useChatStore = defineStore('chat', () => {
   function addThinkingStep(d) {
     const text = _stripReplyText(_cleanThinking(d.content))
     if (!text) return
+    // 工具调用/委托等中间步骤 → 运行轨迹（不混入对话思考区）
+    if (_isToolTrace(text)) {
+      traces.value.push({ text: text.slice(0, 200), time: Date.now() })
+      return
+    }
     // 带身份标注（deepseek 推理来自哪个模型）
     const ident = d.data?.identity_name || d.data?.tier || ''
     const line = (ident ? `【${ident}】` : '') + text
@@ -340,7 +361,7 @@ export const useChatStore = defineStore('chat', () => {
 
   return {
     messages, processing, currentModel, streamingIdx, hint, elapsed,
-    stopped: _stopped, processingSid: _processingSid, runners,
+    stopped: _stopped, processingSid: _processingSid, runners, traces,
     init, switchToSession, addMessage, addThinkingStep, consumeThinking,
     finalizeStream, sendMessage, retryLastInput, stop, clearMessages,
     deleteMessageAt, editMessageAt,

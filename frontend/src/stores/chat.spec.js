@@ -345,3 +345,39 @@ describe('useChatStore', () => {
     expect(t).not.toContain('思考结束')
   })
 })
+
+describe('运行轨迹（工具调用从对话流分离）', () => {
+  it('工具调用记录进入 traces 而非思考区', () => {
+    const chat = useChatStore()
+    chat.addThinkingStep({ content: 'todo: done (391 chars)' })
+    chat.addThinkingStep({ content: 'directory_tree: done (1156 chars)' })
+    chat.addThinkingStep({ content: '【委托】委托给 code_supervisor：评估项目' })
+    // 工具/委托 → traces
+    expect(chat.traces.length).toBe(3)
+    // 纯推理仍进思考区
+    chat.addThinkingStep({ content: '【总指挥】正在分析需求', data: { identity_name: '总指挥' } })
+    expect(chat.traces.length).toBe(3)
+  })
+
+  it('历史加载 thought 工具调用不混入消息流', async () => {
+    vi.spyOn(wsClient, 'connect').mockResolvedValue(true)
+    const chat = useChatStore()
+    const sess = useSessionStore()
+    sess.switchSession('s1')
+    vi.spyOn(endpoints, 'sessionMessages').mockResolvedValue({
+      data: [
+        { role: 'thought', content: 'todo: done (391 chars)', tier: '' },
+        { role: 'thought', content: '我想到应该先分析需求', tier: 'large' },
+        { role: 'user', content: '你好' },
+      ],
+    })
+    await chat.switchToSession('s1')
+    // 工具调用进 traces（不混入消息流）
+    expect(chat.traces.length).toBeGreaterThanOrEqual(1)
+    expect(chat.traces.some(t => t.text.includes('todo: done'))).toBe(true)
+    // 消息流只有用户消息 + 纯推理思考气泡，不含工具调用
+    const kinds = chat.messages.map(m => m.kind || m.role)
+    expect(kinds.filter(k => k === 'thinking')).toHaveLength(1)
+    expect(chat.messages.some(m => (m.content || '').includes('todo: done'))).toBe(false)
+  })
+})
