@@ -2095,3 +2095,45 @@ async def test_reject_session_user_responses_error(monkeypatch):
 def test_runner_managers_lock_is_rlock():
     import _thread
     assert isinstance(mr_mod._runner_managers_lock, _thread.RLock)
+
+
+def test_push_expert_output_supervisor():
+    """主管输出 → 前端独立气泡（role=supervisor，带身份）"""
+    from unittest.mock import MagicMock, patch
+    from modules.thinking.core.model_runner import ModelRunner
+    r = ModelRunner.__new__(ModelRunner)
+    r.model_id = "sup_1"; r.session_id = "s1"; r.tier = "supervisor"
+    r.identity = MagicMock(); r.identity.name = "代码主管"; r.identity.tier = "supervisor"
+
+    sent = []
+    fake_cm = MagicMock()
+    fake_cm.active_connections = {"ws1": object()}
+    fake_cm.send_json_from_thread = lambda sid, ev: sent.append((sid, ev))
+    with patch("modules.thinking.api_stream.connection_manager", fake_cm), \
+         patch("modules.thinking.api_stream._build_event") as be:
+        be.return_value = {"role": "supervisor", "data": {"identity_name": "代码主管"}}
+        r._push_expert_output("正在拆分任务")
+        r._push_expert_output("  ")  # 空白不推
+    assert len(sent) == 1
+    assert sent[0][1]["role"] == "supervisor"
+    assert sent[0][1]["data"]["identity_name"] == "代码主管"
+
+
+def test_push_expert_output_expert():
+    """专家输出 → 前端独立气泡（role=expert）"""
+    from unittest.mock import MagicMock, patch
+    from modules.thinking.core.model_runner import ModelRunner
+    r = ModelRunner.__new__(ModelRunner)
+    r.model_id = "expert_1"; r.session_id = "s1"; r.tier = "expert"
+    r.identity = MagicMock(); r.identity.name = "实现专家"; r.identity.tier = "expert"
+
+    sent = []
+    fake_cm = MagicMock()
+    fake_cm.active_connections = {"ws1": object()}
+    fake_cm.send_json_from_thread = lambda sid, ev: sent.append((sid, ev))
+    with patch("modules.thinking.api_stream.connection_manager", fake_cm), \
+         patch("modules.thinking.api_stream._build_event") as be:
+        be.return_value = {"role": "expert", "data": {"identity_name": "实现专家"}}
+        r._push_expert_output("已完成实现")
+    assert len(sent) == 1
+    assert sent[0][1]["role"] == "expert"

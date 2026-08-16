@@ -168,6 +168,15 @@ function submitIntent() {
       </div>
     </template>
 
+    <!-- 主管/专家实际输出 -->
+    <template v-else-if="kind === 'expert'">
+      <div class="message-avatar" :class="message.avatarCls"></div>
+      <div class="message-body">
+        <div class="message-name">{{ message.name || '专家' }}</div>
+        <div class="message-bubble expert-bubble">{{ message.content }}</div>
+      </div>
+    </template>
+
     <!-- 普通消息 -->
     <template v-else>
       <div class="message-avatar" :class="isUser ? 'avatar-user' : 'avatar-large'"></div>

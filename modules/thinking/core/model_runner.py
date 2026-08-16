@@ -1210,6 +1210,28 @@ class ModelRunner:
         except Exception:
             pass
 
+    def _push_expert_output(self, content: str) -> None:
+        """推送主管/专家实际输出到前端（显示为独立气泡），带身份标注"""
+        content = (content or "").strip()
+        if not content:
+            return
+        try:
+            from modules.thinking.api_stream import connection_manager, _build_event
+            identity = getattr(self.identity, "name", "") or getattr(self.identity, "role", "")
+            tier = self.tier
+            event = _build_event(
+                session_id=self.session_id,
+                msg_type="thinking",
+                event="thinking_step",
+                content=content,
+                role=tier,
+                data={"identity_name": identity, "tier": tier},
+            )
+            for sid in list(connection_manager.active_connections.keys()):
+                connection_manager.send_json_from_thread(sid, event)
+        except Exception:
+            pass
+
     async def _generate(self, prompt: str) -> str:
         """调用底层模型 client 生成文本（含重试、超时保护，支持原生工具调用）
 
@@ -1651,6 +1673,9 @@ class ModelRunner:
                     tool_calls = response.message.tool_calls
                     # 推送 deepseek 思考过程（reasoning_content）到前端
                     self._push_reasoning(getattr(response.message, "reasoning_content", ""))
+                    # 主管/专家的实际输出 → 前端独立气泡（对话区可见其运行过程）
+                    if self.tier in ("supervisor", "expert") and content and content.strip():
+                        self._push_expert_output(content)
 
                     logger.info(
                         f"[ModelRunner] {self.model_id} 第 {turn} 轮响应: "

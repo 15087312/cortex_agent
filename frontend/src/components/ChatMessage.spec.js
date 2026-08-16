@@ -172,3 +172,11 @@ describe('ChatMessage', () => {
     })
   })
 })
+
+describe('主管/专家输出气泡', () => {
+  it('kind=expert 显示身份名与内容', () => {
+    const wrapper = mountMsg({ kind: 'expert', name: '代码主管', content: '正在拆分任务' })
+    expect(wrapper.text()).toContain('代码主管')
+    expect(wrapper.text()).toContain('正在拆分任务')
+  })
+})

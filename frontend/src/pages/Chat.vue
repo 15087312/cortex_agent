@@ -139,11 +139,22 @@ const _onThinking = (d) => {
       return
     }
   }
-  // 思考区只累积 deepseek 推理（reasoning 推送，role=thinking，带身份标注）；
-  // 总指挥/主管/专家的 thinking_step 是模型 content（输出文字），不进思考区
+  // 思考区只累积 deepseek 推理（reasoning 推送，role=thinking，带身份标注）
   const role = String(d.role || d.data?.dialog_tier || '').toLowerCase()
   if (role === 'thinking') {
     chat.addThinkingStep(d)
+    scrollBottom()
+  } else if (role === 'supervisor' || role === 'expert') {
+    // 主管/专家的实际输出 → 独立气泡显示（对话区可见运行过程）
+    const name = d.data?.identity_name || (role === 'supervisor' ? '主管' : '专家')
+    chat.addMessage({
+      role: 'assistant',
+      content: d.content || '',
+      kind: 'expert',
+      name,
+      avatarCls: role === 'supervisor' ? 'avatar-supervisor' : 'avatar-expert',
+      id: '',
+    })
     scrollBottom()
   }
 }

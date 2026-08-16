@@ -633,3 +633,8 @@ textarea.input { resize: vertical; min-height: 60px; font-family: var(--font-mon
 .chat-traces-body { max-height: 180px; overflow-y: auto; border-top: 1px solid var(--border); padding: 4px 0; }
 .trace-item { display: flex; align-items: baseline; gap: 8px; padding: 3px 12px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .trace-item .trace-dot { flex-shrink: 0; width: 6px; height: 6px; border-radius: 50%; background: var(--accent, #4caf50); align-self: center; }
+
+/* ── 主管/专家实际输出气泡 ── */
+.expert-bubble { border: 1px solid var(--border); background: var(--bg-tertiary); }
+.message .avatar-supervisor, .message-avatar.avatar-supervisor { background: var(--blue, #4a90d9); }
+.message .avatar-expert, .message-avatar.avatar-expert { background: var(--green, #4caf50); }
