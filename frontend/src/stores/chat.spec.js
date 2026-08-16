@@ -353,6 +353,43 @@ describe('useChatStore', () => {
     expect(b._thinking).toContain('继续细化方案')
   })
 
+  it('switchToSession 清空主管/专家气泡关联（无残留引用/缓冲）', async () => {
+    const chat = useChatStore()
+    const sess = useSessionStore()
+    // 无输出事件时的缓冲（异常中断场景）
+    chat.addThinkingStep({ content: '未落位的推理', data: { tier: 'expert', identity_name: '实现专家' } })
+    chat.addThinkingStep({ content: 'read_file: done (120 chars)', data: { tier: 'expert' } })
+    // 已建气泡
+    chat.addExpertMessage({ content: '输出1', data: { tier: 'expert', identity_name: '实现专家' } })
+    const b1 = chat.messages.find(m => m.kind === 'expert')
+    expect(b1._thinking).toContain('未落位的推理')
+    vi.spyOn(endpoints, 'sessionMessages').mockResolvedValue({ data: [] })
+    vi.spyOn(wsClient, 'connect').mockResolvedValue(true)
+    sess.switchSession('s1')
+    await chat.switchToSession('s1')
+    // 切换后：消息重建、气泡关联清空
+    expect(chat.messages).toHaveLength(0)
+    // 新会话再次出现 expert 输出 → 全新气泡，不带旧会话缓冲/引用
+    chat.addExpertMessage({ content: '新会话输出', data: { tier: 'expert', identity_name: '实现专家' } })
+    const b2 = chat.messages.find(m => m.kind === 'expert')
+    expect(b2._thinking).toBe('')
+    expect(b2.content).toBe('新会话输出')
+    expect(b2).not.toBe(b1)
+  })
+
+  it('气泡关联清空后旧引用不泄漏到新会话', () => {
+    const chat = useChatStore()
+    chat.addExpertMessage({ content: '主管输出', data: { tier: 'supervisor', identity_name: '代码主管' } })
+    const oldBubble = chat.messages.find(m => m.kind === 'expert')
+    // init（新建会话）清空
+    chat.init()
+    expect(chat.messages).toHaveLength(0)
+    chat.addExpertMessage({ content: '新输出', data: { tier: 'supervisor', identity_name: '代码主管' } })
+    const newBubble = chat.messages.find(m => m.kind === 'expert')
+    expect(newBubble).not.toBe(oldBubble)
+    expect(newBubble._thinking).toBe('')
+  })
+
   it('思考区剔除"思考结束"段（_stripReplyText 经 addThinkingStep 生效）', () => {
     const chat = useChatStore()
     // 后端"思考结束：{summary}"的 summary 就是最终回复，不应混入思考区
