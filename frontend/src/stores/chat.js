@@ -58,6 +58,77 @@ export const useChatStore = defineStore('chat', () => {
   const runners = ref([])
   // 运行轨迹：工具调用/委托等中间步骤（借鉴 dsh，从对话流分离）
   const traces = ref([])
+  // 主管/专家气泡：按 tier 关联其思考过程（_thinking）与工具调用（_tools）
+  const _expertBubbles = new Map()
+  const _pendingByTier = {}
+  const _pendingTools = {}
+
+  function _tierOf(d) {
+    return String(d.data?.tier || d.data?.dialog_tier || d.tier || '').toLowerCase()
+  }
+
+  function _clearExpertState() {
+    _expertBubbles.clear()
+    for (const k of Object.keys(_pendingByTier)) _pendingByTier[k] = ''
+    for (const k of Object.keys(_pendingTools)) _pendingTools[k] = []
+  }
+
+  // 主管/专家的推理 → 挂到该身份气泡（未创建前缓冲）
+  function addExpertThinking(d) {
+    const tier = _tierOf(d)
+    if (tier !== 'supervisor' && tier !== 'expert') return
+    const text = _stripReplyText(_cleanThinking(d.content))
+    if (!text) return
+    const ident = d.data?.identity_name || ''
+    const line = (ident ? `【${ident}】` : '') + text
+    const bubble = _expertBubbles.get(tier)
+    if (bubble) {
+      const cur = bubble._thinking || ''
+      if (!cur.includes(line)) bubble._thinking = cur ? cur + '\n\n' + line : line
+    } else {
+      const cur = _pendingByTier[tier] || ''
+      if (!cur.includes(line)) _pendingByTier[tier] = cur ? cur + '\n\n' + line : line
+    }
+  }
+
+  // 主管/专家的工具调用 → 轨迹面板 + 该身份气泡工具列表
+  function addExpertTool(d, traceText) {
+    const tier = _tierOf(d)
+    if (tier !== 'supervisor' && tier !== 'expert') return
+    const text = (traceText || _stripReplyText(_cleanThinking(d.content))).slice(0, 200)
+    if (text) traces.value.push({ text, time: Date.now() })
+    const bubble = _expertBubbles.get(tier)
+    if (bubble) {
+      const cur = bubble._tools || []
+      if (!cur.includes(text)) bubble._tools = [...cur, text]
+    } else {
+      const cur = _pendingTools[tier] || []
+      if (!cur.includes(text)) _pendingTools[tier] = [...cur, text]
+    }
+  }
+
+  // 主管/专家的实际输出 → 创建独立气泡（携带该身份的思考过程与工具调用）
+  function addExpertMessage(d) {
+    const tier = _tierOf(d)
+    if (tier !== 'supervisor' && tier !== 'expert') return
+    const ident = d.data?.identity_name || ''
+    const name = ident || (tier === 'supervisor' ? '主管' : '专家')
+    const msg = {
+      role: tier,
+      content: d.content || '',
+      kind: 'expert',
+      name,
+      avatarCls: tier === 'supervisor' ? 'avatar-supervisor' : 'avatar-expert',
+      id: '',
+      _thinking: _pendingByTier[tier] || '',
+      _tools: _pendingTools[tier] || [],
+      _expanded: false,
+    }
+    _pendingByTier[tier] = ''
+    _pendingTools[tier] = []
+    messages.value.push({ _id: uid(), ...msg })
+    _expertBubbles.set(tier, messages.value[messages.value.length - 1])
+  }
 
   async function init() {
     // 新建会话：断开旧 WS、清空会话 id 与消息（懒创建，首条消息发送时才建新会话）
@@ -75,6 +146,7 @@ export const useChatStore = defineStore('chat', () => {
     _connectedSid.value = null
     runners.value = []
     traces.value = []
+    _clearExpertState()
     ws.reset()
   }
 
@@ -82,6 +154,7 @@ export const useChatStore = defineStore('chat', () => {
     const oldSid = session.sessionId
     session.switchSession(sid)
     messages.value = []
+    _clearExpertState()
     // 清空模型状态：避免显示旧会话的思考循环（新会话的 thinking_progress 会重新填充）
     runners.value = []
     // 保留处理状态：若另有会话仍在处理中，不重置 processing/hint（横幅+停止按钮继续生效）
@@ -184,6 +257,15 @@ export const useChatStore = defineStore('chat', () => {
     // 工具调用/委托等中间步骤 → 运行轨迹（不混入对话思考区）
     if (_isToolTrace(text)) {
       traces.value.push({ text: text.slice(0, 200), time: Date.now() })
+      // 主管/专家的工具调用 → 额外挂到该身份气泡
+      const tier = _tierOf(d)
+      if (tier === 'supervisor' || tier === 'expert') addExpertTool(d, text)
+      return
+    }
+    // 主管/专家的推理 → 挂到该身份气泡（不混入总思考区）
+    const tier = _tierOf(d)
+    if (tier === 'supervisor' || tier === 'expert') {
+      addExpertThinking(d)
       return
     }
     // 带身份标注（deepseek 推理来自哪个模型）
@@ -362,7 +444,8 @@ export const useChatStore = defineStore('chat', () => {
   return {
     messages, processing, currentModel, streamingIdx, hint, elapsed,
     stopped: _stopped, processingSid: _processingSid, runners, traces,
-    init, switchToSession, addMessage, addThinkingStep, consumeThinking,
+    init, switchToSession, addMessage, addThinkingStep, addExpertThinking, addExpertTool,
+    addExpertMessage, consumeThinking,
     finalizeStream, sendMessage, retryLastInput, stop, clearMessages,
     deleteMessageAt, editMessageAt,
     addApproval, approve, addIntent, answerIntent,

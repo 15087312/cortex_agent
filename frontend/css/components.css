@@ -636,5 +636,12 @@ textarea.input { resize: vertical; min-height: 60px; font-family: var(--font-mon
 
 /* ── 主管/专家实际输出气泡 ── */
 .expert-bubble { border: 1px solid var(--border); background: var(--bg-tertiary); }
+.expert-tools { margin: 4px 0 6px; display: flex; flex-direction: column; gap: 2px; }
+.expert-tool {
+  font-size: 12px; color: var(--muted, #9ca3af);
+  padding: 2px 8px; border-left: 2px solid var(--green, #4caf50);
+  background: rgba(76,175,80,.06); border-radius: 4px;
+  font-family: var(--mono, monospace); word-break: break-all;
+}
 .message .avatar-supervisor, .message-avatar.avatar-supervisor { background: var(--blue, #4a90d9); }
 .message .avatar-expert, .message-avatar.avatar-expert { background: var(--green, #4caf50); }

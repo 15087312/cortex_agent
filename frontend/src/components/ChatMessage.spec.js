@@ -179,4 +179,25 @@ describe('主管/专家输出气泡', () => {
     expect(wrapper.text()).toContain('代码主管')
     expect(wrapper.text()).toContain('正在拆分任务')
   })
+
+  it('expert 气泡显示思考过程折叠与工具调用列表', () => {
+    const wrapper = mountMsg({
+      kind: 'expert', name: '实现专家', content: '已完成实现',
+      _thinking: '【实现专家】分析依赖\n【实现专家】选择方案',
+      _tools: ['todo: done (50 chars)', 'read_file: done (312 chars)'],
+      _expanded: false,
+    })
+    expect(wrapper.text()).toContain('实现专家')
+    // 思考过程默认折叠展示（shortOf 截断）
+    expect(wrapper.text()).toContain('【实现专家】')
+    // 工具调用列表
+    expect(wrapper.text()).toContain('todo: done (50 chars)')
+    expect(wrapper.text()).toContain('read_file: done (312 chars)')
+  })
+
+  it('expert 气泡 Markdown 内容渲染代码块', () => {
+    const wrapper = mountMsg({ kind: 'expert', name: '实现专家', content: '```js\nconst a = 1\n```' })
+    expect(wrapper.find('.code-block').exists()).toBe(true)
+    expect(wrapper.text()).toContain('const a = 1')
+  })
 })

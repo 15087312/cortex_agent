@@ -47,9 +47,9 @@ const userHtml = computed(() => {
   return escapeHtml(props.message.content).replace(/\n/g, '<br>')
 })
 
-/** AI 消息：Markdown 结构化解析为 text / code 片段 */
+/** AI 消息：Markdown 结构化解析为 text / code 片段（主管/专家气泡同样支持） */
 const segments = computed(() => {
-  if (isUser.value || kind.value) return []
+  if (isUser.value || (kind.value && kind.value !== 'expert')) return []
   return parseMarkdownSegments(props.message.content)
 })
 
@@ -168,12 +168,35 @@ function submitIntent() {
       </div>
     </template>
 
-    <!-- 主管/专家实际输出 -->
+    <!-- 主管/专家实际输出：思考过程折叠 + 工具调用 + Markdown 内容 -->
     <template v-else-if="kind === 'expert'">
       <div class="message-avatar" :class="message.avatarCls"></div>
       <div class="message-body">
         <div class="message-name">{{ message.name || '专家' }}</div>
-        <div class="message-bubble expert-bubble">{{ message.content }}</div>
+        <!-- 思考过程折叠（该身份推理） -->
+        <div v-if="message._thinking" class="thinking-box" @click="toggleThinking(message)">
+          <div class="thinking-text">{{ message._expanded ? message._thinking : shortOf({ content: message._thinking }) }}</div>
+          <div v-if="(message._thinking || '').length > 120" class="thinking-toggle">{{ message._expanded ? '收起 ▲' : '展开 ▼' }}</div>
+        </div>
+        <!-- 工具调用列表 -->
+        <div v-if="message._tools && message._tools.length" class="expert-tools">
+          <div v-for="t in message._tools" :key="t" class="expert-tool">{{ t }}</div>
+        </div>
+        <!-- Markdown 内容（与总指挥一致：文本 v-html + 代码块） -->
+        <div class="message-bubble expert-bubble">
+          <template v-if="segments.length">
+            <template v-for="(seg, si) in segments" :key="si">
+              <div v-if="seg.type === 'text'" v-html="seg.html"></div>
+              <CodeBlock
+                v-else-if="seg.type === 'code'"
+                :language="seg.language"
+                :code="seg.code"
+                :highlighted-html="seg.highlightedHtml"
+              />
+            </template>
+          </template>
+          <template v-else>{{ message.content }}</template>
+        </div>
       </div>
     </template>
 

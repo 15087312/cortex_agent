@@ -145,16 +145,8 @@ const _onThinking = (d) => {
     chat.addThinkingStep(d)
     scrollBottom()
   } else if (role === 'supervisor' || role === 'expert') {
-    // 主管/专家的实际输出 → 独立气泡显示（对话区可见运行过程）
-    const name = d.data?.identity_name || (role === 'supervisor' ? '主管' : '专家')
-    chat.addMessage({
-      role: 'assistant',
-      content: d.content || '',
-      kind: 'expert',
-      name,
-      avatarCls: role === 'supervisor' ? 'avatar-supervisor' : 'avatar-expert',
-      id: '',
-    })
+    // 主管/专家的实际输出 → 独立气泡显示（携带该身份思考过程与工具调用）
+    chat.addExpertMessage(d)
     scrollBottom()
   }
 }

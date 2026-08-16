@@ -330,10 +330,27 @@ describe('useChatStore', () => {
     const chat = useChatStore()
     chat.addThinkingStep({ content: '' })
     chat.addThinkingStep({ content: '  ' })
-    chat.addThinkingStep({ content: '步骤X', data: { tier: 'supervisor' } })
-    chat.addThinkingStep({ content: '步骤X', data: { tier: 'supervisor' } })
+    chat.addThinkingStep({ content: '步骤X', data: { tier: 'large' } })
+    chat.addThinkingStep({ content: '步骤X', data: { tier: 'large' } })
     const t = chat.consumeThinking()
-    expect(t).toBe('【supervisor】步骤X')
+    expect(t).toBe('【large】步骤X')
+  })
+
+  it('supervisor/expert 推理挂到其气泡（不混入总思考区）', () => {
+    const chat = useChatStore()
+    chat.addThinkingStep({ content: '正在分析需求', data: { tier: 'supervisor', identity_name: '代码主管' } })
+    expect(chat.consumeThinking()).toBe('')
+    // 输出气泡创建后挂载缓冲的推理
+    chat.addExpertMessage({ content: '我负责整体方案', data: { tier: 'supervisor', identity_name: '代码主管' } })
+    const b = chat.messages.find(m => m.kind === 'expert')
+    expect(b._thinking).toContain('【代码主管】正在分析需求')
+    // 工具调用挂气泡工具列表 + 轨迹
+    chat.addThinkingStep({ content: 'todo: done (50 chars)', data: { tier: 'supervisor' } })
+    expect(b._tools).toContain('todo: done (50 chars)')
+    expect(chat.traces.some(t => t.text.includes('todo: done'))).toBe(true)
+    // 后续推理追加到已建气泡
+    chat.addThinkingStep({ content: '继续细化方案', data: { tier: 'supervisor', identity_name: '代码主管' } })
+    expect(b._thinking).toContain('继续细化方案')
   })
 
   it('思考区剔除"思考结束"段（_stripReplyText 经 addThinkingStep 生效）', () => {
