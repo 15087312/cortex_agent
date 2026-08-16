@@ -17,6 +17,8 @@ async def test_control_mode():
     from modules.security_system.tool_security_gate import (
         get_tool_security_gate,
     )
+    # 用户配置可能覆盖 EXECUTION_MODE，强制 control 模式（保证测试确定性）
+    settings.EXECUTION_MODE = "control"
 
     print("=" * 60)
     print("Control 模式集成测试")

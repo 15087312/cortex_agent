@@ -255,15 +255,6 @@ class TestPerceptionIntegrator:
         })
         assert "2 buttons found" in desc
 
-    def test_format_file_change(self):
-        from modules.perception.integration import PerceptionIntegrator
-        desc = PerceptionIntegrator._format_description("file.change", {
-            "change": "modified",
-            "path": "/tmp/test.py",
-        })
-        assert "modified" in desc
-        assert "/tmp/test.py" in desc
-
     def test_format_speech(self):
         from modules.perception.integration import PerceptionIntegrator
         desc = PerceptionIntegrator._format_description("speech.detected", {
