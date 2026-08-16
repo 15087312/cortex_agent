@@ -230,4 +230,62 @@ describe('ScheduledTasks 页面', () => {
     expect(w.vm.tasks[0].schedule.kind).toBe('cron')
     expect(w.find('input[placeholder="分 时 日 月 周"]').exists()).toBe(true)
   })
+
+  it('DOM：任务输入字段编辑 + 启用开关 + 下拉 + prompt + 删除按钮', async () => {
+    routeFetch([
+      { match: '/management/orchestration', data: { data: { agents: [{ role: 'chief', name: '总指挥' }] } } },
+      { match: '/stream/sessions', data: { data: [{ session_id: 's1', title: '会话A', last_active: '2024-01-02T00:00:00' }] } },
+      { match: '/stream/session/s1/tasks', data: { data: { tasks: { tasks: [] } } } },
+    ])
+    const w = mountPage()
+    await new Promise((r) => setTimeout(r, 30))
+    await w.vm.$nextTick()
+    const addBtn = w.findAll('button').find((b) => b.text().includes('添加任务'))
+    await addBtn.trigger('click')
+    await w.vm.$nextTick()
+    // daily 时间输入 + @change 回写 schedule
+    const timeInput = w.find('input[placeholder="HH:MM"]')
+    await timeInput.setValue('08:30')
+    await w.vm.$nextTick()
+    expect(w.vm.tasks[0].time).toBe('08:30')
+    expect(w.vm.tasks[0].schedule).toBe('08:30')
+    // interval 分钟输入
+    const typeSel = w.findAll('select')[1]
+    await typeSel.setValue('interval')
+    await w.vm.$nextTick()
+    const minInput = w.find('input[type="number"]')
+    await minInput.setValue('15')
+    await w.vm.$nextTick()
+    expect(w.vm.tasks[0].every_minutes).toBe(15)
+    expect(w.vm.tasks[0].schedule.kind).toBe('interval')
+    expect(w.vm.tasks[0].schedule.every_minutes).toBe(15)
+    // once at 输入
+    await typeSel.setValue('once')
+    await w.vm.$nextTick()
+    await w.find('input[placeholder="HH:MM"]').setValue('10:00')
+    await w.vm.$nextTick()
+    expect(w.vm.tasks[0].schedule.kind).toBe('once')
+    expect(w.vm.tasks[0].schedule.at).toBe('10:00')
+    // cron expr
+    await typeSel.setValue('cron')
+    await w.vm.$nextTick()
+    await w.find('input[placeholder="分 时 日 月 周"]').setValue('0 9 * * *')
+    await w.vm.$nextTick()
+    expect(w.vm.tasks[0].schedule.kind).toBe('cron')
+    expect(w.vm.tasks[0].schedule.expr).toBe('0 9 * * *')
+    // 启用开关
+    const cb = w.find('input[type="checkbox"]')
+    await cb.setValue(false)
+    expect(w.vm.tasks[0].enabled).toBe(false)
+    // action / agent_type 下拉
+    await w.findAll('select')[2].setValue('chat')
+    await w.findAll('select')[3].setValue('chief')
+    expect(w.vm.tasks[0].agent_type).toBe('chief')
+    // prompt textarea
+    await w.find('.task-textarea').setValue('定时提醒')
+    expect(w.vm.tasks[0].prompt).toBe('定时提醒')
+    // 删除按钮
+    await w.find('.task-controls .danger').trigger('click')
+    expect(w.vm.tasks).toHaveLength(0)
+  })
 })

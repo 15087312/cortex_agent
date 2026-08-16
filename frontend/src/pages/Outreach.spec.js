@@ -236,6 +236,46 @@ describe('Outreach 页面', () => {
     expect(w.vm.sessions[0]._open).toBe(true)
   })
 
+  it('模板交互：展开后编辑各配置输入框绑定字段', async () => {
+    routeFetch([
+      {
+        match: '/stream/sessions',
+        data: { data: [{ session_id: 's1', title: '会话1', metadata: { outreach: { enabled: true } } }] },
+      },
+      { match: '/stream/proactive-log?limit=50', data: { data: { logs: [], total: 0 } } },
+    ])
+    const w = mountPage()
+    await new Promise((r) => setTimeout(r, 30))
+    await w.vm.$nextTick()
+    await w.find('.outreach-head').trigger('click')
+    const s = w.vm.sessions[0]
+    // 综合冷却
+    const numInputs = w.findAll('.outreach-body input[type="number"]')
+    await numInputs[0].setValue('5')
+    expect(s.cooldownMin).toBe(5)
+    // 定点发送：开启后编辑时间与误差
+    s.scheduleOn = true
+    s.screenOn = true
+    s.idleOn = true
+    s.windowsOn = true
+    await w.vm.$nextTick()
+    await w.find('.outreach-body input[placeholder="14:00"]').setValue('15:00')
+    expect(s.scheduleTime).toBe('15:00')
+    // 屏幕触发数值（number 顺序：cooldown=0, scheduleJitter=1, screenRatio=2, screenProb=3, screenInterval=4, screenCooldown=5）
+    const num2 = w.findAll('.outreach-body input[type="number"]')
+    await num2[2].setValue('0.3')
+    await num2[3].setValue('0.8')
+    await num2[4].setValue('60')
+    await num2[5].setValue('10')
+    expect(s.screenRatio).toBe(0.3)
+    expect(s.screenProb).toBe(0.8)
+    expect(s.screenInterval).toBe(60)
+    expect(s.screenCooldown).toBe(10)
+    // 时段触发文本
+    await w.find('.outreach-body input[placeholder^="09:00-12:00"]').setValue('09:00-12:00@0.5')
+    expect(s.timeWindowsText).toBe('09:00-12:00@0.5')
+  })
+
   it('卸载时清理轮询定时器', async () => {
     routeFetch([
       { match: '/stream/sessions', data: { data: [] } },

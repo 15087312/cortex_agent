@@ -426,3 +426,61 @@ describe('Orchestration.vue', () => {
     expect(reqs.filter((r) => r.url.includes('/api/config/tools/') && r.method === 'PUT')).toHaveLength(0)
   })
 })
+
+  it('DOM 交互：tab 切换 + 更多设置面板保存覆盖/参数/预览 + 新增弹窗', async () => {
+    const reqs = mockApi()
+    const w = await mountOrch()
+    const chief = w.vm.agents.find((a) => a.role === 'chief')
+    // tab 切换
+    const tabs = w.findAll('.tab-btn, [class*="tab"]')
+    const tabBtns = w.findAll('button').filter((b) => ['技能', '编排图', '权限管理', '工具管理'].some((t) => b.text().includes(t)))
+    await tabBtns[0].trigger('click')
+    expect(w.vm.activeTab).toBe('skills')
+    await tabBtns[1].trigger('click')
+    expect(w.vm.activeTab).toBe('graph')
+    await tabBtns[2].trigger('click')
+    expect(w.vm.activeTab).toBe('permission')
+    await tabBtns[3].trigger('click')
+    expect(w.vm.activeTab).toBe('tools')
+    await w.findAll('button').find((b) => b.text().includes('Agent 定义')).trigger('click')
+    expect(w.vm.activeTab).toBe('agents')
+
+    // 展开 chief 更多设置
+    const chiefRow = w.vm.agents.findIndex((a) => a.role === 'chief')
+    w.vm.expanded = { chief: true }
+    await w.vm.$nextTick()
+    expect(w.find('.settings-panel').exists()).toBe(true)
+
+    // 覆盖 textarea 编辑 + 保存覆盖
+    const overrideTa = w.find('.textarea-mono')
+    await overrideTa.setValue('完整覆盖提示词')
+    expect(w.vm.overrides.chief).toBe('完整覆盖提示词')
+    const saveOv = w.findAll('button').find((b) => b.text().includes('保存覆盖'))
+    await saveOv.trigger('click')
+    await new Promise((r) => setTimeout(r, 30))
+    expect(reqs.some((r) => r.url.includes('/api/config/persona/chief') && r.body?.system_override === '完整覆盖提示词')).toBe(true)
+
+    // 模型参数输入 + 保存参数
+    const nums = w.findAll('.settings-panel input[type="number"]')
+    await nums[0].setValue('0.5')
+    await nums[1].setValue('2048')
+    const saveMp = w.findAll('button').find((b) => b.text().includes('保存参数'))
+    await saveMp.trigger('click')
+    await new Promise((r) => setTimeout(r, 30))
+    expect(reqs.some((r) => r.url.includes('/api/config/model-params/chief') && r.body?.params?.temperature === 0.5)).toBe(true)
+
+    // 预览提示词
+    const preview = w.findAll('button').find((b) => b.text().includes('预览提示词'))
+    await preview.trigger('click')
+    await new Promise((r) => setTimeout(r, 30))
+    expect(w.vm.promptPreview?.open).toBe(true)
+
+    // 新增 Agent 弹窗
+    const addAgent = w.findAll('button').find((b) => b.text().includes('新增'))
+    await addAgent.trigger('click')
+    expect(w.vm.showAgentForm).toBe(true)
+    expect(w.vm.agentForm.tier).toBe('large')
+    // 弹窗取消
+    await w.findAll('button').find((b) => b.text().trim() === '取消').trigger('click')
+    expect(w.vm.showAgentForm).toBe(false)
+  })

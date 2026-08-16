@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import Memory from './Memory.vue'
+import Modal from '@/components/Modal.vue'
 import { routeFetch, createTestPinia } from '@/test/helpers.js'
 import { resolveDialog } from '@/composables/useDialog.js'
 
@@ -278,5 +279,87 @@ describe('Memory 页面', () => {
     await new Promise((r) => setTimeout(r, 20))
     expect(calls).toContain('create')
     expect(w.vm.showCreate).toBe(false)
+  })
+
+  it('DOM：视图切换按钮 + 列表详情/删除按钮 + 时间线删除', async () => {
+    const calls = []
+    routeFetch([
+      { match: '/management/memory/events?limit=50', data: { data: { events: [{ id: 'e1', fact: '事件A', time: '2024-01-01T10:00:00', importance: 0.5, type: 'fact' }], total: 1 } } },
+      { match: '/management/memory/events/e1', data: (u, init) => {
+        if (init?.method === 'DELETE') { calls.push('del'); return { success: true } }
+        return { data: { id: 'e1', fact: '事件A', type: 'fact', importance: 0.5, time: '2024-01-01T10:00:00' } }
+      } },
+    ])
+    const w = mountPage()
+    await new Promise((r) => setTimeout(r, 20))
+    await w.vm.$nextTick()
+    // 列表→时间线 按钮
+    const timelineBtn = w.findAll('button').find((b) => b.text().trim() === '时间线')
+    await timelineBtn.trigger('click')
+    expect(w.vm.viewMode).toBe('timeline')
+    expect(w.find('.memory-timeline').exists()).toBe(true)
+    // 时间线删除按钮（@click.stop）
+    const tDel = w.find('.memory-timeline-item button')
+    await tDel.trigger('click')
+    await new Promise((r) => setTimeout(r, 0))
+    resolveDialog(true)
+    await new Promise((r) => setTimeout(r, 10))
+    expect(calls).toContain('del')
+    // 切回列表
+    const listBtn = w.findAll('button').find((b) => b.text().trim() === '列表')
+    await listBtn.trigger('click')
+    expect(w.vm.viewMode).toBe('list')
+    // 列表详情按钮
+    const detailBtn = w.findAll('button').find((b) => b.text().includes('详情'))
+    await detailBtn.trigger('click')
+    await new Promise((r) => setTimeout(r, 10))
+    expect(w.vm.detailEvent?.fact).toBe('事件A')
+    // 详情 Modal 关闭按钮
+    const closeBtn = w.findAll('button').find((b) => b.text().trim() === '关闭')
+    await closeBtn.trigger('click')
+    expect(w.vm.detailEvent).toBeNull()
+  })
+
+  it('DOM：搜索输入与类型下拉绑定 filter', async () => {
+    const w = mountPage()
+    await new Promise((r) => setTimeout(r, 20))
+    await w.vm.$nextTick()
+    const keywordInput = w.find('.search-input')
+    await keywordInput.setValue('架构')
+    expect(w.vm.filter.keyword).toBe('架构')
+    const sel = w.find('.search-bar select')
+    await sel.setValue('thought')
+    expect(w.vm.filter.type).toBe('thought')
+  })
+
+  it('DOM：新建 Modal 字段编辑 + close 事件 + 详情 keywords 渲染', async () => {
+    routeFetch([
+      { match: '/management/memory/events?limit=50', data: { data: { events: [], total: 0 } } },
+      { match: '/management/memory/events/e1', data: { data: { id: 'e1', fact: 'X', type: 'fact', importance: 0.5, keywords: ['k1', 'k2'], time: '2024-01-01T00:00:00' } } },
+    ])
+    const w = mountPage()
+    await new Promise((r) => setTimeout(r, 20))
+    await w.vm.$nextTick()
+    w.vm.showCreate = true
+    await w.vm.$nextTick()
+    const modal = w.findComponent(Modal)
+    // 新建 Modal 内类型下拉 / 关键词 / 重要性
+    const selects = modal.findAll('select')
+    await selects[0].setValue('thought')
+    expect(w.vm.newEvent.event_type).toBe('thought')
+    const inputs = modal.findAll('input')
+    await inputs[0].setValue('k1,k2')
+    await inputs[1].setValue('0.9')
+    expect(w.vm.newEvent.keywords).toBe('k1,k2')
+    expect(w.vm.newEvent.importance).toBe(0.9)
+    // Modal @close 事件
+    await modal.vm.$emit('close')
+    await w.vm.$nextTick()
+    expect(w.vm.showCreate).toBe(false)
+    // 详情 keywords v-for
+    await w.vm.handleDetail('e1')
+    await new Promise((r) => setTimeout(r, 10))
+    expect(w.find('.detail-table').text()).toContain('k1')
+    expect(w.find('.detail-table').text()).toContain('k2')
   })
 })

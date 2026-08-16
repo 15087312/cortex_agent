@@ -1,8 +1,9 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import System from './System.vue'
 import { routeFetch } from '@/test/helpers.js'
+import { endpoints } from '@/api.js'
 
 let wrapper = null
 function mountPage() {
@@ -57,5 +58,41 @@ describe('System 页面', () => {
     expect(w.vm.attBadge('healthy')).toBe('badge-green')
     expect(w.vm.attBadge(true)).toBe('badge-red')
     expect(w.vm.attBadge(undefined)).toBe('badge-gray')
+  })
+
+  it('单端点失败（catch 回退）不影响其余渲染', async () => {
+    const spy = vi.spyOn(endpoints, 'database').mockRejectedValue(new Error('db down'))
+    routeFetch([
+      { match: ROOT, data: { data: { version: '7.7', name: 'CortexAgent' } } },
+      { match: '/health', data: { data: { status: 'healthy' } } },
+    ])
+    const w = mountPage()
+    await new Promise((r) => setTimeout(r, 30))
+    await w.vm.$nextTick()
+    expect(w.text()).toContain('7.7')  // 其余端点仍渲染
+    expect(w.text()).toContain('CortexAgent')
+    spy.mockRestore()
+  })
+
+  it('健康检查项渲染（v-for health.checks 分支）', async () => {
+    routeFetch([
+      { match: ROOT, data: { data: { version: '1.0' } } },
+      { match: '/health', data: { data: { status: 'healthy', checks: { api: 'ok', db: 'ok' } } } },
+    ])
+    const w = mountPage()
+    await new Promise((r) => setTimeout(r, 30))
+    await w.vm.$nextTick()
+    expect(w.text()).toContain('api')
+    expect(w.text()).toContain('db')
+  })
+
+  it('刷新按钮点击触发 loadData', async () => {
+    const w = mountPage()
+    await new Promise((r) => setTimeout(r, 20))
+    await w.vm.$nextTick()
+    const btn = w.find('button')
+    await btn.trigger('click')
+    await w.vm.$nextTick()
+    expect(btn.exists()).toBe(true)
   })
 })

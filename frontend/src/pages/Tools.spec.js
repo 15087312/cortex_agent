@@ -1,8 +1,9 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import Tools from './Tools.vue'
 import { routeFetch } from '@/test/helpers.js'
+import { endpoints } from '@/api.js'
 
 let wrapper = null
 function mountPage() {
@@ -112,5 +113,94 @@ describe('Tools 页面', () => {
     w.vm.jsonText = '{bad json'
     await w.vm.handleCall()
     expect(w.vm.toolResult).toBeNull() // JSON.parse 失败提前 return
+  })
+
+  it('工具列表数组形态（rawTools.map 箭头）', async () => {
+    routeFetch([
+      { match: '/tools', data: { data: { tools: ['exec', { name: 'calc', description: '计算' }] } } },
+      { match: '/tools/events?limit=20', data: { data: { events: [] } } },
+    ])
+    const w = mountPage()
+    await new Promise((r) => setTimeout(r, 30))
+    await w.vm.$nextTick()
+    expect(w.vm.tools.map(t => t.name)).toEqual(['exec', 'calc'])
+  })
+
+  it('加载失败容错（tools/toolEvents reject 的 catch 回退）', async () => {
+    vi.spyOn(endpoints, 'tools').mockRejectedValue(new Error('x'))
+    vi.spyOn(endpoints, 'toolEvents').mockRejectedValue(new Error('y'))
+    const w = mountPage()
+    await new Promise((r) => setTimeout(r, 30))
+    await w.vm.$nextTick()
+    expect(w.vm.tools).toEqual([])
+    expect(w.vm.events).toEqual([])
+  })
+
+  it('DOM 交互：搜索过滤 + 点击工具项 + JSON 模式切换 + 表单输入执行', async () => {
+    let body = null
+    routeFetch([
+      {
+        match: '/tools/info/exec',
+        data: { data: { spec: { params: { command: { type: 'string', required: true }, timeout: { type: 'integer' } } } } },
+      },
+      { match: '/tools/call', data: (u, init) => { body = JSON.parse(init.body); return { data: { ok: true } } } },
+      { match: '/tools/events?limit=20', data: { data: { events: [] } } },
+      {
+        match: '/tools',
+        data: { data: { tools: { exec: { description: '执行命令' }, calc: { description: '计算' } } } },
+      },
+    ])
+    const w = mountPage()
+    await new Promise((r) => setTimeout(r, 30))
+    await w.vm.$nextTick()
+
+    // 搜索框 v-model
+    const search = w.find('.tool-search input')
+    await search.setValue('exec')
+    expect(w.vm.filteredTools.length).toBe(1)
+
+    // 点击工具项
+    const item = w.find('.tool-item')
+    await item.trigger('click')
+    await new Promise((r) => setTimeout(r, 10))
+    expect(w.vm.selected).toBe('exec')
+    expect(w.vm.formFields.length).toBe(2)
+
+    // 表单输入（string + number 参数）
+    const inputs = w.findAll('.tool-param-row input')
+    await inputs[0].setValue('ls -la')
+    await inputs[1].setValue('5')
+    await w.vm.$nextTick()
+    expect(w.vm.formValues.command).toBe('ls -la')
+    expect(w.vm.formValues.timeout).toBe(5)
+
+    // JSON 模式切换
+    const toggleBtn = w.find('.tool-call-section button')
+    await toggleBtn.trigger('click')
+    expect(w.vm.showJson).toBe(true)
+    await w.vm.$nextTick()
+    // JSON 文本域编辑 + 执行
+    const ta = w.find('.tool-json-textarea')
+    await ta.setValue('{"command":"pwd"}')
+    await w.find('.tool-exec-btn button').trigger('click')
+    await new Promise((r) => setTimeout(r, 10))
+    expect(body.tool_name).toBe('exec')
+    expect(body.params).toEqual({ command: 'pwd' })
+    expect(w.vm.toolResult).toContain('ok')
+  })
+
+  it('调用历史非空渲染表格行（v-for events）', async () => {
+    routeFetch([
+      {
+        match: '/tools/events?limit=20',
+        data: { data: { events: [{ id: 'e1', tool_name: 'exec', timestamp: 1700000000 }] } },
+      },
+      { match: '/tools', data: { data: { tools: {} } } },
+    ])
+    const w = mountPage()
+    await new Promise((r) => setTimeout(r, 30))
+    await w.vm.$nextTick()
+    expect(w.find('.data-table').exists()).toBe(true)
+    expect(w.text()).toContain('exec')
   })
 })
