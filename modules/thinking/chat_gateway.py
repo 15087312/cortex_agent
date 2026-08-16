@@ -844,6 +844,15 @@ async def get_session_graph(session_id: str):
                 g = store.get_graph(session_id)
         except Exception:
             pass
+    # 返回前持久化：前端每次读图谱都确保 metadata 最新，
+    # 切换会话/重启后端后能恢复一致（不只是思考结束 finally 才写）
+    if g.get("nodes"):
+        try:
+            from modules.database.session_repo import get_session_repo
+            get_session_repo().set_session_metadata(
+                session_id, {"session_graph": store.snapshot(session_id)})
+        except Exception:
+            pass
     return {"success": True, "data": {"session_id": session_id, "graph": g}}
 
 

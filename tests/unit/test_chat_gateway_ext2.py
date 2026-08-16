@@ -1201,3 +1201,40 @@ async def test_route_stop_chatonly_with_task(monkeypatch):
     assert out["success"] is True
     assert out["data"]["cancelled"] is True
     cg._CHATONLY_TASKS.clear()
+
+
+async def test_get_session_graph_persists_on_read(monkeypatch):
+    """前端读图谱时持久化到 metadata——切换会话/重启后可恢复一致（§58 图谱链路）"""
+    from modules.thinking.session_graph import get_session_graph_store
+    store = get_session_graph_store()
+    store.record("persist_s1", "large_primary", "总指挥", "large", "", "assistant", "你好")
+    store.record("persist_s1", "code_supervisor", "代码主管", "supervisor", "large_primary", "assistant", "收到")
+    meta_saved = []
+    def fake_set(sid, meta):
+        meta_saved.append(meta)
+        return True
+    from modules.database.session_repo import get_session_repo
+    monkeypatch.setattr(get_session_repo(), "set_session_metadata", fake_set)
+    out = await cg.get_session_graph("persist_s1")
+    assert len(out["data"]["graph"]["nodes"]) == 3  # 用户 + 总指挥 + 代码主管
+    assert meta_saved  # 返回前持久化到 metadata
+    assert meta_saved[0]["session_graph"]["nodes"]
+    store.reset("persist_s1")
+
+
+async def test_get_session_graph_restore_then_persist(monkeypatch):
+    """内存空时从 metadata 恢复，并再次持久化（一致性闭环）"""
+    from modules.thinking.session_graph import SessionGraphStore
+    fake_store = SessionGraphStore()
+    snap = {"nodes": [{"id": "m1", "label": "总指挥", "tier": "large",
+                       "count": 1, "last_content": "", "last_ts": 0}], "edges": []}
+    meta = {"session_graph": snap}
+    monkeypatch.setattr("modules.thinking.session_graph.get_session_graph_store",
+                        lambda: fake_store)
+    monkeypatch.setattr("modules.thinking.chat_gateway._get_chat_session_repo",
+                        lambda: MagicMock(get_session_metadata=lambda sid: meta))
+    monkeypatch.setattr("modules.database.session_repo.get_session_repo",
+                        lambda: MagicMock(set_session_metadata=lambda sid, m: True))
+    out = await cg.get_session_graph("restore_s1")
+    assert out["data"]["graph"]["nodes"]
+    assert out["data"]["graph"]["nodes"][0]["label"] == "总指挥"
