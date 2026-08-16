@@ -326,9 +326,9 @@ def test_bind_detects_existing_daemon(monkeypatch):
     assert d._bind_server() is None
 
 
-def test_bind_stale_retry(monkeypatch):
+def test_bind_stale_retry(monkeypatch, tmp_path):
     """bind 失败 + 探测不可连 → stale → 清理后重试成功"""
-    d = ScreenCaptureDaemon("/tmp/x.sock")
+    d = ScreenCaptureDaemon(str(tmp_path / "stale.sock"))
     call = {"n": 0}
     unlinked = []
 
@@ -354,9 +354,9 @@ def test_bind_stale_retry(monkeypatch):
 
 # ── run()：主循环 ─────────────────────────────────────────────────────────
 
-def test_run_exits_when_bind_none(monkeypatch):
+def test_run_exits_when_bind_none(monkeypatch, tmp_path):
     """bind 失败返回 None → run 立即返回"""
-    d = ScreenCaptureDaemon("/tmp/x.sock")
+    d = ScreenCaptureDaemon(str(tmp_path / "none.sock"))
     monkeypatch.setattr(d, "_bind_server", lambda: None)
     d.run()
 

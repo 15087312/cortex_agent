@@ -1806,3 +1806,17 @@ def add_to_dialog(self, role, text):       # 无 session 参数
 **验证：** model_runner / large_model_client 相关 314 项测试通过。
 
 **教训：** thinking 模式（Reasoner）的多轮工具调用，**assistant 消息必须完整保留并回传 `reasoning_content`**（与 `tool_call_id`/`tool_calls` 同等重要）——任何"构造 assistant 消息"的地方都不能丢它，否则跨轮请求被 provider 拒绝。排查此类 400 的口诀：历史里 assistant 是否带 reasoning_content + `_messages_to_api` 是否回传。
+
+## 58. CI 全量下 socket/子进程测试 20s 超时误杀（测试/CI）
+
+**现象：** CI 全量（5875 测试 / 10 分钟）偶发 `test_screen_capture_daemon.py::test_bind_stale_retry` `Timeout (>20.0s)` + 下一个测试 `previous item was not torn down properly`（连锁）；此前 `test_runtime_expert_ext` 也有同类 Timeout。本地单独/小范围跑全部通过（test_bind_stale_retry call 仅 0.01s）。
+
+**根因：** `pytest.ini` 的 `--timeout=20` 对**全量负载**下的调度/导入延迟过紧——单测本身毫秒级，但 CI 机器跑 10 分钟 5875 测试时资源紧张，pytest 从测试开始到结束（含 setup/导入/调度）可能超过 20s → 被 pytest-timeout 误杀；被杀后 monkeypatch teardown 未跑 → 下一个测试报 "not torn down properly"。
+
+**修复：**
+- `pytest.ini`：`--timeout=20` → `--timeout=60`（给全量负载留余量；项目单测本地最长 ~21s，60s 不会掩盖真死锁太久）
+- `test_bind_stale_retry` / `test_run_exits_when_bind_none`：socket 路径从全局 `/tmp/x.sock` 改为 `tmp_path` 隔离（防全量下真实 socket 文件残留冲突）
+
+**验证：** screen_capture_daemon + runtime_expert 67 项通过。
+
+**教训：** `pytest-timeout` 阈值要按**最坏情况（CI 全量负载）**设，不能按本地单测耗时——毫秒级测试在全量下也会因调度/导入延迟超时。这类"单测快、全量误杀"优先放宽超时，而非改测试逻辑。
