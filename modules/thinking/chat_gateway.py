@@ -276,10 +276,17 @@ async def _consume_turn(
                           "tier": tok.get("tier", "large")},
                 )): pass
             elif tok.get("type") == "mental":
-                # 心理活动（conscience 内心独白）
+                # 心理活动（conscience 内心独白）：持久化 role="mental"（与对话同款），
+                # 前端切换会话后历史可恢复；上下文恢复时按 role 过滤不污染模型输入
+                _mental = tok.get("content", "")
+                if _mental:
+                    try:
+                        repo.save_message(session_id, "mental", _mental)
+                    except Exception:
+                        pass
                 if not await _safe_ws_send(websocket, _envelope(
                     session_id, "mental", "mental",
-                    tok.get("content", ""), "system",
+                    _mental, "system",
                     data={"label": "心理活动"},
                 )): pass
             elif tok.get("type") == "done":
