@@ -1793,3 +1793,16 @@ def add_to_dialog(self, role, text):       # 无 session 参数
 - 相关 mock 测试更新（test_difference_detector / test_perception_integration_ext）
 
 **防再犯：** 补感知数据链路端到端测试（真实发布事件 → 感知池 → collect → 断言内容），任何"采集正常但管道断"都会被捕获。
+
+## 57. thinking 模式 tool loop 报 400：assistant 消息未回传 reasoning_content（后端）
+
+**现象：** 代码主管（code_supervisor）多轮工具调用时报错：
+`400 - The reasoning_content in the thinking mode must be passed back to the API.`（provider: Console Go / DeepSeek thinking 模式）
+
+**根因：** `modules/thinking/core/model_runner.py` 工具循环里，构造**声明 tool_calls 的 assistant 消息**（`messages.append(ChatMessage(role="assistant", content=None, tool_calls=all_result_calls))`）时**没有带上本轮的 `reasoning_content`**。thinking 模式下，assistant 消息一旦生成了 reasoning，后续请求必须原样回传（`_messages_to_api` 里 `if m.reasoning_content: msg["reasoning_content"]=...` 才能回传）。历史里该 assistant 消息 reasoning_content 为 None → 不回传 → 下一轮请求 400。
+
+**修复（model_runner.py 1740 附近）：** 构造 tool_calls 的 assistant 消息时补 `reasoning_content=getattr(response.message, "reasoning_content", None)`——thinking 模式回传，非 thinking 模式为 None 不影响。
+
+**验证：** model_runner / large_model_client 相关 314 项测试通过。
+
+**教训：** thinking 模式（Reasoner）的多轮工具调用，**assistant 消息必须完整保留并回传 `reasoning_content`**（与 `tool_call_id`/`tool_calls` 同等重要）——任何"构造 assistant 消息"的地方都不能丢它，否则跨轮请求被 provider 拒绝。排查此类 400 的口诀：历史里 assistant 是否带 reasoning_content + `_messages_to_api` 是否回传。

@@ -1741,6 +1741,9 @@ class ModelRunner:
                             role="assistant",
                             content=None,  # 有 tool_calls 时丢弃文本，避免上下文污染
                             tool_calls=all_result_calls,
+                            # thinking 模式必须回传本轮的 reasoning_content，
+                            # 否则下一轮请求 provider 报 400："reasoning_content must be passed back"
+                            reasoning_content=getattr(response.message, "reasoning_content", None),
                         ))
 
                     # ── query_tool_details → 把工具完整定义作为 tool 消息回传，
