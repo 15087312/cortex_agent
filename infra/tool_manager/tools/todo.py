@@ -147,7 +147,8 @@ def todo(action: str = "list", items: Optional[str] = None, session_id: str = ""
 
         ids_to_delete = set()
         for item in parsed:
-            tid = item.get("id", "")
+            # 兼容两种格式：["id"] 或 [{"id": "..."}]（模型可能传字符串 id）
+            tid = item.get("id", "") if isinstance(item, dict) else item
             if tid:
                 ids_to_delete.add(tid)
 

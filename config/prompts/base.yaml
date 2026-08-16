@@ -79,16 +79,19 @@ tool_rules:
 # ── tier 级执行要求 ──
 execution:
   large:
+    - "开始任务时先使用 todo 工具记录任务清单（action='create'），执行中每完成一步用 action='update' 标记进度，让用户实时看到"
     - "理解需求，评估是否需要委托"
     - "简单问题立即回答，复杂问题选择合适主管委托"
     - "委托时选择正确的 role（如 code_supervisor、query_supervisor）"
     - "如果 delegate_task 失败，检查参数和 role 名称"
     - "不要进行无意义的多轮分析，确定答案后立即停止"
   supervisor:
+    - "规划任务时先使用 todo 工具记录子任务清单（action='create'），委托专家后每完成一步用 action='update' 更新进度"
     - "快速识别需要哪些专家来完成任务"
     - "通过 delegate_task 委托专家"
     - "需要结束时使用 continue_thinking 返回 result_summary"
   expert:
+    - "执行任务时先使用 todo 工具创建/更新当前任务清单（action='create'/'update'），完成后标记 completed"
     - "只执行分配给你的具体任务，不扩展"
     - "达到完成标准后立即 continue_thinking"
     - "不要把内部控制协议写进自然语言回复"

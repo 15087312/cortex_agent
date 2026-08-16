@@ -176,3 +176,20 @@ def test_action_case_insensitive(tmp_path):
 def test_registered_in_registry():
     from infra.tool_manager.tool_registry import ToolRegistry
     assert ToolRegistry.get_func("todo") is todo
+
+
+def test_delete_accepts_string_id():
+    """delete 兼容字符串 id 列表（模型可能传 ['id']）"""
+    todo("create", json.dumps([{"content": "待删"}]))
+    r = todo("delete", json.dumps(["id-not-exist"]))
+    assert "deleted" in r  # 不抛异常，deleted=0
+    assert r["deleted"] == 0
+
+
+def test_delete_accepts_dict_id():
+    """delete 兼容 dict id 列表（[{'id': ...}]）"""
+    todo("create", json.dumps([{"content": "待删2"}]))
+    lst = todo("list")
+    tid = lst["items"][-1]["id"]
+    r = todo("delete", json.dumps([{"id": tid}]))
+    assert r["deleted"] == 1

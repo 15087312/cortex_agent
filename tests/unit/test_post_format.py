@@ -187,3 +187,16 @@ class TestSmallModelPostFormat:
         sys_content = msgs[0]["content"]
         assert "执行专家" in sys_content, "缺少专家身份"
         assert "continue_thinking" in sys_content, "缺少 continue_thinking 指令"
+
+
+class TestTodoInstructionInPrompt:
+    """todo 工具指令应注入 agent 模式各模型的系统提示词"""
+
+    @pytest.mark.asyncio
+    async def test_all_tiers_prompt_contains_todo(self):
+        from config.prompts.composer import PromptComposer, PromptRequest
+        composer = PromptComposer()
+        for tier, role in [("large", "orchestrator"), ("supervisor", "code_supervisor"), ("expert", "code_writer")]:
+            sp = composer.build_system(PromptRequest(tier=tier, role=role, mode="edit"))
+            assert "todo" in sp, f"{tier} 系统提示应含 todo 指令"
+            assert "先使用 todo" in sp or "先创建" in sp or "先使用 todo 工具" in sp, f"{tier} 应有'先使用 todo'引导"
