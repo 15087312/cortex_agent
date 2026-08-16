@@ -18,6 +18,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+import infra.screen_capture_daemon as sd_mod
 from infra.screen_capture_daemon import (
     CACHE_TTL_SECONDS,
     ScreenCaptureDaemon,
@@ -303,7 +304,7 @@ def test_bind_success(monkeypatch):
     d = ScreenCaptureDaemon("/tmp/x.sock")
     fake_server = MagicMock()
     monkeypatch.setattr(socket, "socket", lambda *a, **k: fake_server)
-    monkeypatch.setattr(os, "chmod", lambda *a, **k: None)
+    monkeypatch.setattr(sd_mod.os, "chmod", lambda *a, **k: None)
     assert d._bind_server() is fake_server
     fake_server.bind.assert_called_once()
     fake_server.listen.assert_called_once()
@@ -321,7 +322,7 @@ def test_bind_detects_existing_daemon(monkeypatch):
             s.bind.side_effect = OSError("in use")
         return s  # probe.connect 成功（默认不抛）
 
-    monkeypatch.setattr(socket, "socket", fake_socket)
+    monkeypatch.setattr(sd_mod.socket, "socket", fake_socket)
     assert d._bind_server() is None
 
 
@@ -340,11 +341,11 @@ def test_bind_stale_retry(monkeypatch):
             s.connect.side_effect = OSError("refused")  # 3 次探测均失败
         return s  # 第 5 次（清理后重试 bind）成功
 
-    monkeypatch.setattr(socket, "socket", fake_socket)
-    monkeypatch.setattr(os, "chmod", lambda *a, **k: None)
-    monkeypatch.setattr(os.path, "exists", lambda p: True)
-    monkeypatch.setattr(os, "unlink", lambda p: unlinked.append(p))
-    monkeypatch.setattr(time, "sleep", lambda *a, **k: None)
+    monkeypatch.setattr(sd_mod.socket, "socket", fake_socket)
+    monkeypatch.setattr(sd_mod.os, "chmod", lambda *a, **k: None)
+    monkeypatch.setattr(sd_mod.os.path, "exists", lambda p: True)
+    monkeypatch.setattr(sd_mod.os, "unlink", lambda p: unlinked.append(p))
+    monkeypatch.setattr(sd_mod.time, "sleep", lambda *a, **k: None)
 
     ret = d._bind_server()
     assert ret is not None
@@ -397,11 +398,11 @@ def test_bind_final_failure_returns_none(monkeypatch):
             s.connect.side_effect = OSError("refused")
         return s
 
-    monkeypatch.setattr(socket, "socket", fake_socket)
-    monkeypatch.setattr(os, "chmod", lambda *a, **k: None)
-    monkeypatch.setattr(os.path, "exists", lambda p: True)
+    monkeypatch.setattr(sd_mod.socket, "socket", fake_socket)
+    monkeypatch.setattr(sd_mod.os, "chmod", lambda *a, **k: None)
+    monkeypatch.setattr(sd_mod.os.path, "exists", lambda p: True)
     monkeypatch.setattr(os, "unlink", lambda p: None)
-    monkeypatch.setattr(time, "sleep", lambda *a, **k: None)
+    monkeypatch.setattr(sd_mod.time, "sleep", lambda *a, **k: None)
     assert d._bind_server() is None
 
 
@@ -495,11 +496,11 @@ def test_bind_stale_without_existing_file(monkeypatch):
             s.connect.side_effect = OSError("refused")
         return s
 
-    monkeypatch.setattr(socket, "socket", fake_socket)
-    monkeypatch.setattr(os, "chmod", lambda *a, **k: None)
+    monkeypatch.setattr(sd_mod.socket, "socket", fake_socket)
+    monkeypatch.setattr(sd_mod.os, "chmod", lambda *a, **k: None)
     monkeypatch.setattr(os.path, "exists", lambda p: False)  # 文件已不存在
     monkeypatch.setattr(os, "unlink", lambda p: (_ for _ in ()).throw(AssertionError("不应 unlink")))
-    monkeypatch.setattr(time, "sleep", lambda *a, **k: None)
+    monkeypatch.setattr(sd_mod.time, "sleep", lambda *a, **k: None)
     assert d._bind_server() is not None
 
 
@@ -520,7 +521,7 @@ def test_run_finally_unlink_failure_swallowed(monkeypatch):
     fake_server = MagicMock()
     fake_server.accept.side_effect = OSError("closed")
     monkeypatch.setattr(d, "_bind_server", lambda: fake_server)
-    monkeypatch.setattr(os.path, "exists", lambda p: True)
+    monkeypatch.setattr(sd_mod.os.path, "exists", lambda p: True)
     monkeypatch.setattr(os, "unlink", lambda p: (_ for _ in ()).throw(OSError("no perm")))
     d.run()  # 不抛异常
 
