@@ -7,6 +7,8 @@ import threading
 import time
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 import os
 import sys
 
@@ -218,6 +220,7 @@ def test_ensure_daemon_running_launches(monkeypatch):
     sc_mod._DAEMON_PROC = None
 
 
+@pytest.mark.skipif(sys.platform != "darwin", reason="screen_capture_daemon 是 macOS 专属，非 darwin 平台 ensure_daemon_running 恒返回 False")
 def test_ensure_daemon_running_already_running():
     proc = MagicMock()
     proc.poll.return_value = None
