@@ -144,8 +144,8 @@ class SmallModelClient(BaseModelClient):
             usage={"prompt_tokens": data.get("usage", {}).get("prompt_tokens", 0), "completion_tokens": data.get("usage", {}).get("completion_tokens", 0)},
         )
 
-    async def generate(self, prompt: str, *, system_prompt: str, max_retries: int = 3,
-                       fallback_to_reasoning: bool = False, **kwargs) -> str:  # type: ignore[override]
+    async def generate(self, prompt: str, *, system_prompt: str, max_retries: int = 3,  # type: ignore[override]
+                       fallback_to_reasoning: bool = False, **kwargs) -> str:
         """生成响应 - 使用 OpenAI / Anthropic 兼容 API，带重试机制
 
         Args:

@@ -2,7 +2,7 @@
 ModelRunner — single-model execution engine.
 Wraps LargeModelClient for single execution with streaming.
 """
-from typing import Callable, List, Optional
+from typing import Any, Callable, List, Optional
 
 from infra.model.large_model_client import LargeModelClient
 from infra.model.base_model import ChatMessage, ChatResponse
@@ -17,6 +17,7 @@ class ModelRunner:
 
     def __init__(self, client: LargeModelClient = None):
         self._client = client
+        self._client_cfg: Optional[Any] = None  # 配置指纹（元组）或 None（懒建）
         if client is not None:
             # 显式注入的 client：调用方显式控制，记录当前配置指纹，不自动重建
             from infra.model.config_fingerprint import model_config_fingerprint

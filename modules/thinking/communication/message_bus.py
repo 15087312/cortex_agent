@@ -341,7 +341,7 @@ class ModelMessageBus:
     # 订阅
     # ------------------------------------------------------------------
 
-    async def subscribe(self, recipient_id: str, callback: Callable[[Message], None]) -> None:
+    async def subscribe(self, recipient_id: str, callback: Callable[[Message], Any]) -> None:
         """订阅消息 — 当有新消息时回调"""
         async with self.lock:
             self._subscriptions[recipient_id].append(callback)

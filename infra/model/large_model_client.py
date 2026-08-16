@@ -68,8 +68,8 @@ class LargeModelClient(BaseModelClient):
         # 默认兼容 DashScope（原有用户不受影响）
         return "dashscope"
     
-    async def generate(self, prompt: str, *, system_prompt: str, max_retries: int = 2,
-                       fallback_to_reasoning: bool = False, **kwargs) -> str:  # type: ignore[override]
+    async def generate(self, prompt: str, *, system_prompt: str, max_retries: int = 2,  # type: ignore[override]
+                       fallback_to_reasoning: bool = False, **kwargs) -> str:
         """生成响应 - 支持 DashScope / OpenAI / Anthropic，带重试机制
 
         Args:

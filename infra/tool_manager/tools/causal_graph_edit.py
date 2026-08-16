@@ -84,8 +84,8 @@ def causal_graph_edit(action: str = "", from_label: str = "", to_label: str = ""
                     if graph.delete_edge(edge.id):
                         deleted.append({
                             "id": edge.id,
-                            "from": graph.get_node(edge.from_id).label if graph.get_node(edge.from_id) else edge.from_id,
-                            "to": graph.get_node(edge.to_id).label if graph.get_node(edge.to_id) else edge.to_id,
+                            "from": _node_label(graph, edge.from_id),
+                            "to": _node_label(graph, edge.to_id),
                             "confidence": edge.confidence,
                         })
             if not deleted:
@@ -128,3 +128,8 @@ def causal_graph_edit(action: str = "", from_label: str = "", to_label: str = ""
     except Exception as e:
         logger.warning(f"[causal_graph_edit] 失败: {e}")
         return json.dumps({"error": str(e)}, ensure_ascii=False)
+
+def _node_label(graph, node_id):
+    """取节点 label；不存在返回原始 id（避免 mypy union-attr）"""
+    node = graph.get_node(node_id)
+    return node.label if node else node_id

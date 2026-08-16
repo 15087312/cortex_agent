@@ -372,7 +372,7 @@ class SkillManager:
 
         return Skill(
             id=skill_id,
-            name=data.get("name", skill_id),
+            name=data.get("name") or skill_id,
             description=body_description,
             keywords=data.get("keywords", []),
             source="skill_md",

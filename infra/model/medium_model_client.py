@@ -144,8 +144,8 @@ class MediumModelClient(BaseModelClient):
             usage={"prompt_tokens": data.get("usage", {}).get("prompt_tokens", 0), "completion_tokens": data.get("usage", {}).get("completion_tokens", 0)},
         )
 
-    async def generate(self, prompt: str, *, system_prompt: str,
-                       fallback_to_reasoning: bool = False, **kwargs) -> str:  # type: ignore[override]
+    async def generate(self, prompt: str, *, system_prompt: str,  # type: ignore[override]
+                       fallback_to_reasoning: bool = False, **kwargs) -> str:
         """生成响应（支持 OpenAI / Anthropic）
 
         Args:
