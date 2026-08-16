@@ -299,9 +299,10 @@ def pytest_sessionfinish(session, exitstatus):
 _PRODUCTION_DIRS = ("modules", "infra", "utils", "config", "api", "cortex", "frontend")
 _MODULE_UNCOVERED_MAX = int(os.environ.get("CORTEX_TEST_MODULE_UNCOVERED_MAX", "10"))
 
-# frontend 下依赖 GUI 的启动器：无显示环境（CI）无法测试，清单豁免（前端代理层 server.py
-# 与 pet_widget.py 纳入覆盖，Qt 启动器 main/pet_launch 豁免）
-_FRONTEND_EXCLUDE = ("frontend/main.py", "frontend/pet_launch.py")
+# frontend 下依赖 GUI 的启动器/桌面宠物：无显示环境（CI）无法测试，清单豁免。
+# 说明：frontend/server.py 为标准库代理层纳入覆盖；main.py/pet_launch.py/pet_widget.py
+# 分别依赖 Qt 启动器与 PyQt6（CI 未安装 PyQt6，import 即失败）→ 豁免。
+_FRONTEND_EXCLUDE = ("frontend/main.py", "frontend/pet_launch.py", "frontend/pet_widget.py")
 
 
 def _all_production_modules() -> set:
