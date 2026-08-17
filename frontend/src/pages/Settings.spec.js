@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import Settings from './Settings.vue'
@@ -703,4 +703,68 @@ describe('Settings.vue', () => {
     const sysRows = w.findAll('.setting-row')
     const debugRow = sysRows.find((r) => r.text().includes('调试模式'))
     if (debugRow) { const cb = debugRow.find('input[type=checkbox]'); if (cb.exists()) { await cb.trigger('change'); expect(writes.some((x) => x.url.includes('DEBUG'))).toBe(true) } }
+  })
+
+  it('系统 tab：TTS 开关/后端 seg + 日志级别 seg', async () => {
+    mockApi()
+    const w = await mountSettings()
+    await w.findAll('.settings-tab').find((t) => t.text() === '系统').trigger('click')
+    // TTS 开关（@change 反向）
+    const ttsRow = w.findAll('.setting-row').find((r) => r.text().includes('TTS'))
+    const cb = ttsRow.find('input[type=checkbox]')
+    await cb.trigger('change')
+    expect(writes.some((x) => x.url.includes('OUTPUT_TTS_ENABLED'))).toBe(true)
+    // TTS 后端 seg → 云端
+    await w.findAll('button').find((b) => b.text().trim() === '云端').trigger('click')
+    expect(w.vm.ttsBackend).toBe('api')
+    expect(writes.some((x) => x.url.includes('OUTPUT_TTS_BACKEND') && x.body?.value === 'api')).toBe(true)
+    // 日志级别 seg
+    await w.findAll('button').find((b) => b.text().trim() === 'ERROR').trigger('click')
+    expect(w.vm.logLevel).toBe('ERROR')
+    expect(writes.some((x) => x.url.includes('LOG_LEVEL') && x.body?.value === 'ERROR')).toBe(true)
+  })
+
+  it('授权 tab：保存/清除 API Key + 编辑配置行（editConfig + prompt）', async () => {
+    mockApi()
+    const w = await mountSettings()
+    await w.findAll('.settings-tab').find((t) => t.text() === '授权设置').trigger('click')
+    // 输入 key + 保存按钮
+    await w.find('input.key-input').setValue('sk-abc')
+    await w.findAll('button').find((b) => b.text().trim() === '保存').trigger('click')
+    expect(w.vm.keyInput).toBe('sk-abc')
+    // 清除按钮（keyInput 非空时显示）
+    await w.findAll('button').find((b) => b.text().trim() === '清除').trigger('click')
+    expect(w.vm.keyInput).toBe('')
+    // 配置行编辑按钮 → prompt 对话框
+    const editBtn = w.findAll('button').find((b) => b.text().trim() === '编辑')
+    const p = editBtn.trigger('click')
+    await new Promise((r) => setTimeout(r, 0))
+    resolveDialog('9')
+    await p
+    await new Promise((r) => setTimeout(r, 20))
+    expect(writes.some((x) => x.url.includes('/api/config/'))).toBe(true)
+  })
+
+  it('关于 tab：外链 openLink 触发 window.open', async () => {
+    mockApi()
+    const w = await mountSettings()
+    await w.findAll('.settings-tab').find((t) => t.text() === '关于').trigger('click')
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null)
+    await w.find('a.settings-link').trigger('click')
+    expect(openSpy).toHaveBeenCalledWith('https://cortexagent.com/terms', '_blank')
+    vi.restoreAllMocks()
+  })
+
+  it('记忆库 tab：输入名称 + Enter 触发创建（keydown.enter 内联）', async () => {
+    mockApi()
+    const w = await mountSettings()
+    await w.findAll('.settings-tab').find((t) => t.text() === '记忆库').trigger('click')
+    const input = w.find('input[placeholder="新记忆库名称"]')
+    await input.setValue('lib_enter')
+    await input.trigger('keydown', { key: 'Enter' })
+    await new Promise((r) => setTimeout(r, 20))
+    const post = writes.find((x) => x.url.includes('/config/memory-libs') && x.method === 'POST')
+    expect(post).toBeTruthy()
+    expect(post.body).toEqual({ name: 'lib_enter' })
+    expect(w.vm.newLibName).toBe('')
   })
