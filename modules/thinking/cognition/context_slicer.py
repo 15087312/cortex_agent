@@ -19,11 +19,17 @@ logger = setup_logger("context_slicer")
 
 
 class ContextSlicer:
-    """上下文切片器 — 为不同 tier 生成定制化上下文"""
+    """上下文切片器 — 为不同 tier 生成定制化上下文
+
+    round_start/round_end 控制黑板对话读取的轮次范围（默认近 10 轮，
+    可由工具调用参数自行决定读取 x 轮到 y 轮）。
+    """
 
     def slice_for_large(
         self,
         bb: CognitiveBlackboard,
+        round_start: int = 0,
+        round_end: int = 0,
     ) -> str:
         """
         为 Large 模型生成上下文
@@ -36,8 +42,15 @@ class ContextSlicer:
         - 委托状态
         - 专家发现
         - 用户最新输入
+        - 对话记录（按轮次范围）
         """
         parts = []
+
+        # 对话记录（按轮次范围，默认近 10 轮）
+        dialog = bb.read_dialog(round_start=round_start, round_end=round_end)
+        if dialog:
+            dlg_text = self._format_dialog(dialog)
+            parts.append(f"【对话记录】\n{dlg_text}")
 
         # 对话历史已由 _build_system_prompt_for_mode 前置到 system prompt
         # 此处只收集系统观察（委托引导、良知引导等）
@@ -66,8 +79,8 @@ class ContextSlicer:
 
         # 4. 委托状态
         if bb.delegations:
-            dlg_text = self._format_delegations(bb.delegations)
-            parts.append(f"【委托状态】\n{dlg_text}")
+            dlg_status = self._format_delegations(bb.delegations)
+            parts.append(f"【委托状态】\n{dlg_status}")
 
         # 5. 专家发现
         if bb.expert_findings:
@@ -80,6 +93,8 @@ class ContextSlicer:
         self,
         bb: CognitiveBlackboard,
         delegation_id: Optional[str] = None,
+        round_start: int = 0,
+        round_end: int = 0,
     ) -> str:
         """
         为 Supervisor 模型生成上下文
@@ -115,6 +130,8 @@ class ContextSlicer:
         bb: CognitiveBlackboard,
         task_description: str = "",
         cursor: int = 0,
+        round_start: int = 0,
+        round_end: int = 0,
     ) -> str:
         """
         为 Expert 模型生成上下文
@@ -147,6 +164,17 @@ class ContextSlicer:
         return "\n\n".join(parts)
 
     # ── 格式化辅助方法 ──
+
+    def _format_dialog(self, dialog: List[Dict[str, Any]]) -> str:
+        """格式化对话记录（按轮次）"""
+        lines = []
+        for e in dialog:
+            r = e.get("round", 0)
+            t = e.get("type", "thought")
+            m = e.get("model_id", "")
+            content = str(e.get("content", ""))[:300]
+            lines.append(f"[轮{r} {t} {m}] {content}")
+        return "\n".join(lines) if lines else "(无对话)"
 
     def _format_plan(self, plan: List[Dict[str, Any]]) -> str:
         """格式化计划步骤"""

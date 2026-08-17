@@ -139,10 +139,20 @@ class ModelRunner:
 
     @property
     def context_window_size(self) -> int:
-        """上下文窗口大小"""
+        """上下文窗口大小 — 优先 thinker 运行时值，否则以模型层级的输入上下文长度为标准"""
         if self._thinker:
-            return getattr(self._thinker, '_context_window_size', 128000)
-        return 128000
+            ws = getattr(self._thinker, "_context_window_size", 0)
+            if isinstance(ws, int) and ws > 0:
+                return ws
+        try:
+            identity = getattr(self.instance, "identity", None)
+            from modules.thinking.identity import ModelIdentity
+            if isinstance(identity, ModelIdentity) and isinstance(getattr(identity, "context_length", 0), int) and identity.context_length > 0:
+                return identity.context_length
+            from config.settings import settings as _cfg
+            return _cfg.get_context_length(self.tier)
+        except Exception:
+            return 128000
 
     @property
     def supervisor(self) -> str:
@@ -491,8 +501,16 @@ class ModelRunner:
                 # 无待处理委托，直接退出
                 break
 
-            # 根据 tier 设置不同的等待超时
-            wait_timeout = 180.0 if self.tier == "supervisor" else 300.0
+            # 等待超时由工具（continue_thinking wait_seconds）自行设置，不再硬编码
+            # 模型未设置时用默认（模型输入上下文长度无关的等待兜底）
+            wait_timeout = 300.0
+            try:
+                if self._thinker is not None and self._thinker._last_control_decision is not None:
+                    _ws = getattr(self._thinker._last_control_decision, "wait_seconds", None)
+                    if _ws:
+                        wait_timeout = float(_ws)
+            except Exception:
+                pass
             progress_interval = self.PROGRESS_INTERVAL
             wakeup = await self._wait_for_wakeup_event(
                 timeout=wait_timeout,
@@ -501,7 +519,8 @@ class ModelRunner:
             if not self._running:
                 break
             if wakeup is None:
-                # _wait_for_wakeup_event 返回 None 说明已无待处理委托
+                # 等待超时（工具设定时间到）→ 自动激活上一级查看进度/继续委托
+                await self._notify_timeout_to_parent()
                 break
 
             # 重置状态，用唤醒消息重启循环
@@ -1007,6 +1026,46 @@ class ModelRunner:
             return ""
 
 
+    async def _notify_timeout_to_parent(self) -> None:
+        """委托等待超时（工具设定时间到）后，自动激活上一级模型
+
+        给 return_to_model_id 发 thinking_result，携带进度与委托 id，
+        让上一级可调用 query_delegation 查看进度或 resume_delegation 继续委托。
+        """
+        try:
+            if not self._return_to_model_id:
+                logger.debug("[ModelRunner] 无上一级可通知（return_to_model_id 为空），跳过超时激活")
+                return
+            from modules.thinking.communication.interface import (
+                Message, MessageType, get_message_bus_port,
+            )
+            bus = get_message_bus_port()
+            progress = await self._collect_expert_progress()
+            await bus.send(Message(
+                msg_type=MessageType.SYSTEM,
+                sender=self.model_id,
+                recipient=self._return_to_model_id,
+                content={
+                    "action": "thinking_result",
+                    "result": (
+                        f"【委托等待超时】{self.model_id} 等待委托结果超过设定时间。"
+                        f"当前进度：{progress or '无'}。\n"
+                        f"可用 query_delegation(delegation_id=...) 查看进度，"
+                        f"或用 resume_delegation(delegation_id=...) 继续该委托。"
+                    ),
+                    "delegation_id": getattr(self, "_delegation_id", "") or self._task_id,
+                    "task_id": self._task_id,
+                    "source_model_id": self.model_id,
+                    "source_tier": self.tier,
+                    "timeout": True,
+                },
+            ))
+            logger.info(
+                f"[ModelRunner] {self.model_id} 委托等待超时，已激活上一级 {self._return_to_model_id}"
+            )
+        except Exception as e:
+            logger.debug(f"[ModelRunner] 超时激活上一级失败 (非致命): {e}")
+
     async def _notify_thinking_complete(self) -> None:
         """通知 orchestrator 思考已完成"""
         try:
@@ -1181,15 +1240,18 @@ class ModelRunner:
         messages = await self._check_messages()
 
         # Blackboard 切片 — 包含目标/计划/委托/专家发现/系统观察/共享记忆
+        # 轮次范围：可由 read_context 工具调用指定（默认近 10 轮）
+        _rs = int(getattr(self, "_dialog_round_start", 0) or 0)
+        _re = int(getattr(self, "_dialog_round_end", 0) or 0)
         slicer = ContextSlicer()
         if self.blackboard:
             if self.tier == "large":
-                dialog_context = slicer.slice_for_large(self.blackboard)
+                dialog_context = slicer.slice_for_large(self.blackboard, round_start=_rs, round_end=_re)
             elif self.tier == "supervisor":
-                dialog_context = slicer.slice_for_supervisor(self.blackboard)
+                dialog_context = slicer.slice_for_supervisor(self.blackboard, round_start=_rs, round_end=_re)
             else:  # expert
                 cursor = self.turn_context.round_count if self.turn_context else 0
-                dialog_context = slicer.slice_for_expert(self.blackboard, cursor=cursor)
+                dialog_context = slicer.slice_for_expert(self.blackboard, cursor=cursor, round_start=_rs, round_end=_re)
         else:
             dialog_context = ""
 
@@ -1223,7 +1285,7 @@ class ModelRunner:
     GENERATE_RETRIES = 2         # 模型调用最大重试次数
     GENERATE_RETRY_DELAY = 1.0   # 重试间隔基础值 (指数退避)
 
-    MAX_CHAT_TOOL_TURNS = 25  # 原生工具调用最大轮次
+    MAX_CHAT_TOOL_TURNS = 300  # 工具循环防死循环兜底轮数（非 token 限制）；上下文超 90% 会自动总结后继续
 
     def _push_reasoning(self, reasoning: str) -> None:
         """推送模型思考过程（deepseek reasoning_content）到前端 thinking 区，带身份标注"""
@@ -1519,6 +1581,46 @@ class ModelRunner:
             logger.debug(f"[ModelRunner] resume_delegation 异常 (非致命): {e}")
             return f"【继续异常】{e}"
 
+    async def _handle_read_context(self, args: Dict[str, Any]) -> str:
+        """read_context：读取黑板指定轮次范围的对话记忆，并设置后续默认读取范围"""
+        try:
+            try:
+                round_start = int(args.get("round_start", 0) or 0)
+            except Exception:
+                round_start = 0
+            try:
+                round_end = int(args.get("round_end", 0) or 0)
+            except Exception:
+                round_end = 0
+            try:
+                limit = int(args.get("context_limit", 3000) or 3000)
+                limit = max(500, min(10000, limit))
+            except Exception:
+                limit = 3000
+            bb = getattr(self, "blackboard", None)
+            if bb is None or not hasattr(bb, "read_dialog"):
+                return "【读取失败】当前上下文无黑板。"
+            # 记录范围供后续上下文构建使用
+            self._dialog_round_start = round_start
+            self._dialog_round_end = round_end
+            dialog = bb.read_dialog(round_start=round_start, round_end=round_end)
+            if not dialog:
+                return f"【无对话记录】轮次范围 {round_start}~{round_end} 无记录。"
+            lines = []
+            for e in dialog:
+                r = e.get("round", 0)
+                t = e.get("type", "thought")
+                m = e.get("model_id", "")
+                content = str(e.get("content", ""))
+                lines.append(f"[轮{r} {t} {m}] {content}")
+            text = "\n".join(lines)
+            if len(text) > limit:
+                text = text[:limit] + f"...[已截断，共{len(text)}字符]"
+            return f"【对话记录 轮{round_start}~{round_end}】\n{text}"
+        except Exception as e:
+            logger.debug(f"[ModelRunner] read_context 异常 (非致命): {e}")
+            return f"【读取异常】{e}"
+
     def _save_resume_context(self, messages: list) -> None:
         """保存当前工具循环的 messages 断点快照（供超时/中断后续思考恢复）
 
@@ -1533,6 +1635,100 @@ class ModelRunner:
                 bb.persist()
         except Exception as e:
             logger.debug(f"[ModelRunner] 断点快照保存失败 (非致命): {e}")
+
+    async def _maybe_summarize_context(self, messages: list, user_prompt: str) -> bool:
+        """上下文占用超模型输入上下文的 90% 时，调当前模型做一次总结并注入下轮
+
+        所有 token 控制以模型配置的输入上下文长度为标准（context_window_size），
+        不硬裁剪（不 30/70 截断）；总结后 messages 替换为【摘要 + 原任务】，返回 True。
+        """
+        try:
+            if not messages:
+                return False
+            from modules.thinking.context.compression import get_compression_engine
+            from infra.model.base_model import ChatMessage
+            engine = get_compression_engine()
+            text = "\n".join(f"{m.role}: {(m.content or '')[:500]}" for m in messages)
+            estimated = engine.estimate_tokens(text)
+            window = int(self.context_window_size or 128000)
+            threshold = int(window * 0.9)
+            if estimated <= threshold:
+                return False
+            logger.info(
+                f"[ModelRunner] {self.model_id} 上下文占用 {estimated}/{window} token 超 90%，"
+                f"调当前模型总结后继续"
+            )
+            summary = await self._summarize(messages)
+            if not summary or not summary.strip():
+                logger.warning(f"[ModelRunner] {self.model_id} 自动总结失败，继续原上下文")
+                return False
+            # 替换 messages：保留 system + 摘要 + 原任务，不再保留原始对话（已被摘要覆盖）
+            system_prompt_orig = messages[0].content if messages[0].role == "system" else ""
+            messages[:] = [
+                ChatMessage(role="system", content=system_prompt_orig or "你是智能助手。"),
+                ChatMessage(
+                    role="user",
+                    content=(
+                        f"【历史上下文已自动总结（原上下文超 {window}×90% 限制）】\n{summary}\n\n"
+                        f"原任务：{user_prompt}\n请基于以上摘要继续完成当前任务，不要重复已完成的工作。"
+                    ),
+                ),
+            ]
+            self._record_context_summary(summary)
+            return True
+        except Exception as e:
+            logger.debug(f"[ModelRunner] 上下文总结检查失败 (非致命): {e}")
+            return False
+
+    async def _summarize(self, messages: list) -> str:
+        """调当前模型对已有工具循环上下文做精炼总结，返回摘要文本"""
+        try:
+            from infra.model.base_model import ChatMessage as _CM
+            text = "\n".join(
+                f"[{m.role}] {(m.content or '')[:2000]}" for m in messages
+            )
+            prompt = (
+                "你是一个上下文总结器。以下是一段工具调用/思考历史，请精炼总结：\n"
+                "1. 已完成的目标和关键结论\n"
+                "2. 尚未完成的任务和下一步\n"
+                "3. 重要的工具调用结果\n"
+                "要求：保留关键信息，去掉无关细节，直接输出总结，不要客套。\n\n"
+                f"上下文历史：\n{text}"
+            )
+            client = getattr(self.instance, "client", None)
+            if client is None:
+                return ""
+            if hasattr(client, "chat_stream"):
+                resp = await client.chat_stream(
+                    messages=[_CM(role="user", content=prompt)],
+                    max_tokens=2048,
+                )
+            else:
+                resp = await client.chat(
+                    messages=[_CM(role="user", content=prompt)],
+                    max_tokens=2048,
+                )
+            return (getattr(resp, "message", None) or None) and (
+                getattr(resp.message, "content", "") or ""
+            )
+        except Exception as e:
+            logger.warning(f"[ModelRunner] {self.model_id} 总结调用失败: {e}")
+            return ""
+
+    def _record_context_summary(self, summary: str) -> None:
+        """把自动总结落黑板 observation + 持久化（供恢复/检查）"""
+        try:
+            bb = getattr(self, "blackboard", None)
+            if bb is not None and hasattr(bb, "add_observation"):
+                bb.add_observation(
+                    self.tier,
+                    f"【上下文自动总结】\n{summary}",
+                    metadata={"context_type": "tool_loop_summary"},
+                )
+            if bb is not None and hasattr(bb, "persist"):
+                bb.persist()
+        except Exception as e:
+            logger.debug(f"[ModelRunner] 上下文总结记录失败 (非致命): {e}")
 
     def _visible_tool_whitelist(self) -> List[str]:
         """获取当前模型可见工具列表（唯一出口：ToolPermissionController）
@@ -1838,6 +2034,10 @@ class ModelRunner:
                     # ── 每轮开头保存断点快照：超时/中断后可从最近完成的轮次继续 ──
                     if messages:
                         self._save_resume_context(messages)
+                    # ── 上下文占用超 90% 时自动总结（调当前模型）并继续，不硬裁剪 ──
+                    if await self._maybe_summarize_context(messages, user_prompt):
+                        # 总结后 messages 已替换为摘要，保存新断点继续
+                        self._save_resume_context(messages)
                     # ── 每轮检查执行模式是否被外部变更 ──
                     try:
                         from config.settings import settings as _mode_settings
@@ -1970,7 +2170,7 @@ class ModelRunner:
                             control_calls.append(tc)
                         elif tc.name in ("request_skill", "list_skills", "stop_skill", "set_memory_focus", "stop_task"):
                             control_calls.append(tc)
-                        elif tc.name in ("query_delegation", "resume_delegation"):
+                        elif tc.name in ("query_delegation", "resume_delegation", "read_context"):
                             control_calls.append(tc)
                         elif tc.name in ("request_mode_change", "ask_user_intent"):
                             control_calls.append(tc)
@@ -1987,7 +2187,7 @@ class ModelRunner:
                     # continue_thinking / respond_to_user / set_memory_focus / request_mode_change /
                     # ask_user_intent / delegate_task / create_supervisor 不产生 tool 结果，
                     # 不写入 assistant.tool_calls（避免"未应答的 tool_calls"错误）。
-                    _CONTROL_RESULT_TOOLS = ("request_skill", "stop_skill", "list_skills", "stop_task", "query_delegation", "resume_delegation")
+                    _CONTROL_RESULT_TOOLS = ("request_skill", "stop_skill", "list_skills", "stop_task", "query_delegation", "resume_delegation", "read_context")
                     result_control_calls = [tc for tc in control_calls if tc.name in _CONTROL_RESULT_TOOLS]
                     all_result_calls = normal_calls + query_calls + result_control_calls
                     if all_result_calls:
@@ -2138,6 +2338,8 @@ class ModelRunner:
                                 result = await self._handle_query_delegation(args)
                             elif tc.name == "resume_delegation":
                                 result = await self._handle_resume_delegation(args)
+                            elif tc.name == "read_context":
+                                result = await self._handle_read_context(args)
                             if result:
                                 messages.append(ChatMessage(
                                     role="tool",

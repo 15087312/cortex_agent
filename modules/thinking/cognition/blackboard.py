@@ -563,11 +563,30 @@ class CognitiveBlackboard:
 
     # ── 对话框读取（替代 SharedDialog）──
 
-    def read_dialog(self, limit: int = 50) -> List[Dict[str, Any]]:
-        """读取最近的对话框记录"""
+    def read_dialog(
+        self,
+        limit: int = 200,
+        round_start: int = 0,
+        round_end: int = 0,
+    ) -> List[Dict[str, Any]]:
+        """读取对话框记录
+
+        round_start/round_end: 指定轮次范围（含边界）。
+        round_end=0 → 取到最新轮；round_start=0 → 默认取最近 10 轮（round_end-10 起）。
+        limit: 兼容旧参数，无轮次指定时限制条数。
+        """
         with self._lock:
-            entries = list(self._dialog_entries)[-limit:]
-            return [e.to_dict() for e in entries]
+            entries = list(self._dialog_entries)
+            if entries:
+                max_round = max(e.round_num for e in entries)
+                end = round_end if round_end > 0 else max_round
+                start = round_start if round_start > 0 else max(0, end - 9)
+                filtered = [e for e in entries if start <= e.round_num <= end]
+            else:
+                filtered = []
+            if not round_start and not round_end:
+                filtered = filtered[-limit:]
+            return [e.to_dict() for e in filtered]
 
     def new_entries(self) -> List[Dict[str, Any]]:
         """获取自上次读取以来的新条目（用于 CLI 实时流）"""

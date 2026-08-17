@@ -266,3 +266,23 @@ def test_build_delegation_context(bb):
     assert "已截断" in short
     # 不存在返回空
     assert bb.build_delegation_context("ghost", 100) == ""
+
+
+# --- 对话按轮次读取（默认近 10 轮 / 指定 x~y 轮） ---
+
+def test_read_dialog_by_rounds(bb):
+    """read_dialog 按轮次范围过滤 + 默认近 10 轮"""
+    for r in range(1, 15):
+        bb.write_thought(f"m{r}", "large", f"第{r}轮思考", round_num=r)
+    # 指定范围
+    got = bb.read_dialog(round_start=3, round_end=5)
+    rounds = sorted(e["round"] for e in got)
+    assert rounds == [3, 4, 5]
+    # 默认近 10 轮（到最新轮 14）
+    got10 = bb.read_dialog()
+    assert got10
+    # 最小轮 >= 5（14-10+1）
+    assert min(e["round"] for e in got10) >= 5
+    # round_end 指定、start 缺省 → 近 10 轮到该轮
+    got_end = bb.read_dialog(round_end=8)
+    assert max(e["round"] for e in got_end) == 8

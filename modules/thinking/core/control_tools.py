@@ -266,6 +266,35 @@ RESUME_DELEGATION_TOOL = {
     }
 }
 
+READ_CONTEXT_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "read_context",
+        "description": (
+            "读取黑板对话记忆的指定轮次范围（默认近 10 轮）。"
+            "可传 round_start/round_end 自行决定读取 x 轮到 y 轮的记忆；"
+            "设置后后续上下文构建默认按该范围读取。返回内容按 context_limit 截取。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "round_start": {
+                    "type": "integer",
+                    "description": "起始轮次（可选，默认近 10 轮起点）。",
+                },
+                "round_end": {
+                    "type": "integer",
+                    "description": "结束轮次（可选，默认最新轮）。",
+                },
+                "context_limit": {
+                    "type": "integer",
+                    "description": "返回文本截取长度（可选，默认 3000，范围 500-10000）。",
+                },
+            },
+        },
+    }
+}
+
 QUERY_TOOL_DETAILS_TOOL = {
     "type": "function",
     "function": {

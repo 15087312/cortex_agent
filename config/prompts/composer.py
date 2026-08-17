@@ -59,14 +59,20 @@ class PromptComposer:
     def _roles(self):
         return self._loader.load("roles") or {}
 
-    def build(self, pool, role: str, tier: str, question: str = "") -> str:
+    def build(self, pool, role: str, tier: str, question: str = "", context_length: int = 0) -> str:
         """从 TurnContext 池构建轮次上下文（不含系统提示词）
-        
+
         系统提示词由 model_runner._build_system_prompt_for_mode() 
         单独注入，避免在 system + user 消息中重复出现。
+
+        context_length: 模型输入上下文长度（token），pool 按其 90% 作为软限
+        （不硬裁剪，仅告警）。
         """
         from modules.thinking.context.pool import TurnContext
-        round_ctx = pool.view(role) if isinstance(pool, TurnContext) else ""
+        if isinstance(pool, TurnContext):
+            round_ctx = pool.view(role, max_tokens=int(context_length * 0.9)) if context_length else pool.view(role)
+        else:
+            round_ctx = ""
         task_block = f"【当前任务】\n{question}" if question else ""
         parts = [round_ctx, task_block]
         return "\n\n".join(p for p in parts if p)

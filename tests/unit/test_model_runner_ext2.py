@@ -149,6 +149,7 @@ def _fake_compression(monkeypatch, engine=None):
         engine.estimate_tokens.return_value = 123
     fake_mod = types.ModuleType("modules.thinking.context.compression")
     fake_mod.get_compression_engine = lambda: engine
+    fake_mod.CompressionEngine = type("CompressionEngine", (), {})  # context/__init__ 导入需要
     monkeypatch.setitem(sys.modules, "modules.thinking.context.compression", fake_mod)
     return engine
 
@@ -389,7 +390,7 @@ async def test_build_runner_prompt_expert(monkeypatch):
     r._consume_guidance = MagicMock()
     r._build_prompt = MagicMock(return_value="p")
     await r._build_runner_prompt(1)
-    slicer.slice_for_expert.assert_called_once_with(r.blackboard, cursor=3)
+    slicer.slice_for_expert.assert_called_once_with(r.blackboard, cursor=3, round_start=0, round_end=0)
 
 
 async def test_build_runner_prompt_no_blackboard(monkeypatch):
@@ -2363,3 +2364,106 @@ async def test_runtime_expert_thinking_result_uses_probe_id(monkeypatch):
     assert content["delegation_id"] == "probe_monitor_abc123"  # 委托链 key
     assert content["task_id"] == "task_root_1"                 # 上级 pending 匹配
     assert content["result"] == "监控完成"
+
+
+# ── 上下文 90% 自动总结（工具循环） ────────────────────────────────────────
+
+async def test_maybe_summarize_context_threshold(monkeypatch):
+    """上下文超 90% 时自动总结并替换 messages + 落黑板"""
+    r, mcp = _tool_runner(monkeypatch, tier="large")
+    # 真实小黑板（落 observation）
+    bb = _real_bb()
+    r.blackboard = bb
+    # 窗口 100 → 阈值 90；fake compression estimate_tokens=123 → 触发
+    r._thinker = None
+    from modules.thinking.identity import ModelIdentity
+    r.instance.identity = ModelIdentity(model_id="large_primary", tier="large", context_length=100)
+    client = MagicMock()
+    client.supports_native_tools = True
+    client.chat_stream = AsyncMock(return_value=_resp(content="总结摘要"))
+    r.instance.client = client
+    messages = [ChatMessage(role="system", content="你是助手。"),
+                ChatMessage(role="user", content="请完成一个非常长的任务。")]
+    ok = await r._maybe_summarize_context(messages, "原任务")
+    assert messages[1].role == "user"
+    assert "自动总结" in messages[1].content or "总结" in messages[1].content
+    # 落黑板 observation
+    obs = [o for o in bb.observations if o.metadata.get("context_type") == "tool_loop_summary"]
+    assert len(obs) == 1
+    assert "总结摘要" in obs[0].content
+
+
+async def test_maybe_summarize_context_below(monkeypatch):
+    """上下文未超 90% 不触发总结"""
+    r, mcp = _tool_runner(monkeypatch, tier="large")
+    from modules.thinking.identity import ModelIdentity
+    r.instance.identity = ModelIdentity(model_id="large_primary", tier="large", context_length=100000)
+    messages = [ChatMessage(role="system", content="你是助手。"),
+                ChatMessage(role="user", content="你好")]
+    ok = await r._maybe_summarize_context(messages, "原任务")
+    assert ok is False
+
+
+async def test_maybe_summarize_context_fail_fallback(monkeypatch):
+    """总结调用失败/返回空 → 不替换 messages（继续原上下文）"""
+    r, mcp = _tool_runner(monkeypatch, tier="large")
+    from modules.thinking.identity import ModelIdentity
+    r.instance.identity = ModelIdentity(model_id="large_primary", tier="large", context_length=50)
+    client = MagicMock()
+    client.chat_stream = AsyncMock(return_value=_resp(content=None))
+    r.instance.client = client
+    messages = [ChatMessage(role="system", content="你是助手。"),
+                ChatMessage(role="user", content="长任务。" * 30)]
+    ok = await r._maybe_summarize_context(messages, "原任务")
+    assert ok is False
+    assert len(messages) == 2  # 未替换
+    assert "长任务" in messages[1].content
+
+
+# ── read_context：按轮次读取黑板记忆 ───────────────────────────────────────
+
+async def test_handle_read_context_rounds(monkeypatch):
+    """read_context 按指定轮次范围返回对话，并设置后续读取范围"""
+    r, mcp = _tool_runner(monkeypatch, tier="large")
+    bb = _real_bb()
+    for i in range(1, 6):
+        bb.write_thought(f"m{i}", "large", f"第{i}轮内容", round_num=i)
+    r.blackboard = bb
+    out = await r._handle_read_context({"round_start": 2, "round_end": 4, "context_limit": 3000})
+    assert "轮2" in out
+    assert "第2轮内容" in out
+    assert "第5轮内容" not in out
+    assert r._dialog_round_start == 2
+    assert r._dialog_round_end == 4
+
+
+async def test_handle_read_context_empty(monkeypatch):
+    """指定轮次无记录时返回提示"""
+    r, mcp = _tool_runner(monkeypatch, tier="large")
+    r.blackboard = _real_bb()
+    out = await r._handle_read_context({"round_start": 100, "round_end": 200})
+    assert "无对话记录" in out
+
+
+async def test_notify_timeout_to_parent(monkeypatch):
+    """委托等待超时 → 自动激活上一级（带进度 + 委托 id + timeout 标记）"""
+    import modules.thinking.communication.interface as iface_mod
+    bus = MagicMock()
+    bus.send = AsyncMock()
+    monkeypatch.setattr(iface_mod, "get_message_bus_port", lambda: bus)
+    r = _runner(tier="supervisor")
+    r._return_to_model_id = "large_primary"
+    r._delegation_id = "probe_expert_x"
+    r._task_id = "task_root_1"
+    r._collect_expert_progress = AsyncMock(return_value="专家执行中")
+    await r._notify_timeout_to_parent()
+    sent = [c.args[0] for c in bus.send.call_args_list]
+    assert len(sent) == 1
+    content = sent[0].content
+    assert content["action"] == "thinking_result"
+    assert content["timeout"] is True
+    assert content["delegation_id"] == "probe_expert_x"
+    assert content["task_id"] == "task_root_1"
+    assert "超时" in content["result"]
+    assert "resume_delegation" in content["result"]
+    assert sent[0].recipient == "large_primary"

@@ -102,6 +102,27 @@ class Settings(BaseSettings):
     SMALL_MODEL_API_URL: str = ""
     SMALL_MODEL_NAME: str = ""
 
+    # ── 各模型输入上下文长度（token 数）──
+    # 以设置模型 API 时的「输入上下文长度」为标准（0 = 使用全局 CONTEXT_WINDOW_SIZE）
+    # 所有 token 控制（90% 总结阈值等）都以对应模型的实际上下文长度为基准，禁止硬编码
+    LARGE_MODEL_CONTEXT_LENGTH: int = 0
+    MEDIUM_MODEL_CONTEXT_LENGTH: int = 0
+    SMALL_MODEL_CONTEXT_LENGTH: int = 0
+
+    def get_context_length(self, model_key: str = "") -> int:
+        """按模型层级获取输入上下文长度（token 数）
+
+        large → LARGE_MODEL_CONTEXT_LENGTH；supervisor → MEDIUM_*；expert → SMALL_*；
+        0 / 未知层级 → 全局 CONTEXT_WINDOW_SIZE。
+        """
+        if model_key == "large":
+            return self.LARGE_MODEL_CONTEXT_LENGTH or self.CONTEXT_WINDOW_SIZE or 128000
+        if model_key == "supervisor":
+            return self.MEDIUM_MODEL_CONTEXT_LENGTH or self.CONTEXT_WINDOW_SIZE or 128000
+        if model_key == "expert":
+            return self.SMALL_MODEL_CONTEXT_LENGTH or self.CONTEXT_WINDOW_SIZE or 128000
+        return self.CONTEXT_WINDOW_SIZE or 128000
+
 
 
     # 视觉模型配置

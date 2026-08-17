@@ -288,6 +288,7 @@ class ModelIdentity:
     metadata: Dict = field(default_factory=dict)
     api_key: Optional[str] = None
     api_url: Optional[str] = None
+    context_length: int = 0  # 输入上下文长度（token 数）；0 = 用模型层级全局配置
 
     @classmethod
     def from_template(cls, template_key: str, **overrides) -> "ModelIdentity":

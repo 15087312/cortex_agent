@@ -711,11 +711,15 @@ class ContinuousThinker:
             pass
 
         composer = PromptComposer()
-        prompt = composer.build(pool, role=role, tier=self._tier, question=initial_question)
+        prompt = composer.build(
+            pool, role=role, tier=self._tier, question=initial_question,
+            context_length=getattr(self, "_context_window_size", 0),
+        )
 
         try:
             from config.settings import settings as _cfg
-            self._context_window_size = _cfg.CONTEXT_WINDOW_SIZE
+            # 以模型层级的输入上下文长度为标准（设置模型 API 时的输入上下文长度）
+            self._context_window_size = _cfg.get_context_length(self._tier)
         except Exception:
             self._context_window_size = 128000
         try:

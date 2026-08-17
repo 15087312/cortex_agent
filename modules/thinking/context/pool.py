@@ -96,7 +96,7 @@ class TurnContext:
         self._hashes.add(h)
         self.fragments[fragment.source] = fragment
 
-    def view(self, role: str, max_tokens: int = 8000) -> str:
+    def view(self, role: str, max_tokens: int = 0) -> str:
         parts = []
         sorted_frags = sorted(self.fragments.values(), key=lambda f: f.priority)
 
@@ -115,14 +115,27 @@ class TurnContext:
         return self._compact(combined, max_tokens)
 
     def _compact(self, text: str, max_tokens: int) -> str:
+        """超限时不硬裁剪（不做 30/70 截断）
+
+        max_tokens 由调用方按模型配置的输入上下文长度 × 90% 传入；
+        超限仅告警并返回原样——token 控制交由工具循环的「当前模型总结」机制
+        与来源侧裁剪（近 10 轮等）处理。
+        """
         if not text:
             return ""
+        if max_tokens <= 0:
+            return text
         try:
             from modules.thinking.context.compression import get_compression_engine
             engine = get_compression_engine()
             estimated = engine.estimate_tokens(text)
             if estimated <= max_tokens:
                 return text
-            return engine.compress(text, max_tokens=max_tokens)
+            import logging
+            logging.getLogger("turn_context").warning(
+                f"[TurnContext] 上下文估算 {estimated} token 超限 {max_tokens}，"
+                f"不做硬裁剪，由总结机制/来源侧裁剪控制"
+            )
+            return text
         except Exception:
             return text

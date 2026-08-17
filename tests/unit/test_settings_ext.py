@@ -770,3 +770,32 @@ class TestModuleFallback:
     def test_module_level_settings_instantiates(self):
         from config.settings import settings
         assert settings is not None
+
+
+# ── 模型上下文长度（get_context_length） ──────────────────────────────────
+
+def test_get_context_length_tier_defaults():
+    """各层级上下文长度：0 → 全局 CONTEXT_WINDOW_SIZE"""
+    from config.settings import settings as cfg
+    base = cfg.CONTEXT_WINDOW_SIZE or 128000
+    assert cfg.get_context_length("large") == base
+    assert cfg.get_context_length("supervisor") == base
+    assert cfg.get_context_length("expert") == base
+    assert cfg.get_context_length("unknown") == base
+
+
+def test_get_context_length_tier_specific():
+    """配置了层级上下文长度时按对应层级取值"""
+    from config.settings import settings as cfg
+    try:
+        old_l, old_m, old_s = cfg.LARGE_MODEL_CONTEXT_LENGTH, cfg.MEDIUM_MODEL_CONTEXT_LENGTH, cfg.SMALL_MODEL_CONTEXT_LENGTH
+        cfg.LARGE_MODEL_CONTEXT_LENGTH = 131072
+        cfg.MEDIUM_MODEL_CONTEXT_LENGTH = 65536
+        cfg.SMALL_MODEL_CONTEXT_LENGTH = 32768
+        assert cfg.get_context_length("large") == 131072
+        assert cfg.get_context_length("supervisor") == 65536
+        assert cfg.get_context_length("expert") == 32768
+    finally:
+        cfg.LARGE_MODEL_CONTEXT_LENGTH = old_l
+        cfg.MEDIUM_MODEL_CONTEXT_LENGTH = old_m
+        cfg.SMALL_MODEL_CONTEXT_LENGTH = old_s
