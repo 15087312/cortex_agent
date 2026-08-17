@@ -1910,3 +1910,29 @@ def add_to_dialog(self, role, text):       # 无 session 参数
 **验证：** `test_delegation_chain_full_flow` 断言 `state["final_response"] == blackboard.final_response`；相关 503+ 通过。
 
 **教训：** 黑板持久化要覆盖"终态"字段（final_response 等），不能只持久化过程态；写终态的方法本身应触发落库。
+
+## 66. 测试直接篡改全局单例 ToolRegistry._tools —— 全量 CI 69 个失败（测试污染）
+
+**现象：** CI 全量跑出 69 个失败：`toolgate`/`tool_visibility`/`tools_search`/`tool_registry_ext` 报 `'_T' object has no attribute 'risk_level/category/enabled/...'`，本地单文件测试却全部通过。
+
+**根因：** 我新增的 `test_tool_permission_ext.py::test_get_base_whitelist_star` 为了测 `*` 展开逻辑，直接执行 `tr.ToolRegistry._tools = {含缺字段的 _T 对象}` **篡改了全局共享单例**。全量运行时，`test_toolgate` 等读取 `ToolRegistry._tools` 读到残留的 `_T` 对象（缺 risk_level/category 等字段）→ AttributeError。单文件测试通过是因为 `_T` 污染只在**跨文件执行顺序**下被其他测试读取才暴露。
+
+**修复：**
+1. 用 `monkeypatch.setattr(ToolRegistry, "_tools", {...})` 隔离——pytest monkeypatch 在 **teardown 自动恢复**，不污染全局，且不依赖真实注册工具。
+2. （关联）`read_context` 工具误加入所有 tier 基础工具，导致 `test_get_control_tools_expert` 失败 → 移回 large/supervisor 委托组。
+
+**验证：** CI 同规模全量 `tests/unit` 6036 passed（原 69 failed → 0）。
+
+**教训：** ① 测试**绝不要直接对全局共享单例的内部状态赋值**（`ToolRegistry._tools`、`_runner_managers`、`_session_memory_context` 等）——要隔离就用 `monkeypatch.setattr`（自动恢复）或真实 API + cleanup；② 单文件全过 ≠ 测试安全，这类"全量跨文件顺序才暴露"的污染必须全量回归；③ mock 对象缺字段（`_T`）是"读到被篡改的全局状态"的典型信号。
+
+## 67. 新增控制工具 read_context 误加入所有 tier —— expert 权限越权（后端/测试）
+
+**现象：** `test_get_control_tools_expert` 失败：expert 的 control tools 多出 `read_context`。
+
+**根因：** 在 `tool_permission_controller.get_control_tools` 里把 `READ_CONTEXT_TOOL` 放进了 `tools = [CONTINUE_THINKING_TOOL, QUERY_TOOL_DETAILS_TOOL, READ_CONTEXT_TOOL]` 基础工具列表——**所有 tier 共享**。但 `read_context` 是读取黑板记忆/委托上下文，expert 无记忆读取需求，不应暴露。
+
+**修复：** 把 `READ_CONTEXT_TOOL` 移到 `if delegation_available and tier in ("large", "supervisor")` 委托组（与 query/resume_delegation 同级）。
+
+**验证：** `test_get_control_tools_expert` 恢复；tool 相关 144 passed。
+
+**教训：** 新增控制工具要按 tier 权限**显式归类**（基础/委托/大模型专属），不要无脑塞进共享基础列表；expert 只暴露最小必要工具。
