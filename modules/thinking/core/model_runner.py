@@ -61,7 +61,7 @@ class ModelRunner:
     MAX_IDLE_ROUNDS = 5   # 连续无消息最大空闲轮次
     THINK_INTERVAL = 2.0  # 轮间间隔
 
-    THINK_TIMEOUT = 120.0  # 单次思考轮次超时（含重试），超时强制结束思考循环
+    THINK_TIMEOUT = 300.0  # 单次思考轮次超时（含重试），超时强制结束思考循环；可被 settings.MODEL_THINK_TIMEOUT / 上级委托覆盖
 
     PROGRESS_INTERVAL = 300.0  # 主管/大模型等待时，每隔N秒自动收集进度并唤醒
 
@@ -83,6 +83,13 @@ class ModelRunner:
 
         self.session_id = session_id or str(uuid.uuid4())
         self.manager = manager
+
+        # 思考超时可配置：settings.MODEL_THINK_TIMEOUT 或上级委托时覆盖（不再硬编码）
+        try:
+            from config.settings import settings as _s
+            self.THINK_TIMEOUT = float(getattr(_s, "MODEL_THINK_TIMEOUT", self.THINK_TIMEOUT))
+        except Exception:
+            pass
 
         # RuntimeExpert 相关（由 start_runner / _run_runtime_expert 设置）
         self.identity_key: str = ""
@@ -1817,7 +1824,7 @@ class ModelRunner:
                             if tc.name == "continue_thinking":
                                 ctrl = {"continue": args.get("continue", True)}
                                 if "wait_seconds" in args:
-                                    ctrl["wait_seconds"] = max(1, min(60, int(args["wait_seconds"])))
+                                    ctrl["wait_seconds"] = max(1, min(600, int(args["wait_seconds"])))
                                 if "result_summary" in args:
                                     ctrl["result_summary"] = args["result_summary"]
                                 if self._thinker:

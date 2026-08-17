@@ -669,6 +669,7 @@ class Settings(BaseSettings):
 
     # 模型配置
     MODEL_TIMEOUT: int = 180  # 模型 HTTP 请求超时（秒），可被各模型配置覆盖
+    MODEL_THINK_TIMEOUT: float = 300  # 单次思考轮次超时（秒），上一级大模型可自主设置
 
     # 感知系统总开关
     PERCEPTION_ENABLED: bool = True

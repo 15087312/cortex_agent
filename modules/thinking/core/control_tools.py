@@ -26,7 +26,7 @@ CONTINUE_THINKING_TOOL = {
                 },
                 "wait_seconds": {
                     "type": "integer",
-                    "description": "下一轮思考前等待秒数，范围 1-60。等待专家结果或外部数据时可适当延长。",
+                    "description": "下一轮思考前等待秒数，范围 1-600。等待专家结果或外部数据时可适当延长。",
                 },
                 "reason": {
                     "type": "string",
@@ -64,7 +64,7 @@ DELEGATE_TASK_TOOL = {
                 },
                 "wait_seconds": {
                     "type": "integer",
-                    "description": "发起委托后建议等待秒数，范围 1-60。未传时由 ContinuousThinker 自动决定。",
+                    "description": "发起委托后建议等待秒数，范围 1-600。未传时由 ContinuousThinker 自动决定。",
                 },
             },
             "required": ["role", "task"],
@@ -346,7 +346,7 @@ class ThinkingControlDecision:
         wait_seconds = payload.get("wait_seconds")
         if wait_seconds is not None:
             try:
-                wait_seconds = max(1, min(60, int(wait_seconds)))
+                wait_seconds = max(1, min(600, int(wait_seconds)))
             except Exception:
                 wait_seconds = None
         return cls(
