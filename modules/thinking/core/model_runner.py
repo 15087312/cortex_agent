@@ -364,7 +364,10 @@ class ModelRunner:
                             "source_tier": self.tier,
                             "source_role": self.identity.role if self.identity else "",
                             "result": final_result or "",
-                            "delegation_id": self._task_id,
+                            # 委托链 key 用 probe_id（与 continuous_thinker 路径一致）；
+                            # task_id 供上级 _pending_delegations 匹配
+                            "delegation_id": getattr(self, "_delegation_id", "") or self._task_id,
+                            "task_id": self._task_id,
                             "expert_summary": expert_summary,
                         },
                     )

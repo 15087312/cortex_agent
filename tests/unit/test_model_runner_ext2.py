@@ -2325,3 +2325,41 @@ async def test_delegate_task_records_chain(monkeypatch):
     assert d["parent_delegation_id"] == "p-parent"
     assert d["origin_task_id"] == "task_root"
     assert d["return_to_model_id"] == "large_primary"
+
+
+class _FakeOnDemandExpert:
+    """轻量 on_demand 专家：run_cli_mode 返回固定结果"""
+    is_persistent = False
+
+    def __init__(self, **kwargs):
+        self.identity = MagicMock()
+        self.identity.role = "security_monitor"
+        self.run_cli_mode = AsyncMock(return_value={
+            "success": True, "result": "监控完成", "iterations": 2, "tool_calls": 3,
+        })
+
+
+async def test_runtime_expert_thinking_result_uses_probe_id(monkeypatch):
+    """RuntimeExpert 完成通知上级时，delegation_id 用 probe_id（委托链 key）而非 task_id"""
+    import modules.thinking.communication.interface as iface_mod
+    bus = MagicMock()
+    bus.send = AsyncMock()
+    monkeypatch.setattr(iface_mod, "get_message_bus_port", lambda: bus)
+
+    expert_cls = _FakeOnDemandExpert
+
+    r = _runner(tier="expert")
+    r._delegation_id = "probe_monitor_abc123"
+    r._task_id = "task_root_1"
+    r._return_to_model_id = "large_primary"
+    r.identity.role = "security_monitor"
+
+    await r._run_runtime_expert(expert_cls)
+
+    sent = [c.args[0] for c in bus.send.call_args_list]
+    result_msgs = [m for m in sent if m.content.get("action") == "thinking_result"]
+    assert len(result_msgs) == 1
+    content = result_msgs[0].content
+    assert content["delegation_id"] == "probe_monitor_abc123"  # 委托链 key
+    assert content["task_id"] == "task_root_1"                 # 上级 pending 匹配
+    assert content["result"] == "监控完成"

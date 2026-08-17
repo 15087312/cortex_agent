@@ -1820,3 +1820,57 @@ def add_to_dialog(self, role, text):       # 无 session 参数
 **验证：** screen_capture_daemon + runtime_expert 67 项通过。
 
 **教训：** `pytest-timeout` 阈值要按**最坏情况（CI 全量负载）**设，不能按本地单测耗时——毫秒级测试在全量下也会因调度/导入延迟超时。这类"单测快、全量误杀"优先放宽超时，而非改测试逻辑。
+
+## 59. delegate_task 的 wait_seconds 解析后未传递 —— 上级设置的下级超时恒走 300s 兜底（后端）
+
+**现象：** 要求"让上一级大模型自主设置下级思考超时"后，`delegate_task` 工具已把 `wait_seconds` 标为 required，但运行时上级设置的值**从未生效**——下级 runner 的思考超时恒为 `DEFAULT_DELEGATE_THINK_TIMEOUT=300`。
+
+**根因：** `model_runner._generate_with_tools` 的 delegate_calls 分发处只解析了 `role`/`task`，**没有把 `args["wait_seconds"]` 传入 `DelegationRequest`**（delegation_port.py:24 字段恒为 None）；`ProbeDelegationAdapter.delegate` 收到 None 后走兜底分支（且只在缺省时打 warning）。工具 schema 声明"必填+生效"，但解析到使用之间断链。
+
+**修复（commit `16bd27e`）：** delegate_calls 分发处解析 `wait_seconds`（clamp 1-600）→ `DelegationRequest.wait_seconds` → probe_started `think_timeout` → `_handle_probe_started` → `start_runner(think_timeout)` → `runner.THINK_TIMEOUT`（委托场景覆盖，非委托用默认）。
+
+**验证：** `test_delegate_think_timeout_passed` / `test_delegate_think_timeout_fallback`；相关 288+ 通过。
+
+**教训：** "工具参数声明必填"不等于"参数真正生效"——**解析 → 传递 → 消费**三步必须连测。此模式（schema 声明与实际传递断链）是同类 bug 高发区，排查时搜工具名参数在解析处之后是否真的被使用。
+
+## 60. think_once 外层 120s 嵌套覆盖 runner 的 THINK_TIMEOUT —— 上级设置的超时被内层吞掉（后端）
+
+**现象：** 即使 §59 修好 `wait_seconds` 传递，上级给下级设的超时（如 300s）依然不生效——单次思考总是在 120s 就结束。
+
+**根因：** 双层 `pausable_wait_for` 嵌套：`think_once` 外层 `timeout=SINGLE_THINK_TIMEOUT=120`（continuous_thinker.py:32）包裹整个 `think_fn`（即 `runner._generate`），而 runner 内部 `timeout=self.THINK_TIMEOUT`（300）。**外层 120s 先到 → 取消内层 → 上级设置的 300s 永远到不了**。嵌套超时取"较小者"，而非外层的"上限"。
+
+**修复：** `think_once` 改用 `getattr(runner_ref, "THINK_TIMEOUT", None) or SINGLE_THINK_TIMEOUT`——上层超时与 runner 的超时对齐（上级委托设置的值真正生效）；超时重试分支的日志/error 同步用动态 `_timeout`。
+
+**验证：** 相关 609 项通过。
+
+**教训：** 多层 `wait_for`/超时包裹时，**外层超时若小于内层，内层永远不触发**（实际超时 = 最小嵌套值）。设置"可配置超时"时要检查所有包裹层，确保没有任何一层比被配置值更小。
+
+## 61. 委托链不可重建 + 超时后思考上下文丢失（后端）
+
+**现象（两个相关的结构性缺陷）：**
+1. **委托链无法重建**：`delegation_id` ≡ `task_id`（沿整条链共享，无法区分层级）；`probe_id` 每次委托唯一但只存进程内 `_probe_map`，不随消息传播；黑板 `delegations` 生产代码从不写入（`write_delegation` 无生产调用者）；`_pending_delegations` 以 `task_id` 为 key 且每次 `continuous_think` 清空，多次委托互相覆盖。
+2. **超时后思考丢失**：工具循环的 `messages` 只在内存，超时/中断终止后丢失；`_save_partial_result` 只保存部分输出**文本**（history_thoughts + streaming），不是可恢复的 messages 断点。
+
+**根因：** 委托追踪用的唯一标识选择错误（复用 task_id）+ 委托链数据从未落库；断点快照从未设计（超时=从头重试）。
+
+**修复（commit `16bd27e`）：**
+- `Delegation` 扩展为链节点（`caller/return_to/parent_delegation_id/child_delegation_ids/origin_task_id/probe_id/target_model_id/progress/context_summary`），`delegation_id` 用每次委托唯一的 `probe_id`
+- `delegate_task` 分发时 `_record_delegation_chain` 写入黑板并随黑板按 `(session_id, blackboard_id)` 落库；`probe_started` 传播 `parent_delegation_id`/`origin_task_id`；`thinking_result` 回写状态/结果
+- 工具循环每轮 `_save_resume_context` 保存 messages 断点（runner + 黑板 + 落库）；`think_once` 超时重试 `_request_resume` → runner 从断点续思考（`_resume_context` 重建 messages + "从中断处继续"指令）
+- `ChatMessage/ToolCall` 加 `to_dict/from_dict`；黑板加 `persist/load`
+
+**验证：** 委托链黑板测试 7 项 + 断点续思考测试 3 项 + 相关 938+ 通过。
+
+**教训：** ① 链路追踪必须用**每次实例唯一的 ID**（probe_id），不能复用沿链共享的标识（task_id）；② "超时后如何继续"必须在设计期决定（断点快照），否则超时=全部从头重来；③ 委托这类跨模型状态必须落库（随黑板按 session 持久化），进程内临时表无法支撑跨重启/跨层查询。
+
+## 62. thinking_result 两处生产路径 delegation_id 语义不一致 —— RuntimeExpert 路径用 task_id，黑板委托链查不到（后端）
+
+**现象：** on_demand 专家（RuntimeExpert，如 SecurityMonitor）完成后，上级 `query_delegation` 查不到该委托的结果/状态更新——委托链一直停在"已委托"。
+
+**根因：** §61 修复后，`continuous_thinker._notify_return_target` 发送的 thinking_result 用 `delegation_id = runner._delegation_id`（**probe_id**，黑板委托链 key）；但 `model_runner._run_runtime_expert` 的唤醒路径（model_runner.py:367 附近）仍写 `"delegation_id": self._task_id`（**task_id**）。两处生产路径发送同一消息字段但语义不同 → 上级 `_wait_for_wakeup_event` 用 delegation_id 回写黑板 `get_delegation()` 永远找不到（task_id 不是黑板 key）→ RuntimeExpert 委托的状态/结果不落黑板。
+
+**修复：** `_run_runtime_expert` 唤醒消息改为 `"delegation_id": self._delegation_id or self._task_id`（优先 probe_id），并补 `"task_id": self._task_id`（供上级 `_pending_delegations` 按 task_id 匹配）。与 `_notify_return_target` 路径对齐。
+
+**验证：** `test_runtime_expert_thinking_result_uses_probe_id`（断言 delegation_id=probe_id 且 task_id 存在）；相关 145+ 通过。
+
+**教训：** 同一消息字段**多生产路径**时，字段语义必须一致——修一处必须全仓排查所有发送点（grep `action: thinking_result` / `"delegation_id"`），否则部分链路（本例 RuntimeExpert）静默失效，且无报错、只在 query_delegation 时表现为"查不到"。
