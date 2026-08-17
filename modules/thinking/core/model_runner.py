@@ -1652,6 +1652,12 @@ class ModelRunner:
             estimated = engine.estimate_tokens(text)
             window = int(self.context_window_size or 128000)
             threshold = int(window * 0.9)
+            # 同步当前上下文占用到 thinker，供前端展示真实占用（含工具历史，非仅初始 prompt）
+            try:
+                if self._thinker is not None:
+                    self._thinker._context_tokens = estimated  # type: ignore[union-attr]
+            except Exception:
+                pass
             if estimated <= threshold:
                 return False
             logger.info(

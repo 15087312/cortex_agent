@@ -2615,3 +2615,21 @@ def test_max_chat_tool_turns_default_300():
     """工具循环防死循环兜底轮数为 300（上下文超 90% 自动总结，不再 25 轮硬限）"""
     import modules.thinking.core.model_runner as mr
     assert mr.ModelRunner.MAX_CHAT_TOOL_TURNS == 300
+
+
+async def test_maybe_summarize_syncs_context_tokens(monkeypatch):
+    """上下文检查时把 messages token 估算同步到 thinker._context_tokens（供前端展示真实占用）"""
+    r, mcp = _tool_runner(monkeypatch, tier="large")
+    from modules.thinking.identity import ModelIdentity
+    r.instance.identity = ModelIdentity(model_id="large", tier="large", context_length=100000)
+    thinker = MagicMock()
+    r._thinker = thinker
+    # fake engine 返回 123
+    import modules.thinking.context.compression as cc
+    engine = MagicMock()
+    engine.estimate_tokens.return_value = 123
+    monkeypatch.setattr(cc, "get_compression_engine", lambda: engine)
+    messages = [ChatMessage(role="system", content="s"), ChatMessage(role="user", content="u")]
+    await r._maybe_summarize_context(messages, "任务")
+    # 即使未触发总结（未超 90%），也同步了 context_tokens
+    assert thinker._context_tokens == 123

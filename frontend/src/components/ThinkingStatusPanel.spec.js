@@ -34,3 +34,39 @@ describe('ThinkingStatusPanel', () => {
     expect(w.text()).toContain('LLM 超时')
   })
 })
+
+
+// ── 上下文容量展示边界（warn 70% / danger 90%） ──────────────────────────
+
+function mountWith(ctxTokens, winSize) {
+  const runners = [{ model_id: 'L', name: '总指挥', status: 'idle' }]
+  return mount(ThinkingStatusPanel, {
+    props: { runners, contextTokens: ctxTokens, contextWindowSize: winSize },
+    global: { plugins: [createTestPinia()] },
+  })
+}
+
+it('上下文 warn 阈值（70%+）标黄', () => {
+  const w = mountWith(7000, 10000)
+  expect(w.find('.context-usage-fill').classes()).toContain('warn')
+})
+
+it('上下文 danger 阈值（90%+）标红', () => {
+  const w = mountWith(9500, 10000)
+  expect(w.find('.context-usage-fill').classes()).toContain('danger')
+})
+
+it('上下文满格封顶 100%', () => {
+  const w = mountWith(20000, 10000)
+  expect(w.text()).toContain('100%')
+})
+
+it('无 context_tokens 时不显示上下文条', () => {
+  const w = mountWith(0, 10000)
+  expect(w.find('.context-usage').exists()).toBe(false)
+})
+
+it('无 context_window_size 时不显示上下文条', () => {
+  const w = mountWith(500, 0)
+  expect(w.find('.context-usage').exists()).toBe(false)
+})
