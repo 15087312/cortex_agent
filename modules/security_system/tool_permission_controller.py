@@ -324,13 +324,15 @@ class ToolPermissionController:
             READ_CONTEXT_TOOL,
         )
 
-        tools = [CONTINUE_THINKING_TOOL, QUERY_TOOL_DETAILS_TOOL, READ_CONTEXT_TOOL]
+        tools = [CONTINUE_THINKING_TOOL, QUERY_TOOL_DETAILS_TOOL]
 
         if delegation_available and tier in ("large", "supervisor"):
             tools.append(DELEGATE_TASK_TOOL)
             tools.append(STOP_TASK_TOOL)
             tools.append(QUERY_DELEGATION_TOOL)
             tools.append(RESUME_DELEGATION_TOOL)
+            # 读取黑板记忆/委托上下文（large/supervisor 有记忆与委托链，expert 不直接读）
+            tools.append(READ_CONTEXT_TOOL)
         if delegation_available and tier == "large":
             tools.append(CREATE_SUPERVISOR_TOOL)
         if tier == "large":

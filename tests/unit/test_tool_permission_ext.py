@@ -223,14 +223,16 @@ def test_get_base_whitelist_star(monkeypatch):
     import modules.thinking.identity as ident
     monkeypatch.setattr(ident, "get_identities", lambda: {})
     import infra.tool_manager.tool_registry as tr
-    class _T:
-        source = "user"
-    class _SecT:
-        source = "security"
-    tr.ToolRegistry._tools = {"user_tool": _T(), "sec_tool": _SecT()}
-    out = c._get_base_whitelist("expert", "x")
-    assert "user_tool" in out
-    assert "sec_tool" not in out
+    # 用真实 ToolInfo 注册（避免篡改全局 _tools 污染其它测试）
+    tr.ToolRegistry.register_tool(name="user_tool", func=lambda: None, source="user")
+    tr.ToolRegistry.register_tool(name="sec_tool", func=lambda: None, source="security")
+    try:
+        out = c._get_base_whitelist("expert", "x")
+        assert "user_tool" in out
+        assert "sec_tool" not in out
+    finally:
+        tr.ToolRegistry.unregister("user_tool")
+        tr.ToolRegistry.unregister("sec_tool")
 
 
 def test_identity_whitelist_from_yaml(monkeypatch):
