@@ -768,3 +768,50 @@ describe('Settings.vue', () => {
     expect(post.body).toEqual({ name: 'lib_enter' })
     expect(w.vm.newLibName).toBe('')
   })
+
+  it('感知 tab：全部开关 toggle（@change 反向 setter）', async () => {
+    mockApi()
+    const w = await mountSettings()
+    await w.findAll('.settings-tab').find((t) => t.text() === '感知').trigger('click')
+    const toggles = w.findAll('.setting-ctl input[type=checkbox]')
+    expect(toggles.length).toBeGreaterThan(5)
+    for (const cb of toggles) await cb.trigger('change')
+    const putUrls = writes.filter((x) => x.method === 'PUT').map((x) => x.url)
+    expect(putUrls.some((u) => u.includes('PERCEPTION_ENABLED') || u.includes('PERCEPTION_SCREEN_ENABLED'))).toBe(true)
+    expect(putUrls.some((u) => u.includes('PERCEPTION_MCP_ENABLED') || u.includes('PERCEPTION_INTERNAL_ENABLED'))).toBe(true)
+    expect(putUrls.some((u) => u.includes('MENTAL_ACTIVITY_ENABLED'))).toBe(true)
+    expect(putUrls.some((u) => u.includes('MEMORY_SUMMARY_ENABLED'))).toBe(true)
+    expect(putUrls.some((u) => u.includes('VOICE_ENABLED'))).toBe(true)
+  })
+
+  it('感知 tab：seg 按钮与语音/视觉输入字段 setter', async () => {
+    mockApi()
+    const w = await mountSettings()
+    await w.findAll('.settings-tab').find((t) => t.text() === '感知').trigger('click')
+    // 语音模型 seg
+    await w.findAll('button').find((b) => b.text().trim() === 'small').trigger('click')
+    expect(w.vm.voiceModel).toBe('small')
+    // 触发模式 seg → 唤醒词
+    await w.findAll('button').find((b) => b.text().trim() === '唤醒词').trigger('click')
+    expect(w.vm.voiceMode).toBe('wake')
+    // 触发冷却输入（numCfg setter → PUT）
+    const nums = w.findAll('.setting-ctl input[type=number]')
+    await nums[0].setValue('120')
+    expect(writes.some((x) => x.url.includes('PERCEPTION_TRIGGER_COOLDOWN'))).toBe(true)
+    // 唤醒词输入
+    const wakeRow = w.findAll('.setting-row').find((r) => r.text().includes('唤醒词') && r.find('input').exists())
+    await wakeRow.find('input').setValue('科特')
+    expect(w.vm.voiceWakePrefix).toBe('科特')
+    // 识别后端 → 云端（渲染 API 字段）
+    await w.findAll('button').find((b) => b.text().trim() === '云端').trigger('click')
+    expect(w.vm.voiceBackend).toBe('api')
+    await w.find('input[placeholder="OpenAI 兼容 /audio/transcriptions"]').setValue('sk-v')
+    expect(w.vm.voiceApiKey).toBe('sk-v')
+    await w.find('input[placeholder="https://api.openai.com/v1/audio/transcriptions"]').setValue('https://v')
+    expect(w.vm.voiceApiUrl).toBe('https://v')
+    expect(writes.some((x) => x.url.includes('VOICE_API_URL'))).toBe(true)
+    // 一键安装依赖按钮
+    await w.findAll('button').find((b) => b.text().includes('一键安装依赖')).trigger('click')
+    await new Promise((r) => setTimeout(r, 30))
+    expect(w.vm.installResult?.message).toBe('已安装')
+  })
