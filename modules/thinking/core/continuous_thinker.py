@@ -722,7 +722,7 @@ class ContinuousThinker:
             # 以模型层级的输入上下文长度为标准：优先 identity.context_length（工厂注入），
             # 回退全局配置
             runner = getattr(self, "_runner_ref", None)
-            _id_cl = 0
+            _id_cl = None
             if runner is not None:
                 _id_cl = getattr(getattr(runner, "instance", None), "identity", None)
             if isinstance(_id_cl, ModelIdentity) and isinstance(getattr(_id_cl, "context_length", 0), int) and _id_cl.context_length > 0:

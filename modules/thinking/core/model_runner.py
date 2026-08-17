@@ -1708,9 +1708,10 @@ class ModelRunner:
                     messages=[_CM(role="user", content=prompt)],
                     max_tokens=2048,
                 )
-            return (getattr(resp, "message", None) or None) and (
-                getattr(resp.message, "content", "") or ""
-            )
+            msg = getattr(resp, "message", None)
+            if msg is not None:
+                return getattr(msg, "content", "") or ""
+            return ""
         except Exception as e:
             logger.warning(f"[ModelRunner] {self.model_id} 总结调用失败: {e}")
             return ""
@@ -1983,13 +1984,14 @@ class ModelRunner:
         ]
 
         # ── 断点续思考：上次思考被中断且保存了上下文快照时，从断点继续 ──
-        if getattr(self, "_resume_requested", False) and getattr(self, "_resume_context", None):
+        _resume_ctx = getattr(self, "_resume_context", None)
+        if getattr(self, "_resume_requested", False) and _resume_ctx:
             try:
-                messages = [ChatMessage.from_dict(m) for m in self._resume_context]
+                messages = [ChatMessage.from_dict(m) for m in _resume_ctx]
                 # 防重复：断点里已有"从中断处继续"指令（多次超时重试）则不重复插入
                 has_resume_marker = any(
                     "从中断处继续" in str(m.get("content", ""))
-                    for m in self._resume_context
+                    for m in _resume_ctx
                 )
                 if not has_resume_marker:
                     messages.append(ChatMessage(
@@ -2001,7 +2003,7 @@ class ModelRunner:
                     ))
                 logger.info(
                     f"[ModelRunner] {self.model_id} 从断点续思考，恢复上下文 "
-                    f"{len(self._resume_context)} 条消息"
+                    f"{len(_resume_ctx)} 条消息"
                 )
                 self._resume_requested = False
             except Exception as e:

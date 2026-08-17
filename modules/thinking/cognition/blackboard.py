@@ -379,7 +379,7 @@ class CognitiveBlackboard:
         from dataclasses import asdict
         with self._lock:
             # 回溯到根
-            chain = []
+            chain: List[Dict[str, Any]] = []
             node = self.delegations.get(delegation_id)
             if not node:
                 return chain
