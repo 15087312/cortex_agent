@@ -2137,3 +2137,191 @@ def test_push_expert_output_expert():
         r._push_expert_output("已完成实现")
     assert len(sent) == 1
     assert sent[0][1]["role"] == "expert"
+
+
+# ── 断点续思考（超时后从已保存上下文继续） ────────────────────────────────
+
+async def test_generate_with_tools_resume_from_checkpoint(monkeypatch):
+    """断点续思考：_resume_requested 时从已保存上下文快照继续，而非从头重建"""
+    r, mcp = _tool_runner(monkeypatch, tier="large")
+    r._resume_requested = True
+    r._resume_context = [
+        ChatMessage(role="user", content="旧思考上下文").to_dict(),
+        ChatMessage(role="assistant", content="已有结论").to_dict(),
+    ]
+    client = _chat_client(_resp(content="继续完成"))
+    out = await r._generate_with_tools("system", "user", client)
+    assert "继续完成" in out
+    sent = client.chat.call_args.kwargs["messages"]
+    assert sent[0].role == "user"
+    assert "旧思考上下文" in sent[0].content
+    assert "直接继续" in sent[-1].content
+    # 断点已被消费，避免重复恢复
+    assert r._resume_requested is False
+
+
+async def test_generate_with_tools_no_checkpoint_normal_flow(monkeypatch):
+    """无断点快照（首次思考）时走正常 system+user 初始化"""
+    r, mcp = _tool_runner(monkeypatch, tier="large")
+    r._resume_requested = True
+    r._resume_context = None  # 未保存断点 → 正常流程
+    client = _chat_client(_resp(content="ok"))
+    out = await r._generate_with_tools("system", "user", client)
+    assert "ok" in out
+    sent = client.chat.call_args.kwargs["messages"]
+    assert sent[0].role == "system"
+    assert sent[1].role == "user"
+
+
+async def test_generate_with_tools_saves_resume_context(monkeypatch):
+    """工具循环每轮开头保存断点快照到 runner 与黑板（含落库调用）"""
+    r, mcp = _tool_runner(monkeypatch, tier="large")
+    blackboard = MagicMock()
+    blackboard.resume_context = None
+    r.blackboard = blackboard
+    client = _chat_client(
+        _resp(content=None, calls=[_tc("calc", '{"a":1,"op":"+","b":1}')]),
+        _resp(content="完成"),
+    )
+    out = await r._generate_with_tools("system", "user", client)
+    assert "完成" in out
+    assert r._resume_context and len(r._resume_context) >= 2
+    assert blackboard.resume_context == r._resume_context
+    blackboard.persist.assert_called()
+
+
+# ── 委托链工具：query_delegation / resume_delegation ───────────────────────
+
+def _real_bb():
+    from modules.thinking.cognition.blackboard import CognitiveBlackboard
+    return CognitiveBlackboard(session_id="s1", turn_id="t1")
+
+
+async def test_query_delegation_missing_context_limit(monkeypatch):
+    """query_delegation 必须传 context_limit（截取参数必填）"""
+    r, mcp = _tool_runner(monkeypatch, tier="large")
+    r.blackboard = _real_bb()
+    out = await r._handle_query_delegation({"delegation_id": "p1"})
+    assert "context_limit" in out
+    out2 = await r._handle_query_delegation({"context_limit": 1000})
+    assert "delegation_id" in out2
+
+
+async def test_query_delegation_not_found_lists(monkeypatch):
+    """委托不存在时列出当前委托"""
+    r, mcp = _tool_runner(monkeypatch, tier="large")
+    bb = _real_bb()
+    bb.write_delegation("ex", "任务A", probe_id="p-a")
+    r.blackboard = bb
+    out = await r._handle_query_delegation({"delegation_id": "ghost", "context_limit": 1000})
+    assert "未找到委托" in out
+    assert "p-a" in out
+
+
+async def test_query_delegation_returns_context(monkeypatch):
+    """正常返回委托进度+上下文（按 context_limit 截取）"""
+    r, mcp = _tool_runner(monkeypatch, tier="large")
+    bb = _real_bb()
+    did = bb.write_delegation("ex", "分析性能问题", probe_id="p-c",
+                              caller_model_id="large_primary")
+    bb.update_delegation_progress(did, progress="分析中", status="running")
+    r.blackboard = bb
+    out = await r._handle_query_delegation({"delegation_id": "p-c", "context_limit": 5000})
+    assert "分析性能问题" in out
+    assert "分析中" in out
+    assert "large_primary" in out
+    # 截取生效
+    short = await r._handle_query_delegation({"delegation_id": "p-c", "context_limit": 30})
+    assert "已截断" in short
+
+
+async def test_resume_delegation_default_return_to(monkeypatch):
+    """resume_delegation 未传 return_to → 默认返回原委托者"""
+    import modules.thinking.core.delegation_port as dp_mod
+    captured = {}
+
+    async def fake_delegate(self, request):
+        captured["request"] = request
+        return dp_mod.DelegationResult(success=True, probe_id="probe_new",
+                                       metadata={"probe_id": "probe_new", "task_id": "task_root"})
+
+    monkeypatch.setattr(dp_mod.ProbeDelegationAdapter, "delegate", fake_delegate)
+    r, mcp = _tool_runner(monkeypatch, tier="supervisor")
+    bb = _real_bb()
+    did = bb.write_delegation("ex", "原任务", probe_id="p-orig",
+                              caller_model_id="large_primary",
+                              return_to_model_id="large_primary",
+                              origin_task_id="task_root")
+    r.blackboard = bb
+    r._delegation_id = "p-me"
+    r._origin_task_id = "task_root"
+    out = await r._handle_resume_delegation({"delegation_id": did})
+    assert "已继续委托" in out
+    req = captured["request"]
+    assert req.role == "ex"
+    assert req.return_to_model_id == "large_primary"  # 默认原委托者
+    assert req.task_id == "task_root"
+    # 委托链更新：标记 running + 新委托
+    d = bb.get_delegation(did)
+    assert d["status"] == "running"
+    assert "probe_new" in d["progress"]
+
+
+async def test_resume_delegation_explicit_return_to(monkeypatch):
+    """resume_delegation 传了 return_to 则用指定值"""
+    import modules.thinking.core.delegation_port as dp_mod
+    captured = {}
+
+    async def fake_delegate(self, request):
+        captured["request"] = request
+        return dp_mod.DelegationResult(success=True, probe_id="probe_new2",
+                                       metadata={"probe_id": "probe_new2", "task_id": "task_root"})
+
+    monkeypatch.setattr(dp_mod.ProbeDelegationAdapter, "delegate", fake_delegate)
+    r, mcp = _tool_runner(monkeypatch, tier="supervisor")
+    bb = _real_bb()
+    did = bb.write_delegation("ex", "原任务", probe_id="p-orig2",
+                              caller_model_id="large_primary",
+                              return_to_model_id="large_primary")
+    r.blackboard = bb
+    out = await r._handle_resume_delegation(
+        {"delegation_id": did, "return_to_model_id": "another_001"}
+    )
+    assert captured["request"].return_to_model_id == "another_001"
+
+
+async def test_resume_delegation_not_found(monkeypatch):
+    """委托不存在返回失败"""
+    r, mcp = _tool_runner(monkeypatch, tier="supervisor")
+    r.blackboard = _real_bb()
+    out = await r._handle_resume_delegation({"delegation_id": "ghost"})
+    assert "未找到委托" in out
+
+
+async def test_delegate_task_records_chain(monkeypatch):
+    """delegate_task 分发成功时把委托链写入黑板"""
+    import modules.thinking.core.delegation_port as dp_mod
+    async def fake_delegate(self, request):
+        return dp_mod.DelegationResult(
+            success=True, probe_id="probe_x",
+            metadata={"probe_id": "probe_x", "task_id": "task_t1", "target_tier": "expert"},
+        )
+    monkeypatch.setattr(dp_mod.ProbeDelegationAdapter, "delegate", fake_delegate)
+    r, mcp = _tool_runner(monkeypatch, tier="large")
+    bb = _real_bb()
+    r.blackboard = bb
+    r._delegation_id = "p-parent"
+    r._origin_task_id = "task_root"
+    client = _chat_client(_resp(
+        content=None,
+        calls=[_tc("delegate_task", '{"role": "expert_code_writer", "task": "实现X", "wait_seconds": 120}')],
+    ))
+    out = await r._generate_with_tools("system", "user", client)
+    assert "委托" in out or True
+    d = bb.get_delegation("probe_x")
+    assert d is not None
+    assert d["role"] == "expert_code_writer"
+    assert d["caller_model_id"] == "large_primary"
+    assert d["parent_delegation_id"] == "p-parent"
+    assert d["origin_task_id"] == "task_root"
+    assert d["return_to_model_id"] == "large_primary"

@@ -8,10 +8,58 @@ from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 
 from modules.database.connection import get_db_manager
-from modules.database.chat_models import BlackboardObservation
+from modules.database.chat_models import BlackboardObservation, BlackboardSnapshotRecord
 from utils.logger import setup_logger
 
 logger = setup_logger("blackboard_repo")
+
+
+def save_blackboard(state: Dict[str, Any]) -> bool:
+    """按 (session_id, blackboard_id) 持久化整块黑板状态（upsert，失败不阻塞）"""
+    try:
+        session_id = state.get("session_id", "")
+        blackboard_id = state.get("blackboard_id", "")
+        if not session_id or not blackboard_id:
+            return False
+        db = get_db_manager()
+        with db.get_session() as s:
+            existing = s.query(BlackboardSnapshotRecord).filter_by(
+                session_id=session_id, blackboard_id=blackboard_id
+            ).first()
+            snapshot_json = json.dumps(state, ensure_ascii=False, default=str)
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
+            if existing:
+                existing.snapshot_json = snapshot_json
+                existing.turn_id = state.get("turn_id", "") or existing.turn_id
+                existing.updated_at = now
+            else:
+                s.add(BlackboardSnapshotRecord(
+                    session_id=session_id,
+                    blackboard_id=blackboard_id,
+                    turn_id=state.get("turn_id", ""),
+                    snapshot_json=snapshot_json,
+                    updated_at=now,
+                ))
+        return True
+    except Exception as e:
+        logger.debug(f"[blackboard_repo] 黑板快照落库失败: {e}")
+        return False
+
+
+def load_blackboard(session_id: str, blackboard_id: str) -> Optional[Dict[str, Any]]:
+    """按 (session_id, blackboard_id) 读取黑板快照"""
+    try:
+        db = get_db_manager()
+        with db.get_session() as s:
+            row = s.query(BlackboardSnapshotRecord).filter_by(
+                session_id=session_id, blackboard_id=blackboard_id
+            ).first()
+            if not row:
+                return None
+            return json.loads(row.snapshot_json or "{}")
+    except Exception as e:
+        logger.debug(f"[blackboard_repo] 黑板快照读取失败: {e}")
+        return None
 
 
 def save_observation(session_id: str, obs) -> bool:

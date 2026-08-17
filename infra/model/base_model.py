@@ -25,6 +25,23 @@ class ToolCall:
     arguments: str = "{}"
     type: str = "function"
 
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "arguments": self.arguments,
+            "type": self.type,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "ToolCall":
+        return cls(
+            id=d.get("id", ""),
+            name=d.get("name", ""),
+            arguments=d.get("arguments", "{}"),
+            type=d.get("type", "function"),
+        )
+
 
 @dataclass
 class ChatMessage:
@@ -35,6 +52,32 @@ class ChatMessage:
     name: Optional[str] = None        # DashScope: tool role 时标识函数名
     tool_call_id: Optional[str] = None  # OpenAI: tool role 时关联 tool_call
     reasoning_content: Optional[str] = None  # thinking模式下的推理内容
+
+    def to_dict(self) -> dict:
+        d: dict = {
+            "role": self.role,
+            "content": self.content,
+            "name": self.name,
+            "tool_call_id": self.tool_call_id,
+            "reasoning_content": self.reasoning_content,
+        }
+        if self.tool_calls:
+            d["tool_calls"] = [tc.to_dict() for tc in self.tool_calls]
+        return d
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "ChatMessage":
+        tool_calls = None
+        if d.get("tool_calls"):
+            tool_calls = [ToolCall.from_dict(tc) for tc in d["tool_calls"]]
+        return cls(
+            role=d.get("role", ""),
+            content=d.get("content"),
+            name=d.get("name"),
+            tool_call_id=d.get("tool_call_id"),
+            reasoning_content=d.get("reasoning_content"),
+            tool_calls=tool_calls,
+        )
 
 
 @dataclass

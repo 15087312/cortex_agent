@@ -69,6 +69,22 @@ class BlackboardObservation(Base):
     )
 
 
+class BlackboardSnapshotRecord(Base):
+    """认知黑板快照 — 按 (session_id, blackboard_id) 持久化整块黑板状态（含断点续思考上下文）"""
+    __tablename__ = "blackboard_snapshots"
+
+    id = Column(String(100), primary_key=True, default=lambda: f"bbs_{uuid.uuid4().hex[:12]}")
+    session_id = Column(String(100), nullable=False, index=True)
+    blackboard_id = Column(String(100), nullable=False, index=True)
+    turn_id = Column(String(100), default="")
+    snapshot_json = Column(Text, nullable=False)   # 黑板完整状态（JSON 序列化）
+    updated_at = Column(DateTime, default=_utcnow_default, index=True)
+
+    __table_args__ = (
+        Index("ix_blackboard_snapshot_session_bb", "session_id", "blackboard_id"),
+    )
+
+
 class ProactiveLog(Base):
     """主动搭话触发记录（追溯 + 统计：时间/会话/触发原因/内容）"""
     __tablename__ = "proactive_log"

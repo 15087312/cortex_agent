@@ -8,6 +8,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, Protocol
 
+# 委托未显式指定超时时的兜底（delegate_task 工具已要求必填 wait_seconds）
+DEFAULT_DELEGATE_THINK_TIMEOUT = 300
+
 
 @dataclass
 class DelegationRequest:
@@ -75,6 +78,19 @@ class ProbeDelegationAdapter:
             probe_id = f"probe_{target_tier}_{identity_key}_{uuid.uuid4().hex[:6]}"
             task_id = request.task_id or f"task_{uuid.uuid4().hex[:8]}"
 
+            # 委托链传播：父委托 / 根任务（由 model_runner 分发时写入 request.metadata）
+            parent_delegation_id = (request.metadata or {}).get("parent_delegation_id", "") or ""
+            origin_task_id = (request.metadata or {}).get("origin_task_id", "") or task_id
+
+            # 委托必须指定下级思考超时（delegate_task 工具 required）。缺省时兜底并告警。
+            think_timeout = request.wait_seconds
+            if not think_timeout:
+                think_timeout = DEFAULT_DELEGATE_THINK_TIMEOUT
+                import logging as _logging
+                _logging.getLogger("delegation_port").warning(
+                    f"委托未指定 wait_seconds，使用兜底超时 {think_timeout}s"
+                )
+
             bus = get_message_bus()
             msg = Message(
                 msg_type=MessageType.SYSTEM,
@@ -92,6 +108,9 @@ class ProbeDelegationAdapter:
                     "caller_tier": request.caller_tier,
                     "priority": 5,
                     "ttl_seconds": 1800,
+                    "think_timeout": int(think_timeout),
+                    "parent_delegation_id": parent_delegation_id,
+                    "origin_task_id": origin_task_id,
                 },
             )
             await bus.send(msg)

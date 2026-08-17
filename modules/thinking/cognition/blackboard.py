@@ -24,13 +24,31 @@ logger = setup_logger("cognitive_blackboard")
 
 @dataclass
 class Delegation:
-    """委托任务"""
+    """委托任务 — 扩展为完整委托链节点
+
+    delegation_id 使用每次委托唯一的 probe_id（可跨层级区分），
+    与沿链共享的 task_id 解耦；parent/children 构成委托树。
+    """
     delegation_id: str
     role: str  # supervisor_code / supervisor_query / ...
     task: str
-    status: str = "pending"  # pending / replied / stale
+    status: str = "pending"  # pending / running / replied / stale
     created_at: float = field(default_factory=time.time)
     metadata: Dict[str, Any] = field(default_factory=dict)
+    # ── 委托链字段 ──
+    caller_model_id: str = ""          # 发起委托的模型（直接父级）
+    caller_tier: str = ""              # 发起方层级
+    parent_delegation_id: str = ""     # 父委托的 delegation_id（链）
+    return_to_model_id: str = ""       # 结果返回给谁（缺省 = caller_model_id）
+    return_to_session_id: str = ""
+    origin_task_id: str = ""           # 根任务 id（沿链传播）
+    probe_id: str = ""                 # 本次委托唯一探针
+    target_tier: str = ""              # 目标层级
+    target_model_id: str = ""          # 实际激活的下级 runner model_id
+    progress: str = ""                 # 进度描述（供 query_delegation 查看）
+    context_summary: str = ""          # 委托相关上下文摘要
+    child_delegation_ids: List[str] = field(default_factory=list)
+    updated_at: float = field(default_factory=time.time)
 
 
 @dataclass
@@ -111,9 +129,11 @@ class CognitiveBlackboard:
     # 观察列表容量上限：超过则清理最旧的（读取方只取最近几条，旧观察无推理价值）
     MAX_OBSERVATIONS = 200
 
-    def __init__(self, session_id: str, turn_id: str):
+    def __init__(self, session_id: str, turn_id: str, blackboard_id: Optional[str] = None):
         self._session_id = session_id
         self._turn_id = turn_id
+        import uuid as _uuid
+        self._blackboard_id = blackboard_id or f"bb_{_uuid.uuid4().hex[:12]}"
         self._lock = threading.RLock()
 
         # ── 认知状态字段 ──
@@ -145,6 +165,9 @@ class CognitiveBlackboard:
         self._dialog_entries: deque = deque(maxlen=500)
         self._last_read_index: int = 0
         self._change_callbacks: List[Callable[[str], None]] = []
+
+        # ── 断点续思考上下文（工具循环 messages 快照，随黑板按 session+blackboard_id 落库）──
+        self.resume_context: Optional[List[Dict[str, Any]]] = None
 
         logger.debug(
             f"[CognitiveBlackboard] 创建: session={session_id[:8]}, turn={turn_id[:8]}"
@@ -219,20 +242,52 @@ class CognitiveBlackboard:
         logger.debug(f"[CognitiveBlackboard] 添加观察: {observation_id}")
         return observation_id
 
-    def write_delegation(self, role: str, task: str, metadata: Optional[Dict] = None) -> str:
-        """创建委托（通常由 large 调用）"""
+    def write_delegation(
+        self,
+        role: str,
+        task: str,
+        metadata: Optional[Dict] = None,
+        *,
+        delegation_id: Optional[str] = None,
+        caller_model_id: str = "",
+        caller_tier: str = "",
+        parent_delegation_id: str = "",
+        return_to_model_id: str = "",
+        return_to_session_id: str = "",
+        origin_task_id: str = "",
+        probe_id: str = "",
+        target_tier: str = "",
+    ) -> str:
+        """创建委托（通常由 large 调用），记录完整委托链字段
+
+        delegation_id 缺省用 probe_id（唯一），再缺省生成 dlg_xxx。
+        """
         import uuid
-        delegation_id = f"dlg_{uuid.uuid4().hex[:8]}"
+        did = delegation_id or probe_id or f"dlg_{uuid.uuid4().hex[:8]}"
         delegation = Delegation(
-            delegation_id=delegation_id,
+            delegation_id=did,
             role=role,
             task=task,
             metadata=metadata or {},
+            caller_model_id=caller_model_id,
+            caller_tier=caller_tier,
+            parent_delegation_id=parent_delegation_id,
+            return_to_model_id=return_to_model_id or caller_model_id,
+            return_to_session_id=return_to_session_id,
+            origin_task_id=origin_task_id,
+            probe_id=probe_id or did,
+            target_tier=target_tier,
+            updated_at=time.time(),
         )
         with self._lock:
-            self.delegations[delegation_id] = delegation
-        logger.debug(f"[CognitiveBlackboard] 创建委托: {delegation_id} → {role}")
-        return delegation_id
+            # 维护父子链
+            if parent_delegation_id and parent_delegation_id in self.delegations:
+                parent = self.delegations[parent_delegation_id]
+                if did not in parent.child_delegation_ids:
+                    parent.child_delegation_ids.append(did)
+            self.delegations[did] = delegation
+        logger.debug(f"[CognitiveBlackboard] 创建委托: {did} → {role}")
+        return did
 
     def update_delegation_status(
         self,
@@ -250,6 +305,104 @@ class CognitiveBlackboard:
                 delegation.metadata.update(metadata)
         logger.debug(f"[CognitiveBlackboard] 委托 {delegation_id} 状态更新: {status}")
         return True
+
+    def update_delegation_progress(
+        self,
+        delegation_id: str,
+        progress: str = "",
+        status: Optional[str] = None,
+        target_model_id: str = "",
+        context_summary: str = "",
+    ) -> bool:
+        """更新委托进度 / 状态 / 目标模型 / 上下文摘要（供 query_delegation 查看）"""
+        with self._lock:
+            delegation = self.delegations.get(delegation_id)
+            if not delegation:
+                return False
+            if progress:
+                delegation.progress = progress
+            if context_summary:
+                delegation.context_summary = context_summary
+            if status:
+                delegation.status = status
+            if target_model_id:
+                delegation.target_model_id = target_model_id
+            delegation.updated_at = time.time()
+        logger.debug(f"[CognitiveBlackboard] 委托 {delegation_id} 进度更新: {progress[:60]}")
+        return True
+
+    def get_delegation(self, delegation_id: str) -> Optional[Dict[str, Any]]:
+        """获取单个委托（序列化视图，供工具返回）"""
+        with self._lock:
+            d = self.delegations.get(delegation_id)
+            if not d:
+                return None
+            from dataclasses import asdict
+            view = asdict(d)
+            view["status"] = d.status
+            return view
+
+    def get_delegation_chain(self, delegation_id: str) -> List[Dict[str, Any]]:
+        """获取委托链：从根（父）到叶子（子）的完整序列化列表"""
+        from dataclasses import asdict
+        with self._lock:
+            # 回溯到根
+            chain = []
+            node = self.delegations.get(delegation_id)
+            if not node:
+                return chain
+            ancestors = []
+            cur = node
+            while cur.parent_delegation_id and cur.parent_delegation_id in self.delegations:
+                cur = self.delegations[cur.parent_delegation_id]
+                ancestors.append(cur)
+            for a in reversed(ancestors):
+                chain.append(asdict(a))
+            chain.append(asdict(node))
+            # 向下收集子委托
+            stack = list(node.child_delegation_ids)
+            seen = set()
+            while stack:
+                cid = stack.pop(0)
+                if cid in seen or cid not in self.delegations:
+                    continue
+                seen.add(cid)
+                child = self.delegations[cid]
+                chain.append(asdict(child))
+                stack.extend(child.child_delegation_ids)
+            return chain
+
+    def build_delegation_context(
+        self,
+        delegation_id: str,
+        context_limit: int = 2000,
+    ) -> str:
+        """构建委托进度 + 上下文文本（供 query_delegation 查看），按 context_limit 截取"""
+        from dataclasses import asdict
+        with self._lock:
+            d = self.delegations.get(delegation_id)
+            if not d:
+                return ""
+            parts = []
+            parts.append(f"【委托 {delegation_id}】状态={d.status}")
+            parts.append(f"目标角色: {d.role}  target_model={d.target_model_id or '待激活'}")
+            parts.append(f"调用方: {d.caller_model_id or '未知'} ({d.caller_tier or '?'})")
+            if d.return_to_model_id:
+                parts.append(f"结果返回: {d.return_to_model_id}")
+            if d.progress:
+                parts.append(f"进度: {d.progress}")
+            parts.append(f"任务: {d.task}")
+            if d.context_summary:
+                parts.append(f"上下文: {d.context_summary}")
+            resp = d.metadata.get("response") or d.metadata.get("result") or ""
+            if resp:
+                parts.append(f"结果: {resp}")
+            if d.child_delegation_ids:
+                parts.append(f"子委托: {', '.join(d.child_delegation_ids)}")
+            text = "\n".join(parts)
+            if context_limit and context_limit > 0 and len(text) > context_limit:
+                text = text[:context_limit] + f"...[已截断，共{len(text)}字符]"
+            return text
 
     def write_expert_finding(
         self,
@@ -567,3 +720,123 @@ class CognitiveBlackboard:
                 "has_final_response": bool(self.final_response),
                 "dialog_entries": len(self._dialog_entries),
             }
+
+    # ── 持久化：按 (session_id, blackboard_id) 落库 ──
+
+    @property
+    def blackboard_id(self) -> str:
+        return self._blackboard_id
+
+    def to_state_dict(self) -> Dict[str, Any]:
+        """序列化黑板完整状态（供 DB 持久化 / 断点恢复）"""
+        from dataclasses import asdict
+        with self._lock:
+            return {
+                "session_id": self._session_id,
+                "turn_id": self._turn_id,
+                "blackboard_id": self._blackboard_id,
+                "goal": self.goal,
+                "current_plan": self.current_plan,
+                "active_tasks": self.active_tasks,
+                "observations": [asdict(o) for o in self.observations],
+                "risks": self.risks,
+                "memory_refs": self.memory_refs,
+                "delegations": {k: asdict(v) for k, v in self.delegations.items()},
+                "expert_findings": {k: asdict(v) for k, v in self.expert_findings.items()},
+                "decisions": self.decisions,
+                "runtime_state": self.runtime_state,
+                "final_response": self.final_response,
+                "dialog_entries": [d.to_dict() for d in self._dialog_entries],
+                "resume_context": self.resume_context,
+            }
+
+    def _restore(self, data: Dict[str, Any]) -> None:
+        """从序列化状态恢复黑板内容"""
+        from dataclasses import asdict
+        with self._lock:
+            self.goal = data.get("goal", "")
+            self.current_plan = data.get("current_plan", []) or []
+            self.active_tasks = data.get("active_tasks", []) or []
+            for raw in data.get("observations", []) or []:
+                self.observations.append(Observation(
+                    observation_id=raw.get("observation_id", ""),
+                    tier=raw.get("tier", ""),
+                    content=raw.get("content", ""),
+                    created_at=raw.get("created_at", time.time()),
+                    metadata=raw.get("metadata", {}) or {},
+                ))
+            self.risks = data.get("risks", []) or []
+            self.memory_refs = data.get("memory_refs", []) or []
+            for k, raw in (data.get("delegations", {}) or {}).items():
+                self.delegations[k] = Delegation(
+                    delegation_id=raw.get("delegation_id", ""),
+                    role=raw.get("role", ""),
+                    task=raw.get("task", ""),
+                    status=raw.get("status", "pending"),
+                    created_at=raw.get("created_at", time.time()),
+                    metadata=raw.get("metadata", {}) or {},
+                    caller_model_id=raw.get("caller_model_id", ""),
+                    caller_tier=raw.get("caller_tier", ""),
+                    parent_delegation_id=raw.get("parent_delegation_id", ""),
+                    return_to_model_id=raw.get("return_to_model_id", ""),
+                    return_to_session_id=raw.get("return_to_session_id", ""),
+                    origin_task_id=raw.get("origin_task_id", ""),
+                    probe_id=raw.get("probe_id", ""),
+                    target_tier=raw.get("target_tier", ""),
+                    target_model_id=raw.get("target_model_id", ""),
+                    progress=raw.get("progress", ""),
+                    context_summary=raw.get("context_summary", ""),
+                    child_delegation_ids=raw.get("child_delegation_ids", []) or [],
+                    updated_at=raw.get("updated_at", time.time()),
+                )
+            for k, raw in (data.get("expert_findings", {}) or {}).items():
+                self.expert_findings[k] = ExpertFinding(
+                    finding_id=raw.get("finding_id", ""),
+                    source_tier=raw.get("source_tier", ""),
+                    role=raw.get("role", ""),
+                    content=raw.get("content", ""),
+                    status=raw.get("status", "pending"),
+                    created_at=raw.get("created_at", time.time()),
+                    metadata=raw.get("metadata", {}) or {},
+                )
+            self.decisions = data.get("decisions", []) or []
+            self.runtime_state = data.get("runtime_state", {}) or {}
+            self.final_response = data.get("final_response")
+            for raw in data.get("dialog_entries", []) or []:
+                self._dialog_entries.append(DialogEntry(
+                    entry_id=raw.get("entry_id", ""),
+                    entry_type=raw.get("type", "thought"),
+                    model_id=raw.get("model_id", ""),
+                    tier=raw.get("tier", ""),
+                    content=raw.get("content", ""),
+                    round_num=raw.get("round", 0),
+                    timestamp=raw.get("timestamp", time.time()),
+                    metadata=raw.get("metadata", {}) or {},
+                ))
+            self.resume_context = data.get("resume_context")
+
+    def persist(self) -> None:
+        """按 (session_id, blackboard_id) 落库黑板快照（失败不阻塞）"""
+        try:
+            from modules.database.blackboard_repo import save_blackboard
+            save_blackboard(self.to_state_dict())
+        except Exception:
+            pass
+
+    @classmethod
+    def load(cls, session_id: str, blackboard_id: str) -> Optional["CognitiveBlackboard"]:
+        """按 (session_id, blackboard_id) 恢复黑板快照"""
+        try:
+            from modules.database.blackboard_repo import load_blackboard
+            data = load_blackboard(session_id, blackboard_id)
+        except Exception:
+            data = None
+        if not data:
+            return None
+        bb = cls(
+            session_id=data.get("session_id", session_id),
+            turn_id=data.get("turn_id", ""),
+            blackboard_id=blackboard_id,
+        )
+        bb._restore(data)
+        return bb

@@ -320,6 +320,7 @@ class ToolPermissionController:
             RESPOND_TO_USER_TOOL, REQUEST_SKILL_TOOL,
             LIST_SKILLS_TOOL, STOP_SKILL_TOOL,
             REQUEST_MODE_CHANGE_TOOL, ASK_USER_INTENT_TOOL,
+            QUERY_DELEGATION_TOOL, RESUME_DELEGATION_TOOL,
         )
 
         tools = [CONTINUE_THINKING_TOOL, QUERY_TOOL_DETAILS_TOOL]
@@ -327,6 +328,8 @@ class ToolPermissionController:
         if delegation_available and tier in ("large", "supervisor"):
             tools.append(DELEGATE_TASK_TOOL)
             tools.append(STOP_TASK_TOOL)
+            tools.append(QUERY_DELEGATION_TOOL)
+            tools.append(RESUME_DELEGATION_TOOL)
         if delegation_available and tier == "large":
             tools.append(CREATE_SUPERVISOR_TOOL)
         if tier == "large":

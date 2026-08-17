@@ -64,10 +64,10 @@ DELEGATE_TASK_TOOL = {
                 },
                 "wait_seconds": {
                     "type": "integer",
-                    "description": "发起委托后建议等待秒数，范围 1-600。未传时由 ContinuousThinker 自动决定。",
+                    "description": "下级思考超时（秒），范围 1-600。委托必须指定：将作为下级模型本轮思考的超时上限，超时后自动从断点重试一次，再失败则通知你。",
                 },
             },
-            "required": ["role", "task"],
+            "required": ["role", "task", "wait_seconds"],
         },
     }
 }
@@ -206,6 +206,64 @@ LIST_SKILLS_TOOL = {
             "properties": {},
         },
     },
+}
+
+QUERY_DELEGATION_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "query_delegation",
+        "description": (
+            "查看某个委托进行到什么地方了：状态、目标模型、调用方、进度、已有的上下文"
+            "（任务描述/结果/子委托）。上下文文本按 context_limit 截取，防止一次返回过多。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "delegation_id": {
+                    "type": "string",
+                    "description": "要查看的委托 id（来自 delegate_task 的结果或进度汇报）。",
+                },
+                "context_limit": {
+                    "type": "integer",
+                    "description": "返回的上下文文本截取长度（字符数），必须指定，范围 100-3000。",
+                },
+            },
+            "required": ["delegation_id", "context_limit"],
+        },
+    }
+}
+
+RESUME_DELEGATION_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "resume_delegation",
+        "description": (
+            "继续一个委托（如因超时/中断未完成，或需要推进）。不传 return_to_model_id 时，"
+            "结果默认返回原委托者（发起该委托的模型）。可传新的 task 指令让下级从已有上下文继续。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "delegation_id": {
+                    "type": "string",
+                    "description": "要继续的委托 id。",
+                },
+                "task": {
+                    "type": "string",
+                    "description": "新的补充指令（可选）。不传则沿用原任务，从已有上下文继续。",
+                },
+                "return_to_model_id": {
+                    "type": "string",
+                    "description": "继续委托完成后结果返回给谁（可选）。不传则默认返回原委托者。",
+                },
+                "wait_seconds": {
+                    "type": "integer",
+                    "description": "下级思考超时（秒），范围 1-600。",
+                },
+            },
+            "required": ["delegation_id"],
+        },
+    }
 }
 
 QUERY_TOOL_DETAILS_TOOL = {

@@ -361,6 +361,8 @@ class ContinuousThinker:
             )
 
             bus = get_message_bus_port()
+            # delegation_id 用委托链唯一 key（runner._delegation_id = probe_id），供黑板委托链更新
+            _probe_id = getattr(getattr(self, "_runner_ref", None), "_delegation_id", "") or ""
             await bus.send(Message(
                 msg_type=MessageType.SYSTEM,
                 sender=self._model_id or ctx.origin_model_id or "continuous_thinker",
@@ -368,7 +370,7 @@ class ContinuousThinker:
                 content={
                     "action": "thinking_result",
                     "task_id": ctx.task_id,
-                    "delegation_id": ctx.task_id,
+                    "delegation_id": _probe_id or ctx.task_id,
                     "from_model_id": self._model_id or ctx.origin_model_id,
                     "to_model_id": ctx.return_to_model_id,
                     "source_model_id": self._model_id or ctx.origin_model_id,
@@ -842,21 +844,23 @@ class ContinuousThinker:
 
         thought = ""
         duration_ms = 0.0
+        # 单次思考超时：优先用 runner 的 THINK_TIMEOUT（上级委托时指定），否则默认
+        _timeout = getattr(getattr(self, "_runner_ref", None), "THINK_TIMEOUT", None) or SINGLE_THINK_TIMEOUT
         for attempt in range(1, MAX_THINK_RETRIES + 1):  # pragma: no cover  # 循环必然以 break(成功)/return(超时或异常) 退出，无自然落出路径
             try:
                 start_time = time.time()
-                raw_thought = await pausable_wait_for(self.think_fn(context), timeout=SINGLE_THINK_TIMEOUT)
+                raw_thought = await pausable_wait_for(self.think_fn(context), timeout=_timeout)
                 duration_ms = (time.time() - start_time) * 1000
                 thought = str(raw_thought or "")
                 break
             except asyncio.TimeoutError:
                 if attempt == MAX_THINK_RETRIES:
                     self.logger.warning(
-                        f"单次思考超时（>{SINGLE_THINK_TIMEOUT}s），已达最大重试次数 {MAX_THINK_RETRIES}"
+                        f"单次思考超时（>{_timeout}s），已达最大重试次数 {MAX_THINK_RETRIES}"
                     )
                     error_bus.report_error(
                         asyncio.TimeoutError(
-                            f"单次思考超时（>{SINGLE_THINK_TIMEOUT}s），已达最大重试次数 {MAX_THINK_RETRIES}"
+                            f"单次思考超时（>{_timeout}s），已达最大重试次数 {MAX_THINK_RETRIES}"
                         ),
                         ErrorContext(
                             module="continuous_thinker",
@@ -879,15 +883,17 @@ class ContinuousThinker:
                             self.logger.debug(f"[Blackboard] 超时记录写入失败 (非致命): {e}")
                     return {
                         "thought": timeout_thought,
-                        "duration_ms": SINGLE_THINK_TIMEOUT * 1000,
-                        "error": f"单次思考超时（>{SINGLE_THINK_TIMEOUT}s，已达最大重试次数 {MAX_THINK_RETRIES}）",
+                        "duration_ms": _timeout * 1000,
+                        "error": f"单次思考超时（>{_timeout}s，已达最大重试次数 {MAX_THINK_RETRIES}）",
                         "is_finished": True,
                     }
                 self.logger.warning(
-                    f"单次思考超时（>{SINGLE_THINK_TIMEOUT}s），第 {attempt} 次重试..."
+                    f"单次思考超时（>{_timeout}s），第 {attempt} 次重试..."
                 )
+                # 断点续思考：设置 runner 从上次中断处继续（保留已完成的思考/工具结果），而非从头重试
+                self._request_resume()
                 error_bus.report_error(
-                    asyncio.TimeoutError(f"单次思考超时（>{SINGLE_THINK_TIMEOUT}s），第 {attempt} 次"),
+                    asyncio.TimeoutError(f"单次思考超时（>{_timeout}s），第 {attempt} 次"),
                     ErrorContext(
                         module="continuous_thinker",
                         function="think_once",
@@ -956,6 +962,21 @@ class ContinuousThinker:
             duration_ms, len(thought)
         )
         return record
+
+    def _request_resume(self) -> None:
+        """请求 runner 从断点续思考（保留已完成的思考/工具结果，而非从头重试）"""
+        runner = getattr(self, "_runner_ref", None)
+        if runner is None:
+            return
+        try:
+            runner._resume_requested = True
+            if getattr(runner, "_resume_context", None):
+                self.logger.info(
+                    f"[ContinuousThinker] 超时重试将从断点续思考 "
+                    f"({len(runner._resume_context)} 条上下文消息)"
+                )
+        except Exception as e:
+            self.logger.debug(f"[ContinuousThinker] 断点续思考设置失败 (非致命): {e}")
 
     async def think(self, question: str) -> Dict[str, Any]:
         """

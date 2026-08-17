@@ -95,6 +95,14 @@ class ModelRunner:
         self.identity_key: str = ""
         self._expert_instance: Any = None
 
+        # 断点续思考：保存工具循环累积的 messages 快照；超时后从断点继续而非从头重试
+        self._resume_context: Optional[list] = None
+        self._resume_requested = False
+
+        # 委托链身份：本 runner 对应的委托节点（probe_id）与根任务
+        self._delegation_id: str = ""
+        self._origin_task_id: str = ""
+
         self._running = False
         self._task: Optional[asyncio.Task] = None
         self._task_description = ""
@@ -295,11 +303,14 @@ class ModelRunner:
             )
         else:
             # on_demand 专家用 run_cli_mode（任务导向，完成后退出）
+            # 超时由 THINK_TIMEOUT 派生（委托场景为上级指定值），不再硬编码
+            _expert_timeout = max(60.0, float(self.THINK_TIMEOUT or 300))
+            _round_timeout = max(30, int(_expert_timeout / 5))
             expert_result = await runtime_expert.run_cli_mode(
                 task=self._task_description,
                 max_iterations=10,
-                timeout=300,
-                round_timeout=60,
+                timeout=int(_expert_timeout),
+                round_timeout=_round_timeout,
             )
 
             logger.info(
@@ -754,10 +765,31 @@ class ModelRunner:
                             source = content.get('source_model_id', '')
                             source_tier = content.get('source_tier', '')
                             source_role = content.get('source_role', '')
-                            delegation_id = content.get('delegation_id', '')
+                            delegation_id = content.get('delegation_id', '')  # 委托链 key（probe_id）
+                            task_id = content.get('task_id', '')              # 本地 pending key
 
-                            if self._thinker and delegation_id:
-                                self._thinker._process_delegation_response(result, delegation_id)
+                            # 本地 pending 追踪用 task_id；黑板委托链用 delegation_id
+                            if self._thinker and (task_id or delegation_id):
+                                self._thinker._process_delegation_response(result, task_id or delegation_id)
+
+                            # 回写黑板委托链：标记已完成 + 保存结果上下文
+                            bb = getattr(self, "blackboard", None)
+                            if delegation_id and bb is not None and hasattr(bb, "get_delegation"):
+                                try:
+                                    if bb.get_delegation(delegation_id):
+                                        bb.update_delegation_progress(
+                                            delegation_id,
+                                            progress=f"已完成，结果来自 {source}",
+                                            status="replied",
+                                            context_summary=result[:200],
+                                        )
+                                        bb.update_delegation_status(
+                                            delegation_id, "replied", metadata={"response": result}
+                                        )
+                                        if hasattr(bb, "persist"):
+                                            bb.persist()
+                                except Exception:
+                                    pass
 
                             tier_label = {
                                 "supervisor": "主管",
@@ -1346,6 +1378,159 @@ class ModelRunner:
                 f"模型调用超时 {self.THINK_TIMEOUT}s"
             )
 
+    def _record_delegation_chain(self, role: str, task: str, probe_id: str, target_tier: str, wait_seconds: Optional[int] = None) -> None:
+        """把本次委托写入黑板委托链（含调用方/返回者/父委托/根任务），随黑板落库"""
+        try:
+            bb = getattr(self, "blackboard", None)
+            if bb is None or not hasattr(bb, "write_delegation"):
+                return
+            did = bb.write_delegation(
+                role=role,
+                task=task,
+                delegation_id=probe_id or "",
+                caller_model_id=self.model_id,
+                caller_tier=self.tier,
+                parent_delegation_id=getattr(self, "_delegation_id", ""),
+                return_to_model_id=self.model_id,
+                return_to_session_id=getattr(self, "_return_to_session_id", self.session_id),
+                origin_task_id=getattr(self, "_origin_task_id", "") or self._task_id,
+                probe_id=probe_id or "",
+                target_tier=target_tier,
+            )
+            if wait_seconds:
+                bb.update_delegation_progress(did, progress=f"已委托，下级思考超时 {wait_seconds}s")
+            if hasattr(bb, "persist"):
+                bb.persist()
+            logger.info(f"[ModelRunner] 委托链已记录: {did} → {role} (parent={getattr(self, '_delegation_id', '')})")
+        except Exception as e:
+            logger.debug(f"[ModelRunner] 委托链记录失败 (非致命): {e}")
+
+    async def _handle_query_delegation(self, args: Dict[str, Any]) -> str:
+        """query_delegation：查看委托进度 + 截取上下文（context_limit 必填）"""
+        try:
+            did = str(args.get("delegation_id", "") or "").strip()
+            raw_limit = args.get("context_limit")
+            try:
+                limit = int(raw_limit) if raw_limit not in (None, "") else 0
+                if limit:
+                    limit = max(100, min(3000, limit))
+            except Exception:
+                limit = 0
+            if not did:
+                return "【查询失败】缺少 delegation_id 参数。"
+            if not limit:
+                return "【查询失败】缺少 context_limit 参数（必须指定上下文截取长度，范围 100-3000）。"
+            bb = getattr(self, "blackboard", None)
+            if bb is None or not hasattr(bb, "build_delegation_context"):
+                return "【查询失败】当前上下文无黑板委托记录。"
+            text = bb.build_delegation_context(did, limit)
+            chain = bb.get_delegation_chain(did)
+            if not text:
+                # 列出当前所有委托供参考
+                existing = []
+                try:
+                    with bb._lock:
+                        existing = list(bb.delegations.keys())
+                except Exception:
+                    pass
+                hint = "、".join(existing[:10]) if existing else "（无）"
+                return f"【未找到委托】delegation_id={did} 不存在。当前黑板委托：{hint}"
+            if chain:
+                chain_txt = " → ".join(
+                    f"{d.get('delegation_id')}({d.get('status')})" for d in chain
+                )
+                text += f"\n委托链: {chain_txt}"
+            return text
+        except Exception as e:
+            logger.debug(f"[ModelRunner] query_delegation 异常 (非致命): {e}")
+            return f"【查询异常】{e}"
+
+    async def _handle_resume_delegation(self, args: Dict[str, Any]) -> str:
+        """resume_delegation：继续一个委托
+
+        未传 return_to_model_id 时默认返回原委托者（委托链记录的 return_to/caller）。
+        """
+        try:
+            from modules.thinking.core.delegation_port import (
+                ProbeDelegationAdapter, DelegationRequest,
+            )
+            did = str(args.get("delegation_id", "") or "").strip()
+            new_task = str(args.get("task", "") or "").strip()
+            return_to = str(args.get("return_to_model_id", "") or "").strip()
+            wait_seconds = args.get("wait_seconds")
+            try:
+                wait_seconds = max(1, min(600, int(wait_seconds))) if wait_seconds else None
+            except Exception:
+                wait_seconds = None
+            if not did:
+                return "【继续失败】缺少 delegation_id 参数。"
+            bb = getattr(self, "blackboard", None)
+            if bb is None or not hasattr(bb, "get_delegation"):
+                return "【继续失败】当前上下文无黑板委托记录。"
+            d = bb.get_delegation(did)
+            if not d:
+                return f"【继续失败】未找到委托 {did}。"
+            role = d.get("role", "")
+            if not role:
+                return f"【继续失败】委托 {did} 缺少目标角色。"
+            # 默认返回原委托者（委托链记录的 return_to，其次 caller）
+            final_return_to = return_to or d.get("return_to_model_id") or d.get("caller_model_id") or self.model_id
+            final_task = new_task or d.get("task") or ""
+            request = DelegationRequest(
+                role=role,
+                task=final_task[:500],
+                session_id=self.session_id,
+                caller_model_id=self.model_id,
+                caller_tier=self.tier,
+                return_to_model_id=final_return_to,
+                return_to_session_id=self._return_to_session_id,
+                task_id=getattr(self, "_origin_task_id", "") or self._task_id,
+                wait_seconds=wait_seconds,
+                metadata={
+                    "parent_delegation_id": d.get("parent_delegation_id", "") or getattr(self, "_delegation_id", ""),
+                    "origin_task_id": d.get("origin_task_id", "") or getattr(self, "_origin_task_id", "") or self._task_id,
+                },
+            )
+            dlg_result = await ProbeDelegationAdapter().delegate(request)
+            if not dlg_result.success:
+                return f"【继续失败】{dlg_result.error}"
+            new_probe = dlg_result.metadata.get("probe_id", "")
+            # 更新原委托链：标记继续中 + 记录新委托
+            if hasattr(bb, "update_delegation_progress"):
+                bb.update_delegation_progress(
+                    did,
+                    progress=f"已被 {self.model_id} 继续，新委托 {new_probe}",
+                    status="running",
+                )
+            if hasattr(bb, "persist"):
+                bb.persist()
+            logger.info(
+                f"[ModelRunner] 继续委托: {did} → {role} (return_to={final_return_to}, new_probe={new_probe})"
+            )
+            return (
+                f"【已继续委托】{did} → 重新委派「{role}」，新委托 {new_probe}。\n"
+                f"结果将返回: {final_return_to}\n"
+                f"指令: {final_task[:200]}"
+            )
+        except Exception as e:
+            logger.debug(f"[ModelRunner] resume_delegation 异常 (非致命): {e}")
+            return f"【继续异常】{e}"
+
+    def _save_resume_context(self, messages: list) -> None:
+        """保存当前工具循环的 messages 断点快照（供超时/中断后续思考恢复）
+
+        同步写入黑板 resume_context 并按 (session_id, blackboard_id) 落库，
+        保证超时/重启后可从断点恢复上下文。
+        """
+        try:
+            self._resume_context = [m.to_dict() for m in messages]
+            bb = getattr(self, "blackboard", None)
+            if bb is not None and hasattr(bb, "resume_context"):
+                bb.resume_context = self._resume_context
+                bb.persist()
+        except Exception as e:
+            logger.debug(f"[ModelRunner] 断点快照保存失败 (非致命): {e}")
+
     def _visible_tool_whitelist(self) -> List[str]:
         """获取当前模型可见工具列表（唯一出口：ToolPermissionController）
 
@@ -1598,6 +1783,29 @@ class ModelRunner:
             ChatMessage(role="user", content=user_prompt),
         ]
 
+        # ── 断点续思考：上次思考被中断且保存了上下文快照时，从断点继续 ──
+        if getattr(self, "_resume_requested", False) and getattr(self, "_resume_context", None):
+            try:
+                messages = [ChatMessage.from_dict(m) for m in self._resume_context]
+                messages.append(ChatMessage(
+                    role="system",
+                    content=(
+                        "[系统] 上次思考被中断（超时）。请基于以上已有的思考、推理和工具结果"
+                        "直接继续，不要重复已完成的工作，聚焦未完成的部分，尽快给出结论。"
+                    ),
+                ))
+                logger.info(
+                    f"[ModelRunner] {self.model_id} 从断点续思考，恢复上下文 "
+                    f"{len(self._resume_context)} 条消息"
+                )
+                self._resume_requested = False
+            except Exception as e:
+                logger.warning(f"[ModelRunner] 断点恢复失败，回退从头思考: {e}")
+                messages = [
+                    ChatMessage(role="system", content=system_prompt),
+                    ChatMessage(role="user", content=user_prompt),
+                ]
+
         # 追踪完整上下文大小（system prompt + tools + user prompt）
         try:
             from modules.thinking.context.compression import get_compression_engine
@@ -1618,6 +1826,9 @@ class ModelRunner:
                 self._status_detail = "开始工具循环"
                 for turn in range(self.MAX_CHAT_TOOL_TURNS):
                     self._react_loop = {"turn": turn, "max": self.MAX_CHAT_TOOL_TURNS, "tool": ""}
+                    # ── 每轮开头保存断点快照：超时/中断后可从最近完成的轮次继续 ──
+                    if messages:
+                        self._save_resume_context(messages)
                     # ── 每轮检查执行模式是否被外部变更 ──
                     try:
                         from config.settings import settings as _mode_settings
@@ -1750,6 +1961,8 @@ class ModelRunner:
                             control_calls.append(tc)
                         elif tc.name in ("request_skill", "list_skills", "stop_skill", "set_memory_focus", "stop_task"):
                             control_calls.append(tc)
+                        elif tc.name in ("query_delegation", "resume_delegation"):
+                            control_calls.append(tc)
                         elif tc.name in ("request_mode_change", "ask_user_intent"):
                             control_calls.append(tc)
                         elif tc.name == "query_tool_details":
@@ -1765,7 +1978,7 @@ class ModelRunner:
                     # continue_thinking / respond_to_user / set_memory_focus / request_mode_change /
                     # ask_user_intent / delegate_task / create_supervisor 不产生 tool 结果，
                     # 不写入 assistant.tool_calls（避免"未应答的 tool_calls"错误）。
-                    _CONTROL_RESULT_TOOLS = ("request_skill", "stop_skill", "list_skills", "stop_task")
+                    _CONTROL_RESULT_TOOLS = ("request_skill", "stop_skill", "list_skills", "stop_task", "query_delegation", "resume_delegation")
                     result_control_calls = [tc for tc in control_calls if tc.name in _CONTROL_RESULT_TOOLS]
                     all_result_calls = normal_calls + query_calls + result_control_calls
                     if all_result_calls:
@@ -1912,6 +2125,10 @@ class ModelRunner:
                                         result = "【停止失败】当前上下文无法操作 runner 管理器。"
                                 else:
                                     result = "【停止失败】缺少 target_model_id 或 reason 参数。"
+                            elif tc.name == "query_delegation":
+                                result = await self._handle_query_delegation(args)
+                            elif tc.name == "resume_delegation":
+                                result = await self._handle_resume_delegation(args)
                             if result:
                                 messages.append(ChatMessage(
                                     role="tool",
@@ -1968,6 +2185,11 @@ class ModelRunner:
                                 from modules.thinking.core.delegation_port import (
                                     ProbeDelegationAdapter, DelegationRequest,
                                 )
+                                wait_seconds = args.get("wait_seconds")
+                                try:
+                                    wait_seconds = max(1, min(600, int(wait_seconds))) if wait_seconds else None
+                                except Exception:
+                                    wait_seconds = None
                                 request = DelegationRequest(
                                     role=role,
                                     task=task[:500],
@@ -1977,6 +2199,11 @@ class ModelRunner:
                                     return_to_model_id=self.model_id,
                                     return_to_session_id=self._return_to_session_id,
                                     task_id=self._task_id,
+                                    wait_seconds=wait_seconds,
+                                    metadata={
+                                        "parent_delegation_id": getattr(self, "_delegation_id", ""),
+                                        "origin_task_id": getattr(self, "_origin_task_id", "") or self._task_id,
+                                    },
                                 )
                                 dlg_result = await ProbeDelegationAdapter().delegate(request)
                                 if not dlg_result.success:
@@ -2004,6 +2231,14 @@ class ModelRunner:
                                     self._thinker.record_delegation(role, task, dlg_result)
                                 self._status = "waiting_delegation"
                                 self._status_detail = f"委托 {role}"
+                                # 记录完整委托链到黑板（供 query_delegation / resume_delegation 使用）
+                                self._record_delegation_chain(
+                                    role=role,
+                                    task=task[:500],
+                                    probe_id=dlg_result.metadata.get("probe_id", ""),
+                                    target_tier=dlg_result.metadata.get("target_tier", ""),
+                                    wait_seconds=wait_seconds,
+                                )
                                 logger.info(f"[ModelRunner] 直通委托: role={role}, success={dlg_result.success}")
                         except Exception as e:
                             logger.warning(f"[ModelRunner] 直通委托失败: {e}")
@@ -2459,6 +2694,9 @@ class ModelRunnerManager:
         return_to_model_id: str = "",
         return_to_session_id: str = "",
         skill_id: str = "",
+        think_timeout: Optional[float] = None,
+        parent_delegation_id: str = "",
+        origin_task_id: str = "",
     ) -> Optional[str]:
         """创建并启动一个 ModelRunner
 
@@ -2469,6 +2707,10 @@ class ModelRunnerManager:
             task_id: 当前任务 ID，用于结果回传关联
             return_to_model_id: 思考完成后应通知的模型 ID
             return_to_session_id: 结果所属会话 ID
+            think_timeout: 下级思考超时（秒），由上级委托时指定（delegate_task wait_seconds）。
+                未指定（主动搭话/直接激活）时用 settings.MODEL_THINK_TIMEOUT 默认值。
+            parent_delegation_id: 父委托 id（委托链）
+            origin_task_id: 根任务 id（沿委托链传播）
 
         Returns:
             model_id 如果成功，否则 None
@@ -2550,6 +2792,20 @@ class ModelRunnerManager:
                 blackboard=self.blackboard,
                 turn_context=self.turn_context,
             )
+
+            # 委托场景：上级指定下级思考超时（无默认，强制设置）；非委托（主动搭话）用默认值
+            if think_timeout:
+                runner.THINK_TIMEOUT = max(1.0, float(think_timeout))
+                logger.info(
+                    f"[ModelRunnerManager] {model_id} 思考超时由上级委托指定: "
+                    f"{runner.THINK_TIMEOUT}s (think_timeout={think_timeout})"
+                )
+
+            # 委托链身份：本 runner 是哪个委托节点（probe_id）、根任务来自哪
+            if probe_id:
+                runner._delegation_id = probe_id
+            if origin_task_id:
+                runner._origin_task_id = origin_task_id
 
             # —— per-model 记忆初始化（已移除，旧记忆系统已废弃） ——
 
@@ -2818,6 +3074,9 @@ class ModelRunnerManager:
         return_to_model_id = content.get("return_to_model_id", "")
         return_to_session_id = content.get("return_to_session_id", self.session_id)
         skill_id = content.get("skill_id", "")
+        think_timeout = content.get("think_timeout")
+        parent_delegation_id = content.get("parent_delegation_id", "")
+        origin_task_id = content.get("origin_task_id", "")
 
         # 校验 session_id 匹配（防防止误处理其他 session 的消息）
         if return_to_session_id and return_to_session_id != self.session_id:
@@ -2835,6 +3094,9 @@ class ModelRunnerManager:
             return_to_model_id=return_to_model_id,
             return_to_session_id=return_to_session_id,
             skill_id=skill_id,
+            think_timeout=think_timeout,
+            parent_delegation_id=parent_delegation_id,
+            origin_task_id=origin_task_id,
         )
         if model_id:
             logger.info(

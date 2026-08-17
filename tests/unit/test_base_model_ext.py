@@ -456,3 +456,34 @@ class TestAsyncContextManager:
             return True
 
         assert asyncio.run(go()) is True
+
+
+# ── ChatMessage / ToolCall 序列化（断点续思考上下文快照） ──────────────────
+
+def test_chat_message_roundtrip():
+    """ChatMessage.to_dict/from_dict 往返无损（含 tool_calls 与 reasoning_content）"""
+    from infra.model.base_model import ChatMessage, ToolCall
+    msg = ChatMessage(
+        role="assistant",
+        content="思考输出",
+        tool_calls=[ToolCall(id="tc_1", name="web_search", arguments='{"q":"x"}')],
+        tool_call_id="tc_1",
+        reasoning_content="内部推理",
+    )
+    restored = ChatMessage.from_dict(msg.to_dict())
+    assert restored.role == "assistant"
+    assert restored.content == "思考输出"
+    assert restored.reasoning_content == "内部推理"
+    assert restored.tool_call_id == "tc_1"
+    assert restored.tool_calls is not None
+    assert restored.tool_calls[0].name == "web_search"
+    assert restored.tool_calls[0].id == "tc_1"
+
+
+def test_chat_message_to_dict_no_tool_calls():
+    """无 tool_calls 的消息不生成 tool_calls 键"""
+    from infra.model.base_model import ChatMessage
+    d = ChatMessage(role="user", content="hi").to_dict()
+    assert "tool_calls" not in d
+    restored = ChatMessage.from_dict(d)
+    assert restored.tool_calls is None

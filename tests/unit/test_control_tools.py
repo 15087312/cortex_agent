@@ -25,6 +25,26 @@ def test_get_control_tools_large():
     assert ct.LIST_SKILLS_TOOL["function"]["name"] in names
     assert ct.STOP_SKILL_TOOL["function"]["name"] in names
     assert ct.REQUEST_MODE_CHANGE_TOOL["function"]["name"] in names
+    assert ct.QUERY_DELEGATION_TOOL["function"]["name"] in names
+    assert ct.RESUME_DELEGATION_TOOL["function"]["name"] in names
+
+
+def test_get_control_tools_supervisor_has_delegation_tools():
+    """主管可查看/继续委托（有委托能力时）"""
+    ctrl = get_tool_permission_controller()
+    tools = ctrl.get_control_tools(tier="supervisor", mode="edit", delegation_available=True)
+    names = [t["function"]["name"] for t in tools]
+    assert ct.QUERY_DELEGATION_TOOL["function"]["name"] in names
+    assert ct.RESUME_DELEGATION_TOOL["function"]["name"] in names
+
+
+def test_get_control_tools_expert_no_delegation_tools():
+    """专家无委托工具（含查看/继续）"""
+    ctrl = get_tool_permission_controller()
+    tools = ctrl.get_control_tools(tier="expert", mode="edit", delegation_available=False)
+    names = [t["function"]["name"] for t in tools]
+    assert ct.QUERY_DELEGATION_TOOL["function"]["name"] not in names
+    assert ct.RESUME_DELEGATION_TOOL["function"]["name"] not in names
 
 
 def test_get_control_tools_supervisor_no_skill():
@@ -43,3 +63,13 @@ def test_get_control_tools_expert():
     # 专家无委托，只有基础
     names = [t["function"]["name"] for t in tools]
     assert ct.DELEGATE_TASK_TOOL["function"]["name"] not in names
+
+
+def test_delegate_task_requires_wait_seconds():
+    """委托必须指定下级思考超时：wait_seconds 为必填参数"""
+    props = ct.DELEGATE_TASK_TOOL["function"]["parameters"]
+    required = props["required"]
+    assert "wait_seconds" in required
+    assert "role" in required and "task" in required
+    desc = props["properties"]["wait_seconds"]["description"]
+    assert "超时" in desc
