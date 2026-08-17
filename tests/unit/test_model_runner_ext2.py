@@ -2566,3 +2566,46 @@ async def test_maybe_summarize_system_prompt_fallback(monkeypatch):
     assert ok is True
     assert messages[0].role == "system"
     assert "你是智能助手" in messages[0].content
+
+
+async def test_think_loop_wait_timeout_uses_tool_wait(monkeypatch):
+    """委托等待超时使用工具设置的 wait_seconds（非硬编码）；超时后自动激活上级"""
+    r = _runner(tier="large")
+    r._running = True
+    r._task_description = "任务"
+    r._task_id = "t1"
+    r.identity_key = ""
+    r._return_to_model_id = "supervisor_001"
+    r._wakeup_event = FakeEvent()
+
+    thinker = MagicMock()
+    thinker._pending_delegations = {"task_x": {"status": "pending"}}
+    from modules.thinking.core.continuous_thinker import ThinkingControlDecision
+    thinker._last_control_decision = ThinkingControlDecision(
+        should_continue=True, wait_seconds=45, reason="", result_summary="", delegations=[], raw={},
+    )
+    thinker.continuous_think = AsyncMock(return_value=[])
+    CT = MagicMock(return_value=thinker)
+    import modules.thinking.core.continuous_thinker as ct_mod
+    monkeypatch.setattr(ct_mod, "ContinuousThinker", CT)
+
+    import modules.thinking.communication.interface as iface_mod
+    bus = MagicMock()
+    bus.subscribe = AsyncMock()
+    bus.unsubscribe = AsyncMock()
+    monkeypatch.setattr(iface_mod, "get_message_bus_port", lambda: bus)
+
+    r._write_final_result = AsyncMock()
+    r._notify_thinking_complete = AsyncMock()
+    r._notify_timeout_to_parent = AsyncMock()
+    captured = {}
+
+    async def fake_wait(**kw):
+        captured["timeout"] = kw.get("timeout")
+        return None  # 等待超时
+
+    r._wait_for_wakeup_event = fake_wait
+
+    await r._think_loop()
+    assert captured.get("timeout") == 45.0  # 用工具设置的 wait_seconds，而非硬编码 300
+    r._notify_timeout_to_parent.assert_awaited_once()

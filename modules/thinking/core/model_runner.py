@@ -3510,6 +3510,8 @@ async def remove_runner_manager(session_id: str) -> None:
     global _runner_managers
     with _runner_managers_lock:
         mgr = _runner_managers.pop(session_id, None)
+        # 会话结束：清理事件记忆上下文缓存，防多会话无界增长
+        _session_memory_context.pop(session_id, None)
     if mgr:
         try:
             await mgr.shutdown()

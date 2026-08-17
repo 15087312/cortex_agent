@@ -400,3 +400,35 @@ async def test_tool_loop_context_summary_e2e(e2e_env, monkeypatch):
 
     # 最终回复正常
     assert "总结后完成" in blackboard.final_response
+
+
+async def test_read_context_tool_e2e(e2e_env, monkeypatch):
+    """端到端：模型在工具循环调用 read_context 读取指定轮次记忆并继续"""
+    env = e2e_env
+    manager, blackboard = env["manager"], env["blackboard"]
+
+    # 预先写入几轮对话到黑板（模拟历史）
+    for i in range(1, 6):
+        blackboard.write_thought(f"m{i}", "large", f"第{i}轮讨论内容", round_num=i)
+
+    large_client = _chat_client(
+        _resp(content=None, calls=[_tc(
+            "read_context",
+            '{"round_start": 2, "round_end": 4, "context_limit": 2000}',
+            tid="ld1",
+        )]),
+        _resp(content=None, calls=[_tc(
+            "continue_thinking",
+            '{"continue": false, "result_summary": "综合结论"}',
+            tid="ld2",
+        )]),
+    )
+    _patch_factory(monkeypatch, {"large": large_client, "expert": _chat_client()})
+
+    await manager.start_listening()
+    await _start_large(manager)
+    ok = await _wait_until(lambda: bool(blackboard.final_response), timeout=15.0)
+    assert ok, f"large 未完成: {blackboard.final_response}"
+    assert "综合结论" in blackboard.final_response
+    # read_context 结果作为 tool 消息回传，模型收到后继续（第 2 次 chat 调用发生）
+    assert large_client.chat.call_count >= 2

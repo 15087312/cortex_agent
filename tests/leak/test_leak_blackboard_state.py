@@ -92,3 +92,36 @@ def test_many_sessions_clearable():
         bb.clear_turn_state()
         assert len(bb.delegations) == 0
         assert len(bb._dialog_entries) == 0
+
+
+def test_session_memory_context_cleared_on_remove(monkeypatch):
+    """会话结束（remove_runner_manager）清理 _session_memory_context 缓存"""
+    import asyncio
+    import modules.thinking.core.model_runner as mr
+
+    # 模拟多会话写入记忆缓存
+    mr._session_memory_context.clear()
+    for i in range(50):
+        mr._session_memory_context[f"ses_{i}"] = f"记忆内容{i}"
+
+    assert len(mr._session_memory_context) == 50
+    asyncio.get_event_loop().run_until_complete(mr.remove_runner_manager("ses_10"))
+    assert "ses_10" not in mr._session_memory_context
+    # 其他会话保留（不误删）
+    assert "ses_20" in mr._session_memory_context
+    mr._session_memory_context.clear()
+
+
+def test_session_memory_context_no_unbounded_growth(monkeypatch):
+    """长期多会话后记忆缓存被会话清理回收，不无界增长"""
+    import asyncio
+    import modules.thinking.core.model_runner as mr
+
+    mr._session_memory_context.clear()
+    for i in range(200):
+        mr._session_memory_context[f"ses_{i}"] = "内容" * 10
+    # 模拟会话逐个结束清理
+    for i in range(200):
+        asyncio.get_event_loop().run_until_complete(mr.remove_runner_manager(f"ses_{i}"))
+    assert len(mr._session_memory_context) == 0
+    mr._session_memory_context.clear()
