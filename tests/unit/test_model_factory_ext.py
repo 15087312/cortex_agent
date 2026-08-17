@@ -238,3 +238,70 @@ def test_get_model_factory_singleton(monkeypatch):
     b = get_model_factory()
     assert a is b
     assert mod._factory is a
+
+
+# ── 输入上下文长度注入（context_length，按模型层级） ──────────────────────
+
+def test_create_large_injects_context_length(monkeypatch):
+    """create_large 把 LARGE_MODEL_CONTEXT_LENGTH 注入 identity.context_length"""
+    from modules.thinking.model_factory import ModelInstanceFactory
+    from modules.thinking.identity import ModelIdentity
+    from config.settings import settings as cfg
+
+    try:
+        old = cfg.LARGE_MODEL_CONTEXT_LENGTH
+        cfg.LARGE_MODEL_CONTEXT_LENGTH = 131072
+        factory = ModelInstanceFactory.__new__(ModelInstanceFactory)
+        factory._get_max_for_identity = MagicMock(return_value=10)
+        factory._ensure_capacity = MagicMock()
+        # mock client 构造，避免真实 API 调用
+        import infra.model.large_model_client as lmc
+        fake_client = MagicMock()
+        monkeypatch.setattr(lmc, "LargeModelClient", MagicMock(return_value=fake_client))
+        factory._register = MagicMock(return_value="instance")
+        ident = ModelIdentity(model_id="large_primary", tier="large")
+        factory.create_large(identity=ident)
+        assert ident.context_length == 131072
+    finally:
+        cfg.LARGE_MODEL_CONTEXT_LENGTH = old
+
+
+def test_create_expert_injects_context_length(monkeypatch):
+    """create_expert 用 SMALL_MODEL_CONTEXT_LENGTH"""
+    from modules.thinking.model_factory import ModelInstanceFactory
+    from modules.thinking.identity import ModelIdentity
+    from config.settings import settings as cfg
+
+    try:
+        old = cfg.SMALL_MODEL_CONTEXT_LENGTH
+        cfg.SMALL_MODEL_CONTEXT_LENGTH = 32768
+        factory = ModelInstanceFactory.__new__(ModelInstanceFactory)
+        factory._get_max_for_identity = MagicMock(return_value=10)
+        factory._ensure_capacity = MagicMock()
+        import infra.model.small_model_client as smc
+        monkeypatch.setattr(smc, "SmallModelClient", MagicMock())
+        factory._register = MagicMock(return_value="instance")
+        ident = ModelIdentity(model_id="expert_001", tier="expert")
+        factory.create_expert(identity=ident)
+        assert ident.context_length == 32768
+    finally:
+        cfg.SMALL_MODEL_CONTEXT_LENGTH = old
+
+
+def test_context_length_respected_when_present():
+    """identity 已有 context_length 时不覆盖"""
+    from modules.thinking.model_factory import ModelInstanceFactory
+    from modules.thinking.identity import ModelIdentity
+    factory = ModelInstanceFactory.__new__(ModelInstanceFactory)
+    factory._get_max_for_identity = MagicMock(return_value=10)
+    factory._ensure_capacity = MagicMock()
+    factory._register = MagicMock(return_value="instance")
+    ident = ModelIdentity(model_id="large_primary", tier="large", context_length=99999)
+    import infra.model.large_model_client as lmc
+    orig = lmc.LargeModelClient
+    lmc.LargeModelClient = MagicMock(return_value=MagicMock())
+    try:
+        factory.create_large(identity=ident)
+    finally:
+        lmc.LargeModelClient = orig
+    assert ident.context_length == 99999

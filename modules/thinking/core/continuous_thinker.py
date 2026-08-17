@@ -718,8 +718,17 @@ class ContinuousThinker:
 
         try:
             from config.settings import settings as _cfg
-            # 以模型层级的输入上下文长度为标准（设置模型 API 时的输入上下文长度）
-            self._context_window_size = _cfg.get_context_length(self._tier)
+            from modules.thinking.identity import ModelIdentity
+            # 以模型层级的输入上下文长度为标准：优先 identity.context_length（工厂注入），
+            # 回退全局配置
+            runner = getattr(self, "_runner_ref", None)
+            _id_cl = 0
+            if runner is not None:
+                _id_cl = getattr(getattr(runner, "instance", None), "identity", None)
+            if isinstance(_id_cl, ModelIdentity) and isinstance(getattr(_id_cl, "context_length", 0), int) and _id_cl.context_length > 0:
+                self._context_window_size = _id_cl.context_length
+            else:
+                self._context_window_size = _cfg.get_context_length(self._tier)
         except Exception:
             self._context_window_size = 128000
         try:

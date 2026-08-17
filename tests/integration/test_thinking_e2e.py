@@ -48,11 +48,15 @@ def _chat_client(*responses):
 class _FakeFactory:
     """模型工厂替身：各角色返回带 fake client 的 ModelInstance"""
 
-    def __init__(self, clients: dict):
+    def __init__(self, clients: dict, context_length: dict = None):
         self.clients = clients
+        self.context_length = context_length or {}
 
     def _make(self, identity, key):
         from modules.thinking.model_factory import ModelInstance
+        cl = self.context_length.get(key, 0)
+        if cl:
+            identity.context_length = cl
         return ModelInstance(identity=identity, client=self.clients[key], status="idle")
 
     def create_large(self, identity=None, **kw):
@@ -96,9 +100,9 @@ def _patch_deps(monkeypatch):
     return mcp
 
 
-def _patch_factory(monkeypatch, clients: dict):
+def _patch_factory(monkeypatch, clients: dict, context_length: dict = None):
     import modules.thinking.model_factory as mf_mod
-    monkeypatch.setattr(mf_mod, "get_model_factory", lambda: _FakeFactory(clients))
+    monkeypatch.setattr(mf_mod, "get_model_factory", lambda: _FakeFactory(clients, context_length))
 
 
 def _reset_bus(monkeypatch):
@@ -351,3 +355,48 @@ async def test_resume_delegation_e2e(e2e_env, monkeypatch):
     d = blackboard.get_delegation(did)
     assert d["status"] == "running"
     assert "probe_resumed_1" in d["progress"]
+
+async def test_tool_loop_context_summary_e2e(e2e_env, monkeypatch):
+    """端到端：工具循环内 90% 上下文自动总结（调当前模型）并注入下轮，摘要落黑板"""
+    env = e2e_env
+    manager, blackboard = env["manager"], env["blackboard"]
+
+    # large：小窗口（context_length=2 → 阈值 1，任何上下文都触发总结）
+    # chat_stream 统一走：先被 _summarize 调用（返回摘要），再被主循环调用（返回结束指令）
+    large_client = MagicMock()
+    large_client.supports_native_tools = True
+    large_client.chat_stream = AsyncMock(side_effect=[
+        _resp(content="中间总结"),  # _summarize 调用
+        _resp(content=None, calls=[_tc(
+            "continue_thinking",
+            '{"continue": false, "result_summary": "总结后完成"}',
+            tid="ld1",
+        )]),  # 主循环模型调用
+    ])
+
+    expert_client = _chat_client(
+        _resp(content=None, calls=[_tc(
+            "continue_thinking",
+            '{"continue": false, "result_summary": "专家结果"}',
+            tid="ed1",
+        )]),
+    )
+    _patch_factory(monkeypatch, {"large": large_client, "expert": expert_client},
+                   context_length={"large": 2, "expert": 100000})
+
+    await manager.start_listening()
+    await _start_large(manager)
+    ok = await _wait_until(lambda: bool(blackboard.final_response), timeout=15.0)
+    assert ok, f"large 未完成: {blackboard.final_response}"
+
+    # 总结被触发：黑板落了一条 tool_loop_summary 观察
+    summaries = [o for o in blackboard.observations
+                 if o.metadata.get("context_type") == "tool_loop_summary"]
+    assert len(summaries) == 1, f"应有自动总结，实际 {len(summaries)}"
+    assert "中间总结" in summaries[0].content
+
+    # 总结调用真实发生（chat_stream 被用于 _summarize）
+    assert large_client.chat_stream.called
+
+    # 最终回复正常
+    assert "总结后完成" in blackboard.final_response

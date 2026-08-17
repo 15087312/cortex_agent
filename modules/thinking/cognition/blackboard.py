@@ -128,6 +128,8 @@ class CognitiveBlackboard:
 
     # 观察列表容量上限：超过则清理最旧的（读取方只取最近几条，旧观察无推理价值）
     MAX_OBSERVATIONS = 200
+    # 委托链节点上限：超过则清理最旧的「已完成/过期」委托，防长时间运行无界增长
+    MAX_DELEGATIONS = 100
 
     def __init__(self, session_id: str, turn_id: str, blackboard_id: Optional[str] = None):
         self._session_id = session_id
@@ -286,8 +288,38 @@ class CognitiveBlackboard:
                 if did not in parent.child_delegation_ids:
                     parent.child_delegation_ids.append(did)
             self.delegations[did] = delegation
+            # 防无界增长：超限时清理最旧的「已完成/过期」委托
+            overflow = len(self.delegations) - self.MAX_DELEGATIONS
+            if overflow > 0:
+                self._trim_delegations(overflow)
         logger.debug(f"[CognitiveBlackboard] 创建委托: {did} → {role}")
         return did
+
+    def _trim_delegations(self, count: int) -> None:
+        """清理最旧的已完成/过期委托（pending/running 保留），防委托链无界增长"""
+        removable = sorted(
+            [
+                k for k, d in self.delegations.items()
+                if d.status in ("replied", "stale")
+            ],
+            key=lambda k: self.delegations[k].updated_at,
+        )[:count]
+        for k in removable:
+            del self.delegations[k]
+
+    def clear_delegations(self, keep: int = 0) -> int:
+        """清理全部已完成/过期委托（可保留最近 keep 条），返回清理数"""
+        with self._lock:
+            removable = [
+                k for k, d in self.delegations.items()
+                if d.status in ("replied", "stale")
+            ]
+            removable.sort(key=lambda k: self.delegations[k].updated_at)
+            if keep:
+                removable = removable[:-keep] if keep else removable
+            for k in removable:
+                del self.delegations[k]
+            return len(removable)
 
     def update_delegation_status(
         self,
