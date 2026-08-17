@@ -2633,3 +2633,40 @@ async def test_maybe_summarize_syncs_context_tokens(monkeypatch):
     await r._maybe_summarize_context(messages, "任务")
     # 即使未触发总结（未超 90%），也同步了 context_tokens
     assert thinker._context_tokens == 123
+
+
+async def test_push_todo_update(monkeypatch):
+    """todo 变更 → 推送 type='todo' 事件给前端（替代轮询）"""
+    import modules.thinking.api_stream as api
+    sent = []
+    class _CM:
+        active_connections = {"s1": object()}
+        @staticmethod
+        def send_json_from_thread(sid, event, timeout=5.0):
+            sent.append((sid, event))
+    monkeypatch.setattr(api, "connection_manager", _CM)
+    monkeypatch.setattr(api, "_build_event", lambda **kw: kw)
+    r, mcp = _tool_runner(monkeypatch, tier="expert")
+    r.session_id = "s1"
+    r._push_todo_update()
+    assert len(sent) == 1
+    sid, ev = sent[0]
+    assert sid == "s1"
+    assert ev["msg_type"] == "todo"
+    assert ev["event"] == "todo_changed"
+
+
+async def test_todo_tool_execution_triggers_push(monkeypatch):
+    """模型调用 todo 工具成功 → _generate_with_tools 自动触发 _push_todo_update"""
+    r, mcp = _tool_runner(monkeypatch, tier="large")
+    pushed = {"n": 0}
+    r._push_todo_update = lambda: pushed.__setitem__("n", pushed["n"] + 1)
+    # MCP execute 返回 todo 成功
+    mcp.execute.return_value = type("R", (), {"success": True, "result": '{"action":"create","items":[]}'})()
+    client = _chat_client(
+        _resp(content=None, calls=[_tc("todo", '{"action":"list"}')]),
+        _resp(content="完成"),
+    )
+    out = await r._generate_with_tools("system", "user", client)
+    assert "完成" in out
+    assert pushed["n"] == 1  # todo 工具执行成功触发一次推送

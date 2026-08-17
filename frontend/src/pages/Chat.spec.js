@@ -633,4 +633,35 @@ describe('Chat 页面', () => {
     expect(editSpy).toHaveBeenCalledWith(0, '新内容')
     vi.restoreAllMocks()
   })
+// ── todo 推送（替代轮询）：WS 事件触发按需拉取 ────────────────────────────
+
+it('收到 todo 推送事件 → 按需重新拉取 todo 列表', async () => {
+  const w = await mountChat()
+  const sessions = useSessionStore()
+  sessions.sessionId = 's1'
+  vi.stubGlobal('fetch', vi.fn(async (url) => {
+    if (String(url).includes('/api/management/todos')) {
+      return { ok: true, status: 200, json: async () => ({ data: { todos: [{ id: 't1', status: 'pending', text: '新任务' }] } }), text: async () => '' }
+    }
+    return { ok: true, status: 200, json: async () => ({}), text: async () => '' }
+  }))
+  w.vm.todos = []
+  await w.vm._onTodo({ session_id: 's1', content: 'todo 已变更' })
+  await flushPromises()
+  expect(w.vm.todos).toHaveLength(1)
+  expect(w.vm.todos[0].text).toBe('新任务')
+})
+
+it('todo 推送事件属于其他会话 → 不刷新当前会话 todo', async () => {
+  const w = await mountChat()
+  const sessions = useSessionStore()
+  sessions.sessionId = 's1'
+  w.vm.todos = [{ id: 'keep', status: 'pending', text: '保留' }]
+  vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ data: { todos: [] } }), text: async () => '' })))
+  await w.vm._onTodo({ session_id: 'other_session', content: 'x' })
+  await flushPromises()
+  expect(w.vm.todos).toHaveLength(1)
+  expect(w.vm.todos[0].text).toBe('保留')
+})
+
 })

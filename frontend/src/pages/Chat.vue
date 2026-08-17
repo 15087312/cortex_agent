@@ -29,7 +29,6 @@ const showSettings = ref(false)
 const todos = ref([])
 const showTodos = ref(false)
 const tracesOpen = ref(false)
-let todoTimer = null
 const todoDone = computed(() => todos.value.filter((t) => t.status === 'completed').length)
 // 上下文窗口占用（估算 token，由 thinking_progress 状态事件填充）
 const contextTokens = ref(0)
@@ -258,6 +257,13 @@ const _onProactive = (d) => {
   scrollBottom()
 }
 
+// todo 变更推送：后端 todo 工具执行后推送，收到即按需拉取（替代 3s 轮询）
+const _onTodo = (d) => {
+  // 只刷新当前会话的 todo（后端按 session 隔离推送）
+  if (d.session_id && d.session_id !== session.sessionId) return
+  loadTodos()
+}
+
 function scrollBottom() {
   nextTick(() => {
     const el = messagesWrap.value
@@ -284,6 +290,7 @@ onMounted(async () => {
   ws.wsClient.on('ack', _onAck)
   ws.wsClient.on('status', _onStatus)
   ws.wsClient.on('proactive', _onProactive)
+  ws.wsClient.on('todo', _onTodo)
   // 连接看门狗：处理中断开 → 复位加载态并提示，避免"一直加载"
   watchTimer = setInterval(() => {
     if (chat.processing && !ws.wsClient.connected) {
@@ -291,8 +298,8 @@ onMounted(async () => {
       toast.show('连接已断开，本轮回复可能丢失', 'error')
     }
   }, 2000)
+  // 初始加载 todo（切换会话时由 _onTodo / 会话变更刷新）
   loadTodos()
-  todoTimer = setInterval(loadTodos, 3000)
 })
 
 // KeepAlive 缓存下 onMounted 只首次执行——切页回来刷新会话列表
@@ -309,8 +316,8 @@ onUnmounted(() => {
   ws.wsClient.off('ack', _onAck)
   ws.wsClient.off('status', _onStatus)
   ws.wsClient.off('proactive', _onProactive)
+  ws.wsClient.off('todo', _onTodo)
   if (watchTimer) clearInterval(watchTimer)
-  if (todoTimer) clearInterval(todoTimer)
 })
 
 function handleSend({ text, attachments }) {

@@ -1936,3 +1936,31 @@ def add_to_dialog(self, role, text):       # 无 session 参数
 **验证：** `test_get_control_tools_expert` 恢复；tool 相关 144 passed。
 
 **教训：** 新增控制工具要按 tier 权限**显式归类**（基础/委托/大模型专属），不要无脑塞进共享基础列表；expert 只暴露最小必要工具。
+
+## 68. todo 面板 3 秒轮询 —— 改 WS 事件推送 + 按需拉取（前端/后端）
+
+**现象：** 前端 todo 面板用 `setInterval(loadTodos, 3000)` 轮询拉取，模型更新 todo 后最多延迟 3 秒才显示；且轮询每 3 秒发一次请求，空闲会话也持续消耗。
+
+**根因：** todo 工具（模型调用）在 `model_runner._generate_with_tools` 通过 MCP 执行后，前端无感知——只能靠轮询主动拉取，架构是"拉"而非"推"。
+
+**修复（架构调整：轮询 → 推送 + 按需调用）：**
+- 后端：`model_runner` 新增 `_push_todo_update()`，todo 工具执行成功后通过 `connection_manager.send_json_from_thread` 推送 `type='todo', event='todo_changed'` WS 事件（含 session_id）
+- 前端：`Chat.vue` 注册 `wsClient.on('todo', _onTodo)`（onMounted）→ 收到事件**按需**调用 `loadTodos()`；移除 3 秒轮询 `setInterval`；`_onTodo` 按 session_id 过滤（其他会话的推送不刷新当前）
+
+**持久化（未改，已合理）：** todo 工具调用即写 `~/.cortex/todos/{session_id}.json`（`_save_todos`），按会话隔离，切换会话不丢。
+
+**验证：** 后端 `test_push_todo_update` + `test_todo_tool_execution_triggers_push`；前端 `_onTodo` 两个用例（触发刷新/其他会话忽略）；前端 497 + 后端相关全过。
+
+**教训：** ① 前端"实时状态"优先用**事件推送**而非定时轮询——有 WS 通道就该推送 + 按需拉取，避免无效轮询；② 推送事件要带 `session_id` 并在前端按会话过滤，否则多会话串扰；③ todo 这类持久化状态，模型工具调用即写盘是正确范式，无需额外同步。
+
+## 69. 前端上下文占用显示偏低 —— context_tokens 未计入工具调用历史（后端）
+
+**现象：** ThinkingStatusPanel 显示的上下文占用百分比偏低，与真实消耗不符。
+
+**根因：** `model_runner._generate_with_tools` 只在**进入工具循环前**估算一次 `_thinker._context_tokens = engine.estimate_tokens(system + tools + user_prompt)`（model_runner.py:2023），工具循环内**每轮累积的 messages（tool_calls + tool 结果）不计入**。而 `_maybe_summarize_context` 内部算了 messages token（用于判断 90% 总结阈值），但没同步回 `_context_tokens` → 前端显示的是初始 prompt 占用，不是实时累积。
+
+**修复：** `_maybe_summarize_context` 每轮把 messages 估算的 token 同步写回 `self._thinker._context_tokens`（无论是否触发总结），前端展示含工具历史的真实占用。
+
+**验证：** `test_maybe_summarize_syncs_context_tokens`；前端 ThinkingStatusPanel 上下文 warn(70%)/danger(90%)/100%封顶/无数据隐藏测试。
+
+**教训：** ① "估算一次"若用于展示累计状态，必须覆盖完整累积范围（含工具历史），否则展示值失真；② token 估算的更新点要与"真实消费点"（messages 增长处）对齐，不能只在初始化处算一次；③ 前端展示字段（context_tokens）要由后端维护一个**权威实时值**，前端只管渲染。

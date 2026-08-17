@@ -1314,8 +1314,24 @@ class ModelRunner:
         except Exception:
             pass
 
+    def _push_todo_update(self) -> None:
+        """todo 变更后推送前端（替代轮询）：前端收到 type='todo' 事件后按需拉取列表"""
+        try:
+            from modules.thinking.api_stream import connection_manager, _build_event
+            event = _build_event(
+                session_id=self.session_id,
+                msg_type="todo",
+                event="todo_changed",
+                content="todo 已变更",
+                role=self.tier,
+                data={"session_id": self.session_id},
+            )
+            for sid in list(connection_manager.active_connections.keys()):
+                connection_manager.send_json_from_thread(sid, event)
+        except Exception as e:
+            logger.debug(f"[ModelRunner] todo 推送失败 (非致命): {e}")
+
     def _push_expert_output(self, content: str) -> None:
-        """推送主管/专家实际输出到前端（显示为独立气泡），带身份标注"""
         content = (content or "").strip()
         if not content:
             return
@@ -2668,6 +2684,9 @@ class ModelRunner:
                                         mcp_result = await asyncio.to_thread(mcp.execute, tool_request)
                                         if mcp_result.success:
                                             result = str(mcp_result.result) if mcp_result.result is not None else "(无返回值)"
+                                            # todo 变更 → 推送前端（替代前端轮询），按需刷新 todo 面板
+                                            if tc.name == "todo":
+                                                self._push_todo_update()
                                         else:
                                             error_msg = mcp_result.error or f"MCP 执行失败（无错误信息）: {tc.name}"
                                             result = f"[错误: {error_msg}]"
