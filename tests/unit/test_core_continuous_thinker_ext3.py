@@ -1029,3 +1029,245 @@ async def test_continuous_think_duplicate_thresholds(monkeypatch):
     with patch.object(ct_mod.asyncio, "sleep", new=AsyncMock(side_effect=lambda s: sleeps.append(s))):
         await t.continuous_think("问题", max_rounds=2)
     assert any(s >= 15.0 for s in sleeps) or len(sleeps) == 1
+
+
+# ── 断点续思考 / 重置 / 中间回复 / 清理 / 便捷入口 补测 ─────────────────────
+
+def test_request_resume_sets_flag():
+    """_request_resume 设置 runner 断点续思考标志"""
+    t = _thinker()
+    runner = MagicMock()
+    runner._resume_requested = False
+    runner._resume_context = [{"role": "user", "content": "c"}]
+    t._runner_ref = runner
+    t._request_resume()
+    assert runner._resume_requested is True
+
+
+def test_request_resume_no_runner():
+    """无 runner_ref 时安全跳过"""
+    t = _thinker()
+    t._runner_ref = None
+    t._request_resume()  # 不崩
+
+
+def test_request_resume_no_context():
+    """有 runner 但无断点上下文时仅设标志不记日志"""
+    t = _thinker()
+    runner = MagicMock()
+    runner._resume_context = None
+    t._runner_ref = runner
+    t._request_resume()
+    assert runner._resume_requested is True
+
+
+def test_reset_for_continuation_keeps_last_5():
+    """reset_for_continuation 保留最近 5 条历史 + 重置委托计数"""
+    t = _thinker(history_thoughts=[f"思考{i}" for i in range(10)])
+    t._consecutive_new_delegation_rounds = 3
+    t.reset_for_continuation()
+    assert len(t.history_thoughts) == 5
+    assert t.history_thoughts == [f"思考{i}" for i in range(5, 10)]
+    assert t._consecutive_new_delegation_rounds == 0
+
+
+def test_produce_intermediate_response_empty():
+    """无历史思考 → 返回空"""
+    t = _thinker(history_thoughts=[])
+    assert t.produce_intermediate_response() == ""
+
+
+def test_produce_intermediate_response_extracts_section():
+    """提取【结论】结构化段落并加 [preliminary] 标记"""
+    t = _thinker(history_thoughts=[
+        "思考无实质内容",
+        "这是详细的分析过程，包含了多步推理和中间结果展示。\n\n【结论】最终答案是 42，需要进一步验证边界条件。\n\n【建议】补充更多测试用例覆盖异常路径。",
+    ])
+    out = t.produce_intermediate_response(max_length=2000)
+    assert out.startswith("[preliminary]")
+    assert "42" in out
+
+
+def test_produce_intermediate_response_fallback():
+    """无结构化段落时回退取最后一段"""
+    t = _thinker(history_thoughts=["短", "这是一段足够长的分析结论内容，包含有意义的输出，超过三十字符阈值。"])
+    out = t.produce_intermediate_response(max_length=2000)
+    assert out.startswith("[preliminary]")
+
+
+async def test_close_clears_resources():
+    """close 清理记忆 + 外部提示"""
+    t = _thinker()
+    t.clear_memory = MagicMock()
+    t.clear_external_prompts = MagicMock()
+    await t.close()
+    t.clear_memory.assert_called_once()
+    t.clear_external_prompts.assert_called_once()
+
+
+def test_deep_think_no_think_fn():
+    """deep_think 无 think_fn → 返回空列表"""
+    t = _thinker()
+    t.think_fn = None
+    assert t.deep_think("问题") == []
+
+
+def test_collect_final_synthesis_context(monkeypatch):
+    """_collect_final_synthesis_context 聚合专家回复上下文"""
+    import types as _types
+    from modules.thinking.core.continuous_thinker import ContinuousThinker as CT
+    t = _thinker()
+    # 模拟 delegation_results（直通对象）
+    from modules.thinking.core.delegation_port import DelegationResult
+    t._delegation_results = [
+        {"role": "expert", "task": "分析", "success": True},
+    ]
+    t._pending_delegations = {}
+    ctx = t._collect_final_synthesis_context("问题", [])
+    assert isinstance(ctx, str)
+
+
+def test_write_final_response():
+    """write_final_response 写入黑板 response"""
+    t = _thinker()
+    bb = MagicMock()
+    t._blackboard = bb
+    t._model_id = "m1"
+    t._tier = "large"
+    t.write_final_response("最终内容")
+    bb.write_response.assert_called_once()
+
+
+async def test_run_final_synthesis_no_think_fn():
+    """_run_final_synthesis 无 think_fn → 返回 None"""
+    t = _thinker()
+    t.think_fn = None
+    out = await t._run_final_synthesis("问题", [])
+    assert out is None
+
+
+async def test_run_final_synthesis_success():
+    """_run_final_synthesis 正常合成并记录"""
+    t = _thinker(history_thoughts=["旧"])
+    t.notebook = None
+    t.think_fn = AsyncMock(return_value="【回答】最终总结")
+    t._blackboard = MagicMock()
+    t._model_id = "m1"
+    t._tier = "large"
+    out = await t._run_final_synthesis("问题", [], None)
+    assert out is not None
+    assert out["final_output"] == "【回答】最终总结"
+    assert out["is_final_synthesis"] is True
+
+
+async def test_run_final_synthesis_exception():
+    """_run_final_synthesis 异常 → 返回 None（不发布）"""
+    t = _thinker()
+    t.think_fn = AsyncMock(side_effect=RuntimeError("boom"))
+    out = await t._run_final_synthesis("问题", [])
+    assert out is None
+
+
+async def test_finalize_skips_with_pending():
+    """有待处理委托时跳过最终合成"""
+    t = _thinker(tier="large")
+    t._pending_delegations = {"task_1": {"status": "pending"}}
+    t._last_control_decision = None
+    t._finalize_thinking_results = None
+    # 直接测内部逻辑：_finalize_thinking_results 走 pending 分支
+    from modules.thinking.core.continuous_thinker import ContinuousThinker
+    orig = ContinuousThinker._finalize_thinking_results
+    try:
+        def _fake_sel(results, cd):
+            return "结果"
+        t._select_final_result = _fake_sel
+        t._build_final_synthesis_prompt = MagicMock(return_value="p")
+        t.think_fn = AsyncMock(return_value="合成")
+        t._finalize_thinking_results = orig.__get__(t, ContinuousThinker)
+        # 需 mock _process_collector 等
+        t._process_collector.complete = MagicMock(return_value="snap")
+        out = await t._finalize_thinking_results("问题", [])
+        assert isinstance(out, str)
+    finally:
+        pass
+
+
+async def test_finalize_uses_result_summary():
+    """模型已有 result_summary → 跳过合成直接用"""
+    t = _thinker(tier="large")
+    t._pending_delegations = {}
+    from modules.thinking.core.continuous_thinker import ThinkingControlDecision
+    t._last_control_decision = ThinkingControlDecision(
+        should_continue=False, wait_seconds=None, reason="",
+        result_summary="直接结果", delegations=[], raw={},
+    )
+    # 复用 _select_final_result 真实实现
+    results = []
+    t._process_collector.complete = MagicMock(return_value="snap")
+    out = await t._finalize_thinking_results("问题", results)
+    assert out == "直接结果" or "直接结果" in out
+
+
+async def test_context_manager_enter_exit():
+    """async 上下文管理器入口/出口"""
+    t = _thinker()
+    async with t as ctx:
+        assert ctx is t
+
+
+async def test_build_prompt_forced_skill(monkeypatch):
+    """用户强制技能 → 注入【强制技能】提示"""
+    t = _thinker()
+    t._consume_external_guidance = MagicMock(return_value="")
+    t.notebook = None
+    pool = MagicMock()
+    monkeypatch.setattr("modules.thinking.context.pool.TurnContext", lambda: pool)
+    composer = MagicMock()
+    composer.build = MagicMock(return_value="P")
+    monkeypatch.setattr("config.prompts.composer.PromptComposer", lambda: composer)
+    monkeypatch.setattr("modules.memory.event_retrieval.get_event_retrieval",
+                        lambda: (_ for _ in ()).throw(RuntimeError("no")))
+    monkeypatch.setattr("modules.thinking.context.sources.perception_source.PerceptionSource",
+                        lambda: (_ for _ in ()).throw(RuntimeError("no")))
+    skill = type("S", (), {"name": "代码技能", "id": "code", "enabled": True})()
+    monkeypatch.setattr("modules.thinking.skills.skill_manager",
+                        type("SM", (), {
+                            "get_skill": staticmethod(lambda _id: skill),
+                            "match_skill": staticmethod(lambda q: None),
+                        })())
+    import sys, types
+    cfg = sys.modules["config.settings"]
+    monkeypatch.setattr(cfg, "settings", types.SimpleNamespace(get_forced_skill=lambda: "code"))
+    await t._build_prompt("问题", 1)
+    added = [c.args[0] for c in pool.add.call_args_list]
+    skill_frags = [f for f in added if getattr(f, "source", "") == "skill_suggestion"]
+    assert skill_frags and "强制技能" in skill_frags[0].content
+
+
+async def test_build_prompt_matched_skill(monkeypatch):
+    """无强制技能时按问题匹配 → 注入【建议技能】提示"""
+    t = _thinker()
+    t._consume_external_guidance = MagicMock(return_value="")
+    t.notebook = None
+    pool = MagicMock()
+    monkeypatch.setattr("modules.thinking.context.pool.TurnContext", lambda: pool)
+    composer = MagicMock()
+    composer.build = MagicMock(return_value="P")
+    monkeypatch.setattr("config.prompts.composer.PromptComposer", lambda: composer)
+    monkeypatch.setattr("modules.memory.event_retrieval.get_event_retrieval",
+                        lambda: (_ for _ in ()).throw(RuntimeError("no")))
+    monkeypatch.setattr("modules.thinking.context.sources.perception_source.PerceptionSource",
+                        lambda: (_ for _ in ()).throw(RuntimeError("no")))
+    skill = type("S", (), {"name": "写作技能", "id": "writer", "enabled": True})()
+    monkeypatch.setattr("modules.thinking.skills.skill_manager",
+                        type("SM", (), {
+                            "get_skill": staticmethod(lambda _id: None),
+                            "match_skill": staticmethod(lambda q: skill),
+                        })())
+    import sys, types
+    cfg = sys.modules["config.settings"]
+    monkeypatch.setattr(cfg, "settings", types.SimpleNamespace(get_forced_skill=lambda: ""))
+    await t._build_prompt("问题", 1)
+    added = [c.args[0] for c in pool.add.call_args_list]
+    skill_frags = [f for f in added if getattr(f, "source", "") == "skill_suggestion"]
+    assert skill_frags and "建议技能" in skill_frags[0].content

@@ -286,3 +286,39 @@ def test_read_dialog_by_rounds(bb):
     # round_end 指定、start 缺省 → 近 10 轮到该轮
     got_end = bb.read_dialog(round_end=8)
     assert max(e["round"] for e in got_end) == 8
+
+
+# --- 委托链清理：_trim_delegations / 父子关联 ---
+
+def test_trim_delegations_overflow_cleans_completed(bb):
+    """超 MAX_DELEGATIONS 时自动清理最旧已完成（_trim_delegations）"""
+    for i in range(bb.MAX_DELEGATIONS + 30):
+        did = bb.write_delegation(f"ex{i}", f"任务{i}", probe_id=f"p_{i}")
+        bb.update_delegation_progress(did, status="replied")
+    assert len(bb.delegations) <= bb.MAX_DELEGATIONS
+    # 全部 replied → 只保留最近 MAX_DELEGATIONS 条
+    ids = list(bb.delegations.keys())
+    assert len(ids) == bb.MAX_DELEGATIONS
+
+
+def test_trim_delegations_keeps_running(bb):
+    """超限清理只清已完成，pending/running 保留"""
+    running_ids = []
+    for i in range(bb.MAX_DELEGATIONS + 30):
+        did = bb.write_delegation(f"ex{i}", f"任务{i}", probe_id=f"p_{i}")
+        if i % 3 == 0:
+            running_ids.append(did)  # 保留 running/pending
+        else:
+            bb.update_delegation_progress(did, status="replied")
+    for did in running_ids:
+        assert did in bb.delegations
+
+
+def test_write_delegation_parent_children(bb):
+    """父委托的 child_delegation_ids 自动更新"""
+    root = bb.write_delegation("sv", "根", probe_id="p_root")
+    c1 = bb.write_delegation("ex", "子1", parent_delegation_id=root, probe_id="p_c1")
+    c2 = bb.write_delegation("ex", "子2", parent_delegation_id=root, probe_id="p_c2")
+    assert bb.delegations[root].child_delegation_ids == [c1, c2]
+    # 父不存在时不崩
+    bb.write_delegation("ex", "孤儿", parent_delegation_id="ghost", probe_id="p_orphan")
