@@ -1874,3 +1874,39 @@ def add_to_dialog(self, role, text):       # 无 session 参数
 **验证：** `test_runtime_expert_thinking_result_uses_probe_id`（断言 delegation_id=probe_id 且 task_id 存在）；相关 145+ 通过。
 
 **教训：** 同一消息字段**多生产路径**时，字段语义必须一致——修一处必须全仓排查所有发送点（grep `action: thinking_result` / `"delegation_id"`），否则部分链路（本例 RuntimeExpert）静默失效，且无报错、只在 query_delegation 时表现为"查不到"。
+
+## 63. start_runner 委托节点记录覆盖 delegate 分发记录 —— 委托角色名被 identity.role 替换（后端）
+
+**现象：** 端到端测试发现，`delegate_task` 分发时 `_record_delegation_chain` 已用**角色显示名**（如"代码实现专家"）记录委托；随后 manager 消费 probe_started → `start_runner` 又用 `identity.role`（如 `code_writer`）**覆盖了同一 probe_id 的委托节点** → 委托链里角色变成英文标识，`query_delegation` 展示的角色名丢失。
+
+**根因：** 同一委托节点有两个记录点（delegate 分发 + probe 激活），后者用 `write_delegation` 无条件覆盖前者（同一 probe_id 为 key）。
+
+**修复：** `start_runner` 记录委托节点前先检查 `bb.delegations` 是否已存在该 probe_id——存在则只补全 `target_model_id`（通过 `update_delegation_progress`），不覆盖 role/task/caller；仅 orchestrator 直启等缺失场景才 `write_delegation`。
+
+**验证：** `tests/integration/test_thinking_e2e.py::test_delegation_chain_full_flow` 断言委托链 `role=代码实现专家, caller=large_primary_001, parent=probe_user_input, status=replied`；相关 79+ 通过。
+
+**教训：** 同一业务实体（委托节点）有两个写入源时，必须明确"谁优先/谁补充"，否则后写者静默覆盖前者。
+
+## 64. 断点续思考的"从中断处继续"指令在多次超时重试下累积（后端）
+
+**现象：** 端到端审查发现，`think_once` 超时重试（MAX_THINK_RETRIES）时每次 resume 都往 messages 追加"从中断处继续" system 指令；断点快照更新后再次 resume 会再插一条 → 上下文膨胀 + 指令重复。
+
+**根因：** resume 分支无条件 `messages.append(...)`，未检查断点里是否已含该指令。
+
+**修复：** resume 分支先扫描断点 messages 是否已含"从中断处继续"（`has_resume_marker`），有则跳过插入。
+
+**验证：** 相关 503+ 通过。
+
+**教训：** 幂等性——任何"断点恢复/续跑"逻辑注入标记指令前，先检查是否已注入过；多次恢复同一断点不能重复追加。
+
+## 65. 黑板 final_response 设置后未落库 —— 重启后最终回复丢失（后端）
+
+**现象：** 端到端验证黑板快照时发现，`blackboard.persist()` 只在断点保存/委托链记录时调用；`final_response` 作为终态在 `set_final_response` 设置后从不落库 → DB 快照的 `final_response` 恒为 None。
+
+**根因：** 持久化时机覆盖不全——只覆盖了"过程态"（断点/委托），遗漏了"终态"（最终回复）。
+
+**修复：** `CognitiveBlackboard.set_final_response` 末尾调用 `self.persist()`（失败不阻塞），保证最终回复落库可恢复。
+
+**验证：** `test_delegation_chain_full_flow` 断言 `state["final_response"] == blackboard.final_response`；相关 503+ 通过。
+
+**教训：** 黑板持久化要覆盖"终态"字段（final_response 等），不能只持久化过程态；写终态的方法本身应触发落库。

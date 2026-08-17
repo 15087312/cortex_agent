@@ -106,6 +106,7 @@ class ProbeDelegationAdapter:
                     "return_to_session_id": request.return_to_session_id or request.session_id,
                     "task_id": task_id,
                     "caller_tier": request.caller_tier,
+                    "caller_model_id": request.caller_model_id,
                     "priority": 5,
                     "ttl_seconds": 1800,
                     "think_timeout": int(think_timeout),

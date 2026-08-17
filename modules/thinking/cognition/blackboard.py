@@ -440,6 +440,8 @@ class CognitiveBlackboard:
         logger.info(
             f"[CognitiveBlackboard] 最终回复已设置: {len(content)} 字符"
         )
+        # 最终回复是终态，落库保证可恢复
+        self.persist()
 
     def set_security_block(self, category: str, description: str, risk_level: str = "high") -> None:
         """设置安全拦截信号（由 SecurityMonitor 调用）"""

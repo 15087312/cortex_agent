@@ -1790,13 +1790,19 @@ class ModelRunner:
         if getattr(self, "_resume_requested", False) and getattr(self, "_resume_context", None):
             try:
                 messages = [ChatMessage.from_dict(m) for m in self._resume_context]
-                messages.append(ChatMessage(
-                    role="system",
-                    content=(
-                        "[系统] 上次思考被中断（超时）。请基于以上已有的思考、推理和工具结果"
-                        "直接继续，不要重复已完成的工作，聚焦未完成的部分，尽快给出结论。"
-                    ),
-                ))
+                # 防重复：断点里已有"从中断处继续"指令（多次超时重试）则不重复插入
+                has_resume_marker = any(
+                    "从中断处继续" in str(m.get("content", ""))
+                    for m in self._resume_context
+                )
+                if not has_resume_marker:
+                    messages.append(ChatMessage(
+                        role="system",
+                        content=(
+                            "[系统] 上次思考被中断（超时）。请基于以上已有的思考、推理和工具结果"
+                            "直接继续，不要重复已完成的工作，聚焦未完成的部分，尽快给出结论。"
+                        ),
+                    ))
                 logger.info(
                     f"[ModelRunner] {self.model_id} 从断点续思考，恢复上下文 "
                     f"{len(self._resume_context)} 条消息"
@@ -2700,6 +2706,8 @@ class ModelRunnerManager:
         think_timeout: Optional[float] = None,
         parent_delegation_id: str = "",
         origin_task_id: str = "",
+        caller_model_id: str = "",
+        caller_tier: str = "",
     ) -> Optional[str]:
         """创建并启动一个 ModelRunner
 
@@ -2714,6 +2722,8 @@ class ModelRunnerManager:
                 未指定（主动搭话/直接激活）时用 settings.MODEL_THINK_TIMEOUT 默认值。
             parent_delegation_id: 父委托 id（委托链）
             origin_task_id: 根任务 id（沿委托链传播）
+            caller_model_id: 激活方模型 id（委托链节点的调用方）
+            caller_tier: 激活方层级
 
         Returns:
             model_id 如果成功，否则 None
@@ -2809,6 +2819,39 @@ class ModelRunnerManager:
                 runner._delegation_id = probe_id
             if origin_task_id:
                 runner._origin_task_id = origin_task_id
+
+            # 记录本 runner 为委托链节点（probe_started 激活即产生一个委托节点）
+            # 注意：delegate_task 分发时已记录（含角色名/调用方），此处仅补记缺失场景（如 orchestrator 激活）
+            bb = getattr(self, "blackboard", None)
+            if probe_id and bb is not None and hasattr(bb, "write_delegation"):
+                try:
+                    _existing = bb.delegations.get(probe_id) if hasattr(bb, "delegations") else None
+                    if _existing is None:
+                        bb.write_delegation(
+                            role=getattr(identity, "role", "") or identity_key,
+                            task=task_description[:500],
+                            delegation_id=probe_id,
+                            caller_model_id=caller_model_id or "orchestrator",
+                            caller_tier=caller_tier,
+                            parent_delegation_id=parent_delegation_id,
+                            return_to_model_id=return_to_model_id or "orchestrator",
+                            return_to_session_id=return_to_session_id,
+                            origin_task_id=origin_task_id or task_id,
+                            probe_id=probe_id,
+                            target_tier=tier,
+                        )
+                    else:
+                        # 已有记录：补全 target_model_id / 状态
+                        if hasattr(bb, "update_delegation_progress"):
+                            bb.update_delegation_progress(
+                                probe_id,
+                                target_model_id=model_id,
+                                status=_existing.status,
+                            )
+                    if hasattr(bb, "persist"):
+                        bb.persist()
+                except Exception as e:
+                    logger.debug(f"[ModelRunnerManager] 委托节点记录失败 (非致命): {e}")
 
             # —— per-model 记忆初始化（已移除，旧记忆系统已废弃） ——
 
@@ -3080,6 +3123,8 @@ class ModelRunnerManager:
         think_timeout = content.get("think_timeout")
         parent_delegation_id = content.get("parent_delegation_id", "")
         origin_task_id = content.get("origin_task_id", "")
+        caller_model_id = content.get("caller_model_id", "")
+        caller_tier = content.get("caller_tier", "")
 
         # 校验 session_id 匹配（防防止误处理其他 session 的消息）
         if return_to_session_id and return_to_session_id != self.session_id:
@@ -3100,6 +3145,8 @@ class ModelRunnerManager:
             think_timeout=think_timeout,
             parent_delegation_id=parent_delegation_id,
             origin_task_id=origin_task_id,
+            caller_model_id=caller_model_id,
+            caller_tier=caller_tier,
         )
         if model_id:
             logger.info(
