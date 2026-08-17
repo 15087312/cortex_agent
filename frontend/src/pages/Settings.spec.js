@@ -815,3 +815,87 @@ describe('Settings.vue', () => {
     await new Promise((r) => setTimeout(r, 30))
     expect(w.vm.installResult?.message).toBe('已安装')
   })
+
+  it('感知 tab：视觉 API 字段 + 本地模型切换 + 桌宠字段', async () => {
+    mockApi()
+    const w = await mountSettings()
+    await w.findAll('.settings-tab').find((t) => t.text() === '感知').trigger('click')
+    // 视觉后端 → API（onVisionBackendChange 触发）
+    await w.findAll('button').find((b) => b.text().trim() === 'API').trigger('click')
+    expect(w.vm.visionBackend).toBe('api')
+    // 填视觉 API 字段（txtCfg setter → PUT）
+    await w.find('input[placeholder="https://api.openai.com/v1/chat/completions"]').setValue('https://vision')
+    expect(w.vm.visionApiUrl).toBe('https://vision')
+    expect(writes.some((x) => x.url.includes('VISION_API_URL'))).toBe(true)
+    await w.find('input[placeholder="sk-..."]').setValue('sk-v')
+    expect(w.vm.visionApiKey).toBe('sk-v')
+    await w.find('input[placeholder="openai"]').setValue('openai')
+    expect(w.vm.visionApiFormat).toBe('openai')
+    // 切回本地（视觉后端，title 定位避免与语音本地按钮重名）→ 加载本地模型列表
+    await w.findAll('button').find((b) => b.attributes('title') === '本地模型（自动检测）').trigger('click')
+    expect(w.vm.visionBackend).toBe('local')
+    // 桌宠：主会话 ID 输入
+    const petRow = w.findAll('.setting-row').find((r) => r.text().includes('主会话 ID'))
+    await petRow.find('input').setValue('pet_custom')
+    expect(w.vm.petSessionId).toBe('pet_custom')
+    expect(writes.some((x) => x.url.includes('DESKTOP_PET_SESSION_ID'))).toBe(true)
+    // 重置状态按钮
+    await w.findAll('button').find((b) => b.text().includes('重置状态')).trigger('click')
+    await new Promise((r) => setTimeout(r, 30))
+    expect(writes.some((x) => x.url.includes('pet/state/reset'))).toBe(true)
+  })
+
+  it('高级 tab：配置行编辑（editConfig + prompt）', async () => {
+    mockApi({ config: { ATTENTION_X: 3 } })
+    const w = await mountSettings()
+    await w.findAll('.settings-tab').find((t) => t.text() === '高级').trigger('click')
+    const editBtn = w.findAll('button').find((b) => b.text().trim() === '编辑')
+    const p = editBtn.trigger('click')
+    await new Promise((r) => setTimeout(r, 0))
+    resolveDialog('9')
+    await p
+    await new Promise((r) => setTimeout(r, 20))
+    expect(writes.some((x) => x.url.includes('ATTENTION_X'))).toBe(true)
+  })
+
+  it('错误分支：createLib 失败与 saveCfg 失败 toast', async () => {
+    const configData = mockApi()
+    routeFetch([
+      { match: '/api/config/', data: () => { throw new Error('500') } },
+      { match: '/api/config', data: { success: true, data: configData } },
+      { match: '/api/management/memory-libs', data: () => { throw new Error('500') } },
+    ])
+    const w = await mountSettings()
+    // createLib 失败（POST memory-libs 抛错）
+    w.vm.newLibName = 'lib_fail'
+    await w.vm.createLib()
+    await new Promise((r) => setTimeout(r, 10))
+    const { useToastStore } = await import('@/stores/toast.js')
+    expect(useToastStore().toasts.some((t) => t.msg.includes('创建失败'))).toBe(true)
+    // saveCfg 失败（/api/config/ PUT 抛错）
+    await w.vm.saveCfg('DEBUG', true)
+    await new Promise((r) => setTimeout(r, 10))
+    expect(useToastStore().toasts.some((t) => t.msg.includes('保存失败'))).toBe(true)
+  })
+
+  it('诊断 Modal：DOM 遮罩/✕/关闭按钮 + 复制全部按钮', async () => {
+    mockApi()
+    const w = await mountSettings()
+    await w.vm.openDiagnostics()
+    await new Promise((r) => setTimeout(r, 30))
+    expect(w.vm.showDiag).toBe(true)
+    expect(w.find('.diag-modal').exists()).toBe(true)
+    // 复制全部按钮（copyDiag 内联）
+    const copySpy = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue()
+    await w.find('.modal-footer button').trigger('click')
+    expect(copySpy).toHaveBeenCalled()
+    // 关闭按钮
+    await w.findAll('.modal-footer button')[1].trigger('click')
+    expect(w.vm.showDiag).toBe(false)
+    // 重新打开 → 遮罩点击关闭（@click.self）
+    await w.vm.openDiagnostics()
+    await new Promise((r) => setTimeout(r, 30))
+    await w.find('.modal-overlay').trigger('click')
+    expect(w.vm.showDiag).toBe(false)
+    vi.restoreAllMocks()
+  })
