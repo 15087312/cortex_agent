@@ -175,6 +175,22 @@ export const useChatStore = defineStore('chat', () => {
         }))
       } catch {}
     }
+    // 预扫描：聚合 supervisor/expert 的思考与工具调用为独立专家气泡（与实时 addExpertMessage 一致）
+    // 后端把每个 stage 存为 role='thought'+tier；恢复时同 tier 聚合，不散成多条 thinking 气泡
+    const expertAgg = {}  // tier -> { thinking: [], tools: [], contents: [] }
+    for (const d of msgs) {
+      const tier = d.tier || ''
+      if ((d.role === 'thought' || (d.role === 'assistant' && tier)) && (tier === 'supervisor' || tier === 'expert')) {
+        const text = _stripReplyText(_cleanThinking(d.content || ''))
+        const agg = (expertAgg[tier] = expertAgg[tier] || { thinking: [], tools: [], contents: [] })
+        if (_isToolTrace(text)) {
+          if (!agg.tools.includes(text.slice(0, 200))) agg.tools.push(text.slice(0, 200))
+        } else if (text) {
+          agg.thinking.push(text)
+          agg.contents.push(text)
+        }
+      }
+    }
     messages.value = msgs.map(d => {
       const et = d.type || ''
       const tier = d.tier || ''
@@ -190,13 +206,15 @@ export const useChatStore = defineStore('chat', () => {
       }
       // 持久化的思考/对话步骤 → 渲染为思考气泡（与运行时 addThinkingStep 一致）
       if (d.role === 'thought') {
-        // 工具调用/委托等中间步骤 → 运行轨迹（切换会话后历史恢复也不混入消息流）
         const thoughtText = _stripReplyText(_cleanThinking(d.content || ''))
         if (_isToolTrace(thoughtText)) {
           traces.value.push({ text: thoughtText.slice(0, 200), time: Date.now() })
           return null
         }
-        const trole = (d.tier && d.tier !== 'thinking') ? d.tier : 'thinking'
+        const tier = d.tier || ''
+        // supervisor/expert 思考已在上方聚合为独立专家气泡，这里跳过
+        if (tier === 'supervisor' || tier === 'expert') return null
+        const trole = (tier && tier !== 'thinking') ? tier : 'thinking'
         return {
           _id: uid(),
           kind: 'thinking',
@@ -221,6 +239,22 @@ export const useChatStore = defineStore('chat', () => {
         identity_name: d.metadata?.identity_name || '',
       }
     }).filter(Boolean)
+    // 追加聚合的 supervisor/expert 专家气泡（内容 = 最后一条输出，思考/工具聚合）
+    for (const [tier, agg] of Object.entries(expertAgg)) {
+      if (!agg.thinking.length && !agg.tools.length) continue
+      messages.value.push({
+        _id: uid(),
+        role: tier,
+        kind: 'expert',
+        name: _nameFor(tier),
+        avatarCls: _avatarCls(tier),
+        content: agg.contents.length ? agg.contents[agg.contents.length - 1] : '',
+        _thinking: agg.thinking.join('\n\n'),
+        _tools: agg.tools,
+        _expanded: false,
+        id: '',
+      })
+    }
     const found = session.sessions.find(x => x.session_id === sid)
     session.currentTitle = found?.title || found?.name || (sid.slice(0, 12) + '...')
     ws.reset()

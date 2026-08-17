@@ -305,8 +305,11 @@ describe('useChatStore', () => {
     expect(session.sessionId).toBe('s2')
     expect(chat.messages).toHaveLength(3)
     expect(chat.messages[0].role).toBe('user')
-    expect(chat.messages[1].kind).toBe('thinking')
-    expect(chat.messages[2].identity_name).toBe('总指挥')
+    expect(chat.messages[1].identity_name).toBe('总指挥')
+    // supervisor 思考聚合为独立专家气泡（与实时 addExpertMessage 一致）
+    expect(chat.messages[2].kind).toBe('expert')
+    expect(chat.messages[2].role).toBe('supervisor')
+    expect(chat.messages[2]._thinking).toContain('思考过程')
     expect(session.currentTitle).toBe('会话二')
     vi.restoreAllMocks()
   })
@@ -435,3 +438,27 @@ describe('运行轨迹（工具调用从对话流分离）', () => {
     expect(chat.messages.some(m => (m.content || '').includes('todo: done'))).toBe(false)
   })
 })
+
+  it('历史加载 supervisor/expert 思考聚合为独立专家气泡', async () => {
+    vi.spyOn(wsClient, 'connect').mockResolvedValue(true)
+    const chat = useChatStore()
+    const sess = useSessionStore()
+    sess.switchSession('s1')
+    vi.spyOn(endpoints, 'sessionMessages').mockResolvedValue({
+      data: [
+        { role: 'thought', content: '【专家】先分析需求', tier: 'expert', id: 'e1' },
+        { role: 'thought', content: 'read_file: done (120 chars)', tier: 'expert', id: 'e2' },
+        { role: 'thought', content: '【专家】输出结果', tier: 'expert', id: 'e3' },
+        { role: 'user', content: '你好' },
+      ],
+    })
+    await chat.switchToSession('s1')
+    const expert = chat.messages.find(m => m.kind === 'expert')
+    expect(expert).toBeDefined()
+    expect(expert.role).toBe('expert')
+    expect(expert._thinking).toContain('先分析需求')
+    expect(expert._thinking).toContain('输出结果')
+    expect(expert._tools.some(t => t.includes('read_file: done'))).toBe(true)
+    // 工具调用不混入消息流
+    expect(chat.messages.some(m => (m.content || '').includes('read_file: done'))).toBe(false)
+  })
