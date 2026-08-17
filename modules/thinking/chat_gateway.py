@@ -267,10 +267,18 @@ async def _consume_turn(
                 full_text.append(chunk)
                 flush_buf.append(chunk)
             elif tok.get("type") == "thinking":
-                # deepseek 思考过程（reasoning）单独推送，与回复区分
+                # deepseek 思考过程（reasoning）单独推送，与回复区分。
+                # 持久化 role="thought"（与 agent 模式 _persist_thought 一致），
+                # 切换会话后思考历史可恢复；上下文恢复按 user/assistant 过滤不污染模型。
+                _thought = tok.get("content", "")
+                if _thought:
+                    try:
+                        repo.save_message(session_id, "thought", _thought)
+                    except Exception:
+                        pass
                 if not await _safe_ws_send(websocket, _envelope(
                     session_id, "thinking", "thinking_step",
-                    tok.get("content", ""), "thinking",
+                    _thought, "thinking",
                     data={"source": "reasoning",
                           "identity_name": tok.get("identity_name", "总指挥"),
                           "tier": tok.get("tier", "large")},

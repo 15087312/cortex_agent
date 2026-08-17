@@ -823,6 +823,7 @@ async def test_consume_turn_thinking_mental_tokens(monkeypatch):
     # 心理活动持久化：save_message 以 role="mental" 调用（切换会话后可恢复历史）
     saved_roles = [c.args[1] for c in repo.save_message.call_args_list]
     assert "mental" in saved_roles
+    assert "thought" in saved_roles  # 思考过程也持久化（与 agent 模式一致，§58 同类）
 
 
 # ── _chatonly_ws：附件错误 / 停止取消 ───────────────────────────────────
