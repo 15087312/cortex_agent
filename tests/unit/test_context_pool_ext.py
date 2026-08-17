@@ -84,13 +84,42 @@ def test_compact_empty():
     assert tc._compact("", 100) == ""
 
 
-def test_compact_over_budget(monkeypatch):
+def test_compact_over_budget_no_hard_truncate(monkeypatch):
+    """超限不硬裁剪（禁止 30/70 截断）：仅告警并返回原样，由总结机制控制"""
     tc = TurnContext()
     engine = MagicMock()
     engine.estimate_tokens = MagicMock(return_value=9999)
     engine.compress = MagicMock(return_value="压缩后")
     monkeypatch.setattr("modules.thinking.context.compression.get_compression_engine", lambda: engine)
-    assert tc._compact("很长" * 100, 10) == "压缩后"
+    text = "很长" * 100
+    assert tc._compact(text, 10) == text  # 原样返回，不调用 compress
+    engine.compress.assert_not_called()
+
+
+def test_compact_within_budget(monkeypatch):
+    """未超限直接返回原样"""
+    tc = TurnContext()
+    engine = MagicMock()
+    engine.estimate_tokens = MagicMock(return_value=5)
+    monkeypatch.setattr("modules.thinking.context.compression.get_compression_engine", lambda: engine)
+    assert tc._compact("内容", 10) == "内容"
+
+
+def test_compact_max_tokens_zero_returns_original():
+    """max_tokens<=0（未配置模型上下文长度）不限制"""
+    tc = TurnContext()
+    text = "内容" * 50
+    assert tc._compact(text, 0) == text
+    assert tc._compact(text, -1) == text
+
+
+def test_compact_real_engine_over_budget():
+    """真实 compression 引擎 + 长文本超限 → 返回原样（不硬裁剪）"""
+    tc = TurnContext()
+    text = "这是一段很长的中文内容。" * 2000
+    out = tc._compact(text, 10)
+    assert "这是" in out
+    assert len(out) > 1000  # 未被截断成头尾小片段
 
 
 def test_compact_error(monkeypatch):

@@ -2467,3 +2467,102 @@ async def test_notify_timeout_to_parent(monkeypatch):
     assert "超时" in content["result"]
     assert "resume_delegation" in content["result"]
     assert sent[0].recipient == "large_primary"
+
+
+# ── 关键边界补充 ───────────────────────────────────────────────────────────
+
+async def test_summarize_client_error_returns_empty(monkeypatch):
+    """_summarize 客户端抛异常 → 返回空（不替换上下文）"""
+    r, mcp = _tool_runner(monkeypatch, tier="large")
+    client = MagicMock()
+    client.supports_native_tools = True
+    client.chat_stream = AsyncMock(side_effect=RuntimeError("api down"))
+    r.instance.client = client
+    out = await r._summarize([ChatMessage(role="user", content="内容")])
+    assert out == ""
+
+
+async def test_maybe_summarize_at_exact_threshold(monkeypatch):
+    """估算恰好等于阈值（90%）→ 不触发总结（<= 不总结）"""
+    r, mcp = _tool_runner(monkeypatch, tier="large")
+    from modules.thinking.identity import ModelIdentity
+    r.instance.identity = ModelIdentity(model_id="large", tier="large", context_length=100)
+    # fake engine 返回 90 → 等于 threshold=90 → 不触发
+    import modules.thinking.context.compression as cc
+    engine = MagicMock()
+    engine.estimate_tokens.return_value = 90
+    monkeypatch.setattr(cc, "get_compression_engine", lambda: engine)
+    messages = [ChatMessage(role="system", content="s"), ChatMessage(role="user", content="u")]
+    ok = await r._maybe_summarize_context(messages, "原任务")
+    assert ok is False
+
+
+async def test_maybe_summarize_empty_messages(monkeypatch):
+    """messages 为空 → 直接返回 False 不总结"""
+    r, mcp = _tool_runner(monkeypatch, tier="large")
+    ok = await r._maybe_summarize_context([], "原任务")
+    assert ok is False
+
+
+async def test_notify_timeout_no_parent(monkeypatch):
+    """无上级（return_to_model_id 为空）→ 不发送，安全跳过"""
+    import modules.thinking.communication.interface as iface_mod
+    bus = MagicMock()
+    bus.send = AsyncMock()
+    monkeypatch.setattr(iface_mod, "get_message_bus_port", lambda: bus)
+    r = _runner(tier="expert")
+    r._return_to_model_id = ""
+    await r._notify_timeout_to_parent()
+    assert bus.send.call_count == 0
+
+
+async def test_handle_read_context_no_blackboard(monkeypatch):
+    """无黑板 → 返回读取失败"""
+    r, mcp = _tool_runner(monkeypatch, tier="large")
+    r.blackboard = None
+    out = await r._handle_read_context({"round_start": 1, "round_end": 2})
+    assert "读取失败" in out
+
+
+async def test_handle_read_context_limit_clamp(monkeypatch):
+    """context_limit 超范围被 clamp 到 500-10000"""
+    r, mcp = _tool_runner(monkeypatch, tier="large")
+    bb = _real_bb()
+    bb.write_thought("m", "large", "内容", round_num=1)
+    r.blackboard = bb
+    out = await r._handle_read_context({"round_start": 1, "round_end": 1, "context_limit": 10})
+    assert "已截断" in out or "对话记录" in out
+
+
+async def test_resume_delegation_missing_id(monkeypatch):
+    """resume_delegation 缺 delegation_id → 返回失败"""
+    r, mcp = _tool_runner(monkeypatch, tier="supervisor")
+    r.blackboard = _real_bb()
+    out = await r._handle_resume_delegation({})
+    assert "delegation_id" in out
+
+
+async def test_summarize_chat_path_no_stream(monkeypatch):
+    """client 无 chat_stream（走 chat 非流式）时 _summarize 正常返回摘要"""
+    r, mcp = _tool_runner(monkeypatch, tier="large")
+    client = MagicMock()
+    client.supports_native_tools = True
+    delattr(client, "chat_stream")  # 非流式
+    client.chat = AsyncMock(return_value=_resp(content="非流式摘要"))
+    r.instance.client = client
+    out = await r._summarize([ChatMessage(role="user", content="上下文")])
+    assert out == "非流式摘要"
+    client.chat.assert_awaited_once()
+
+
+async def test_maybe_summarize_system_prompt_fallback(monkeypatch):
+    """messages 首条非 system 时用默认系统提示（不崩）"""
+    r, mcp = _tool_runner(monkeypatch, tier="large")
+    from modules.thinking.identity import ModelIdentity
+    r.instance.identity = ModelIdentity(model_id="large", tier="large", context_length=100)
+    r._summarize = AsyncMock(return_value="摘要")
+    messages = [ChatMessage(role="user", content="没有 system 开头")]  # 首条非 system
+    ok = await r._maybe_summarize_context(messages, "任务")
+    assert ok is True
+    assert messages[0].role == "system"
+    assert "你是智能助手" in messages[0].content

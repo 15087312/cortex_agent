@@ -92,3 +92,53 @@ def test_format_runtime_state_and_observations():
     obs = type("O", (), {"tier": "expert", "content": "内容"})()
     assert "内容" in s._format_observations([obs])
     assert s._format_observations([]) == "(无历史)"
+
+
+# ── 近期改动：按轮次读取对话记录（slice 带 dialog 段 + round 参数） ────────
+
+def test_slice_for_large_dialog_rounds():
+    """slice_for_large 含按轮次范围的【对话记录】段"""
+    s = _slicer()
+    bb = _bb()
+    for r in range(1, 6):
+        bb.write_thought(f"m{r}", "large", f"第{r}轮内容", round_num=r)
+    out = s.slice_for_large(bb, round_start=2, round_end=3)
+    assert "对话记录" in out
+    assert "第2轮内容" in out
+    assert "第3轮内容" in out
+    assert "第5轮内容" not in out
+
+
+def test_slice_for_large_dialog_default_near_10():
+    """未传轮次时默认近 10 轮"""
+    s = _slicer()
+    bb = _bb()
+    for r in range(1, 20):
+        bb.write_thought(f"m{r}", "large", f"第{r}轮", round_num=r)
+    out = s.slice_for_large(bb)
+    assert "第19轮" in out
+    assert "第1轮" not in out  # 远轮被排除（近 10 轮）
+
+
+def test_slice_for_expert_rounds():
+    """slice_for_expert 支持轮次参数"""
+    s = _slicer()
+    bb = _bb()
+    for r in range(1, 4):
+        bb.write_thought(f"m{r}", "expert", f"执行{r}", round_num=r)
+    out = s.slice_for_expert(bb, task_description="任务", round_start=1, round_end=2)
+    assert "执行1" in out
+    assert "执行3" not in out
+
+
+def test_format_dialog_empty():
+    """无对话 → (无对话)"""
+    s = _slicer()
+    assert s._format_dialog([]) == "(无对话)"
+
+
+def test_slice_for_large_no_dialog():
+    """无对话记录时无【对话记录】段"""
+    s = _slicer()
+    out = s.slice_for_large(_bb())
+    assert "对话记录" not in out

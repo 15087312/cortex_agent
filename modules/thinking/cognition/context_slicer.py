@@ -106,6 +106,12 @@ class ContextSlicer:
         """
         parts = []
 
+        # 对话记录（按轮次范围，默认近 10 轮）
+        dialog = bb.read_dialog(round_start=round_start, round_end=round_end)
+        if dialog:
+            dlg_text = self._format_dialog(dialog)
+            parts.append(f"【对话记录】\n{dlg_text}")
+
         # 任务描述
         if delegation_id and delegation_id in bb.delegations:
             delegation = bb.delegations[delegation_id]
@@ -142,6 +148,12 @@ class ContextSlicer:
         - 最近5条执行历史
         """
         parts = []
+
+        # 对话记录（按轮次范围，默认近 10 轮）
+        dialog = bb.read_dialog(round_start=round_start, round_end=round_end)
+        if dialog:
+            dlg_text = self._format_dialog(dialog)
+            parts.append(f"【对话记录】\n{dlg_text}")
 
         # 执行任务
         if task_description:
