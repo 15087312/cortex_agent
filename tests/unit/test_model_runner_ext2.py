@@ -2318,7 +2318,7 @@ async def test_delegate_task_records_chain(monkeypatch):
         calls=[_tc("delegate_task", '{"role": "expert_code_writer", "task": "实现X", "wait_seconds": 120}')],
     ))
     out = await r._generate_with_tools("system", "user", client)
-    assert "委托" in out or True
+    assert "委托" in out
     d = bb.get_delegation("probe_x")
     assert d is not None
     assert d["role"] == "expert_code_writer"
@@ -2609,3 +2609,9 @@ async def test_think_loop_wait_timeout_uses_tool_wait(monkeypatch):
     await r._think_loop()
     assert captured.get("timeout") == 45.0  # 用工具设置的 wait_seconds，而非硬编码 300
     r._notify_timeout_to_parent.assert_awaited_once()
+
+
+def test_max_chat_tool_turns_default_300():
+    """工具循环防死循环兜底轮数为 300（上下文超 90% 自动总结，不再 25 轮硬限）"""
+    import modules.thinking.core.model_runner as mr
+    assert mr.ModelRunner.MAX_CHAT_TOOL_TURNS == 300

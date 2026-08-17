@@ -170,8 +170,10 @@ def test_save_causal_graph_invalid_relation():
         [{"label": "原因"}, {"label": "结果"}],
         [{"from_label": "原因", "to_label": "结果", "relation": "bogus"}],
     )
-    # 关系非法时回退 causes；边仍创建（无异常即可）
-    assert True
+    # 关系非法时回退 causes；节点和边仍被保存
+    graph = CausalGraph.get_instance()
+    edges = graph.list_all_edges()
+    assert edges  # 边已创建（关系回退为 causes）
 
 
 def test_save_causal_graph_short_label_skipped(store, monkeypatch):

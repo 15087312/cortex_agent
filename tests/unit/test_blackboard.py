@@ -64,9 +64,8 @@ def test_set_plan(bb):
 
 def test_final_response(bb):
     bb.set_final_response("the answer is 42")
-    resp = bb.get_latest_response()
-    # Response may or may not be set depending on implementation
-    assert resp is not None or resp is None  # just verify no crash
+    # set_final_response 设置 final_response 字段
+    assert bb.final_response == "the answer is 42"
 
 
 # --- format_for_model ---

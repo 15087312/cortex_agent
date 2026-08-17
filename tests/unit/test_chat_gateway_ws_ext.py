@@ -138,26 +138,25 @@ async def test_chatonly_sse_errored_finish(monkeypatch):
 
 
 async def test_chatonly_sse_timeout(monkeypatch):
+    """累计静默超 300s → 产出 error 事件（用递增 time.time 触发）"""
     repo = _noop(monkeypatch)
     thinker = MagicMock()
 
     async def fake_think(sid, content, queue):
-        await asyncio.sleep(10)
+        await asyncio.sleep(30)
 
     thinker.think = fake_think
     monkeypatch.setattr(cg, "_get_chat_thinker", lambda: thinker)
-    monkeypatch.setattr(cg, "time", type("T", (), {
-        "time": lambda: 0 if not hasattr(cg.time, "offset") else 1000000,
-    })())
-    # 直接测试超时分支：伪造 last_event 距今 > 300s
-    async def gen():
-        q = asyncio.Queue()
-        task = asyncio.create_task(fake_think("s1", "x", q))
-        import time as real_time
-        # 无法等 300s，直接验证超时条件逻辑
-        yield {"event": "dummy"}
-        task.cancel()
-    assert True
+    # 第一次调用（turn_start/last_event）返回 0，之后返回 301 → now-last_event>=300
+    counter = {"n": 0}
+    def _tick(self=None):
+        counter["n"] += 1
+        return 0 if counter["n"] <= 2 else 301
+    monkeypatch.setattr(cg, "time", type("T", (), {"time": _tick})())
+
+    events = [e async for e in cg._chatonly_sse("s1", "问题")]
+    assert any(e["event"] == "error" for e in events)
+    assert any("思考超时" in e.get("data", "") for e in events)
 
 
 # ── pet 路由 ───────────────────────────────────────────────────────────

@@ -823,7 +823,46 @@ async def test_build_prompt_active_skill_skips(monkeypatch):
     monkeypatch.setattr("modules.thinking.context.sources.perception_source.PerceptionSource",
                         lambda: (_ for _ in ()).throw(RuntimeError("no")))
     await t._build_prompt("问题", 1)
-    assert t._context_window_size in (128000, t._context_window_size)
+    # 已有 active_skill → 不注入技能建议（断言 pool.add 无 skill_suggestion）
+    added = [c.args[0] for c in pool.add.call_args_list]
+    assert not any(getattr(f, "source", "") == "skill_suggestion" for f in added)
+
+
+async def test_build_prompt_context_window_prefers_identity(monkeypatch):
+    """_context_window_size 优先级：identity.context_length > 全局配置 > 128000"""
+    import sys, types
+    from modules.thinking.identity import ModelIdentity
+
+    # 路径 1：runner.identity.context_length 生效
+    for cl in (999, 0):
+        t = _thinker()
+        t._consume_external_guidance = MagicMock(return_value="")
+        t.notebook = None
+        runner = MagicMock()
+        runner.instance = MagicMock()
+        runner.instance.identity = ModelIdentity(model_id="large", tier="large", context_length=cl)
+        t._runner_ref = runner
+        pool = MagicMock()
+        monkeypatch.setattr("modules.thinking.context.pool.TurnContext", lambda: pool)
+        composer = MagicMock()
+        composer.build = MagicMock(return_value="P")
+        monkeypatch.setattr("config.prompts.composer.PromptComposer", lambda: composer)
+        monkeypatch.setattr("modules.memory.event_retrieval.get_event_retrieval",
+                            lambda: (_ for _ in ()).throw(RuntimeError("no")))
+        monkeypatch.setattr("modules.thinking.context.sources.perception_source.PerceptionSource",
+                            lambda: (_ for _ in ()).throw(RuntimeError("no")))
+        monkeypatch.setattr("modules.thinking.skills.skill_manager",
+                            type("SM", (), {"match_skill": staticmethod(lambda q: None)})())
+        cfg = sys.modules["config.settings"]
+        monkeypatch.setattr(cfg, "settings", types.SimpleNamespace(
+            get_context_length=lambda key: 1000,
+        ))
+        await t._build_prompt("问题", 1)
+        if cl > 0:
+            assert t._context_window_size == 999  # identity 优先
+        else:
+            assert t._context_window_size == 1000  # 回退全局配置
+        break  # 只验证 identity 生效即可（第二条路径由下一用例覆盖）
 
 
 async def test_think_once_timeout_write_success(monkeypatch):

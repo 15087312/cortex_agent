@@ -1,5 +1,6 @@
 """CognitiveBlackboard 扩展测试：观察清理 / 委托 / 对话框 / 快照"""
 import pytest
+from unittest.mock import AsyncMock, MagicMock
 
 from modules.thinking.cognition.blackboard import (
     CognitiveBlackboard,
@@ -125,10 +126,14 @@ def test_on_change_callback_error(monkeypatch):
 
 
 def test_broadcast_no_loop(monkeypatch):
+    import modules.thinking.communication.message_bus as mb
+    bus = MagicMock()
+    bus.broadcast = AsyncMock()
+    monkeypatch.setattr(mb, "get_message_bus", lambda: bus)
     bb = _bb()
-    # 无运行中事件循环 → _broadcast 静默跳过
     bb._broadcast(DialogEntry(entry_type="thought", model_id="m", tier="large", content="x"))
-    assert True
+    # 无运行中事件循环 → 不创建 task，静默跳过（不抛错）
+    bus.broadcast.assert_not_awaited()
 
 
 def test_write_thought_empty_returns_none():
