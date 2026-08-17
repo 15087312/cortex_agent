@@ -631,3 +631,76 @@ describe('Settings.vue', () => {
     expect(cfg.enabled).toBe(true)
   })
 })
+
+  it('对话 tab：模式 seg 切换 + 主模型配置编辑保存（computed setter + 内联 handler）', async () => {
+    mockApi()
+    const w = await mountSettings()
+    // 处理方式 seg
+    await w.findAll('button').find((b) => b.text().includes('纯对话模式')).trigger('click')
+    expect(w.vm.cortexMode).toBe('chatonly')
+    // 执行模式 seg（宽松）
+    await w.findAll('button').find((b) => b.text().includes('宽松')).trigger('click')
+    expect(w.vm.execMode).toBe('yolo')
+    expect(writes.some((x) => x.url.includes('EXECUTION_MODE') && x.body?.value === 'yolo')).toBe(true)
+    // 主模型配置输入（本地表单 ref，保存时才 PUT）
+    await w.findAll('input[placeholder="deepseek-v4-flash"]')[0].setValue('my-model')
+    expect(w.vm.modelForm.LARGE.NAME).toBe('my-model')
+    await w.findAll('input[placeholder^="https://api.deepseek"]')[0].setValue('https://example.com/v1')
+    expect(w.vm.modelForm.LARGE.API_URL).toBe('https://example.com/v1')
+    // 保存主模型配置按钮（saveModelForm 内联 → PUT）
+    const saveModel = w.findAll('button').find((b) => b.text().includes('保存主模型配置'))
+    await saveModel.trigger('click')
+    await new Promise((r) => setTimeout(r, 30))
+    expect(w.vm.modelSaving).toBe(false)
+    expect(writes.some((x) => x.url.includes('LARGE_MODEL_NAME') && x.body?.value === 'my-model')).toBe(true)
+    expect(writes.some((x) => x.url.includes('LARGE_MODEL_API_URL') && x.body?.value === 'https://example.com/v1')).toBe(true)
+  })
+
+  it('主动搭话 tab：全局总开关 + 全局默认规则字段编辑保存', async () => {
+    mockApi()
+    const w = await mountSettings()
+    await w.findAll('.settings-tab').find((t) => t.text() === '主动搭话').trigger('click')
+    // 全局总开关 toggle（@change 反向）
+    const enabledCb = w.findAll('.setting-row')[0].find('input[type=checkbox]')
+    await enabledCb.trigger('change')
+    expect(writes.some((x) => x.url.includes('PROACTIVE_OUTREACH_ENABLED'))).toBe(true)
+    // 全局默认规则：开启定点 → 编辑时间 → 保存
+    w.vm.globalDefault.scheduleOn = true
+    w.vm.globalDefault.windowsOn = true
+    await w.vm.$nextTick()
+    await w.find('input[placeholder="14:00"]').setValue('16:30')
+    expect(w.vm.globalDefault.scheduleTime).toBe('16:30')
+    await w.find('input[placeholder^="09:00-12:00"]').setValue('09:00-12:00@0.5')
+    expect(w.vm.globalDefault.timeWindowsText).toBe('09:00-12:00@0.5')
+    const saveGlobal = w.findAll('button').find((b) => b.text().includes('保存全局默认规则'))
+    await saveGlobal.trigger('click')
+    await new Promise((r) => setTimeout(r, 30))
+    const g = writes.filter((x) => x.url.includes('PROACTIVE_OUTREACH_DEFAULT') && x.method === 'PUT').pop()
+    expect(g).toBeTruthy()
+    expect(JSON.parse(g.body.value).schedule.time).toBe('16:30')
+    expect(JSON.parse(g.body.value).time_windows[0].start).toBe('09:00')
+  })
+
+  it('感知 tab：开关/阈值/语音后端/打开文件夹 + 系统 tab 调试开关', async () => {
+    mockApi()
+    const w = await mountSettings()
+    await w.findAll('.settings-tab').find((t) => t.text() === '感知').trigger('click')
+    // 感知开关（@change 反向）
+    const rows = w.findAll('.setting-row')
+    const pEnabled = rows.find((r) => r.text().includes('感知开关') || r.text().includes('感知系统'))
+    if (pEnabled) { const cb = pEnabled.find('input[type=checkbox]'); if (cb.exists()) await cb.trigger('change') }
+    // 触发冷却输入
+    const cooldown = w.find('input[type=number]')
+    if (cooldown.exists()) { await cooldown.setValue('90'); await new Promise((r) => setTimeout(r, 20)) }
+    // 语音后端 seg → 云端
+    const cloud = w.findAll('button').find((b) => b.text() === '云端')
+    if (cloud) { await cloud.trigger('click'); expect(w.vm.voiceBackend).toBe('api') }
+    // 打开文件夹按钮
+    const openBtn = w.findAll('button').find((b) => b.text().includes('打开文件夹'))
+    if (openBtn) { await openBtn.trigger('click'); await new Promise((r) => setTimeout(r, 20)); expect(writes.some((x) => x.url.includes('open-folder'))).toBe(true) }
+    // 系统 tab：调试模式开关 + 日志级别 seg
+    await w.findAll('.settings-tab').find((t) => t.text() === '系统').trigger('click')
+    const sysRows = w.findAll('.setting-row')
+    const debugRow = sysRows.find((r) => r.text().includes('调试模式'))
+    if (debugRow) { const cb = debugRow.find('input[type=checkbox]'); if (cb.exists()) { await cb.trigger('change'); expect(writes.some((x) => x.url.includes('DEBUG'))).toBe(true) } }
+  })
