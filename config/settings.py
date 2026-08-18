@@ -53,6 +53,10 @@ class Settings(BaseSettings):
         "MENTAL_ACTIVITY_ENABLED",   # 心理活动开关（良知内心独白）
         "MEMORY_SUMMARY_ENABLED",    # 记忆总结开关（EventReducer 自动提炼事件记忆）
 
+        # ── 搜索配置 ──
+        "SEARCH_ENGINE_PRIORITY",    # 搜索引擎优先级（逗号分隔）
+        "SEARXNG_URL",               # 自部署 searXNG 实例地址
+
         # ── 语音识别（Whisper）──
         "PERCEPTION_VOICE_ENABLED",
         "PERCEPTION_VOICE_MODEL", "PERCEPTION_VOICE_MODE", "PERCEPTION_VOICE_HOTKEY",
@@ -691,6 +695,27 @@ class Settings(BaseSettings):
     # 模型配置
     MODEL_TIMEOUT: int = 180  # 模型 HTTP 请求超时（秒），可被各模型配置覆盖
     MODEL_THINK_TIMEOUT: float = 300  # 单次思考轮次超时（秒），上一级大模型可自主设置
+
+    # ── 搜索配置 ──────────────────────────────────────────
+    # 搜索引擎优先级（逗号分隔），按序尝试，首个成功的返回。
+    # 可选: searxng / ddg_html / ddg_lite / ddg_api / sogou / bing_cn / baidu
+    SEARCH_ENGINE_PRIORITY: str = "ddg_html,ddg_lite,ddg_api,sogou,bing_cn,baidu"
+    # searXNG 实例地址（自部署元搜索引擎），配置后 SEARCH_ENGINE_PRIORITY 含 searxng 时优先用其 JSON API
+    SEARXNG_URL: str = ""
+
+    def get_search_engines(self) -> "list[str]":
+        """解析搜索引擎优先级配置为有序列表（去重、过滤非法项）"""
+        allowed = {"searxng", "ddg_html", "ddg_lite", "ddg_api", "sogou", "bing_cn", "baidu"}
+        raw = (self.SEARCH_ENGINE_PRIORITY or "").strip()
+        seen = []
+        for part in raw.split(","):
+            eng = part.strip().lower()
+            if eng and eng in allowed and eng not in seen:
+                seen.append(eng)
+        # 兜底：未配置或全非法时用默认顺序
+        if not seen:
+            seen = ["ddg_html", "ddg_lite", "ddg_api", "sogou", "bing_cn", "baidu"]
+        return seen
 
     # 感知系统总开关
     PERCEPTION_ENABLED: bool = True

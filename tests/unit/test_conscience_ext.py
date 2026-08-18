@@ -253,7 +253,10 @@ async def test_think_generates_monologue(monkeypatch, tmp_path):
     assert c._dialog_buffers["large_primary"]  # 独白加入历史（按 session）
     gen_kwargs = c._model_client.generate.call_args.kwargs
     assert gen_kwargs["system_prompt"] == CONSCIENCE_SYSTEM_PROMPT
-    assert "我记得" in CONSCIENCE_PROMPT
+    # 无历史经验（_get_node_ids_from_events 返回 []）→ 走"不编造、仅推测"提示词分支
+    prompt = gen_kwargs.get("prompt") or c._model_client.generate.call_args.args[0]
+    assert "不要编造" in prompt
+    assert "推测" in prompt
 
 
 async def test_think_no_client():

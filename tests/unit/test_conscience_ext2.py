@@ -416,3 +416,49 @@ async def test_analyze_feedback_uses_session_snapshot(monkeypatch, tmp_path):
     assert g.get_node(ids["B"].id).confidence == 0.5  # 会话 B 的节点不受影响（隔离）
     assert "sess_a" not in c._pending_feedback_by_session  # 用完清理
     assert c._last_analyzed_node_ids == []  # 快照消费后清空
+
+
+# ── 内心独白提示词：无历史经验时不编造（§76） ─────────────────────────────
+
+async def test_think_no_knowledge_uses_guess_not_fabricate(monkeypatch):
+    """无历史经验 → 提示词明确"不编造、仅推测"（不是"回忆过去"）"""
+    from modules.thinking.conscience import Conscience, CONSCIENCE_SYSTEM_PROMPT
+    from unittest.mock import AsyncMock, MagicMock
+
+    c = Conscience(model_client=None)
+    c._get_causal_knowledge = MagicMock(return_value="（暂无相关因果经验）")
+    c._build_persona = MagicMock(return_value="人设")
+    c._build_values = MagicMock(return_value="价值观")
+    c._get_recent_dialog = MagicMock(return_value="最近对话")
+    c._model_client = MagicMock()
+    c._model_client.generate = AsyncMock(return_value="（推测未来）")
+    c.add_to_dialog = MagicMock()
+    c._extract_causal = MagicMock(return_value=None)
+    out = await c.think("当前问题", owner_id="large_primary")
+    gen_args = c._model_client.generate.call_args.args[0]
+    assert "不要编造" in gen_args
+    assert "推测" in gen_args
+    assert "根据当前情境进行推测" in gen_args
+    # 不应诱导回忆虚构过去
+    assert "回忆过去的经验" not in gen_args
+    assert c._model_client.generate.call_args.kwargs["system_prompt"] == CONSCIENCE_SYSTEM_PROMPT
+
+
+async def test_think_with_knowledge_uses_recall(monkeypatch):
+    """有历史经验 → 提示词走"回忆经验"分支"""
+    from modules.thinking.conscience import Conscience
+    from unittest.mock import AsyncMock, MagicMock
+
+    c = Conscience(model_client=None)
+    c._get_causal_knowledge = MagicMock(return_value="【经验】以前 X 导致 Y")
+    c._build_persona = MagicMock(return_value="人设")
+    c._build_values = MagicMock(return_value="价值观")
+    c._get_recent_dialog = MagicMock(return_value="最近对话")
+    c._model_client = MagicMock()
+    c._model_client.generate = AsyncMock(return_value="（想起过去）")
+    c.add_to_dialog = MagicMock()
+    c._extract_causal = MagicMock(return_value=None)
+    await c.think("当前问题", owner_id="large_primary")
+    gen_args = c._model_client.generate.call_args.args[0]
+    assert "回忆过去的经验" in gen_args
+    assert "我记得" in gen_args

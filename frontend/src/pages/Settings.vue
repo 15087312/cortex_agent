@@ -118,6 +118,8 @@ function segCfg(k, fallback) { return computed({ get: () => _str(configStore.con
 const cortexMode = segCfg('CORTEX_MODE', 'agent')
 const execMode = segCfg('EXECUTION_MODE', 'edit')
 const userName = txtCfg('USER_NAME', '用户')
+const searchEnginePriority = txtCfg('SEARCH_ENGINE_PRIORITY', '')
+const searxngUrl = txtCfg('SEARXNG_URL', '')
 const proactiveEnabled = boolCfg('PROACTIVE_OUTREACH_ENABLED', false)
 // 全局默认主动搭话规则（会话未单独配置时生效）
 const globalDefault = ref({ enabled: false, scheduleOn: false, scheduleTime: '', scheduleJitter: 10, screenOn: false, screenRatio: 0.5, screenProb: 0.5, screenInterval: 30, screenCooldown: 30, idleOn: false, idleMinutes: 30, idleProb: 0.5, idleInterval: 60, windowsOn: false, timeWindowsText: '' })
@@ -497,6 +499,19 @@ onMounted(async () => {
                 <button :class="{ on: execMode === 'control' }" @click="execMode = 'control'" title="MEDIUM+ 工具需单独确认">完全控制</button>
               </div>
             </div>
+          </div>
+        </div>
+        <div class="settings-divider"></div>
+        <div class="settings-group">
+          <div class="settings-group-title">搜索引擎</div>
+          <p class="settings-hint">按优先级尝试的搜索后端（逗号分隔，首个成功的返回）。可选：<code>searxng</code>、<code>ddg_html</code>、<code>ddg_lite</code>、<code>ddg_api</code>、<code>sogou</code>、<code>bing_cn</code>、<code>baidu</code>。留空使用默认顺序。</p>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">引擎优先级</div></div>
+            <div class="setting-ctl"><input class="input w-360" v-model="searchEnginePriority" placeholder="ddg_html,ddg_lite,ddg_api,sogou,bing_cn,baidu" /></div>
+          </div>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">searXNG 地址</div><div class="d">自部署元搜索实例（配置后 priority 含 searxng 时优先用其 JSON API）</div></div>
+            <div class="setting-ctl"><input class="input w-360" v-model="searxngUrl" placeholder="https://searx.example.com" /></div>
           </div>
         </div>
         <div class="settings-divider"></div>

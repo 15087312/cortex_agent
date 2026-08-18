@@ -1242,3 +1242,96 @@ def test_baidu_parser_edge_states2():
         '<span class="content-right_8Zs40">孤立摘要</span>'
     )
     assert p.results == []
+
+
+# ── 搜索引擎优先级配置（SEARCH_ENGINE_PRIORITY）+ searXNG ─────────────────────
+
+def test_get_search_engines_default_order():
+    from config.settings import Settings
+    s = Settings(SEARCH_ENGINE_PRIORITY="")
+    assert s.get_search_engines() == ["ddg_html", "ddg_lite", "ddg_api", "sogou", "bing_cn", "baidu"]
+
+
+def test_get_search_engines_custom_order_and_filter():
+    from config.settings import Settings
+    s = Settings(SEARCH_ENGINE_PRIORITY="searxng, baidu, unknown_engine, DDG_HTML")
+    engs = s.get_search_engines()
+    assert engs == ["searxng", "baidu", "ddg_html"]
+    assert "unknown_engine" not in engs
+    assert engs.index("searxng") < engs.index("baidu")
+
+
+def test_get_search_engines_dedup():
+    from config.settings import Settings
+    s = Settings(SEARCH_ENGINE_PRIORITY="baidu,baidu,sogou,baidu")
+    assert s.get_search_engines() == ["baidu", "sogou"]
+
+
+def test_get_search_engines_all_invalid_falls_back():
+    from config.settings import Settings
+    s = Settings(SEARCH_ENGINE_PRIORITY="foo,bar,baz")
+    assert s.get_search_engines() == ["ddg_html", "ddg_lite", "ddg_api", "sogou", "bing_cn", "baidu"]
+
+
+def test_search_searxng_success(monkeypatch):
+    from config.settings import settings as gsettings
+    monkeypatch.setattr(gsettings, "SEARXNG_URL", "https://searx.example.com")
+    data = {
+        "results": [
+            {"title": "T1", "url": "https://a.com", "content": "C1"},
+            {"title": "T2", "url": "https://b.com", "snippet": "S2"},
+        ]
+    }
+    monkeypatch.setattr("requests.get", lambda *a, **k: _Resp(json_data=data))
+    r = ws._search_searxng("hello", 5)
+    assert len(r) == 2
+    assert r[0]["title"] == "T1"
+    assert r[0]["snippet"] == "C1"
+    assert r[1]["snippet"] == "S2"
+
+
+def test_search_searxng_no_url(monkeypatch):
+    from config.settings import settings as gsettings
+    monkeypatch.setattr(gsettings, "SEARXNG_URL", "")
+    assert ws._search_searxng("hello", 5) == []
+
+
+def test_search_searxng_request_error(monkeypatch):
+    from config.settings import settings as gsettings
+    monkeypatch.setattr(gsettings, "SEARXNG_URL", "https://searx.example.com")
+    monkeypatch.setattr("requests.get", lambda *a, **k: (_ for _ in ()).throw(Exception("boom")))
+    assert ws._search_searxng("hello", 5) == []
+
+
+def test_web_search_uses_searxng_when_configured(monkeypatch):
+    """配置 SEARCH_ENGINE_PRIORITY 含 searxng 时优先走 searxng"""
+    from config.settings import settings as gsettings
+    monkeypatch.setattr(gsettings, "SEARCH_ENGINE_PRIORITY", "searxng,baidu")
+
+    def fake_fetch(results, max_fetch=3):
+        return results
+
+    monkeypatch.setattr(ws, "_search_searxng", lambda q, lim: [{"title": "x", "url": "u", "snippet": ""}])
+    monkeypatch.setattr(ws, "_check_ddg_reachable", lambda: False)
+    monkeypatch.setattr(ws, "_fetch_results_content", fake_fetch)
+    monkeypatch.setattr(ws, "_sanitize_web_content", lambda t, max_chars=300: t)
+    r = asyncio.run(ws.web_search("hello", fetch_content=False))
+    assert r["source"] == "searxng"
+    assert r["results_count"] == 1
+
+
+def test_web_search_respects_custom_priority(monkeypatch):
+    """按配置顺序尝试：baidu 在前则 baidu 命中，而非默认 ddg 优先"""
+    from config.settings import settings as gsettings
+    monkeypatch.setattr(gsettings, "SEARCH_ENGINE_PRIORITY", "baidu,ddg_html")
+
+    def fake_fetch(results, max_fetch=3):
+        return results
+
+    monkeypatch.setattr(ws, "_check_ddg_reachable", lambda: True)
+    monkeypatch.setattr(ws, "_search_baidu", lambda q, lim: [{"title": "b", "url": "u", "snippet": ""}])
+    monkeypatch.setattr(ws, "_search_ddg_html", lambda q, lim: (_ for _ in ()).throw(RuntimeError("unexpected")))
+    monkeypatch.setattr(ws, "_fetch_results_content", fake_fetch)
+    monkeypatch.setattr(ws, "_sanitize_web_content", lambda t, max_chars=300: t)
+    r = asyncio.run(ws.web_search("hello", fetch_content=False))
+    assert r["source"] == "baidu"

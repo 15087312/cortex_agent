@@ -20,20 +20,37 @@ REQUEST_TIMEOUT = 30
 
 
 def _is_private_ip(hostname: str) -> bool:
-    """SEC: 检查主机名是否解析到内网 IP（SSRF 防护）"""
+    """SEC: 检查主机名是否解析到内网 IP（SSRF 防护）
+
+    注意：
+    - 不判 `ip.is_reserved`——Python ipaddress 把公网保留段误报，误伤正常域名
+    - IPv6 的 `is_private` 会把 2001::/32（RFC 保留）误报为私有，故 IPv6 只认
+      ULA（fc00::/7）与 link-local（fe80::/10）——这才是真正的内网 IPv6
+    """
     import socket
     try:
         addrinfos = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
         for family, _, _, _, sockaddr in addrinfos:
-            ip = ipaddress.ip_address(sockaddr[0])
-            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
-                return True
-            # 云元数据端点
-            if str(ip) == "169.254.169.254":
-                return True
+            try:
+                ip = ipaddress.ip_address(sockaddr[0])
+            except ValueError:
+                continue
+            # IPv4：内网/环回/链路本地（含云元数据 169.254.169.254）
+            if ip.version == 4:
+                if ip.is_private or ip.is_loopback or ip.is_link_local:
+                    return True
+                if str(ip) == "169.254.169.254":
+                    return True
+            # IPv6：只认 ULA（fc00::/7）与 link-local（fe80::/10）——排除 is_private 误报的 2001::/32
+            else:
+                if ip.is_loopback or ip.is_link_local:
+                    return True
+                if ip in ipaddress.ip_network("fc00::/7"):
+                    return True
         return False
     except (socket.gaierror, ValueError):
-        return True  # 无法解析时拒绝
+        # 无法解析时拒绝（SSRF 安全兜底）
+        return True
 
 
 @ToolRegistry.register(

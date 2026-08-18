@@ -63,6 +63,8 @@ class TestBasicProperties:
         s = _new_settings(tmp_path, monkeypatch)
         assert "LOG_LEVEL" in s._MODIFIABLE_FIELDS
         assert "EXECUTION_MODE" in s._MODIFIABLE_FIELDS
+        assert "SEARCH_ENGINE_PRIORITY" in s._MODIFIABLE_FIELDS
+        assert "SEARXNG_URL" in s._MODIFIABLE_FIELDS
 
 
 # ---------------------------------------------------------------------------

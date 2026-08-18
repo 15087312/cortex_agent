@@ -63,6 +63,7 @@ def test_conscience_prompt_format():
         role_intro="你是总指挥", persona="", role_name="总指挥",
         causal_knowledge="c", values="v", recent_dialog="r",
         spatial_enhancement="", user_input="u",
+        thought_activity="回忆过去的经验", causal_instruction="不要编造，仅推测",
     )
     assert "c" in s and "u" in s
 

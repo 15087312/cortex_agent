@@ -101,6 +101,7 @@ def test_private_ip_public_address():
 def test_private_ip_cloud_metadata(monkeypatch):
     import socket
     class FakeIP:
+        version = 4
         is_private = is_loopback = is_link_local = is_reserved = False
         def __str__(self):
             return "169.254.169.254"
@@ -125,3 +126,77 @@ def test_web_fetch_generic_error(monkeypatch):
     monkeypatch.setattr(req_mod, "request", lambda *a, **k: (_ for _ in ()).throw(ValueError("boom")))
     r = _run(wf.web_fetch("https://example.com"))
     assert "boom" in r["error"]
+
+
+# ── IPv6 SSRF 边界（修复：2001::/32 公网保留段不再误判为内网） ───────────────
+
+def test_private_ip_ipv6_public_reserved_not_private():
+    """IPv6 公网保留段（如 2001::1）不应误判为内网（is_private 误报回归）"""
+    import socket
+    class FakeIP6:
+        version = 6
+        is_loopback = is_link_local = False
+        def __str__(self):
+            return "2001::1"
+        def __contains__(self, net):
+            return False
+    def fake_getaddrinfo(*a, **k):
+        return [(socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("2001::1", 0, 0, 0))]
+    real = socket.getaddrinfo
+    socket.getaddrinfo = fake_getaddrinfo
+    try:
+        assert wf._is_private_ip("example.com") is False
+    finally:
+        socket.getaddrinfo = real
+
+
+def test_private_ip_ipv6_ula_is_private(monkeypatch):
+    """IPv6 ULA（fc00::/7）应判定为内网"""
+    import socket
+    import ipaddress
+    class FakeIP6:
+        version = 6
+        is_loopback = is_link_local = False
+        def __str__(self):
+            return "fd00::1"
+    class FakeULA:
+        def __contains__(self, ip):
+            return str(ip) == "fd00::1"
+    monkeypatch.setattr(wf.ipaddress, "ip_address", lambda s: FakeIP6())
+    monkeypatch.setattr(wf.ipaddress, "ip_network", lambda n: FakeULA())
+    def fake_getaddrinfo(*a, **k):
+        return [(socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("fd00::1", 0, 0, 0))]
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
+    assert wf._is_private_ip("example.com") is True
+
+
+def test_private_ip_ipv6_link_local_is_private(monkeypatch):
+    """IPv6 link-local（fe80::/10）应判定为内网"""
+    import socket
+    class FakeIP6:
+        version = 6
+        is_loopback = False
+        is_link_local = True
+        def __str__(self):
+            return "fe80::1"
+        def __contains__(self, net):
+            return False
+    monkeypatch.setattr(wf.ipaddress, "ip_address", lambda s: FakeIP6())
+    def fake_getaddrinfo(*a, **k):
+        return [(socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("fe80::1", 0, 0, 0))]
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
+    assert wf._is_private_ip("example.com") is True
+
+
+def test_private_ip_invalid_ip_skips_continue():
+    """getaddrinfo 返回非法 IP 字符串时跳过该条（except ValueError: continue）"""
+    import socket
+    def fake_getaddrinfo(*a, **k):
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("not-an-ip", 0)),
+                (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.8.8", 0))]
+    real = socket.getaddrinfo
+    socket.getaddrinfo = fake_getaddrinfo
+    try:
+        assert wf._is_private_ip("example.com") is False
+    finally:
+        socket.getaddrinfo = real

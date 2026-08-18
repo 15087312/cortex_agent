@@ -18,7 +18,7 @@ from utils.logger import setup_logger
 
 logger = setup_logger("conscience")
 
-CONSCIENCE_PROMPT = """{role_intro}，正在回忆过去的经验。
+CONSCIENCE_PROMPT = """{role_intro}，正在{thought_activity}。
 
 {persona}
 
@@ -34,16 +34,13 @@ CONSCIENCE_PROMPT = """{role_intro}，正在回忆过去的经验。
 【当前用户输入】
 {user_input}
 
-现在，请以第一人称写一段内心独白（3-5句话），就像你突然想起了过去的一些经验：
-1. 你以前经历过什么、观察到什么规律
-2. 基于这些经验，你觉得现在应该怎么考虑
-3. 你的直觉判断
+现在，请以第一人称写一段内心独白（3-5句话）：
+{causal_instruction}
 
 要求：
 - 用括号包裹，第一人称，像在自言自语
 - 身份就是你自己——{role_name}——不是别人
-- 优先引用因果知识（"我记得X往往导致Y"），其次引用价值观
-- 不要说"我是良知系统""根据分析"之类的话，这是你自己的记忆
+- 不要说"我是良知系统""根据分析"之类的话，这是你自己的思考
 - 不要输出 JSON，不要用标签格式
 
 直接输出内心独白，不要任何前缀或说明。"""
@@ -433,6 +430,27 @@ class Conscience:
             except Exception:
                 pass
 
+            # 有因果知识 → "回忆经验"；无历史经验（空或"暂无相关因果经验"占位）→ 明确"不编造，仅基于当前情境与价值观推测"
+            _has_knowledge = bool(causal_knowledge) and causal_knowledge.strip() and "暂无相关因果经验" not in causal_knowledge
+            if _has_knowledge:
+                thought_activity = "回忆过去的经验"
+                causal_instruction = (
+                    "就像你突然想起了过去的一些经验：\n"
+                    "1. 你以前经历过什么、观察到什么规律\n"
+                    "2. 基于这些经验，你觉得现在应该怎么考虑\n"
+                    "3. 你的直觉判断\n"
+                    "优先引用因果知识（\"我记得X往往导致Y\"），其次引用价值观。"
+                )
+            else:
+                thought_activity = "根据当前情境进行推测"
+                causal_instruction = (
+                    "你没有过去的经历可以回忆，不要编造任何虚构的往事、人物或经历。\n"
+                    "只需基于【当前用户输入】、最近对话和你【核心价值观】做合理的推测与思考：\n"
+                    "1. 你对当前情况的理解和直觉\n"
+                    "2. 基于价值观，你觉得应该怎么考虑\n"
+                    "不要说\"以前我...\"\"我记得...\"之类虚构过去的话，只谈当前与未来。"
+                )
+
             prompt = CONSCIENCE_PROMPT.format(
                 role_intro=role_intro,
                 persona=persona,
@@ -442,6 +460,8 @@ class Conscience:
                 recent_dialog=recent_dialog,
                 spatial_enhancement=spatial_enhancement,
                 user_input=user_input,
+                thought_activity=thought_activity,
+                causal_instruction=causal_instruction,
             )
             
             try:

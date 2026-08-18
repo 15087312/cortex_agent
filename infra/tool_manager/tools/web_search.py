@@ -785,6 +785,33 @@ def _fetch_results_content(results: List[Dict[str, str]], max_fetch: int = 3) ->
     category="query",
     core=True,
 )
+def _search_searxng(query: str, limit: int) -> List[Dict[str, str]]:
+    """searXNG 元搜索（自部署实例 JSON API）— 返回结构化结果"""
+    import requests as _req
+    from config.settings import settings
+    base = (settings.SEARXNG_URL or "").strip().rstrip("/")
+    if not base:
+        return []
+    url = f"{base}/search"
+    params = {"q": query, "format": "json", "language": "auto"}
+    try:
+        resp = _req.get(url, params=params, timeout=SEARCH_TIMEOUT,
+                        headers={"User-Agent": "Mozilla/5.0 (compatible; CortexAgent/1.0)"})
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        logger.warning(f"[searxng] 请求失败: {e}")
+        return []
+    results = []
+    for item in data.get("results", [])[:limit]:
+        results.append({
+            "title": item.get("title", ""),
+            "url": item.get("url", ""),
+            "snippet": item.get("content", "") or item.get("snippet", ""),
+        })
+    return results
+
+
 async def web_search(
     query: str,
     limit: Optional[int] = 5,
@@ -807,9 +834,6 @@ async def web_search(
 
         errors = []
 
-        # 快速检测 DuckDuckGo 是否可达
-        ddg_ok = _check_ddg_reachable()
-
         def _finalize(results: List[Dict[str, str]], source: str) -> Dict[str, Any]:
             if _fetch:
                 results = _fetch_results_content(results)
@@ -825,54 +849,37 @@ async def web_search(
                 "source": source,
             }
 
-        if ddg_ok:
+        # 引擎注册表：name -> (是否依赖 DDG 可达, 搜索函数)
+        _ddg_ok = _check_ddg_reachable()
+        engines = {
+            "searxng": (False, lambda: _search_searxng(query, _limit)),
+            "ddg_html": (True, lambda: _search_ddg_html(query, _limit)),
+            "ddg_lite": (True, lambda: _search_ddg_lite(query, _limit)),
+            "ddg_api": (True, lambda: _search_ddg_api(query, _limit)),
+            "sogou": (False, lambda: _search_sogou(query, _limit)),
+            "bing_cn": (False, lambda: _search_bing_cn(query, _limit)),
+            "baidu": (False, lambda: _search_baidu(query, _limit)),
+        }
+
+        # 按配置的优先级尝试（SEARCH_ENGINE_PRIORITY）
+        from config.settings import settings
+        for eng in settings.get_search_engines():
+            if eng not in engines:
+                continue
+            need_ddg, fn = engines[eng]
+            if need_ddg and not _ddg_ok:
+                errors.append(f"{eng}: ddg 不可达，跳过")
+                continue
             for attempt in range(MAX_RETRIES):
                 try:
-                    results = _search_ddg_html(query, _limit)
+                    results = fn()
                     if results:
-                        return _finalize(results, "ddg_html")
+                        return _finalize(results, eng)
                     break
                 except Exception as e:
-                    errors.append(f"ddg_html: {e}")
+                    errors.append(f"{eng}: {e}")
                     if attempt < MAX_RETRIES - 1:
                         time.sleep(1)
-
-            try:
-                results = _search_ddg_lite(query, _limit)
-                if results:
-                    return _finalize(results, "ddg_lite")
-            except Exception as e:
-                errors.append(f"ddg_lite: {e}")
-
-            try:
-                results = _search_ddg_api(query, _limit)
-                if results:
-                    return _finalize(results, "ddg_api")
-            except Exception as e:
-                errors.append(f"ddg_api: {e}")
-        else:
-            errors.append("ddg: 不可达，跳过")
-
-        try:
-            results = _search_sogou(query, _limit)
-            if results:
-                return _finalize(results, "sogou")
-        except Exception as e:
-            errors.append(f"sogou: {e}")
-
-        try:
-            results = _search_bing_cn(query, _limit)
-            if results:
-                return _finalize(results, "bing_cn")
-        except Exception as e:
-            errors.append(f"bing_cn: {e}")
-
-        try:
-            results = _search_baidu(query, _limit)
-            if results:
-                return _finalize(results, "baidu")
-        except Exception as e:
-            errors.append(f"baidu: {e}")
 
         return {"error": f"所有搜索端点均失败: {'; '.join(errors)}", "query": query}
 
