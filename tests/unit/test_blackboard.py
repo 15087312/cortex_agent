@@ -321,3 +321,36 @@ def test_write_delegation_parent_children(bb):
     assert bb.delegations[root].child_delegation_ids == [c1, c2]
     # 父不存在时不崩
     bb.write_delegation("ex", "孤儿", parent_delegation_id="ghost", probe_id="p_orphan")
+
+
+# --- read_dialog_by_model（按 model_id 过滤具体执行过程）---
+
+def test_read_dialog_by_model_filters(bb):
+    bb.write_thought("expert_1", "expert", "专家1思考A")
+    bb.write_thought("expert_2", "expert", "专家2思考B")
+    bb.write_thought("expert_1", "expert", "专家1思考C")
+    rows = bb.read_dialog_by_model("expert_1")
+    assert len(rows) == 2
+    assert all(r["model_id"] == "expert_1" for r in rows)
+    assert all("专家1" in r["content"] for r in rows)
+
+
+def test_read_dialog_by_model_entry_types(bb):
+    bb.write_thought("expert_1", "expert", "思考")
+    bb.write_response("expert_1", "expert", "回复")
+    thoughts = bb.read_dialog_by_model("expert_1", entry_types=["thought"])
+    assert len(thoughts) == 1
+    assert thoughts[0]["type"] == "thought"
+
+
+def test_read_dialog_by_model_limit(bb):
+    for i in range(10):
+        bb.write_thought("expert_1", "expert", f"第{i}条")
+    rows = bb.read_dialog_by_model("expert_1", limit=3)
+    assert len(rows) == 3
+    assert rows[-1]["content"] == "第9条"
+
+
+def test_read_dialog_by_model_empty_or_missing(bb):
+    assert bb.read_dialog_by_model("") == []
+    assert bb.read_dialog_by_model("no_such_model") == []

@@ -295,7 +295,9 @@ def test_build_task_contract_expert():
     ct = _ct(task_context=ctx, tier="expert")
     out = ct._build_task_contract_section(ctx)
     assert "continue_thinking" in out
-    assert "delegate_task" not in out
+    # 专家明确禁止委托 + 明确完成返回（不再只是"不含 delegate_task 字样"）
+    assert "禁止委托" in out
+    assert "结束思考" in out
 
 
 def test_build_task_contract_large():

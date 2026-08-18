@@ -324,7 +324,7 @@ class ToolPermissionController:
             LIST_SKILLS_TOOL, STOP_SKILL_TOOL,
             REQUEST_MODE_CHANGE_TOOL, ASK_USER_INTENT_TOOL,
             QUERY_DELEGATION_TOOL, RESUME_DELEGATION_TOOL,
-            READ_CONTEXT_TOOL,
+            INSPECT_DELEGATION_TOOL, READ_CONTEXT_TOOL,
         )
 
         tools = [CONTINUE_THINKING_TOOL, QUERY_TOOL_DETAILS_TOOL]
@@ -334,6 +334,8 @@ class ToolPermissionController:
             tools.append(STOP_TASK_TOOL)
             tools.append(QUERY_DELEGATION_TOOL)
             tools.append(RESUME_DELEGATION_TOOL)
+            # 深入查看下级具体执行过程（large/supervisor 可查自己下属专家的过程）
+            tools.append(INSPECT_DELEGATION_TOOL)
             # 读取黑板记忆/委托上下文（large/supervisor 有记忆与委托链，expert 不直接读）
             tools.append(READ_CONTEXT_TOOL)
         if delegation_available and tier == "large":

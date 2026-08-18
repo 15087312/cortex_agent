@@ -312,7 +312,10 @@ class ContinuousThinker:
             control_hint = (
                 "- 你调用的每个工具，系统自动把结果追加给你继续，不需要主动结束。\n"
                 "- 任务完成时使用 continue_thinking(continue=false, result_summary=...) 返回结果。\n"
-                "- 不要把控制标记写进自然语言回复。"
+                "- 不要把控制标记写进自然语言回复。\n"
+                "- 【权限边界】你的可用工具由系统按你的身份分配（列表内的工具就是你的全部权限）：只能调用列表内工具，禁止调用主管/总指挥才有的工具或任务范围之外的操作。\n"
+                "- 【禁止委托】你没有委托权限，不要调用 delegate_task 或试图指挥其他专家/主管——只管好你自己的任务。\n"
+                "- 【结束返回】信息足够或任务完成时，必须结束思考并通过 continue_thinking 把完整结果返回给主管/上级，不要反复调用工具空转。"
             )
         else:  # large
             control_hint = (
@@ -678,7 +681,8 @@ class ContinuousThinker:
         # 委托状态
         dlg_status = self._build_delegation_status_section()
         if dlg_status:
-            pool.add(ContextFragment("delegation", dlg_status, ("large",), "当前委托状态", 60))
+            # 委托链注入到总指挥与主管（主管只看自己负责的委托链，见 _build_delegation_status_section）
+            pool.add(ContextFragment("delegation", dlg_status, ("large", "supervisor"), "委托链（协作过程）", 60))
 
         # 技能建议（强制技能优先：用户设置了 forced_skill 时直接提示已强制激活）
         try:
@@ -770,9 +774,20 @@ class ContinuousThinker:
 4. 等待主管唤醒，收到结果后整理并回复用户"""
 
     def _build_delegation_status_section(self) -> str:
-        """构建委托状态摘要。委托 ContextManager。"""
+        """构建委托链摘要（含完整委托链：父子关系/进度/目标模型）。
+
+        - 大模型：注入全部委托链（总览全局协作）
+        - 主管：只注入它发起/负责的委托及其下级（便于查看下属专家过程）
+        委托 ContextManager。
+        """
         from modules.thinking.context.manager import ContextManager
-        return ContextManager.build_delegation_status(self._pending_delegations)
+        bb = getattr(self, "_blackboard", None)
+        return ContextManager.build_delegation_status(
+            self._pending_delegations,
+            blackboard=bb,
+            scope_model_id=self._model_id if self._tier == "supervisor" else "",
+            scope_tier=self._tier,
+        )
 
     def _process_delegation_response(
         self,

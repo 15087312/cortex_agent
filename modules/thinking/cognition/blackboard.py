@@ -15,7 +15,7 @@
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Callable
+from typing import Any, Dict, List, Optional, Callable, Iterable
 from collections import deque
 from utils.logger import setup_logger
 
@@ -619,6 +619,28 @@ class CognitiveBlackboard:
             if not round_start and not round_end:
                 filtered = filtered[-limit:]
             return [e.to_dict() for e in filtered]
+
+    def read_dialog_by_model(
+        self,
+        model_id: str,
+        limit: int = 30,
+        entry_types: Optional[Iterable[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """读取指定 model_id 的对话记录（思考/回复/用户输入），供委托过程查看工具使用。
+
+        model_id: 目标模型的 model_id（精确匹配，如专家 runner 的 model_id）。
+        entry_types: 可选，过滤条目类型（thought/response/user_input），默认全部。
+        limit: 最多返回的条目数（取最新的）。
+        """
+        if not model_id:
+            return []
+        wanted = set(entry_types) if entry_types else None
+        with self._lock:
+            filtered = [
+                e.to_dict() for e in self._dialog_entries
+                if e.model_id == model_id and (wanted is None or e.entry_type in wanted)
+            ]
+        return filtered[-limit:]
 
     def new_entries(self) -> List[Dict[str, Any]]:
         """获取自上次读取以来的新条目（用于 CLI 实时流）"""

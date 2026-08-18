@@ -258,7 +258,37 @@ RESUME_DELEGATION_TOOL = {
                 },
                 "wait_seconds": {
                     "type": "integer",
-                    "description": "下级思考超时（秒），范围 1-600。",
+                     "description": "下级思考超时（秒），范围 1-600。",
+                 },
+             },
+             "required": ["delegation_id"],
+         },
+     }
+ }
+
+INSPECT_DELEGATION_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "inspect_delegation",
+        "description": (
+            "深入查看某个委托的具体执行过程：目标专家/主管在黑板上的思考、工具执行结果、"
+            "最终回复与对话记录（按 model_id 过滤）。用于了解下级究竟做了什么、进行到哪一步、"
+            "是否在空转或重复调用工具。比 query_delegation 更详细（能看到过程而非仅状态摘要）。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "delegation_id": {
+                    "type": "string",
+                    "description": "要深入查看的委托 id（来自 delegate_task 的结果或进度汇报）。",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "最多返回的思考/回复条数（默认 20，范围 1-50）。",
+                },
+                "max_len": {
+                    "type": "integer",
+                    "description": "每条内容的截取长度（字符，默认 500，范围 100-2000）。",
                 },
             },
             "required": ["delegation_id"],

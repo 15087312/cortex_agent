@@ -2670,3 +2670,36 @@ async def test_todo_tool_execution_triggers_push(monkeypatch):
     out = await r._generate_with_tools("system", "user", client)
     assert "完成" in out
     assert pushed["n"] == 1  # todo 工具执行成功触发一次推送
+
+
+# ── inspect_delegation：查看委托链具体执行过程 ──
+
+async def test_inspect_delegation_missing_id(monkeypatch):
+    r, mcp = _tool_runner(monkeypatch, tier="large")
+    r.blackboard = _real_bb()
+    out = await r._handle_inspect_delegation({})
+    assert "delegation_id" in out
+
+
+async def test_inspect_delegation_not_found(monkeypatch):
+    r, mcp = _tool_runner(monkeypatch, tier="large")
+    r.blackboard = _real_bb()
+    out = await r._handle_inspect_delegation({"delegation_id": "ghost"})
+    assert "未找到委托" in out
+
+
+async def test_inspect_delegation_shows_process(monkeypatch):
+    r, mcp = _tool_runner(monkeypatch, tier="large")
+    bb = _real_bb()
+    # 委托目标专家 model_id
+    bb.write_delegation("code_writer", "写代码", probe_id="d1", target_tier="expert")
+    bb.update_delegation_progress("d1", target_model_id="expert_writer_001")
+    # 专家在黑板上的思考与回复
+    bb.write_thought("expert_writer_001", "expert", "专家思考：分析需求")
+    bb.write_thought("expert_writer_001", "expert", "专家思考：搜索资料")
+    bb.write_response("expert_writer_001", "expert", "专家最终回复")
+    r.blackboard = bb
+    out = await r._handle_inspect_delegation({"delegation_id": "d1"})
+    assert "执行过程" in out
+    assert "专家思考" in out
+    assert "专家最终回复" in out

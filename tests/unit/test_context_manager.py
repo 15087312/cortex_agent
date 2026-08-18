@@ -42,3 +42,57 @@ def test_build_delegation_status_all_done():
     out = ContextManager.build_delegation_status(d)
     assert "当前委托状态" in out
     assert "等待专家回复" not in out
+
+
+# ── build_delegation_status：完整委托链（黑板）+ scope 过滤 ──
+
+def _mk_bb():
+    from modules.thinking.cognition.blackboard import CognitiveBlackboard
+    return CognitiveBlackboard(session_id="s", turn_id="t")
+
+
+def test_delegation_status_from_blackboard_chain():
+    bb = _mk_bb()
+    # 根委托（主管发起）→ 子委托（专家）
+    bb.write_delegation(
+        delegation_id="root", role="code_supervisor", task="主管任务",
+        caller_model_id="large_primary", caller_tier="large",
+        target_tier="supervisor",
+    )
+    bb.write_delegation(
+        delegation_id="child", role="code_writer", task="专家任务",
+        caller_model_id="supervisor_code_001", caller_tier="supervisor",
+        target_tier="expert", parent_delegation_id="root",
+    )
+    out = ContextManager.build_delegation_status({}, blackboard=bb)
+    assert "委托链" in out
+    assert "root" in out and "child" in out
+    assert "主管任务" in out
+
+
+def test_delegation_status_scope_supervisor_filters():
+    bb = _mk_bb()
+    # 主管 A 发起的委托
+    bb.write_delegation(
+        delegation_id="dA", role="code_writer", task="A的任务",
+        caller_model_id="sup_A", caller_tier="supervisor", target_tier="expert",
+    )
+    # 主管 B 发起的委托（不应出现在 A 的视图中）
+    bb.write_delegation(
+        delegation_id="dB", role="code_writer", task="B的任务",
+        caller_model_id="sup_B", caller_tier="supervisor", target_tier="expert",
+    )
+    out = ContextManager.build_delegation_status({}, blackboard=bb,
+                                                  scope_model_id="sup_A", scope_tier="supervisor")
+    assert "dA" in out
+    assert "dB" not in out
+
+
+def test_delegation_status_scope_absent_for_large():
+    bb = _mk_bb()
+    bb.write_delegation(
+        delegation_id="dX", role="code_writer", task="X任务",
+        caller_model_id="large_primary", caller_tier="large", target_tier="expert",
+    )
+    out = ContextManager.build_delegation_status({}, blackboard=bb, scope_model_id="", scope_tier="large")
+    assert "dX" in out

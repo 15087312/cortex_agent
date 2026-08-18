@@ -73,3 +73,27 @@ def test_delegate_task_requires_wait_seconds():
     assert "role" in required and "task" in required
     desc = props["properties"]["wait_seconds"]["description"]
     assert "超时" in desc
+
+
+# ── inspect_delegation：查看委托链具体执行过程（总指挥/主管）──
+
+def test_inspect_delegation_registered_for_large_supervisor():
+    ctrl = get_tool_permission_controller()
+    for tier in ("large", "supervisor"):
+        tools = ctrl.get_control_tools(tier=tier, mode="edit", delegation_available=True)
+        names = [t["function"]["name"] for t in tools]
+        assert "inspect_delegation" in names, f"{tier} 应可调用 inspect_delegation"
+
+
+def test_inspect_delegation_not_for_expert():
+    ctrl = get_tool_permission_controller()
+    tools = ctrl.get_control_tools(tier="expert", mode="edit", delegation_available=True)
+    names = [t["function"]["name"] for t in tools]
+    assert "inspect_delegation" not in names, "专家不应有 inspect_delegation（无委托权限）"
+
+
+def test_inspect_delegation_schema_requires_id():
+    props = ct.INSPECT_DELEGATION_TOOL["function"]["parameters"]
+    assert "delegation_id" in props["required"]
+    assert "limit" in props["properties"]
+    assert "max_len" in props["properties"]

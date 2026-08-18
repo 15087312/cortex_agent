@@ -1597,6 +1597,69 @@ class ModelRunner:
             logger.debug(f"[ModelRunner] resume_delegation 异常 (非致命): {e}")
             return f"【继续异常】{e}"
 
+    async def _handle_inspect_delegation(self, args: Dict[str, Any]) -> str:
+        """inspect_delegation：深入查看某委托下级的【具体执行过程】——思考/工具结果/回复。
+
+        通过委托定位 target_model_id，再从黑板按该 model_id 过滤对话记录，
+        让上级能看到下级究竟做了什么（而非仅 query_delegation 的状态摘要）。
+        """
+        try:
+            did = str(args.get("delegation_id", "") or "").strip()
+            try:
+                limit = int(args.get("limit", 20) or 20)
+                limit = max(1, min(50, limit))
+            except Exception:
+                limit = 20
+            try:
+                max_len = int(args.get("max_len", 500) or 500)
+                max_len = max(100, min(2000, max_len))
+            except Exception:
+                max_len = 500
+            if not did:
+                return "【查询失败】缺少 delegation_id 参数。"
+
+            bb = getattr(self, "blackboard", None)
+            if bb is None or not hasattr(bb, "get_delegation"):
+                return "【查询失败】当前上下文无黑板委托记录。"
+            d = bb.get_delegation(did)
+            if not d:
+                return f"【未找到委托】delegation_id={did} 不存在。"
+            target = d.get("target_model_id") or d.get("role", "")
+
+            # 先给委托概览
+            parts = [f"【委托 {did}】状态={d.get('status')} 角色={d.get('role')} target_model={target}"]
+            if d.get("task"):
+                parts.append(f"任务: {d['task']}")
+
+            # 从黑板读取该模型的具体过程（思考/回复/对话）
+            process_lines = []
+            if bb and target and hasattr(bb, "read_dialog_by_model"):
+                entries = bb.read_dialog_by_model(target, limit=limit)
+                if not entries:
+                    # 可能 target_model_id 尚未落库，回退按 role 匹配 tier 过滤
+                    try:
+                        entries = [e for e in bb.read_dialog(limit=500)
+                                   if e.get("tier") == d.get("tier") and e.get("model_id") == target]
+                        entries = entries[-limit:]
+                    except Exception:
+                        entries = []
+                for e in entries:
+                    et = e.get("type", "?")
+                    m = e.get("model_id", "")
+                    r = e.get("round", 0)
+                    content = str(e.get("content", ""))
+                    if len(content) > max_len:
+                        content = content[:max_len] + "...[截断]"
+                    process_lines.append(f"[{et} 轮{r} {m}] {content}")
+            if process_lines:
+                parts.append("【执行过程】\n" + "\n".join(process_lines))
+            else:
+                parts.append("【执行过程】该委托暂无黑板上记录到的思考/回复（可能尚未开始或未写板）。")
+            return "\n".join(parts)
+        except Exception as e:
+            logger.debug(f"[ModelRunner] inspect_delegation 异常 (非致命): {e}")
+            return f"【查询异常】{e}"
+
     async def _handle_read_context(self, args: Dict[str, Any]) -> str:
         """read_context：读取黑板指定轮次范围的对话记忆，并设置后续默认读取范围"""
         try:
@@ -2194,7 +2257,7 @@ class ModelRunner:
                             control_calls.append(tc)
                         elif tc.name in ("request_skill", "list_skills", "stop_skill", "set_memory_focus", "stop_task"):
                             control_calls.append(tc)
-                        elif tc.name in ("query_delegation", "resume_delegation", "read_context"):
+                        elif tc.name in ("query_delegation", "resume_delegation", "inspect_delegation", "read_context"):
                             control_calls.append(tc)
                         elif tc.name in ("request_mode_change", "ask_user_intent"):
                             control_calls.append(tc)
@@ -2211,7 +2274,7 @@ class ModelRunner:
                     # continue_thinking / respond_to_user / set_memory_focus / request_mode_change /
                     # ask_user_intent / delegate_task / create_supervisor 不产生 tool 结果，
                     # 不写入 assistant.tool_calls（避免"未应答的 tool_calls"错误）。
-                    _CONTROL_RESULT_TOOLS = ("request_skill", "stop_skill", "list_skills", "stop_task", "query_delegation", "resume_delegation", "read_context")
+                    _CONTROL_RESULT_TOOLS = ("request_skill", "stop_skill", "list_skills", "stop_task", "query_delegation", "resume_delegation", "inspect_delegation", "read_context")
                     result_control_calls = [tc for tc in control_calls if tc.name in _CONTROL_RESULT_TOOLS]
                     all_result_calls = normal_calls + query_calls + result_control_calls
                     if all_result_calls:
@@ -2362,6 +2425,8 @@ class ModelRunner:
                                 result = await self._handle_query_delegation(args)
                             elif tc.name == "resume_delegation":
                                 result = await self._handle_resume_delegation(args)
+                            elif tc.name == "inspect_delegation":
+                                result = await self._handle_inspect_delegation(args)
                             elif tc.name == "read_context":
                                 result = await self._handle_read_context(args)
                             if result:
