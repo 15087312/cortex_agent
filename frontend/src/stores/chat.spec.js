@@ -432,10 +432,33 @@ describe('运行轨迹（工具调用从对话流分离）', () => {
     // 工具调用进 traces（不混入消息流）
     expect(chat.traces.length).toBeGreaterThanOrEqual(1)
     expect(chat.traces.some(t => t.text.includes('todo: done'))).toBe(true)
-    // 消息流只有用户消息 + 纯推理思考气泡，不含工具调用
+    // 消息流只有用户消息，不含工具调用；大模型 thought 聚合到回复思考区（无后续回复则丢弃，不独立成"思考"气泡）
     const kinds = chat.messages.map(m => m.kind || m.role)
-    expect(kinds.filter(k => k === 'thinking')).toHaveLength(1)
+    expect(kinds.filter(k => k === 'thinking')).toHaveLength(0)
     expect(chat.messages.some(m => (m.content || '').includes('todo: done'))).toBe(false)
+  })
+
+  it('历史加载 大模型 thought 聚合到回复思考区而非独立气泡', async () => {
+    vi.spyOn(wsClient, 'connect').mockResolvedValue(true)
+    const chat = useChatStore()
+    const sess = useSessionStore()
+    sess.switchSession('s1')
+    vi.spyOn(endpoints, 'sessionMessages').mockResolvedValue({
+      data: [
+        { role: 'thought', content: '第一轮思考', tier: 'large', id: 's1' },
+        { role: 'thought', content: '第二轮思考', tier: 'large', id: 's2' },
+        { role: 'assistant', content: '最终回答', tier: 'large', id: 'r1' },
+        { role: 'user', content: '你好' },
+      ],
+    })
+    await chat.switchToSession('s1')
+    const reply = chat.messages.find(m => m.role === 'assistant' && (m.content || '').includes('最终回答'))
+    expect(reply).toBeDefined()
+    // 两轮思考聚合到该回复的思考区（运行时折叠，不散成 2 个独立"思考"气泡）
+    expect(reply._thinking).toContain('第一轮思考')
+    expect(reply._thinking).toContain('第二轮思考')
+    const kinds = chat.messages.map(m => m.kind || m.role)
+    expect(kinds.filter(k => k === 'thinking')).toHaveLength(0)
   })
 })
 

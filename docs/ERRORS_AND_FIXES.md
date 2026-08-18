@@ -1976,3 +1976,19 @@ def add_to_dialog(self, role, text):       # 无 session 参数
 **验证：** 新增 `test_openai_stream_tool_calls_null_safe`（tool_calls:null 混入文本+后续工具调用）+ `test_openai_stream_tool_calls_key_missing`；large_model_stream 9 passed + 相关 274 passed。
 
 **教训：** ① `dict.get(key, default)` 只在**键缺失**时返回默认值，**键存在但值为 None** 时返回 None——对可能为 null 的字段要用 `get(key) or default`；② SSE 流解析对 provider 的字段空值（null/缺省）都要容忍，DeepSeek reasoning 的 tool_calls 思考阶段为 null 是常态；③ 排查 "X is not iterable" 优先搜 `for x in dict.get(...)` 模式。
+
+## 71. 切换会话后出现多余的独立"思考"气泡（前端）
+
+**现象：** 切回某会话后，原本在会话窗口不显示的多个"思考/思考/思考"框冒出来（重复的 `kind: 'thinking'` 气泡）。
+
+**根因：** 会话切换恢复（loadHistory）与运行时思考展示**两条路径行为不一致**：
+- **运行时**：大模型思考累积到 `pendingThinking`，最终折叠进回复框（`consumeThinking`），**不独立成消息**
+- **恢复时**：持久化的 `role='thought'` 消息被逐条渲染为独立 `kind: 'thinking'` 气泡（含"思考"徽标），多轮思考 → 多个"思考"框
+
+后端把连续思考的每一轮都持久化为 `role='thought'`，恢复时全部变成独立气泡，视觉上与运行时严重不符。
+
+**修复（loadHistory）：** 大模型（非 supervisor/expert）的 thought 改为**累积到 `pendingLargeThinking`，聚合到紧随其后的 assistant/large 回复的 `_thinking` 思考区**（与运行时折叠一致）；无后续回复的累积丢弃。工具调用仍进 traces、supervisor/expert 仍聚合为独立专家气泡（不变）。
+
+**验证：** 更新原测试（大模型 thought 不再独立成 thinking 气泡）+ 新增"thought 聚合到回复思考区而非独立气泡"用例；前端 498 全过。
+
+**教训：** ① 同一状态的**运行时展示路径与恢复路径必须一致**——恢复（loadHistory）要复用运行时的聚合逻辑（pendingThinking 折叠），而不是另写一套渲染；② 持久化的每条"思考步骤"不等于一条"消息"，恢复时要按运行时的分组规则聚合，否则切换会话后 UI 与实时不一致；③ 修复此类问题要同时更新"断言旧行为"的测试，否则测试仍固化错误的展示方式。

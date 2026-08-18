@@ -191,6 +191,8 @@ export const useChatStore = defineStore('chat', () => {
         }
       }
     }
+    // 待挂到大模型回复的思考累积（恢复时把同一轮大模型 thought 聚合到回复框，不散成独立"思考"气泡）
+    let pendingLargeThinking = ''
     messages.value = msgs.map(d => {
       const et = d.type || ''
       const tier = d.tier || ''
@@ -204,26 +206,20 @@ export const useChatStore = defineStore('chat', () => {
           id: d.id || '',
         }
       }
-      // 持久化的思考/对话步骤 → 渲染为思考气泡（与运行时 addThinkingStep 一致）
+      // 持久化的思考/对话步骤 → 与运行时 addThinkingStep 一致：
+      // 工具调用进运行轨迹；supervisor/expert 聚合为独立气泡（上方已处理）；
+      // 大模型思考聚合到紧随其后的 assistant 回复的思考区（运行时折叠，不独立成消息）
       if (d.role === 'thought') {
         const thoughtText = _stripReplyText(_cleanThinking(d.content || ''))
         if (_isToolTrace(thoughtText)) {
           traces.value.push({ text: thoughtText.slice(0, 200), time: Date.now() })
           return null
         }
-        const tier = d.tier || ''
-        // supervisor/expert 思考已在上方聚合为独立专家气泡，这里跳过
         if (tier === 'supervisor' || tier === 'expert') return null
-        const trole = (tier && tier !== 'thinking') ? tier : 'thinking'
-        return {
-          _id: uid(),
-          kind: 'thinking',
-          role: trole,
-          name: _nameFor(trole),
-          avatarCls: _avatarCls(trole),
-          content: thoughtText,
-          id: d.id || '',
+        if (thoughtText) {
+          pendingLargeThinking += (pendingLargeThinking ? '\n\n' : '') + thoughtText
         }
+        return null
       }
       let role = (d.role === 'user' || et === 'user_input') ? 'user' : (d.role || 'large')
       if (!d.role) {
@@ -231,14 +227,22 @@ export const useChatStore = defineStore('chat', () => {
         else if (tier === 'expert') role = 'expert'
         else if (et === 'thought' || et === 'response') role = 'large'
       }
-      return {
+      const msg = {
         _id: uid(),
         role,
         content: d.content || d.text || '',
         id: d.id || '',
         identity_name: d.metadata?.identity_name || '',
       }
+      // 大模型回复：把累积的思考挂到该回复的思考区（折叠显示）
+      // 后端 assistant 消息 role='assistant'，无 role 时回退 'large'，两者都算大模型回复
+      if ((role === 'large' || role === 'assistant') && pendingLargeThinking) {
+        msg._thinking = pendingLargeThinking
+        pendingLargeThinking = ''
+      }
+      return msg
     }).filter(Boolean)
+    // 末尾仍有未挂出的大模型思考（无后续回复）→ 丢弃（与运行时 consumeThinking 未消费一致）
     // 追加聚合的 supervisor/expert 专家气泡（内容 = 最后一条输出，思考/工具聚合）
     for (const [tier, agg] of Object.entries(expertAgg)) {
       if (!agg.thinking.length && !agg.tools.length) continue
