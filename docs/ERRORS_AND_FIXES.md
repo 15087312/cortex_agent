@@ -2054,3 +2054,24 @@ def add_to_dialog(self, role, text):       # 无 session 参数
 **验证：** ChatMessage 21 测试 + 前端构建通过。
 
 **教训：** flex 布局里的气泡子项必须显式 `min-width: 0` 才允许收缩换行；长内容（序号列表/URL/代码标识符）要靠 `overflow-wrap: break-word` 兜底，否则会撑破固定 max-width 容器。CSS 溢出类问题常被"只测逻辑不测样式"的测试忽略，需在真实宽度的渲染下人工核对。
+
+## 76. 长时间挂机后："Task was destroyed but it is pending!"（asyncio Event.wait 残留，后端）
+
+**现象：** 挂机数小时后日志大量出现：
+```
+Asyncio error without exception: {'message': 'Task was destroyed but it is pending!',
+  'task': <Task pending ... coro=<Event.wait() running at locks.py:213> wait_for=<Future pending cb=[Task.task_wakeup()]>>}
+```
+Task 编号（Task-3838/4022/4214/4386/4572/4755...）随对话逐次递增，即**每次对话**产生一个残留的 `Event.wait()` task，关闭事件循环时被销毁报错。
+
+**根因：** `modules/thinking/multi_model_orchestrator.py` 等待大模型完成信号时用了
+`asyncio.wait_for(asyncio.shield(done_event.wait()), timeout=POLL_INTERVAL)`。
+`asyncio.shield` 会创建**独立的内部 task** 包裹 `done_event.wait()`，外层 `wait_for` 超时取消时，**shield 防止取消传播到内部 task**，于是内部 `Event.wait()` 继续挂起。每次对话都这样残留一个 pending task，挂机久了积累大量未完成 task，事件循环关闭时触发 "Task was destroyed but it is pending!"。
+
+**修复：** 去掉 `asyncio.shield`，直接用 `asyncio.wait_for(done_event.wait(), timeout=POLL_INTERVAL)`。
+`done_event.wait()` 只是等待信号，超时后下次循环重新 await 即可（`done_event` 已 set 则立即返回），无需 shield 保护。
+（`model_runner.py:211/3270` 的 shield 用于关闭时等待长期后台任务正常结束，属正确用途，未改动。）
+
+**验证：** `test_multi_model_orchestrator_ext.py::test_wait_large_no_shield_task_leak`（wait_for 超时后无残留 pending Event.wait task）+ `test_wait_large_done_event_set_returns`；orchestrator 相关 213 测试通过。
+
+**教训：** `asyncio.shield` 是"延迟取消"而非"不取消"——被 shield 的内部 task 在事件循环关闭时仍可能 pending。对只需"等待信号、超时重试"的 `Event.wait()`，直接 `wait_for` 即可，不要 shield；shield 只应用于确实需要与调用方生命周期解耦的长期任务。

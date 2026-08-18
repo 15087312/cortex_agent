@@ -338,3 +338,43 @@ def test_get_active_sessions(monkeypatch):
     registry = {"s1": {"session_id": "s1", "state": "planning"}}
     monkeypatch.setattr(mmo, "_session_registry", registry)
     assert mmo.get_active_sessions() == [{"session_id": "s1", "state": "planning"}]
+
+
+# ── 等待大模型完成：wait_for 超时后不残留 pending shield task（修复 "Task was destroyed"）──
+
+async def test_wait_large_no_shield_task_leak(monkeypatch):
+    """POLL_INTERVAL 超时后，Event.wait 不被 shield 保护而残留 pending task"""
+    import asyncio
+
+    orch = _orch()
+    done_event = asyncio.Event()
+    POLL_INTERVAL = 0.01
+
+    async def wait_cycle():
+        try:
+            await asyncio.wait_for(done_event.wait(), timeout=POLL_INTERVAL)
+        except asyncio.TimeoutError:
+            pass
+
+    task = asyncio.create_task(wait_cycle())
+    await task
+
+    def _is_event_wait_pending(t):
+        if t.done():
+            return False
+        coro = getattr(t.get_coro(), "__qualname__", "")
+        return "Event.wait" in coro
+
+    pending = [t for t in asyncio.all_tasks() if _is_event_wait_pending(t)]
+    assert task.done()
+    assert not pending
+
+
+async def test_wait_large_done_event_set_returns(monkeypatch):
+    """done_event 已 set 时 wait_for 立即返回，无需超时"""
+    import asyncio
+
+    done_event = asyncio.Event()
+    done_event.set()
+    await asyncio.wait_for(done_event.wait(), timeout=1.0)
+    assert done_event.is_set()

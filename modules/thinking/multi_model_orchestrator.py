@@ -698,7 +698,8 @@ class MultiModelOrchestrator:
 
                 while not completed and (time.time() - t_wait_start) < MAX_WALL_TIME:
                     try:
-                        await asyncio.wait_for(asyncio.shield(done_event.wait()), timeout=POLL_INTERVAL)
+                        # 直接 wait_for：超时取消不产生残留 shield task（避免挂机后 "Task was destroyed"）
+                        await asyncio.wait_for(done_event.wait(), timeout=POLL_INTERVAL)
                         completed = True
                         break
                     except asyncio.TimeoutError:
