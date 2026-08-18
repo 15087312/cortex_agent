@@ -473,3 +473,53 @@ def test_get_singleton(monkeypatch):
     assert a is b
     assert isinstance(a, ToolPermissionController)
     monkeypatch.setattr(m, "_instance", None)
+
+
+# ── 不可用工具过滤（get_visible_tools 第 5 步）：禁用/未注册工具不显示 ───────────
+
+def test_visible_tools_excludes_disabled(monkeypatch):
+    """被禁用（is_tool_enabled=False）的工具不出现在可见列表，防止误调用"""
+    from infra.tool_manager.tool_registry import ToolRegistry
+    ctrl = _make()
+
+    # mock is_tool_available 使 run_command 不可用（避免真实 set_tool_enabled 写盘污染）
+    real = ToolRegistry.is_tool_available
+    monkeypatch.setattr(
+        ToolRegistry, "is_tool_available",
+        classmethod(lambda cls, name: name != "run_command" and real(name)),
+    )
+    tools = ctrl.get_visible_tools(tier="expert", mode="edit", role="code_writer")
+    assert "run_command" not in tools, "不可用的工具不应可见"
+    assert "event_query" in tools
+
+
+def test_visible_tools_excludes_unregistered(monkeypatch):
+    """白名单写了但未注册的工具不显示（调用必然失败）"""
+    from infra.tool_manager.tool_registry import ToolRegistry
+    ctrl = _make()
+
+    # 让白名单含一个不存在的工具名 → is_tool_available 返回 False（未注册）
+    monkeypatch.setattr(
+        "modules.security_system.tool_permission_controller."
+        "ToolPermissionController._get_base_whitelist",
+        lambda self, tier, role="": ["event_query", "definitely_not_registered_tool_xyz", "todo"],
+    )
+    tools = ctrl.get_visible_tools(tier="expert", mode="edit", role="code_writer")
+    assert "definitely_not_registered_tool_xyz" not in tools
+    assert "event_query" in tools
+    assert "todo" in tools
+
+
+def test_tool_registry_is_tool_available(monkeypatch):
+    """ToolRegistry.is_tool_available：未注册 False；禁用 False；正常 True"""
+    from infra.tool_manager.tool_registry import ToolRegistry
+    assert ToolRegistry.is_tool_available("event_query") is True
+    assert ToolRegistry.is_tool_available("no_such_tool_zzz") is False
+
+    # 用 mock 模拟禁用，避免真实写盘
+    real_enabled = ToolRegistry.is_tool_enabled
+    monkeypatch.setattr(
+        ToolRegistry, "is_tool_enabled",
+        classmethod(lambda cls, name: False if name == "event_query" else real_enabled(name)),
+    )
+    assert ToolRegistry.is_tool_available("event_query") is False

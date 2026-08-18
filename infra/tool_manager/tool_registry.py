@@ -252,7 +252,19 @@ class ToolRegistry:
     def is_tool_enabled(cls, name: str) -> bool:
         cls._load_disabled()
         return name not in cls._disabled_tools
-    
+
+    @classmethod
+    def is_tool_available(cls, name: str) -> bool:
+        """判断工具是否"可用"：已注册且未被禁用（含运行时开关与 enabled 标志）。
+
+        用于可见性过滤——不可用工具不暴露给模型，防止误调用必然失败的工具。
+        """
+        info = cls.get_tool(name)
+        if info is None:
+            return False  # 未注册 → 不可用
+        return info.enabled and cls.is_tool_enabled(name)
+
+
     @classmethod
     def register(
         cls,

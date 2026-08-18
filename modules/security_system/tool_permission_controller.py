@@ -45,6 +45,7 @@ class ToolPermissionController:
         2. 展开 tag: 前缀
         3. 按 tier 风险过滤（专家不能看 HIGH 工具）
         4. 技能工具规则（激活的 Skill ToolRules 重排/排除）
+        5. 过滤"不可用"工具（未注册 / 被禁用）——防止模型误调用必然失败的工具
         """
         from infra.tool_manager.tool_registry import ToolRegistry
 
@@ -61,7 +62,9 @@ class ToolPermissionController:
         if skill_tool_rules:
             tier_filtered = self._apply_skill_rules(tier_filtered, skill_tool_rules, ToolRegistry)
 
-        return tier_filtered
+        # 5. 过滤"不可用"工具：未注册（白名单写了但实际不存在）或被禁用（管理端运行时开关）——
+        #    这类工具模型即使调用也必然失败，直接不显示，避免误调用
+        return [t for t in tier_filtered if ToolRegistry.is_tool_available(t)]
 
     def _get_base_whitelist(self, tier: str, role: str = "") -> List[str]:
         """获取基础白名单

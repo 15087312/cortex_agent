@@ -299,6 +299,11 @@ def test_build_cli_prompt_with_history(monkeypatch):
     assert "工具一" in prompt
     assert "结果1" in prompt
     assert "第 2 轮迭代" in prompt
+    # 权限边界 / 任务处理流程 / 返回给上级 提示已注入
+    assert "权限边界" in prompt
+    assert "任务处理流程" in prompt
+    assert "返回给上级" in prompt
+    assert "不要扩展任务范围" in prompt
 
 
 def test_build_cli_prompt_no_tools(monkeypatch):
