@@ -440,7 +440,9 @@ class LargeModelClient(BaseModelClient):
                     reasoning_parts.append(reasoning)
 
                 # 工具调用 delta
-                for tc_delta in delta.get("tool_calls", []):
+                # 注意：某些 provider（如 DeepSeek reasoning）的 delta.tool_calls 可为 null
+                # （思考阶段字段存在但值为 None），须用 or [] 兜底，否则 for 迭代 None 报错
+                for tc_delta in (delta.get("tool_calls") or []):
                     idx = tc_delta.get("index", 0)
                     if idx not in tc_accum:
                         tc_accum[idx] = {"id": "", "name": "", "arguments_parts": []}

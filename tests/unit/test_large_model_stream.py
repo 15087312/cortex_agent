@@ -129,3 +129,31 @@ def test_dashscope_stream_text():
     ])
     r = _run(c._parse_dashscope_stream(resp, None))
     assert r.message.content == "你好世界"
+
+
+def test_openai_stream_tool_calls_null_safe():
+    """delta.tool_calls 为 null（DeepSeek reasoning 思考阶段）→ 不崩、正常解析后续"""
+    c = _client()
+    resp = _FakeResponse([
+        'data: {"choices":[{"delta":{"tool_calls":null,"content":"思考中"}}]}',
+        'data: {"choices":[{"delta":{"content":"最终"}}]}',
+        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"calc","arguments":"{\\"a\\":1}"}}]},"finish_reason":"tool_calls"}]}',
+        'data: [DONE]',
+    ])
+    r = _run(c._parse_openai_stream(resp, None))
+    assert r.message.content == "思考中最终"
+    assert r.finish_reason == "tool_calls"
+    assert r.message.tool_calls == [ToolCall(id="c1", name="calc", arguments='{"a":1}')]
+
+
+def test_openai_stream_tool_calls_key_missing():
+    """delta 无 tool_calls 键（普通思考轮）→ 安全"""
+    c = _client()
+    resp = _FakeResponse([
+        'data: {"choices":[{"delta":{"content":"正常输出"}}]}',
+        'data: {"choices":[{"delta":{"content":"继续"}}]}',
+        'data: [DONE]',
+    ])
+    r = _run(c._parse_openai_stream(resp, None))
+    assert r.message.content == "正常输出继续"
+    assert r.message.tool_calls is None

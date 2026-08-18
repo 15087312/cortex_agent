@@ -1964,3 +1964,15 @@ def add_to_dialog(self, role, text):       # 无 session 参数
 **验证：** `test_maybe_summarize_syncs_context_tokens`；前端 ThinkingStatusPanel 上下文 warn(70%)/danger(90%)/100%封顶/无数据隐藏测试。
 
 **教训：** ① "估算一次"若用于展示累计状态，必须覆盖完整累积范围（含工具历史），否则展示值失真；② token 估算的更新点要与"真实消费点"（messages 增长处）对齐，不能只在初始化处算一次；③ 前端展示字段（context_tokens）要由后端维护一个**权威实时值**，前端只管渲染。
+
+## 70. 模型调用失败：'NoneType' object is not iterable —— SSE 流 delta.tool_calls 为 null（后端）
+
+**现象：** 工具循环中模型调用报 `[模型调用失败: 'NoneType' object is not iterable]`，思考中断。
+
+**根因：** `large_model_client._parse_openai_stream` 用 `for tc_delta in delta.get("tool_calls", [])` 迭代工具调用增量。DeepSeek reasoning 模式流式返回时，**思考阶段 `delta.tool_calls` 字段存在但值为 `null`**——`dict.get(key, [])` 在键存在但值为 None 时返回 **None**（不是默认 `[]`），`for ... in None` → `'NoneType' object is not iterable`。
+
+**修复：** `for tc_delta in (delta.get("tool_calls") or [])` —— 用 `or []` 同时兜底"键缺失"与"值为 null"两种情况。
+
+**验证：** 新增 `test_openai_stream_tool_calls_null_safe`（tool_calls:null 混入文本+后续工具调用）+ `test_openai_stream_tool_calls_key_missing`；large_model_stream 9 passed + 相关 274 passed。
+
+**教训：** ① `dict.get(key, default)` 只在**键缺失**时返回默认值，**键存在但值为 None** 时返回 None——对可能为 null 的字段要用 `get(key) or default`；② SSE 流解析对 provider 的字段空值（null/缺省）都要容忍，DeepSeek reasoning 的 tool_calls 思考阶段为 null 是常态；③ 排查 "X is not iterable" 优先搜 `for x in dict.get(...)` 模式。
