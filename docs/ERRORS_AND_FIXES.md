@@ -2040,3 +2040,17 @@ def add_to_dialog(self, role, text):       # 无 session 参数
 **验证：** 新增架构一致性测试（classifyThinking 分类规则 + dispatchThinking 输出/推理分流 + 工具 trace 归类）；前端 504 全过。
 
 **教训：** ① 展示规则（"某数据 → 哪种 UI"）应抽成**单一纯函数**，运行时与恢复都调用，而非各自实现——这样分类永远一致，属性名/聚合策略天然统一；② 恢复不是"另写一套渲染"，而是"把持久化数据按同一规则重放/累积"；③ 架构层根治优于反复补丁——补丁只修当前不一致点，架构统一从源头消除整类问题。
+
+## 75. AI 输出序号（有序列表）超出气泡边界（前端样式）
+
+**现象：** AI 输出带序号的内容（markdown 有序列表 `1. 2. 3.`）时，序号/长内容渲染后超出气泡边界，撑破 `message-bubble`。
+
+**根因：** `.message-bubble`（`frontend/css/components.css`）有 `max-width: 100%` 但**缺 `min-width: 0` 和 `overflow-wrap: break-word`/`word-break: break-word`**。作为 flex 容器 `.message-body` 的子项，flex 子项默认 `min-width: auto` 阻止收缩，遇到无法换行的长 token（序号列表）就溢出气泡。
+
+**修复：**
+- `.message-bubble` 加 `min-width: 0; overflow-wrap: break-word; word-break: break-word;`
+- 新增 `.message-bubble ol/ul/li` 换行保护（`overflow-wrap`/`word-break`）+ 列表缩进样式（`list-style: decimal/disc`）
+
+**验证：** ChatMessage 21 测试 + 前端构建通过。
+
+**教训：** flex 布局里的气泡子项必须显式 `min-width: 0` 才允许收缩换行；长内容（序号列表/URL/代码标识符）要靠 `overflow-wrap: break-word` 兜底，否则会撑破固定 max-width 容器。CSS 溢出类问题常被"只测逻辑不测样式"的测试忽略，需在真实宽度的渲染下人工核对。

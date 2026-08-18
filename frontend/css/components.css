@@ -107,7 +107,12 @@ textarea.input { resize: vertical; min-height: 60px; font-family: var(--font-mon
 .message-name { font-size: var(--text-xs); color: var(--text-muted); font-weight: 500; margin: 0 0 2px; }
 .message.user .message-name { align-self: flex-end; }
 
-.message-bubble { padding: 10px 14px; border-radius: var(--radius-xl); font-size: var(--text-base); line-height: 1.6; max-width: 100%; transition: box-shadow var(--duration) var(--ease-in-out); }
+.message-bubble { padding: 10px 14px; border-radius: var(--radius-xl); font-size: var(--text-base); line-height: 1.6; max-width: 100%; min-width: 0; overflow-wrap: break-word; word-break: break-word; transition: box-shadow var(--duration) var(--ease-in-out); }
+/* AI 序号列表等长内容换行不溢出气泡 */
+.message-bubble ol, .message-bubble ul { margin: 0.25em 0; padding-left: 1.5em; }
+.message-bubble li { overflow-wrap: break-word; word-break: break-word; }
+.message-bubble ol { list-style: decimal; }
+.message-bubble ul { list-style: disc; }
 .message.user .message-bubble { background: linear-gradient(135deg, var(--accent), var(--accent-hover)); color: var(--text-inverse); border-bottom-right-radius: 4px; box-shadow: 0 1px 4px rgba(16, 163, 127, 0.25); }
 /* 桌宠互动消息：图标化展示 */
 .pet-interaction { display: inline-flex; align-items: center; justify-content: center; }
