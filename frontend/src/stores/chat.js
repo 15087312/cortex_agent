@@ -107,15 +107,30 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  // 主管/专家的实际输出 → 创建独立气泡（携带该身份的思考过程与工具调用）
+  // 主管/专家的实际输出 → 创建/复用独立气泡（携带该身份的思考过程与工具调用）
+  // 同 tier 复用已有气泡并更新内容，与 loadHistory 恢复的"聚合为一条"行为一致
   function addExpertMessage(d) {
     const tier = _tierOf(d)
     if (tier !== 'supervisor' && tier !== 'expert') return
     const ident = d.data?.identity_name || ''
     const name = ident || (tier === 'supervisor' ? '主管' : '专家')
+    const content = d.content || ''
+    const existing = _expertBubbles.get(tier)
+    if (existing) {
+      // 复用：更新输出内容（保留旧输出供参考），合并新思考/工具
+      const mergedThinking = [existing._thinking || '', _pendingByTier[tier] || ''].filter(Boolean).join('\n\n')
+      const mergedTools = [...(existing._tools || []), ...(_pendingTools[tier] || [])]
+      existing.content = content || existing.content
+      if (mergedThinking) existing._thinking = mergedThinking
+      if (mergedTools.length) existing._tools = mergedTools
+      existing.name = name
+      _pendingByTier[tier] = ''
+      _pendingTools[tier] = []
+      return
+    }
     const msg = {
       role: tier,
-      content: d.content || '',
+      content,
       kind: 'expert',
       name,
       avatarCls: tier === 'supervisor' ? 'avatar-supervisor' : 'avatar-expert',
@@ -235,9 +250,9 @@ export const useChatStore = defineStore('chat', () => {
         identity_name: d.metadata?.identity_name || '',
       }
       // 大模型回复：把累积的思考挂到该回复的思考区（折叠显示）
-      // 后端 assistant 消息 role='assistant'，无 role 时回退 'large'，两者都算大模型回复
+      // 用 thinking（与运行时 Chat.vue:191 addMessage thinking 一致，组件读 message.thinking）
       if ((role === 'large' || role === 'assistant') && pendingLargeThinking) {
-        msg._thinking = pendingLargeThinking
+        msg.thinking = pendingLargeThinking
         pendingLargeThinking = ''
       }
       return msg

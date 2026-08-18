@@ -455,8 +455,8 @@ describe('运行轨迹（工具调用从对话流分离）', () => {
     const reply = chat.messages.find(m => m.role === 'assistant' && (m.content || '').includes('最终回答'))
     expect(reply).toBeDefined()
     // 两轮思考聚合到该回复的思考区（运行时折叠，不散成 2 个独立"思考"气泡）
-    expect(reply._thinking).toContain('第一轮思考')
-    expect(reply._thinking).toContain('第二轮思考')
+    expect(reply.thinking).toContain('第一轮思考')
+    expect(reply.thinking).toContain('第二轮思考')
     const kinds = chat.messages.map(m => m.kind || m.role)
     expect(kinds.filter(k => k === 'thinking')).toHaveLength(0)
   })
@@ -485,3 +485,24 @@ describe('运行轨迹（工具调用从对话流分离）', () => {
     // 工具调用不混入消息流
     expect(chat.messages.some(m => (m.content || '').includes('read_file: done'))).toBe(false)
   })
+
+
+// ── 运行时 expert/supervisor 气泡复用（与恢复聚合一致，§71 同类） ───────────
+
+it('运行时同 tier 多次输出复用同一气泡（不散成多条）', () => {
+  const chat = useChatStore()
+  chat.addExpertMessage({ content: '第一次输出', data: { tier: 'supervisor', identity_name: '代码主管' } })
+  chat.addExpertMessage({ content: '第二次输出', data: { tier: 'supervisor', identity_name: '代码主管' } })
+  const bubbles = chat.messages.filter(m => m.kind === 'expert' && m.role === 'supervisor')
+  // 同 tier 复用：只有 1 条气泡，内容更新为最新
+  expect(bubbles).toHaveLength(1)
+  expect(bubbles[0].content).toBe('第二次输出')
+})
+
+it('运行时不同 tier 各自独立气泡', () => {
+  const chat = useChatStore()
+  chat.addExpertMessage({ content: '主管', data: { tier: 'supervisor' } })
+  chat.addExpertMessage({ content: '专家', data: { tier: 'expert' } })
+  const kinds = chat.messages.filter(m => m.kind === 'expert').map(m => m.role)
+  expect(kinds).toEqual(expect.arrayContaining(['supervisor', 'expert']))
+})
