@@ -511,6 +511,9 @@ describe('运行轨迹（工具调用从对话流分离）', () => {
   })
 
 
+
+describe('专家气泡复用与统一分类（架构一致性）', () => {
+  beforeEach(() => { setActivePinia(createPinia()) })
 // ── 运行时 expert/supervisor 气泡复用（与恢复聚合一致，§71 同类） ───────────
 
 it('运行时同 tier 多次输出复用同一气泡（不散成多条）', () => {
@@ -529,4 +532,53 @@ it('运行时不同 tier 各自独立气泡', () => {
   chat.addExpertMessage({ content: '专家', data: { tier: 'expert' } })
   const kinds = chat.messages.filter(m => m.kind === 'expert').map(m => m.role)
   expect(kinds).toEqual(expect.arrayContaining(['supervisor', 'expert']))
+})
+
+
+// ── 架构一致性：运行时 dispatchThinking 与恢复 classifyThinking 用同一分类规则 ──
+
+it('classifyThinking 分类规则（运行时/恢复共用）', () => {
+  const chat = useChatStore()
+  // security → skip
+  expect(chat.classifyThinking({ content: 'x', data: { tier: 'security' } }).kind).toBe('skip')
+  // 工具 trace → tool_trace
+  expect(chat.classifyThinking({ content: 'read_file: done (120 chars)', data: { tier: 'thinking' } }).kind).toBe('tool_trace')
+  // supervisor 推理 → expert
+  expect(chat.classifyThinking({ content: '思考', data: { tier: 'supervisor' } }).kind).toBe('expert')
+  // 大模型思考 → thinking
+  expect(chat.classifyThinking({ content: '推理', data: { tier: 'thinking' } }).kind).toBe('thinking')
+  expect(chat.classifyThinking({ content: '推理', data: { tier: '' } }).kind).toBe('thinking')
+})
+
+it('dispatchThinking: expert 输出创建气泡，推理累积（与恢复聚合一致）', () => {
+  const chat = useChatStore()
+  // 推理事件（role=thinking + tier=supervisor）→ 累积
+  chat.dispatchThinking({ content: '先分析需求', role: 'thinking', data: { tier: 'supervisor', identity_name: '代码主管' } })
+  // 输出事件（role=supervisor + 实质内容）→ 创建气泡
+  chat.dispatchThinking({ content: '我负责整体方案', role: 'supervisor', data: { tier: 'supervisor', identity_name: '代码主管' } })
+  const bubble = chat.messages.find(m => m.kind === 'expert')
+  expect(bubble).toBeDefined()
+  expect(bubble.content).toBe('我负责整体方案')
+  expect(bubble._thinking).toContain('先分析需求')
+  // 再次输出 → 复用同一条气泡（§72 复用）
+  chat.dispatchThinking({ content: '补充方案', role: 'supervisor', data: { tier: 'supervisor', identity_name: '代码主管' } })
+  const bubbles = chat.messages.filter(m => m.kind === 'expert')
+  console.log('DBG expert bubbles:', bubbles.map(b => b.content))
+  expect(bubbles).toHaveLength(1)
+  expect(bubbles[0].content).toBe('补充方案')
+})
+
+it('dispatchThinking: tool_trace 大模型进轨迹，专家进气泡 _tools', () => {
+  const chat = useChatStore()
+  chat.dispatchThinking({ content: 'calc: done (3 chars)', role: 'thinking', data: { tier: 'thinking' } })
+  expect(chat.traces.some(t => t.text.includes('calc: done'))).toBe(true)
+  // 专家工具 trace → 进 expert _tools
+  chat.dispatchThinking({ content: 'read_file: done (120 chars)', role: 'thinking', data: { tier: 'expert' } })
+  const expert = chat.messages.find(m => m.kind === 'expert')
+  // 需先有 expert 输出气泡；工具累积到 _pendingTools
+  chat.dispatchThinking({ content: '输出', role: 'expert', data: { tier: 'expert' } })
+  const b = chat.messages.find(m => m.kind === 'expert')
+  expect(b._tools.some(t => t.includes('read_file: done'))).toBe(true)
+})
+
 })

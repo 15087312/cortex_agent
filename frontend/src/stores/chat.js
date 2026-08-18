@@ -190,62 +190,56 @@ export const useChatStore = defineStore('chat', () => {
         }))
       } catch {}
     }
-    // 预扫描：聚合 supervisor/expert 的思考与工具调用为独立专家气泡（与实时 addExpertMessage 一致）
-    // 后端把每个 stage 存为 role='thought'+tier；恢复时同 tier 聚合，不散成多条 thinking 气泡
+    // ── 统一重放：持久化消息用同一 classifyThinking 分类（保证与运行时规则唯一） ──
+    messages.value = []
+    traces.value = []
+    // 恢复专用的 expert 聚合（与运行时 addExpertMessage 复用行为对齐）
     const expertAgg = {}  // tier -> { thinking: [], tools: [], contents: [] }
+    let pendingLargeThinking = ''
     for (const d of msgs) {
       const tier = d.tier || ''
-      if ((d.role === 'thought' || (d.role === 'assistant' && tier)) && (tier === 'supervisor' || tier === 'expert')) {
-        const text = _stripReplyText(_cleanThinking(d.content || ''))
-        const agg = (expertAgg[tier] = expertAgg[tier] || { thinking: [], tools: [], contents: [] })
-        if (_isToolTrace(text)) {
-          if (!agg.tools.includes(text.slice(0, 200))) agg.tools.push(text.slice(0, 200))
-        } else if (text) {
-          agg.thinking.push(text)
-          agg.contents.push(text)
-        }
-      }
-    }
-    // 待挂到大模型回复的思考累积（恢复时把同一轮大模型 thought 聚合到回复框，不散成独立"思考"气泡）
-    let pendingLargeThinking = ''
-    messages.value = msgs.map(d => {
-      const et = d.type || ''
-      const tier = d.tier || ''
-      // 持久化的心理活动（mental）→ 渲染为心理活动框（与运行时 mental 事件一致）
+      // 心理活动 → 独立心理活动框（与运行时 mental 事件一致）
       if (d.role === 'mental') {
-        return {
+        messages.value.push({
           _id: uid(),
           kind: 'mental',
           role: 'system',
           content: d.content || '',
           id: d.id || '',
-        }
+        })
+        continue
       }
-      // 持久化的思考/对话步骤 → 与运行时 addThinkingStep 一致：
-      // supervisor/expert 的工具 trace 已聚合进 expert 气泡 _tools（预扫描），不再重复进全局 traces；
-      // 大模型工具 trace 进运行轨迹；supervisor/expert 思考跳过（已聚合）；
-      // 大模型思考聚合到紧随其后的 assistant 回复的思考区（运行时折叠，不独立成消息）
+      // 思考/对话步骤 → 用统一 classifyThinking 分类，按类别累积
       if (d.role === 'thought') {
-        // 安全审查/审批/提问是瞬态交互，恢复时不折叠进思考区也不作历史气泡
-        if (tier === 'security') return null
-        const thoughtText = _stripReplyText(_cleanThinking(d.content || ''))
-        if (_isToolTrace(thoughtText)) {
-          if (tier !== 'supervisor' && tier !== 'expert') {
-            traces.value.push({ text: thoughtText.slice(0, 200), time: Date.now() })
+        const evt = { content: d.content || '', data: { tier, dialog_tier: tier } }
+        const c = classifyThinking(evt)
+        if (c.kind === 'skip' || c.kind === 'approval' || c.kind === 'intent') continue
+        if (c.kind === 'tool_trace') {
+          if (c.tier === 'supervisor' || c.tier === 'expert') {
+            const agg = (expertAgg[c.tier] = expertAgg[c.tier] || { thinking: [], tools: [], contents: [] })
+            if (!agg.tools.includes(c.text)) agg.tools.push(c.text)
+          } else {
+            traces.value.push({ text: c.text, time: Date.now() })
           }
-          return null
+          continue
         }
-        if (tier === 'supervisor' || tier === 'expert') return null
-        if (thoughtText) {
-          pendingLargeThinking += (pendingLargeThinking ? '\n\n' : '') + thoughtText
+        if (c.kind === 'expert') {
+          const agg = (expertAgg[c.tier] = expertAgg[c.tier] || { thinking: [], tools: [], contents: [] })
+          if (c.text) { agg.thinking.push(c.text); agg.contents.push(c.text) }
+          continue
         }
-        return null
+        if (c.kind === 'thinking') {
+          if (c.text) pendingLargeThinking += (pendingLargeThinking ? '\n\n' : '') + c.text
+          continue
+        }
+        continue
       }
-      let role = (d.role === 'user' || et === 'user_input') ? 'user' : (d.role || 'large')
+      // 普通消息（user / assistant 终稿）
+      let role = (d.role === 'user') ? 'user' : (d.role || 'large')
       if (!d.role) {
         if (tier === 'supervisor') role = 'supervisor'
         else if (tier === 'expert') role = 'expert'
-        else if (et === 'thought' || et === 'response') role = 'large'
+        else if (tier === 'large') role = 'large'
       }
       const msg = {
         _id: uid(),
@@ -254,16 +248,14 @@ export const useChatStore = defineStore('chat', () => {
         id: d.id || '',
         identity_name: d.metadata?.identity_name || '',
       }
-      // 大模型回复：把累积的思考挂到该回复的思考区（折叠显示）
-      // 用 thinking（与运行时 Chat.vue:191 addMessage thinking 一致，组件读 message.thinking）
+      // 大模型回复：把累积的思考挂到该回复的思考区（与运行时 addMessage thinking 一致）
       if ((role === 'large' || role === 'assistant') && pendingLargeThinking) {
         msg.thinking = pendingLargeThinking
         pendingLargeThinking = ''
       }
-      return msg
-    }).filter(Boolean)
-    // 末尾仍有未挂出的大模型思考（无后续回复）→ 丢弃（与运行时 consumeThinking 未消费一致）
-    // 追加聚合的 supervisor/expert 专家气泡（内容 = 最后一条输出，思考/工具聚合）
+      messages.value.push(msg)
+    }
+    // 追加聚合的 supervisor/expert 专家气泡（与运行时 addExpertMessage 复用行为一致）
     for (const [tier, agg] of Object.entries(expertAgg)) {
       if (!agg.thinking.length && !agg.tools.length) continue
       messages.value.push({
@@ -272,13 +264,13 @@ export const useChatStore = defineStore('chat', () => {
         kind: 'expert',
         name: _nameFor(tier),
         avatarCls: _avatarCls(tier),
-        content: agg.contents.length ? agg.contents[agg.contents.length - 1] : '',
+        content: agg.contents[agg.contents.length - 1] || '',
         _thinking: agg.thinking.join('\n\n'),
         _tools: agg.tools,
         _expanded: false,
-        id: '',
       })
     }
+    // 末尾仍未挂出的思考 → 丢弃（与运行时 consumeThinking 未消费一致）
     const found = session.sessions.find(x => x.session_id === sid)
     session.currentTitle = found?.title || found?.name || (sid.slice(0, 12) + '...')
     ws.reset()
@@ -499,11 +491,61 @@ export const useChatStore = defineStore('chat', () => {
     if (m) { m.answered = true; m.answer = String(answer) }
   }
 
+  // ── 统一思考事件分类（运行时 WS 与 loadHistory 恢复共用，保证展示规则唯一） ──
+  // 返回: { kind: 'approval'|'intent'|'tool_trace'|'thinking'|'expert'|'skip', tier, text }
+  function classifyThinking(d) {
+    const tier = _tierOf(d)
+    // 安全审查/审批/提问 → 跳过（瞬态交互，不重建横幅、不折叠进思考区）
+    if (tier === 'security') return { kind: 'skip', tier }
+    // 安全审批 / 模型提问（实时才有 request_id；恢复时后端标 tier='security' 已在上方跳过）
+    const sev = d.data?.stage_event
+    if (sev?.event_type === 'security' && d.data?.payload?.request_id) {
+      const action = String(sev.action || '')
+      if (action.indexOf('等待用户审批') >= 0) return { kind: 'approval', tier, d }
+      if (action.indexOf('user_intent_request') >= 0) return { kind: 'intent', tier, d }
+    }
+    const text = _stripReplyText(_cleanThinking(d.content || ''))
+    // 工具/委托等中间步骤 → 运行轨迹
+    if (_isToolTrace(text)) return { kind: 'tool_trace', tier, text: text.slice(0, 200) }
+    // supervisor/expert 推理 → 专家气泡
+    if (tier === 'supervisor' || tier === 'expert') return { kind: 'expert', tier, text }
+    // 大模型思考 → 折叠到回复
+    if (tier === 'thinking' || tier === 'large' || tier === '') return { kind: 'thinking', tier, text }
+    return { kind: 'skip', tier }
+  }
+
+  // ── 统一思考事件分派（运行时 WS 事件用） ──
+  // 返回事件类型：'approval' | 'intent' | 'thinking' | 'expert' | 'tool_trace' | ''（未处理/跳过）
+  function dispatchThinking(d) {
+    const c = classifyThinking(d)
+    switch (c.kind) {
+      case 'approval': addApproval(d); return 'approval'
+      case 'intent': addIntent(d); return 'intent'
+      case 'tool_trace':
+        if (c.tier === 'supervisor' || c.tier === 'expert') addExpertTool(d, c.text)
+        else traces.value.push({ text: c.text, time: Date.now() })
+        return 'tool_trace'
+      case 'expert': {
+        // role='supervisor'/'expert' 的实质输出 → 创建/复用气泡；
+        // role='thinking' 的推理 → 累积到该身份气泡的思考区（等输出时合并）
+        const role = String(d.role || '').toLowerCase()
+        const isOutput = (role === 'supervisor' || role === 'expert') && (d.content || '').trim()
+        if (isOutput) addExpertMessage(d)
+        else addExpertThinking(d)
+        return 'expert'
+      }
+      case 'thinking':
+        addThinkingStep(d)
+        return 'thinking'
+      default: return ''
+    }
+  }
+
   return {
     messages, processing, currentModel, streamingIdx, hint, elapsed,
     stopped: _stopped, processingSid: _processingSid, runners, traces,
     init, switchToSession, addMessage, addThinkingStep, addExpertThinking, addExpertTool,
-    addExpertMessage, consumeThinking,
+    addExpertMessage, consumeThinking, dispatchThinking, classifyThinking,
     finalizeStream, sendMessage, retryLastInput, stop, clearMessages,
     deleteMessageAt, editMessageAt,
     addApproval, approve, addIntent, answerIntent,

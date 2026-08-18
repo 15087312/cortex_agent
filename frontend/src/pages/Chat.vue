@@ -123,29 +123,9 @@ const ERROR_PREFIXES = ['[思考失败]', '[模型调用失败]', '[工具调用
 
 const _onThinking = (d) => {
   if (!_isCurrent(d)) return
-  // 安全审批 / 模型提问 → 拦截，不混入内容
-  const sev = d.data?.stage_event
-  if (sev?.event_type === 'security' && d.data?.payload?.request_id) {
-    const action = String(sev.action || '')
-    if (action.indexOf('等待用户审批') >= 0) {
-      chat.addApproval(d)
-      scrollBottom()
-      return
-    }
-    if (action.indexOf('user_intent_request') >= 0) {
-      chat.addIntent(d)
-      scrollBottom()
-      return
-    }
-  }
-  // 思考区只累积 deepseek 推理（reasoning 推送，role=thinking，带身份标注）
-  const role = String(d.role || d.data?.dialog_tier || '').toLowerCase()
-  if (role === 'thinking') {
-    chat.addThinkingStep(d)
-    scrollBottom()
-  } else if (role === 'supervisor' || role === 'expert') {
-    // 主管/专家的实际输出 → 独立气泡显示（携带该身份思考过程与工具调用）
-    chat.addExpertMessage(d)
+  // 统一分派：安全审批/提问/思考折叠/专家气泡 由 store 的 dispatchThinking 处理（与恢复同一规则）
+  const kind = chat.dispatchThinking(d)
+  if (kind === 'approval' || kind === 'intent' || kind === 'thinking' || kind === 'expert' || kind === 'tool_trace') {
     scrollBottom()
   }
 }

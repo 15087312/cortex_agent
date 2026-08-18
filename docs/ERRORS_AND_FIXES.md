@@ -2026,3 +2026,17 @@ def add_to_dialog(self, role, text):       # 无 session 参数
 **验证：** 新增"expert 工具 trace 不重复进全局 traces"+"security tier 跳过"用例；前端 501 + 后端 api_stream 180 全过。
 
 **教训：** ① 同一数据在恢复时的多条路径（expert 聚合 + 全局 traces）要防重复入账，运行时进哪条恢复就进哪条；② 瞬态交互事件（审批/提问）不应作为历史"思考"持久化或展示——要么不持久化，要么用独立 tier 标记并在恢复时跳过；③ 跨端修复要同步（后端持久化 tier 标记 + 前端识别）。
+
+## 74. 架构根治：运行时与恢复路径共用同一分类规则（前端重构）
+
+**背景：** §71-73 连续发现运行时展示路径与 loadHistory 恢复路径不一致（思考折叠/专家气泡数量/属性名/工具 trace 双份/审批污染），每次都是"运行时改一处、恢复改一处"的补丁式修复。根因：两套独立实现，属性名/聚合规则未对齐。
+
+**架构重构（根治）：**
+- **新增 `classifyThinking(d)` 纯函数**：统一分类规则（security 跳过 / approval / intent / tool_trace / expert / thinking），运行时 WS 事件与 loadHistory 恢复**共用它**——分类规则唯一，从根源杜绝不一致
+- **新增 `dispatchThinking(d)`**：运行时 WS 事件分派器（调 classifyThinking + 按类别执行 addApproval/addIntent/addExpertThinking/addExpertMessage/addThinkingStep/traces）
+- **Chat.vue `_onThinking`** 改为调 `chat.dispatchThinking(d)`（运行时也走统一分类）
+- **loadHistory** 改为用 `classifyThinking` 分类持久化消息并按类别累积（专家聚合/大模型思考折叠/工具轨迹/security 跳过）——不再维护独立映射逻辑
+
+**验证：** 新增架构一致性测试（classifyThinking 分类规则 + dispatchThinking 输出/推理分流 + 工具 trace 归类）；前端 504 全过。
+
+**教训：** ① 展示规则（"某数据 → 哪种 UI"）应抽成**单一纯函数**，运行时与恢复都调用，而非各自实现——这样分类永远一致，属性名/聚合策略天然统一；② 恢复不是"另写一套渲染"，而是"把持久化数据按同一规则重放/累积"；③ 架构层根治优于反复补丁——补丁只修当前不一致点，架构统一从源头消除整类问题。
