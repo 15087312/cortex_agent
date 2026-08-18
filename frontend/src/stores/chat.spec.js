@@ -484,6 +484,30 @@ describe('运行轨迹（工具调用从对话流分离）', () => {
     expect(expert._tools.some(t => t.includes('read_file: done'))).toBe(true)
     // 工具调用不混入消息流
     expect(chat.messages.some(m => (m.content || '').includes('read_file: done'))).toBe(false)
+    // MED-1：expert 工具 trace 已进 expert _tools，不重复进全局 traces
+    expect(chat.traces.some(t => t.text.includes('read_file: done'))).toBe(false)
+  })
+
+  it('历史加载 security tier 的 thought 跳过（审批/提问瞬态事件不混入思考区）', async () => {
+    vi.spyOn(wsClient, 'connect').mockResolvedValue(true)
+    const chat = useChatStore()
+    const sess = useSessionStore()
+    sess.switchSession('s1')
+    vi.spyOn(endpoints, 'sessionMessages').mockResolvedValue({
+      data: [
+        { role: 'thought', content: '【安全审查】request_mode_change 等待用户审批', tier: 'security', id: 's1' },
+        { role: 'thought', content: '【安全审查】exec_command 等待用户审批', tier: 'security', id: 's2' },
+        { role: 'assistant', content: '最终回复', tier: 'large', id: 'r1' },
+        { role: 'user', content: '你好' },
+      ],
+    })
+    await chat.switchToSession('s1')
+    const reply = chat.messages.find(m => m.role === 'assistant')
+    // security 事件不折叠进回复思考区
+    expect(reply.thinking || '').not.toContain('安全审查')
+    // 也不作为独立消息/思考气泡
+    const kinds = chat.messages.map(m => m.kind || m.role)
+    expect(kinds.filter(k => k === 'thinking')).toHaveLength(0)
   })
 
 

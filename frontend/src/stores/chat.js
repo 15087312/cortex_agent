@@ -222,12 +222,17 @@ export const useChatStore = defineStore('chat', () => {
         }
       }
       // 持久化的思考/对话步骤 → 与运行时 addThinkingStep 一致：
-      // 工具调用进运行轨迹；supervisor/expert 聚合为独立气泡（上方已处理）；
+      // supervisor/expert 的工具 trace 已聚合进 expert 气泡 _tools（预扫描），不再重复进全局 traces；
+      // 大模型工具 trace 进运行轨迹；supervisor/expert 思考跳过（已聚合）；
       // 大模型思考聚合到紧随其后的 assistant 回复的思考区（运行时折叠，不独立成消息）
       if (d.role === 'thought') {
+        // 安全审查/审批/提问是瞬态交互，恢复时不折叠进思考区也不作历史气泡
+        if (tier === 'security') return null
         const thoughtText = _stripReplyText(_cleanThinking(d.content || ''))
         if (_isToolTrace(thoughtText)) {
-          traces.value.push({ text: thoughtText.slice(0, 200), time: Date.now() })
+          if (tier !== 'supervisor' && tier !== 'expert') {
+            traces.value.push({ text: thoughtText.slice(0, 200), time: Date.now() })
+          }
           return null
         }
         if (tier === 'supervisor' || tier === 'expert') return null

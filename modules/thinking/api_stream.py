@@ -782,6 +782,10 @@ class StreamThinkingSystem:
                     except Exception:
                         pass
                     event_role = formatted["data"].get("dialog_tier", "thinking")
+                    # 安全审查/审批/提问是瞬态交互事件，持久化用独立 tier='security'，
+                    # 前端恢复时识别并跳过（不折叠进大模型思考区，避免审批文本污染历史思考）
+                    if formatted["data"].get("event_type") == "security":
+                        event_role = "security"
                     # 持久化思考/对话步骤（role=thought），切换会话后仍能恢复展示
                     # 只写 DB、不进内存 messages，避免污染 AI 上下文（见 _persist_thought）
                     try:

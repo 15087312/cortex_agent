@@ -2011,3 +2011,18 @@ def add_to_dialog(self, role, text):       # 无 session 参数
 **验证：** 新增"同 tier 复用"与"不同 tier 独立"用例；前端 500 全过。
 
 **教训：** ① 运行时与恢复**必须共享同一套展示规则**（属性名、聚合策略），否则切换会话 UI 与实时不一致且测试互不暴露；② 两个测试文件（store/组件）分别断言 `_thinking` 与 `thinking`，恰好掩盖了属性名断裂——跨层测试要验证"store 写入字段 = 组件读取字段"；③ 同类 bug 排查要逐类对比"运行时事件处理"与"loadHistory 恢复映射"，找属性名/数量/内容三方面的不一致。
+
+## 73. 恢复路径工具 trace 双份 + 审批文本污染思考区（前端/后端，§71 同类）
+
+**现象：** 排查 §71 同类 bug（运行时 vs 恢复不一致）时的两个 MED 问题：
+
+1. **工具 trace 双份入账**：supervisor/expert 的工具 trace 在恢复时既进 expert 气泡 `_tools`（预扫描 expertAgg），又进全局 `traces`；运行时只进 expert `_tools`（`addExpertTool`）。→ 恢复后运行轨迹多出重复项。
+2. **审批/提问文本污染思考区**：security 事件（"等待用户审批"/"user_intent_request"）持久化为 `role='thought', tier='thinking'`，恢复时折叠进大模型回复的思考区——瞬态交互文本变成历史"思考"内容，误导。
+
+**修复：**
+- MED-1：恢复时 supervisor/expert 的工具 trace 只进 expert `_tools`（`tier!=='supervisor'&&tier!=='expert'` 才进全局 traces）
+- MED-2：后端 `_persist_thought` 对 `event_type=='security'` 用 `tier='security'` 持久化；前端恢复时 `tier==='security'` 的 thought 跳过（不折叠进思考区、不作历史气泡）
+
+**验证：** 新增"expert 工具 trace 不重复进全局 traces"+"security tier 跳过"用例；前端 501 + 后端 api_stream 180 全过。
+
+**教训：** ① 同一数据在恢复时的多条路径（expert 聚合 + 全局 traces）要防重复入账，运行时进哪条恢复就进哪条；② 瞬态交互事件（审批/提问）不应作为历史"思考"持久化或展示——要么不持久化，要么用独立 tier 标记并在恢复时跳过；③ 跨端修复要同步（后端持久化 tier 标记 + 前端识别）。
