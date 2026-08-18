@@ -304,6 +304,9 @@ def test_build_cli_prompt_with_history(monkeypatch):
     assert "任务处理流程" in prompt
     assert "返回给上级" in prompt
     assert "不要扩展任务范围" in prompt
+    # 被派遣身份 + 停止思考返回
+    assert "派遣" in prompt
+    assert "停止思考" in prompt
 
 
 def test_build_cli_prompt_no_tools(monkeypatch):

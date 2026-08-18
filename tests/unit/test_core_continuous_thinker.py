@@ -295,9 +295,24 @@ def test_build_task_contract_expert():
     ct = _ct(task_context=ctx, tier="expert")
     out = ct._build_task_contract_section(ctx)
     assert "continue_thinking" in out
-    # 专家明确禁止委托 + 明确完成返回（不再只是"不含 delegate_task 字样"）
+    # 专家明确禁止委托 + 明确停止思考返回给派遣者
     assert "禁止委托" in out
-    assert "结束思考" in out
+    assert "停止思考" in out
+    assert "派遣者" in out
+
+
+def test_build_task_contract_expert_shows_dispatcher():
+    ctx = MagicMock()
+    ctx.task_id = "t1"
+    ctx.loop_goal = "目标"
+    ctx.origin_model_id = "supervisor_code_001"
+    ctx.return_to_model_id = "supervisor_code_001"
+    ct = _ct(task_context=ctx, tier="expert")
+    out = ct._build_task_contract_section(ctx)
+    # 派遣者可读身份注入（model_id 被反查为可读角色名）
+    assert "派遣者" in out
+    assert "代码主管" in out
+    assert "返回" in out
 
 
 def test_build_task_contract_large():

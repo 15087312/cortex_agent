@@ -299,6 +299,19 @@ class ContinuousThinker:
         if not ctx:
             return ""
 
+        # 派遣者 / 结果接收方可读身份（model_id → 角色名，供专家识别"谁派遣我、结果返回给谁"）
+        def _readable(mid: str) -> str:
+            if not mid:
+                return ""
+            try:
+                from modules.thinking.identity import get_identities
+                for key, idata in get_identities().items():
+                    if idata.get("model_id") == mid:
+                        return f"{idata.get('name', key)}({key})"
+            except Exception:
+                pass
+            return mid
+
         # 根据 tier 输出不同的控制工具指令
         if self._tier == "supervisor":
             control_hint = (
@@ -309,13 +322,14 @@ class ContinuousThinker:
                 "- 整合阶段：使用 continue_thinking(continue=false) 结束循环并返回 result_summary 给指挥。"
             )
         elif self._tier == "expert":
+            dispatcher = _readable(ctx.origin_model_id) or "上级"
+            return_to = _readable(ctx.return_to_model_id) or "派遣你的上级"
             control_hint = (
                 "- 你调用的每个工具，系统自动把结果追加给你继续，不需要主动结束。\n"
-                "- 任务完成时使用 continue_thinking(continue=false, result_summary=...) 返回结果。\n"
-                "- 不要把控制标记写进自然语言回复。\n"
+                f"- 【你的派遣者】你是被「{dispatcher}」派遣来执行本次任务的执行专家，不是独立决策者。\n"
+                f"- 【结果返回】任务完成后，停止思考，用 continue_thinking(continue=false, result_summary=...) 把完整结果返回给「{return_to}」；不要反复调用工具空转，也不要自己去找用户。\n"
                 "- 【权限边界】你的可用工具由系统按你的身份分配（列表内的工具就是你的全部权限）：只能调用列表内工具，禁止调用主管/总指挥才有的工具或任务范围之外的操作。\n"
-                "- 【禁止委托】你没有委托权限，不要调用 delegate_task 或试图指挥其他专家/主管——只管好你自己的任务。\n"
-                "- 【结束返回】信息足够或任务完成时，必须结束思考并通过 continue_thinking 把完整结果返回给主管/上级，不要反复调用工具空转。"
+                "- 【禁止委托】你没有委托权限，不要调用 delegate_task 或试图指挥其他专家/主管——只管好你自己的任务。"
             )
         else:  # large
             control_hint = (
@@ -330,8 +344,8 @@ class ContinuousThinker:
             "【本次连续思考循环契约】\n"
             f"- 任务ID：{ctx.task_id}\n"
             f"- 循环目标：{ctx.loop_goal}\n"
-            f"- 发起模型：{ctx.origin_model_id or 'unknown'}\n"
-            f"- 结果返回给：{ctx.return_to_model_id or '用户/主流程'}\n"
+            f"- 发起模型：{(_readable(ctx.origin_model_id) or ctx.origin_model_id or 'unknown') if self._tier == 'expert' else (ctx.origin_model_id or 'unknown')}\n"
+            f"- 结果返回给：{(_readable(ctx.return_to_model_id) or ctx.return_to_model_id or '用户/主流程') if self._tier == 'expert' else (ctx.return_to_model_id or '用户/主流程')}\n"
             + control_hint
         )
 
