@@ -131,6 +131,11 @@ cp .env.example .env        # 编辑填入 API Key
 
 ## 交互端
 
+<!-- 界面截图：将图片放到 docs/images/ui_chat.png 后此处自动显示 -->
+<p align="center">
+  <img src="docs/images/ui_chat.png" alt="Web UI 聊天界面" width="640">
+</p>
+
 ### Web UI（Vue 3）
 
 15 个页面：Chat（多模态附件/流式/思考区/待办/审批横幅）、Orchestration（角色编排/人设/工具权限/
