@@ -1,0 +1,8 @@
+# 本地语音 / 桌面硬件依赖（macOS/Windows 桌面端）
+# 服务器部署（Vercel 等）不需要这些 —— 它们依赖系统库（portaudio 等），
+# 在无头/服务器环境无法编译且无用。语音检测模块已做延迟导入 + ImportError 降级，
+# 缺少时自动禁用相关能力，不影响核心功能。
+pyaudio>=0.2.14
+pynput>=1.7.6
+pyautogui>=0.9.54
+pyserial>=3.5

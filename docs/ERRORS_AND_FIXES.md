@@ -2130,3 +2130,23 @@ Task 编号（Task-3838/4022/4214/4386/4572/4755...）随对话逐次递增，�
 **验证：** 新增 `test_api_stream_think_ext.py::test_think_resets_started_at_per_round`（旧 started_at 被重置、连续两轮各自刷新计时起点）；api_stream 全部 183 测试通过。
 
 **教训：** "会话生命周期"计时与"任务/轮次生命周期"计时是两种语义，不能混用同一个时间戳。WS 状态推送的耗时类字段必须挂在"本轮处理"的起点上，否则 UI 展示的耗时失真。
+
+## 81. Vercel 部署失败：pyaudio 编译需要 portaudio.h（服务器/无头环境依赖治理）
+
+**现象：** 部署到 Vercel 时构建失败：
+```
+error: Command '['cc', ..., '-c', 'src/pyaudio/device_api.c', ...]' returned non-zero exit status 1
+hint: This error likely indicates that you need to install a library that provides "portaudio.h"
+help: `pyaudio` (v0.2.14) was included because `cortex-agent` depends on `pyaudio`
+```
+
+**根因：** `requirements.txt` 把 `pyaudio` 列为必需依赖。PyAudio 是 PortAudio 的 C 扩展，pip 安装需编译（源码无 wheel），编译依赖系统开发头文件 `portaudio.h`。Vercel Python 沙箱没有该库，且无 apt 可装。pyaudio 仅用于本地麦克风录音（`modules/perception/detectors/voice_detector.py` / `hotkey_voice_detector.py`），服务器/无头环境既无法编译也无用途。
+
+**修复：** 将本地硬件/桌面专用依赖从主 `requirements.txt` 移出，新建 `requirements-voice.txt`：
+- 移除：`pyaudio`、`pynput`（全局热键）、`pyautogui`（桌面自动化）、`pyserial`（串口）
+- 保留：`SpeechRecognition`、`gTTS`、`openai-whisper`（纯 Python / 服务器可装）
+- 语音检测器已做延迟导入 + `_check_availability()` 的 `except ImportError` 降级（`is_available()=False` 不启动），无顶层 `import pyaudio`，缺失时不影响核心功能。
+
+**验证：** `test_detectors.py`/`test_voice_hotkey.py`/`test_perception.py` 107 测试通过；requirements.txt 语法合法；语音/桌面模块均函数内延迟 import。
+
+**教训：** 服务端部署（Vercel 等沙箱构建）不能包含依赖系统 C 库/无 wheel 的本地硬件包。此类依赖应独立成可选文件（如 requirements-voice.txt），并在代码层做延迟导入 + ImportError 优雅降级，让"装了有功能、没装不崩溃"。

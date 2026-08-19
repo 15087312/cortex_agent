@@ -34,16 +34,14 @@ faiss-cpu>=1.7.4  # 向量索引
 
 # 语音处理
 SpeechRecognition>=3.10.0
-pyaudio>=0.2.14
 gTTS>=2.5.0
-pynput>=1.7.6  # 全局热键监听（热键模式语音 Push-to-Talk）
 openai-whisper>=20231117  # 本地语音识别 STT（随 torch 一起安装）
+# 本地硬件依赖（pyaudio/pynput/pyautogui/pyserial）见 requirements-voice.txt ——
+# 依赖系统库（portaudio 等），服务器/无头环境无法编译且无用
 
 # 图像处理
 Pillow>=10.1.0
 opencv-python>=4.8.1.78
-pyautogui>=0.9.54  # 鼠标键盘自动化
-pyserial>=3.5  # 串口通信
 
 # 感知系统
 mss>=10.0.0  # 跨平台屏幕捕获
