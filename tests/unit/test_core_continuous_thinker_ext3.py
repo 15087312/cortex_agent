@@ -134,7 +134,6 @@ def test_jaccard_union_empty():
 
 def test_collect_final_context_delegation(monkeypatch):
     t = _thinker()
-    t._build_expert_context_section = MagicMock(return_value="")
     t._build_delegation_status_section = MagicMock(return_value="委托进行中")
     t.notebook = MagicMock()
     t.notebook.content = ""
@@ -144,7 +143,6 @@ def test_collect_final_context_delegation(monkeypatch):
 
 def test_collect_final_context_no_thoughts():
     t = _thinker()
-    t._build_expert_context_section = MagicMock(return_value="")
     t._build_delegation_status_section = MagicMock(return_value="")
     t.notebook = None
     assert t._collect_final_synthesis_context("q", []) == ""

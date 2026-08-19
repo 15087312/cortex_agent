@@ -291,3 +291,20 @@ def test_init_uses_global_loader(monkeypatch):
     monkeypatch.setattr("config.prompts.loader.get_loader", lambda: fake)
     c = PromptComposer()
     assert c._loader is fake
+
+
+def test_build_supervisor_table_merges_custom_agents(monkeypatch):
+    """§79：编排页自定义 agent 出现在可委托主管列表（与 _resolve_role 动态回退一致）"""
+    from config.settings import Settings
+    monkeypatch.setattr(
+        Settings, "get_custom_agents",
+        lambda self: [{"role": "security_supervisor", "name": "安全主管", "tier": "supervisor", "expertise": ["安全审计"]}],
+    )
+    c = _composer({
+        "roles": {"roles": {
+            "code_supervisor": {"tier": "supervisor", "expertise": ["代码"]},
+        }}
+    })
+    tbl = c._build_supervisor_table()
+    assert "security_supervisor" in tbl
+    assert "code_supervisor" in tbl

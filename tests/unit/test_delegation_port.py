@@ -114,3 +114,21 @@ def test_delegate_think_timeout_fallback(monkeypatch):
     assert result.success is True
     content = bus.send.call_args.args[0].content
     assert content["think_timeout"] == dp.DEFAULT_DELEGATE_THINK_TIMEOUT
+
+
+def test_resolve_role_dynamic_identity_fallback(monkeypatch):
+    """§79：动态回退——get_identities() 里的角色（含自定义 agent）无需硬编码即可解析"""
+    fake = {
+        "security_supervisor": {"tier": "supervisor", "model_id": "supervisor_sec_001"},
+        "data_expert": {"tier": "expert", "model_id": "expert_data_001"},
+    }
+    monkeypatch.setattr("modules.thinking.identity.get_identities", lambda: fake)
+    assert _resolve_role("security_supervisor") == ("supervisor", "security_supervisor")
+    assert _resolve_role("data_expert") == ("expert", "data_expert")
+
+
+def test_resolve_role_dynamic_fallback_substr(monkeypatch):
+    fake = {"security_supervisor": {"tier": "supervisor"}}
+    monkeypatch.setattr("modules.thinking.identity.get_identities", lambda: fake)
+    assert _resolve_role("security") == ("supervisor", "security_supervisor")
+    assert _resolve_role("ghost") is None

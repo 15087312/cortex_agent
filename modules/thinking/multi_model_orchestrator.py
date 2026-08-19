@@ -505,33 +505,6 @@ class MultiModelOrchestrator:
 
             # ---- 写入上下文到 CognitiveBlackboard ----
 
-            # 1. 委托引导（系统级，持久上下文）
-            from config.prompts.composer import PromptComposer
-            composer = PromptComposer()
-            supervisor_list = composer._build_supervisor_table()
-            expert_list = composer._build_expert_table()
-            delegation_guidance = (
-                "【多模型协作 — 使用内部控制工具委托，不要滥用委托】\n"
-                "搜索、读文件、写代码等需要外部执行的操作，应通过 delegate_task 委托给合适主管或专家。\n"
-                "寒暄、需求澄清、等待用户补充、普通对话、业务判断，不要委托专家。\n"
-                "用户只是打招呼或没有提出具体任务时，直接友好回复并请用户说明需求。\n"
-                "\n"
-                f"可用主管：\n{supervisor_list}\n"
-                f"\n可用专家：\n{expert_list}\n"
-                "\n"
-                "专家只用于明确的工具执行任务：web_search(联网搜索) / search_files(搜文件) / read_file(读文件) / write_file(写文件) / 执行命令等。\n"
-                "用户请求最新数据、网页信息、玩家数量、文件/桌面/系统状态时，应委托专家执行明确工具任务，不要直接回答不知道。\n"
-                "反例：用户说你好 → 不要委托专家，直接回复问候。\n"
-                "反例：不知道用户要做什么 → 不要委托专家，直接请用户补充需求。\n"
-            )
-            if blackboard:
-                blackboard.add_observation(
-                    tier="system",
-                    content=delegation_guidance,
-                    metadata={"context_type": "delegation_guidance"},
-                )
-
-
             # 1b. 当前会话对话历史（短期记忆）
             if blackboard and context:
                 history_lines = []

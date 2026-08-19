@@ -173,4 +173,19 @@ def _resolve_role(role_name: str) -> Optional[tuple[str, str]]:
     for name, identity in ROLE_TO_IDENTITY.items():
         if name.lower() in role_lower or role_lower in name.lower():
             return identity
+    # 动态回退：直接命中 get_identities() 里的 role key（含编排页自定义 agent）
+    try:
+        from modules.thinking.identity import get_identities
+        identities = get_identities()
+        if role_name in identities:
+            ident = identities[role_name]
+            tier = ident.get("tier") or "expert"
+            return tier, role_name
+        for key in identities:
+            if key.lower() in role_lower or role_lower in key.lower():
+                ident = identities[key]
+                tier = ident.get("tier") or "expert"
+                return tier, key
+    except Exception:
+        pass
     return None

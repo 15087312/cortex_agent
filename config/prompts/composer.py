@@ -224,11 +224,36 @@ class PromptComposer:
         if tier == "supervisor":
             return self._build_expert_table()
         elif tier == "large":
-            return self._build_supervisor_table()
+            tables = [self._build_supervisor_table(), self._build_expert_table()]
+            return "\n\n".join(t for t in tables if t)
         return ""
 
+    def _merged_roles(self):
+        """roles.yaml（composer 注入的 loader 优先）+ 编排页自定义 agent"""
+        roles = dict(self._roles.get("roles", {}) or {})
+        try:
+            from config.settings import settings as _settings
+            for ca in _settings.get_custom_agents():
+                role = (ca.get("role") or "").strip()
+                if not role or role in roles:
+                    continue
+                roles[role] = {
+                    "name": ca.get("name") or role,
+                    "tier": ca.get("tier") or "expert",
+                    "role": role,
+                    "model_id": (ca.get("model_id") or "").strip() or f"{role}_001",
+                    "personality": ca.get("personality") or f"你是{ca.get('name') or role}。",
+                    "speaking_style": ca.get("speaking_style") or "自然",
+                    "expertise": ca.get("expertise") or [],
+                    "weaknesses": [],
+                    "tool_whitelist": [],
+                }
+        except Exception:
+            pass
+        return roles
+
     def _build_expert_table(self) -> str:
-        roles = self._roles.get("roles", {})
+        roles = self._merged_roles()
         experts = [(k, r) for k, r in roles.items() if r.get("tier") == "expert"]
         if not experts:
             return ""
@@ -239,7 +264,7 @@ class PromptComposer:
         return "\n".join(lines)
 
     def _build_supervisor_table(self) -> str:
-        roles = self._roles.get("roles", {})
+        roles = self._merged_roles()
         sups = [(k, r) for k, r in roles.items() if r.get("tier") == "supervisor"]
         if not sups:
             return ""

@@ -326,12 +326,19 @@ def test_build_task_contract_large():
     assert "自动推进" in out
 
 
-def test_build_expert_context_only_large():
-    ct = _ct(tier="large")
-    out = ct._build_expert_context_section()
-    assert "可用主管" in out
-    ct2 = _ct(tier="expert")
-    assert ct2._build_expert_context_section() == ""
+def test_expert_context_moved_to_system_prompt():
+    """可委托角色表格由 system prompt 按模型权限注入（§77 同类重构）：large 主管+专家表，supervisor 专家表"""
+    from config.prompts.composer import PromptComposer, PromptRequest
+    c = PromptComposer()
+    sp_large = c.build_system(PromptRequest(tier="large", role="orchestrator", mode="edit"))
+    sp_sup = c.build_system(PromptRequest(tier="supervisor", role="code_supervisor", mode="edit"))
+    sp_exp = c.build_system(PromptRequest(tier="expert", role="code_writer", mode="edit"))
+    assert "可委托的主管" in sp_large
+    assert "可委托的专家" in sp_large
+    assert "可委托的主管" not in sp_sup
+    assert "可委托的专家" in sp_sup
+    assert "可委托的主管" not in sp_exp
+    assert "可委托的专家" not in sp_exp
 
 
 def test_build_delegation_status_section():

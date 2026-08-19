@@ -2075,3 +2075,46 @@ Task 编号（Task-3838/4022/4214/4386/4572/4755...）随对话逐次递增，�
 **验证：** `test_multi_model_orchestrator_ext.py::test_wait_large_no_shield_task_leak`（wait_for 超时后无残留 pending Event.wait task）+ `test_wait_large_done_event_set_returns`；orchestrator 相关 213 测试通过。
 
 **教训：** `asyncio.shield` 是"延迟取消"而非"不取消"——被 shield 的内部 task 在事件循环关闭时仍可能 pending。对只需"等待信号、超时重试"的 `Event.wait()`，直接 `wait_for` 即可，不要 shield；shield 只应用于确实需要与调用方生命周期解耦的长期任务。
+
+## 77. 授权设置页冗余的 API Key 手动输入（前端，安全暴露反模式）
+
+**现象：** "授权设置" tab 有一个"API 密钥"手动输入框（`X-API-Key`，由后端 `SIMPLE_API_KEY` 控制），可保存/清除密钥。
+
+**根因：** 设计冗余。前端启动时 `autoDetectApiKey()` 已从 `/config/api-key` 自动拉取密钥（开发/测试直接返回明文；生产仅回环客户端返回明文，其余只返回 `configured` 状态）。手动输入框只对"生产 + 非回环客户端"这一边缘场景有意义，其余场景完全无用；且它把安全密钥暴露成前端入口，属安全反模式。
+
+**修复：** 移除授权设置 tab 的 API 密钥输入区（`keyInput`/`saveKey`/`clearKey`），保留 `autoDetectApiKey`/请求头携带逻辑。授权设置 tab 仅保留运行时配置表。
+
+**验证：** Settings.spec.js 删除 3 个依赖该 UI 的测试、改写 1 个 tab 测试；50 个前端测试通过；重新 `npm run build` 后 dist 中无 `key-input`/`输入 X-API-Key` 残留。
+
+**教训：** 凡"自动检测/自动恢复已覆盖"的配置，前端不要再留手动入口——既冗余又扩大攻击面。检查同类：见 §78、§79。
+
+## 78. 授权设置 tab 运行时配置表明文展示模型 API Key（前端，§77 同类）
+
+**现象：** 授权设置 tab 的"运行时配置"表把 `configStore.config` 全部可改配置项逐行渲染 `String(v)`，包括 `LARGE_MODEL_API_KEY`/`MEDIUM_MODEL_API_KEY`/`SMALL_MODEL_API_KEY`/`PERCEPTION_VOICE_API_KEY`/`OUTPUT_TTS_API_KEY`/`VISION_API_KEY` 等密钥明文。
+
+**根因：** `get_config`（api/main.py:764）返回 `_MODIFIABLE_CONFIG_KEYS` 内全部配置项（含模型/语音/视觉密钥），前端运行时配置表对非对象值一律 `String(v)` 明文输出。这些密钥均有专属 password 式配置区（主模型配置等），运行表明文展示属冗余暴露（窥屏/日志泄露风险）。
+
+**状态：** 已确认同类问题，待修复（前端对密钥字段 masked 显示 `••••`，编辑走 password 输入）。
+
+**教训：** 允许展示的配置清单（`_MODIFIABLE_FIELDS`）本身含密钥类字段；任何"全量配置渲染"界面都必须按字段名屏蔽密钥值（KEY/TOKEN/SECRET/PASSWORD 模式）。
+
+## 79. 委托角色名解析硬编码（delegation_port ROLE_TO_IDENTITY，后端，§77 同类隐患）
+
+**现象：** `modules/thinking/core/delegation_port.py:135` 的 `ROLE_TO_IDENTITY` 是**硬编码** role 名 → (tier, identity_key) 映射表。新增 supervisor/expert 角色（含编排页自定义 agent）时若不同步更新此表，`delegate_task` 报 `未知委托角色`。
+
+**根因：** 提示词侧的角色列表是**动态**的（`composer._build_supervisor_table()/_build_expert_table()` 从 roles.yaml 实时读取所有 tier=supervisor/expert 角色注入总指挥/主管；`identity.get_identities()` 还合并了编排页自定义 agent），但委托执行侧 `_resolve_role` 只能解析硬编码映射表。动态列 vs 硬编码解析不一致 → 新增角色可直接委托界面列出、却实际无法委托。已实测：`security_supervisor`、`data_expert` → `_resolve_role` 返回 `None`。
+
+**附加隐患：** `_build_supervisor_table/_build_expert_table` 仅读 `roles.yaml`，不含编排页自定义 agent（合并进 identities 但不出现在委托引导列表）。
+
+**修复：**
+1. `_resolve_role` 加动态回退：`ROLE_TO_IDENTITY` 未命中时查 `get_identities()`（含编排页自定义 agent，直接/子串匹配）——新增角色无需改映射表即可委托。
+2. `_build_supervisor_table/_build_expert_table` 改为合并自定义 agent（composer `_merged_roles`，以注入 loader 为基础 + `settings.get_custom_agents()`）。
+3. **可委托角色表格按模型权限在 system prompt 注入**，不再走黑板：
+   - 移除 `multi_model_orchestrator.py` 写入黑板的 `delegation_guidance`（含可用主管/可用专家表）
+   - `_build_capability_table`：large → 主管表+专家表；supervisor → 专家表；expert → 无
+   - 删除 `continuous_thinker._build_expert_context_section` **硬编码角色表**（含旧名 `test_writer`/`data_analyzer`/`memory_manager`/`emotion`，与 roles.yaml 不一致且漏 `ui_designer`/`customer`）
+   - `delegate_task` 工具 role 描述同步改为「可委托的主管」「可委托的专家」
+
+**验证：** delegation_port 新增 2 动态回退测试；composer 新增自定义 agent 合并测试；`test_build_expert_context_only_large` 改为 `test_expert_context_moved_to_system_prompt`（large 主管+专家表 / supervisor 专家表 / expert 无表）；相关 180 测试 + orchestrator 89 测试通过。
+
+**教训：** "提示词动态列举的能力"必须与"执行侧可解析的集合"同源同生，否则出现 UI/提示词看得到、实际跑不通的脱节。可委托角色表格是"模型权限"信息，应随 system prompt 按 tier 注入，而非全局黑板广播（避免重复注入+越权可见）；硬编码角色名会随 roles.yaml 演化而失配。

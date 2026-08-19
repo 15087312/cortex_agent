@@ -269,13 +269,6 @@ class ContinuousThinker:
         if recent_steps:
             parts.append("【本次内部思考摘要】\n" + "\n---\n".join(recent_steps))
 
-        expert_context = self._sanitize_final_context_text(
-            self._build_expert_context_section(),
-            limit=2500,
-        )
-        if expert_context:
-            parts.append("【本模型可见的新上下文/专家回复】\n" + expert_context)
-
         delegation_status = self._sanitize_final_context_text(
             self._build_delegation_status_section(),
             limit=1200,
@@ -755,37 +748,6 @@ class ContinuousThinker:
         except Exception:
             self._context_tokens = 0
         return prompt
-
-    def _build_expert_context_section(self) -> str:
-        """构建可用主管和专家上下文（大模型关键信息）"""
-        if self._tier != "large":
-            return ""  # 只给大模型提供这些信息
-
-        return """## 可用主管（delegate_task 的 role 参数）
-
-| role 参数 | 主管名称 | 专长 |
-|-----------|---------|------|
-| code_supervisor | 代码主管 | 代码审查、实现、测试、架构设计 |
-| query_supervisor | 查询主管 | 文件操作、数据查询、信息检索 |
-| creative_supervisor | 创意主管 | 内容生成、文案、方案设计 |
-
-## 可用专家（主管通过 delegate_task 调度）
-
-| role 参数 | 专家名称 | 专长 |
-|-----------|---------|------|
-| code_reviewer | 审查专家 | 代码审查、安全审计 |
-| code_writer | 实现专家 | 代码实现、算法设计 |
-| test_writer | 测试专家 | 测试编写、边界分析 |
-| data_analyzer | 分析专家 | 数据分析、文件查询 |
-| memory_manager | 记忆管理员 | 记忆操作 |
-| emotion | 情绪分析师 | 情绪识别、共情 |
-| customer | 客户 | 用户交互 |
-
-## 工作流
-1. 分析任务，判断是否需要委托（简单问题自己回答）
-2. 用 `delegate_task(role="...", task="...")` 委托给主管
-3. 主管会按"分析→规划与委托→等待整合"三阶段执行
-4. 等待主管唤醒，收到结果后整理并回复用户"""
 
     def _build_delegation_status_section(self) -> str:
         """构建委托链摘要（含完整委托链：父子关系/进度/目标模型）。

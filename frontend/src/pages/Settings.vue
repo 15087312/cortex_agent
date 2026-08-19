@@ -414,6 +414,8 @@ function openLink(url) { window.open(url, '_blank') }
 
 /* ── 高级参数表 ── */
 const advancedKeys = computed(() => Object.keys(configStore.config).filter(k => /^(ATTENTION|INTERRUPT|CAUSAL)/.test(k)))
+const SECRET_KEY_PAT = /(^|_)(API_KEY|KEY|TOKEN|SECRET|PASSWORD|PASSWD)(_|$)/
+function isSecretKey(k) { return SECRET_KEY_PAT.test(String(k)) }
 async function editConfig(k, v) {
   const vs = typeof v === 'object' ? JSON.stringify(v) : String(v)
   const nv = await prompt('编辑 ' + k, vs)
@@ -1074,7 +1076,7 @@ onMounted(async () => {
             <tbody>
               <tr v-for="(v, k) in configStore.config" :key="k">
                 <td><code class="text-sm">{{ k }}</code></td>
-                <td><span class="config-cell-value">{{ typeof v === 'object' ? JSON.stringify(v) : String(v) }}</span></td>
+                <td><span class="config-cell-value">{{ isSecretKey(k) ? '••••••••' : (typeof v === 'object' ? JSON.stringify(v) : String(v)) }}</span></td>
                 <td><button class="btn btn-sm" @click="editConfig(k, v)">编辑</button></td>
               </tr>
             </tbody>
