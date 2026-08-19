@@ -4,7 +4,6 @@ import { createPinia, setActivePinia } from 'pinia'
 import Settings from './Settings.vue'
 import { routeFetch } from '@/test/helpers.js'
 import { dialogState, resolveDialog } from '@/composables/useDialog.js'
-import { setApiKey } from '@/api.js'
 
 const libs = [{ name: 'lib_a', size: 1024 }, { name: 'lib_b', size: 2048 }]
 
@@ -174,16 +173,6 @@ describe('Settings.vue', () => {
     expect(puts.some((x) => x.url.includes('LARGE_MODEL_API_URL'))).toBe(true)
   })
 
-  it('授权：saveKey 保存 API Key（内存）', async () => {
-    mockApi()
-    const w = await mountSettings()
-    w.vm.keyInput = 'sk-test-123'
-    w.vm.saveKey()
-    const { getApiKey } = await import('@/api.js')
-    expect(getApiKey()).toBe('sk-test-123')
-    setApiKey('')
-  })
-
   it('openFolder 打开目录', async () => {
     mockApi()
     const w = await mountSettings()
@@ -268,17 +257,6 @@ describe('Settings.vue', () => {
     await new Promise((r) => setTimeout(r, 30))
     const put2 = writes.find((x) => x.url.includes('/api/config/CORTEX_MODE'))
     expect(put2.body).toEqual({ value: 'chatonly' })
-  })
-
-  it('saveKey 清除 API Key', async () => {
-    mockApi()
-    const w = await mountSettings()
-    const { getApiKey } = await import('@/api.js')
-    setApiKey('temp-key')
-    w.vm.keyInput = ''
-    w.vm.saveKey()
-    expect(getApiKey()).toBe('')
-    setApiKey('')
   })
 
   it('copyPath / copyDiag 复制到剪贴板', async () => {
@@ -469,18 +447,6 @@ describe('Settings.vue', () => {
     w.vm.openLink('https://example.com')
     expect(openSpy).toHaveBeenCalledWith('https://example.com', '_blank')
     vi.restoreAllMocks()
-  })
-
-  it('clearKey 清除 API Key', async () => {
-    mockApi()
-    const w = await mountSettings()
-    const { getApiKey } = await import('@/api.js')
-    setApiKey('temp')
-    w.vm.keyInput = 'temp'
-    w.vm.clearKey()
-    expect(w.vm.keyInput).toBe('')
-    expect(getApiKey()).toBe('')
-    setApiKey('')
   })
 
   it('advancedKeys 过滤高级配置键', async () => {
@@ -726,17 +692,10 @@ describe('Settings.vue', () => {
     expect(writes.some((x) => x.url.includes('LOG_LEVEL') && x.body?.value === 'ERROR')).toBe(true)
   })
 
-  it('授权 tab：保存/清除 API Key + 编辑配置行（editConfig + prompt）', async () => {
+  it('授权 tab：编辑配置行（editConfig + prompt）', async () => {
     mockApi()
     const w = await mountSettings()
     await w.findAll('.settings-tab').find((t) => t.text() === '授权设置').trigger('click')
-    // 输入 key + 保存按钮
-    await w.find('input.key-input').setValue('sk-abc')
-    await w.findAll('button').find((b) => b.text().trim() === '保存').trigger('click')
-    expect(w.vm.keyInput).toBe('sk-abc')
-    // 清除按钮（keyInput 非空时显示）
-    await w.findAll('button').find((b) => b.text().trim() === '清除').trigger('click')
-    expect(w.vm.keyInput).toBe('')
     // 配置行编辑按钮 → prompt 对话框
     const editBtn = w.findAll('button').find((b) => b.text().trim() === '编辑')
     const p = editBtn.trigger('click')

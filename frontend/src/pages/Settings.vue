@@ -1,6 +1,6 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
-import { getApiKey, setApiKey, endpoints } from '@/api.js'
+import { endpoints } from '@/api.js'
 import { useConfigStore } from '@/stores/config.js'
 import { useToastStore } from '@/stores/toast.js'
 import { useConfirm, usePrompt } from '@/composables/useDialog.js'
@@ -411,11 +411,6 @@ async function checkUpdates() {
   checkingUpdate.value = false
 }
 function openLink(url) { window.open(url, '_blank') }
-
-/* ── 授权 ── */
-const keyInput = ref(getApiKey())
-function saveKey() { setApiKey(keyInput.value); toast.show(keyInput.value ? '已保存' : '已清除', 'success') }
-function clearKey() { keyInput.value = ''; setApiKey(''); toast.show('已清除', 'success') }
 
 /* ── 高级参数表 ── */
 const advancedKeys = computed(() => Object.keys(configStore.config).filter(k => /^(ATTENTION|INTERRUPT|CAUSAL)/.test(k)))
@@ -1071,20 +1066,6 @@ onMounted(async () => {
 
       <!-- ═══════════════ 授权设置 ═══════════════ -->
       <div v-if="activeTab === '授权设置'" class="settings-section">
-        <div class="settings-group">
-          <div class="settings-group-title">API 密钥</div>
-          <div class="config-api-hint">用于访问需要认证的后端接口。由后端 .env 中的 SIMPLE_API_KEY 控制。</div>
-          <div class="search-bar mb-none">
-            <input class="input key-input" v-model="keyInput" placeholder="输入 X-API-Key" />
-            <button class="btn btn-primary btn-sm" @click="saveKey">保存</button>
-            <button v-if="keyInput" class="btn btn-sm" @click="clearKey">清除</button>
-          </div>
-          <div class="key-status">
-            <span v-if="getApiKey()" class="badge badge-green"><Icon name="check" :size="13" /> 已配置</span>
-            <span v-else class="key-unconfigured">未配置</span>
-          </div>
-        </div>
-        <div class="settings-divider"></div>
         <div class="settings-group">
           <div class="settings-group-title">运行时配置 ({{ Object.keys(configStore.config).length }} 项)</div>
           <div v-if="Object.keys(configStore.config).length === 0" class="empty-state empty-padded"><p class="empty-text">暂无配置项</p></div>
