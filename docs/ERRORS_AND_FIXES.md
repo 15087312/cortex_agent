@@ -2150,3 +2150,18 @@ help: `pyaudio` (v0.2.14) was included because `cortex-agent` depends on `pyaudi
 **验证：** `test_detectors.py`/`test_voice_hotkey.py`/`test_perception.py` 107 测试通过；requirements.txt 语法合法；语音/桌面模块均函数内延迟 import。
 
 **教训：** 服务端部署（Vercel 等沙箱构建）不能包含依赖系统 C 库/无 wheel 的本地硬件包。此类依赖应独立成可选文件（如 requirements-voice.txt），并在代码层做延迟导入 + ImportError 优雅降级，让"装了有功能、没装不崩溃"。
+
+## 82. 多会话并行处理：WS 单连接 + 全局处理状态导致会话互相干扰（前端 ws client / chat store / Chat.vue）
+
+**现象：** 用户在 A 会话提问后切到 B 会话，出现「会话「b1da48c1…」正在思考中，切回该会话可查看进度」横幅；A 的回复丢失（切回 A 看不到）；B 的处理状态被 A 的 done/error 事件意外清除。用户要求：各会话独立且可并行，不出现跨会话横幅。
+
+**根因：** 前端 WS 客户端 `frontend/src/ws/client.js` 是**单连接**（`this._conn` 单一 WebSocket，`connect()` 会关闭旧连接）；chat store 的 `processing`/`_processingSid` 是**全局单态**。当 A 处理中切到 B 并发消息：`_ensureConnected` 强制关闭 A 连接（`_doConnect` 里 `this._conn.close()`），A 的后端任务继续运行但结果无法到达；`_onDone`/`_onError` 对非当前会话事件直接调 `finalizeStream('')`，无条件清全局 `processing`，误清除 B 的处理状态；`_onMessage`/`_onThinking` 虽按 `session_id` 拦截（不混入 B 消息流），但状态清除与连接切换未按会话隔离。
+
+**修复：** 会话真正并行需要每个处理中的会话保有独立连接 + 独立状态：
+- `frontend/src/ws/client.js` 改造为多连接：`_conns = { sid: {conn, ...} }`，新增 `isConnected(sid)`、`send(sid, data)`、`disconnect(sid)`、`disconnectAll()`；`connect(sid)` 不再关闭其他会话连接
+- `frontend/src/stores/chat.js`：`_processingSid` 改 `_processingSids`（`Set` 支持多会话并行）；`processing` 改为 computed（当前会话是否处理中）；新增 `finalizeSession(sid)` 按会话精确清理、`markProcessing(sid, on)` 辅助；`switchToSession` 始终连接目标会话、保留其他会话处理状态；`sendMessage`/`stop`/`clearMessages` 按当前会话操作
+- `frontend/src/pages/Chat.vue`：移除跨会话横幅「会话xxx正在思考中」；`_onDone`/`_onError` 对非当前会话事件只调 `finalizeSession(sid)` 不影响当前会话；watchdog 检查当前会话连接（`isConnected(session.sessionId)`）
+
+**验证：** ws client 新增多会话独立连接测试；chat store 新增并行会话场景测试（A 处理中切 B、B 也处理时 A 的 done 不清除 B 状态）；Chat.spec 新增真实 `switchToSession` 流程验证 A 的回复/思考/done 不混入 B；全部前端 505 测试通过，`npm run build` 通过。
+
+**教训：** "会话并行"要求连接的建立/关闭与状态的生命周期都按会话维度隔离。单例连接 + 全局布尔状态只能支撑单会话串行；多会话并发必须把"连接"和"处理状态"都建模成集合/映射，事件处理按 `session_id` 精确路由。

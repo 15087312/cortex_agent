@@ -57,16 +57,17 @@ class LargeModelClient(BaseModelClient):
     def _detect_api_format(url: str) -> str:
         """从 URL 自动检测 API 格式"""
         if not url:
-            return "dashscope"
+            return "openai"
         url_lower = url.lower()
-        if "dashscope" in url_lower:
+        if "dashscope" in url_lower or "aliyun" in url_lower:
             return "dashscope"
         if "anthropic" in url_lower or "claude" in url_lower:
             return "anthropic"
-        if any(k in url_lower for k in ("openai", "v1/chat", "v1/completions")):
+        # OpenRouter / Groq / Mistral / 智谱 / 火山引擎等均为 OpenAI 兼容格式
+        if any(k in url_lower for k in ("openai", "openrouter", "groq", "v1/chat", "v1/completions")):
             return "openai"
-        # 默认兼容 DashScope（原有用户不受影响）
-        return "dashscope"
+        # 默认 OpenAI 兼容（绝大多数兼容端点都是该格式；dashscope 已在上方精确识别）
+        return "openai"
     
     async def generate(self, prompt: str, *, system_prompt: str, max_retries: int = 2,  # type: ignore[override]
                        fallback_to_reasoning: bool = False, **kwargs) -> str:

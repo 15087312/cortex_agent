@@ -12,7 +12,7 @@ export const useWsStore = defineStore('ws', () => {
   }
 
   function disconnect() {
-    wsClient.disconnect()
+    wsClient.disconnectAll()
     isConnected.value = false
   }
 

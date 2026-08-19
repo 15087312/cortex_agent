@@ -170,13 +170,15 @@ class TestConstructor:
         assert client.api_key == "c"
 
     def test_detect_api_format(self):
-        assert LargeModelClient._detect_api_format("") == "dashscope"
+        assert LargeModelClient._detect_api_format("") == "openai"
         assert LargeModelClient._detect_api_format("https://dashscope.aliyuncs.com") == "dashscope"
         assert LargeModelClient._detect_api_format("https://api.anthropic.com/v1") == "anthropic"
         assert LargeModelClient._detect_api_format("https://api.claude.ai") == "anthropic"
         assert LargeModelClient._detect_api_format("https://api.openai.com/v1/chat/completions") == "openai"
         assert LargeModelClient._detect_api_format("https://x/v1/completions") == "openai"
-        assert LargeModelClient._detect_api_format("https://x/other") == "dashscope"
+        assert LargeModelClient._detect_api_format("https://x/other") == "openai"
+        assert LargeModelClient._detect_api_format("https://openrouter.ai/api/v1") == "openai"
+        assert LargeModelClient._detect_api_format("https://api.groq.com/openai/v1") == "openai"
 
 
 # ---------------------------------------------------------------------------

@@ -8,7 +8,7 @@ import { endpoints } from '@/api.js'
 
 // 让 send 重试循环不真实等待（_sendWithRetry 最多 8×1s）
 function stubConnected(value) {
-  vi.spyOn(wsClient, 'connected', 'get').mockReturnValue(value)
+  vi.spyOn(wsClient, 'isConnected').mockReturnValue(value)
 }
 function stubSend(value) {
   return vi.spyOn(wsClient, 'send').mockReturnValue(value)
@@ -38,10 +38,12 @@ describe('useChatStore', () => {
 
   it('approve 发送 security_response 并更新状态', async () => {
     const chat = useChatStore()
+    const session = useSessionStore()
+    session.sessionId = 's1'
     const sendSpy = vi.spyOn(wsClient, 'send').mockReturnValue(true)
     chat.addApproval({ data: { payload: { request_id: 'r1' }, stage_event: {} } })
     chat.approve('r1', true)
-    expect(sendSpy).toHaveBeenCalledWith(expect.objectContaining({ type: 'security_response', request_id: 'r1', approved: true }))
+    expect(sendSpy).toHaveBeenCalledWith('s1', expect.objectContaining({ type: 'security_response', request_id: 'r1', approved: true }))
     const m = chat.messages.find(x => x.kind === 'approval' && x.requestId === 'r1')
     expect(m.resolved).toBe(true)
     expect(m.approved).toBe(true)
@@ -61,10 +63,12 @@ describe('useChatStore', () => {
 
   it('answerIntent 发送 interactive_response 并标记已回答', async () => {
     const chat = useChatStore()
+    const session = useSessionStore()
+    session.sessionId = 's1'
     const sendSpy = vi.spyOn(wsClient, 'send').mockReturnValue(true)
     chat.addIntent({ data: { payload: { request_id: 'i1', question: 'q' } } })
     chat.answerIntent('i1', '答案B')
-    expect(sendSpy).toHaveBeenCalledWith(expect.objectContaining({ type: 'interactive_response', request_id: 'i1', answer: '答案B' }))
+    expect(sendSpy).toHaveBeenCalledWith('s1', expect.objectContaining({ type: 'interactive_response', request_id: 'i1', answer: '答案B' }))
     const m = chat.messages.find(x => x.kind === 'intent' && x.requestId === 'i1')
     expect(m.answered).toBe(true)
     expect(m.answer).toBe('答案B')
@@ -99,10 +103,12 @@ describe('useChatStore', () => {
 
   it('stop 置 stopped 并 finalize', () => {
     const chat = useChatStore()
+    const session = useSessionStore()
+    session.sessionId = 's1'
     const sendSpy = vi.spyOn(wsClient, 'send').mockReturnValue(true)
-    chat.processing = true
+    chat.markProcessing('s1')
     chat.stop()
-    expect(sendSpy).toHaveBeenCalledWith(expect.objectContaining({ type: 'stop' }))
+    expect(sendSpy).toHaveBeenCalledWith('s1', expect.objectContaining({ type: 'stop' }))
     expect(chat.processing).toBe(false)
     vi.restoreAllMocks()
   })
@@ -111,8 +117,8 @@ describe('useChatStore', () => {
     const chat = useChatStore()
     const session = useSessionStore()
     chat.addMessage({ role: 'user', content: 'x' })
-    chat.processing = true
     session.sessionId = 'old'
+    chat.markProcessing('old')
     chat.init()
     expect(chat.messages).toHaveLength(0)
     expect(chat.processing).toBe(false)
@@ -121,10 +127,12 @@ describe('useChatStore', () => {
 
   it('approve 拒绝时发送 approved:false', async () => {
     const chat = useChatStore()
+    const session = useSessionStore()
+    session.sessionId = 's1'
     const sendSpy = vi.spyOn(wsClient, 'send').mockReturnValue(true)
     chat.addApproval({ data: { payload: { request_id: 'r2' }, stage_event: {} } })
     chat.approve('r2', false)
-    expect(sendSpy).toHaveBeenCalledWith(expect.objectContaining({ type: 'security_response', request_id: 'r2', approved: false }))
+    expect(sendSpy).toHaveBeenCalledWith('s1', expect.objectContaining({ type: 'security_response', request_id: 'r2', approved: false }))
     const m = chat.messages.find(x => x.kind === 'approval' && x.requestId === 'r2')
     expect(m.resolved).toBe(true)
     expect(m.approved).toBe(false)
@@ -157,7 +165,7 @@ describe('useChatStore', () => {
     const createSpy = vi.spyOn(session, 'createSession').mockImplementation(async () => { session.sessionId = 's1'; return 's1' })
     await chat.sendMessage('你好', [])
     expect(createSpy).toHaveBeenCalled()
-    expect(sendSpy).toHaveBeenCalledWith(expect.objectContaining({ type: 'input', content: '你好' }))
+    expect(sendSpy).toHaveBeenCalledWith('s1', expect.objectContaining({ type: 'input', content: '你好' }))
     expect(chat.processingSid).toBe('s1')
     vi.restoreAllMocks()
   })
@@ -171,7 +179,7 @@ describe('useChatStore', () => {
     fastSleep()
     // 一直发送失败（_sendWithRetry 8 次重试内都失败）
     const sendSpy = stubSend(false)
-    chat.processing = true
+    chat.markProcessing('s1')
     await chat.sendMessage('x', [])
     expect(sendSpy).toHaveBeenCalled()
     expect(chat.processing).toBe(false)
@@ -192,7 +200,7 @@ describe('useChatStore', () => {
     // 处理中 → 重发 input
     await chat.sendMessage('重试', [])
     chat.retryLastInput()
-    expect(sendSpy).toHaveBeenCalledWith(expect.objectContaining({ type: 'input', content: '重试' }))
+    expect(sendSpy).toHaveBeenCalledWith('s1', expect.objectContaining({ type: 'input', content: '重试' }))
     vi.restoreAllMocks()
   })
 
@@ -213,8 +221,10 @@ describe('useChatStore', () => {
 
   it('clearMessages 清空消息与处理状态', () => {
     const chat = useChatStore()
+    const session = useSessionStore()
+    session.sessionId = 's1'
     chat.addMessage({ role: 'user', content: 'x' })
-    chat.processing = true
+    chat.markProcessing('s1')
     chat.hint = '思考中...'
     chat.clearMessages()
     expect(chat.messages).toHaveLength(0)
@@ -225,9 +235,11 @@ describe('useChatStore', () => {
 
   it('finalizeStream 收尾：更新流式消息、清状态与残留思考', () => {
     const chat = useChatStore()
+    const session = useSessionStore()
+    session.sessionId = 's1'
     chat.addMessage({ role: 'assistant', content: '初稿' })
     chat.streamingIdx = 0
-    chat.processing = true
+    chat.markProcessing('s1')
     chat.addThinkingStep({ content: '残留思考' })
     chat.finalizeStream('最终回复')
     expect(chat.messages[0].content).toBe('最终回复')

@@ -39,7 +39,7 @@ describe('useWsStore', () => {
   it('connect/disconnect 代理到 wsClient', () => {
     const s = useWsStore()
     const connectSpy = vi.spyOn(wsClient, 'connect').mockResolvedValue()
-    const disconnectSpy = vi.spyOn(wsClient, 'disconnect').mockImplementation(() => {})
+    const disconnectSpy = vi.spyOn(wsClient, 'disconnectAll').mockImplementation(() => {})
     s.connect('s1')
     expect(connectSpy).toHaveBeenCalledWith('s1')
     s.disconnect()

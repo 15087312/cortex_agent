@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useSessionStore } from './session.js'
 import { useWsStore } from '@/ws/store.js'
 import { endpoints } from '@/api.js'
@@ -41,7 +41,6 @@ export const useChatStore = defineStore('chat', () => {
   const ws = useWsStore()
 
   const messages = ref([])
-  const processing = ref(false)
   const currentModel = ref('large')
   const streamingIdx = ref(-1)
   // 状态提示（对齐 js chatHint）：'' | '思考中...' | '会话正在处理中，请稍候…'
@@ -50,10 +49,14 @@ export const useChatStore = defineStore('chat', () => {
   // 用户主动停止后，忽略后端后续补发的 message（避免"按了停止又冒出回复"）
   const _stopped = ref(false)
   const _lastInput = ref(null)
-  // 正在处理的会话 id（跨会话保留处理状态：切走后仍显示思考横幅、可停止）
-  const _processingSid = ref(null)
-  // 当前 WS 连接的会话 id
-  const _connectedSid = ref(null)
+  // 正在处理的会话 id 集合（多会话并行：每个处理中的会话独立连接、独立状态）
+  const _processingSids = ref(new Set())
+  // 当前 WS 连接的会话 id 集合（多会话并行连接）
+  const _connectedSids = ref(new Set())
+  // 当前会话是否处理中（由集合派生，切换会话互不干扰）
+  const processing = computed(() => _processingSids.value.has(session.sessionId))
+  // 当前会话的处理中 id（null 表示当前会话空闲）
+  const processingSid = computed(() => processing.value ? session.sessionId : null)
   // 思考循环在线模型状态（由 thinking_progress 解析）：[{model_id, tier, name, status, status_detail, round, max_turns, supervisor, last_thought}]
   const runners = ref([])
   // 运行轨迹：工具调用/委托等中间步骤（借鉴 dsh，从对话流分离）
@@ -147,18 +150,17 @@ export const useChatStore = defineStore('chat', () => {
 
   async function init() {
     // 新建会话：断开旧 WS、清空会话 id 与消息（懒创建，首条消息发送时才建新会话）
-    try { ws.wsClient.disconnect() } catch {}
+    try { ws.wsClient.disconnectAll() } catch {}
     session.sessionId = null
     session.currentTitle = '新会话'
     messages.value = []
-    processing.value = false
     hint.value = ''
     elapsed.value = 0
     streamingIdx.value = -1
     _stopped.value = false
     _lastInput.value = null
-    _processingSid.value = null
-    _connectedSid.value = null
+    _processingSids.value = new Set()
+    _connectedSids.value = new Set()
     runners.value = []
     traces.value = []
     _clearExpertState()
@@ -166,13 +168,12 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   async function switchToSession(sid) {
-    const oldSid = session.sessionId
     session.switchSession(sid)
     messages.value = []
     _clearExpertState()
     // 清空模型状态：避免显示旧会话的思考循环（新会话的 thinking_progress 会重新填充）
     runners.value = []
-    // 保留处理状态：若另有会话仍在处理中，不重置 processing/hint（横幅+停止按钮继续生效）
+    // 处理状态按会话隔离（_processingSids 集合），切换会话不重置其他会话的处理状态
     _stopped.value = false
     // 双源加载：优先 /stream 消息，空则回退 /management dialog
     let msgs = []
@@ -275,16 +276,18 @@ export const useChatStore = defineStore('chat', () => {
     session.currentTitle = found?.title || found?.name || (sid.slice(0, 12) + '...')
     ws.reset()
     streamingIdx.value = -1
-    // WS 策略：处理中的会话保持连接（继续监听其 thinking/done，避免切换后收不到完成事件）；
-    // 无处理中会话或目标就是处理中会话 → 连接目标会话
-    if (_processingSid.value && _processingSid.value !== sid && _processingSid.value === oldSid) {
-      // 保持现有连接
-    } else {
-      _connectedSid.value = sid
-      try {
-        await Promise.race([ws.wsClient.connect(sid), new Promise(r => setTimeout(r, 8000))])
-      } catch {}
-    }
+    // 多会话并行：始终连接目标会话（处理中的其他会话连接保留，互不干扰）
+    _connectedSids.value.add(sid)
+    try {
+      await Promise.race([ws.wsClient.connect(sid), new Promise(r => setTimeout(r, 8000))])
+    } catch {}
+  }
+
+  // 测试/内部辅助：标记指定会话为处理中（并行会话集合操作）
+  function markProcessing(sid, on = true) {
+    if (!sid) return
+    if (on) _processingSids.value.add(sid)
+    else _processingSids.value.delete(sid)
   }
 
   function addMessage(msg) {
@@ -338,31 +341,39 @@ export const useChatStore = defineStore('chat', () => {
       messages.value[idx] = { ...messages.value[idx], content: final }
     }
     streamingIdx.value = -1
-    processing.value = false
+    // 仅清理当前会话的处理状态（其他会话的处理状态保留，互不干扰）
+    _processingSids.value.delete(session.sessionId)
     hint.value = ''
-    _processingSid.value = null
-    runners.value = []
+    if (!processing.value) runners.value = []
     pendingThinking.value = ''  // 清理残留思考（未合并到回复时丢弃）
   }
 
+  // 按会话完成清理（后端 done 事件携带 session_id，切走后仍可精确清理对应会话）
+  function finalizeSession(sid) {
+    if (!sid) return
+    _processingSids.value.delete(sid)
+    if (sid === session.sessionId) {
+      streamingIdx.value = -1
+      hint.value = ''
+      runners.value = []
+      pendingThinking.value = ''
+    }
+  }
+
   async function _ensureConnected() {
-    if (ws.wsClient.connected && _connectedSid.value === session.sessionId) return true
-    // WS 连接的不是当前会话（切走后原会话连接残留）→ 重连当前会话。
-    // 注意：sendMessage 刚设置 _processingSid = 当前会话，不能清空；
-    // 只有旧会话（非当前）的处理中状态才需要在此清除（当前会话发消息意味着旧会话处理已结束）。
-    const processingThis = _processingSid.value === session.sessionId
-    _connectedSid.value = session.sessionId
-    if (!processingThis) _processingSid.value = null
+    if (ws.wsClient.isConnected(session.sessionId)) return true
+    // 多会话并行：确保当前会话有独立连接（其他会话连接保留）
+    _connectedSids.value.add(session.sessionId)
     try {
       await Promise.race([ws.wsClient.connect(session.sessionId), new Promise(r => setTimeout(r, 8000))])
     } catch {}
-    return ws.wsClient.connected
+    return ws.wsClient.isConnected(session.sessionId)
   }
 
   // 发送前确保连接就绪；失败则最多等待 ~8s 重试（对齐 js/pages/chat.js sendMessage）
   async function _sendWithRetry(payload) {
     for (let w = 0; w < 8; w++) {
-      if (ws.wsClient.send(payload)) return true
+      if (ws.wsClient.send(session.sessionId, payload)) return true
       await new Promise(r => setTimeout(r, 1000))
     }
     return false
@@ -374,11 +385,11 @@ export const useChatStore = defineStore('chat', () => {
     }
     _stopped.value = false
     _lastInput.value = { content, attachments }
-    _processingSid.value = session.sessionId
+    _processingSids.value.add(session.sessionId)
     await _ensureConnected()
     const ok = await _sendWithRetry({ type: 'input', content, model: currentModel.value, attachments })
     if (!ok) {
-      processing.value = false
+      _processingSids.value.delete(session.sessionId)
       hint.value = ''
     }
   }
@@ -386,7 +397,7 @@ export const useChatStore = defineStore('chat', () => {
   // 后端 busy 丢弃 input 后重发（会话处理完成后会自动恢复）
   function retryLastInput() {
     if (_stopped.value || !_lastInput.value || !processing.value) return
-    if (!ws.wsClient.connected) return
+    if (!ws.wsClient.isConnected(session.sessionId)) return
     _sendWithRetry({
       type: 'input',
       content: _lastInput.value.content,
@@ -398,17 +409,17 @@ export const useChatStore = defineStore('chat', () => {
   function stop() {
     _stopped.value = true
     _sendWithRetry({ type: 'stop' })
+    _processingSids.value.delete(session.sessionId)
     finalizeStream('')
   }
 
   function clearMessages() {
     messages.value = []
-    processing.value = false
     hint.value = ''
     elapsed.value = 0
     streamingIdx.value = -1
     _stopped.value = false
-    _processingSid.value = null
+    _processingSids.value.delete(session.sessionId)
     runners.value = []
   }
 
@@ -543,11 +554,12 @@ export const useChatStore = defineStore('chat', () => {
 
   return {
     messages, processing, currentModel, streamingIdx, hint, elapsed,
-    stopped: _stopped, processingSid: _processingSid, runners, traces,
+    stopped: _stopped, processingSid, runners, traces,
     init, switchToSession, addMessage, addThinkingStep, addExpertThinking, addExpertTool,
     addExpertMessage, consumeThinking, dispatchThinking, classifyThinking,
-    finalizeStream, sendMessage, retryLastInput, stop, clearMessages,
+    finalizeStream, finalizeSession, sendMessage, retryLastInput, stop, clearMessages,
     deleteMessageAt, editMessageAt,
     addApproval, approve, addIntent, answerIntent,
+    markProcessing,
   }
 })

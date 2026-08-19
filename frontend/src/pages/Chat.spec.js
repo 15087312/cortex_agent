@@ -96,7 +96,7 @@ describe('Chat 页面', () => {
   it('WS done 事件结束处理状态', async () => {
     await mountChat()
     const chat = useChatStore()
-    chat.processing = true
+    chat.markProcessing('s1')
     chat.addMessage({ role: 'user', content: 'x' })
     wsClient._emit('done', { session_id: 's1' })
     expect(chat.processing).toBe(false)
@@ -130,9 +130,9 @@ describe('Chat 页面', () => {
     chat.addIntent({ data: { payload: { request_id: 'ia', question: 'q', options: ['A'] } } })
     await flushPromises()
     w.vm.handleApprove('ra', true)
-    expect(sendSpy).toHaveBeenCalledWith(expect.objectContaining({ type: 'security_response', request_id: 'ra', approved: true }))
+    expect(sendSpy).toHaveBeenCalledWith('s1', expect.objectContaining({ type: 'security_response', request_id: 'ra', approved: true }))
     w.vm.handleAnswerIntent('ia', 'A')
-    expect(sendSpy).toHaveBeenCalledWith(expect.objectContaining({ type: 'interactive_response', request_id: 'ia', answer: 'A' }))
+    expect(sendSpy).toHaveBeenCalledWith('s1', expect.objectContaining({ type: 'interactive_response', request_id: 'ia', answer: 'A' }))
     vi.restoreAllMocks()
   })
 
@@ -154,7 +154,7 @@ describe('Chat 页面', () => {
   it('WS message 空内容触发 finalizeStream', async () => {
     await mountChat()
     const chat = useChatStore()
-    chat.processing = true
+    chat.markProcessing('s1')
     wsClient._emit('message', { session_id: 's1', content: '' })
     expect(chat.processing).toBe(false)
   })
@@ -256,8 +256,7 @@ describe('Chat 页面', () => {
   it('WS done 其他会话完成时仅清除其处理状态', async () => {
     await mountChat()
     const chat = useChatStore()
-    chat.processing = true
-    chat.processingSid = 'other_sid'
+    chat.markProcessing('other_sid')
     wsClient._emit('done', { session_id: 'other_sid' })
     expect(chat.processing).toBe(false)
   })
@@ -281,7 +280,7 @@ describe('Chat 页面', () => {
     const w = await mountChat()
     const chat = useChatStore()
     const sendSpy = vi.spyOn(chat, 'sendMessage')
-    chat.processing = true
+    chat.markProcessing('s1')
     w.vm.handleSend({ text: '再发一次' })
     expect(sendSpy).not.toHaveBeenCalled()
     vi.restoreAllMocks()
@@ -535,9 +534,9 @@ describe('Chat 页面', () => {
   it('showThinkingWaiting 仅在 processing 且末条为 user 时显示', async () => {
     const w = await mountChat()
     const chat = useChatStore()
-    chat.processing = false
+    chat.markProcessing('s1', false)
     expect(w.vm.showThinkingWaiting).toBe(false)
-    chat.processing = true
+    chat.markProcessing('s1')
     expect(w.vm.showThinkingWaiting).toBe(true) // 空消息
     chat.addMessage({ role: 'assistant', content: 'a' })
     expect(w.vm.showThinkingWaiting).toBe(false)
@@ -549,9 +548,9 @@ describe('Chat 页面', () => {
     vi.useFakeTimers()
     await mountChat()
     const chat = useChatStore()
-    chat.processing = true
+    chat.markProcessing('s1')
     // 模拟 WS 未连接
-    vi.spyOn(wsClient, 'connected', 'get').mockReturnValue(false)
+    vi.spyOn(wsClient, 'isConnected').mockReturnValue(false)
     vi.advanceTimersByTime(2200)
     expect(chat.processing).toBe(false)
     const { useToastStore } = await import('@/stores/toast.js')
@@ -664,4 +663,62 @@ it('todo 推送事件属于其他会话 → 不刷新当前会话 todo', async (
   expect(w.vm.todos[0].text).toBe('保留')
 })
 
+
+  it('A 会话处理中切到 B，A 的回复不混入 B', async () => {
+    await mountChat()
+    const chat = useChatStore()
+    const session = useSessionStore()
+    // A 会话处理中
+    chat.markProcessing('s1')
+    // 切到 B
+    session.sessionId = 's2'
+    // A 的回复到达
+    wsClient._emit('message', { session_id: 's1', event: 'assistant_message', content: 'A 的回复' })
+    expect(chat.messages.some(m => m.content === 'A 的回复')).toBe(false)
+  })
+
+  it('A 会话处理中切到 B，A 的 done 到达时 B 无处理 → processing 归零', async () => {
+    await mountChat()
+    const chat = useChatStore()
+    const session = useSessionStore()
+    chat.markProcessing('s1')
+    session.sessionId = 's2'
+    wsClient._emit('done', { session_id: 's1' })
+    expect(chat.processing).toBe(false)
+  })
+
+  it('A 会话处理中切到 B 且 B 也在处理，A 的 done 不清除 B 的处理状态', async () => {
+    await mountChat()
+    const chat = useChatStore()
+    const session = useSessionStore()
+    chat.markProcessing('s1')
+    session.sessionId = 's2'
+    // B 也开始处理
+    chat.markProcessing('s2')
+    wsClient._emit('done', { session_id: 's1' })
+    expect(chat.processing).toBe(true)
+  })
+
+  it('真实流程：A 处理中 → switchToSession(B) → A 的回复/思考/done 均不混入 B', async () => {
+    const w = await mountChat()
+    const chat = useChatStore()
+    const session = useSessionStore()
+    // A 处理中
+    session.sessionId = 's1'
+    session.sessions = [{ session_id: 's1', title: 'A' }, { session_id: 's2', title: 'B' }]
+    chat.markProcessing('s1')
+    // 真实切到 B
+    vi.spyOn(wsClient, 'connect').mockResolvedValue()
+    vi.spyOn(wsClient, 'isConnected').mockReturnValue(true)
+    vi.spyOn(endpoints, 'sessionMessages').mockResolvedValue({ data: [] })
+    vi.spyOn(endpoints, 'sessionDialog').mockResolvedValue({ data: { dialog: [] } })
+    await chat.switchToSession('s2')
+    expect(session.sessionId).toBe('s2')
+    // A 的各类事件到达
+    wsClient._emit('thinking', { session_id: 's1', msg_type: 'thinking', event: 'thinking', content: 'A 在思考', role: 'thinking' })
+    wsClient._emit('message', { session_id: 's1', event: 'assistant_message', content: 'A 的回复' })
+    wsClient._emit('status', { session_id: 's1', event: 'status', data: {} })
+    wsClient._emit('done', { session_id: 's1' })
+    expect(chat.messages.some(m => m.content === 'A 的回复')).toBe(false)
+  })
 })

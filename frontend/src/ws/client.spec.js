@@ -36,7 +36,7 @@ describe('WsClient', () => {
   afterEach(() => {
     vi.useRealTimers()
     vi.unstubAllGlobals()
-    client.disconnect()
+    client.disconnectAll()
   })
 
   it('connected 未连接时为 falsy', () => {
@@ -87,7 +87,7 @@ describe('WsClient', () => {
     const p = client.connect('s1')
     FakeWebSocket.instances[0]._open()
     await p
-    const ok = client.send({ type: 'input', content: 'hi' })
+    const ok = client.send('s1', { type: 'input', content: 'hi' })
     expect(ok).toBe(true)
     const payload = JSON.parse(FakeWebSocket.instances[0].sent[0])
     expect(payload.type).toBe('input')
@@ -96,7 +96,7 @@ describe('WsClient', () => {
   })
 
   it('send 未连接返回 false', () => {
-    expect(client.send({ type: 'input' })).toBe(false)
+    expect(client.send('nope', { type: 'input' })).toBe(false)
   })
 
   it('connect 8s 超时兜底 resolve（不依赖 onopen）', async () => {
@@ -137,7 +137,7 @@ describe('WsClient', () => {
     await p
     const ws = FakeWebSocket.instances[0]
     const closeSpy = vi.spyOn(ws, 'close')
-    client.disconnect()
+    client.disconnectAll()
     expect(closeSpy).toHaveBeenCalled()
     // 断开后 onclose 不应触发重连
     const count = FakeWebSocket.instances.length

@@ -183,14 +183,18 @@ const _onMessage = (d) => {
 
 const _onDone = (d) => {
   if (d.session_id && d.session_id !== session.sessionId) {
-    // 处理中其他会话完成 → 清除其处理状态（保持连接时收到的 done）
-    if (chat.processingSid === d.session_id) chat.finalizeStream('')
+    // 处理中其他会话完成 → 仅清理该会话状态（并行会话互不干扰）
+    chat.finalizeSession(d.session_id)
     return
   }
   chat.finalizeStream('')
 }
 const _onError = (d) => {
-  if (!_isCurrent(d)) return
+  if (d.session_id && d.session_id !== session.sessionId) {
+    // 其他会话的错误：仅清理该会话处理状态，不影响当前会话
+    chat.finalizeSession(d.session_id)
+    return
+  }
   chat.finalizeStream('')
   toast.show('错误: ' + (d.content || '未知'), 'error')
 }
@@ -273,7 +277,7 @@ onMounted(async () => {
   ws.wsClient.on('todo', _onTodo)
   // 连接看门狗：处理中断开 → 复位加载态并提示，避免"一直加载"
   watchTimer = setInterval(() => {
-    if (chat.processing && !ws.wsClient.connected) {
+    if (chat.processing && !ws.wsClient.isConnected(session.sessionId)) {
       chat.finalizeStream('')
       toast.show('连接已断开，本轮回复可能丢失', 'error')
     }
@@ -307,7 +311,6 @@ function handleSend({ text, attachments }) {
     .filter(a => a && String(a.type || '').startsWith('image/'))
     .map(a => a.data)
   chat.addMessage({ role: 'user', content: text, images })
-  chat.processing = true
   chat.hint = '思考中...'
   scrollBottom()
 }
@@ -487,12 +490,6 @@ function handleAnswerIntent(requestId, answer) {
               <span class="trace-dot"></span>{{ tr.text }}
             </div>
           </div>
-        </div>
-
-        <!-- 其他会话正在思考中（切走后仍显示横幅 + 停止按钮，可停止处理中的会话） -->
-        <div v-if="chat.processing && chat.processingSid && chat.processingSid !== session.sessionId" class="chat-other-processing">
-          <span>会话「{{ (chat.processingSid || '').slice(0, 8) }}…」正在思考中，切回该会话可查看进度</span>
-          <button class="btn btn-sm btn-stop" @click="chat.stop()"><Icon name="stop" :size="14" /> 停止</button>
         </div>
 
         <div class="chat-load-more" v-if="hasMoreMessages" @click="loadMoreMessages">

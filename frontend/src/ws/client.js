@@ -8,21 +8,14 @@ const _traceId = (typeof crypto !== 'undefined' && crypto.randomUUID)
   : ('w' + Date.now() + Math.random().toString(36).slice(2))
 let _traceSeq = 0
 
+// 多会话并行连接：每个会话一条独立 WS（后端按 /stream/ws/{sid} 路由，
+// 前端据此让多个会话同时处理互不干扰）。
 class WsClient {
   constructor() {
-    this._conn = null
+    this._conns = {}  // sid -> { conn, shouldReconnect, attempt, resolve, reject, timeoutId }
     this._listeners = {}
-    this._attempt = 0
-    this._shouldReconnect = false
-    this._resolve = null
-    this._reject = null
-    this._timeoutId = null
     this._backendPort = null
     this._resolveBackendPort()
-  }
-
-  get connected() {
-    return this._conn && this._conn.readyState === WebSocket.OPEN
   }
 
   _host() {
@@ -40,59 +33,83 @@ class WsClient {
     } catch {}
   }
 
+  // 兼容旧接口：是否有任意活跃连接
+  get connected() {
+    return Object.values(this._conns).some(r => r.conn && r.conn.readyState === WebSocket.OPEN)
+  }
+
+  isConnected(sid) {
+    const r = this._conns[sid]
+    return !!(r && r.conn && r.conn.readyState === WebSocket.OPEN)
+  }
+
   connect(sid) {
-    this._shouldReconnect = true
-    this._attempt = 0
+    if (!sid) return Promise.resolve()
+    if (this.isConnected(sid)) return Promise.resolve()
+    const rec = this._conns[sid] || { shouldReconnect: true, attempt: 0, resolve: null, reject: null, timeoutId: null }
+    rec.shouldReconnect = true
+    this._conns[sid] = rec
     return new Promise((resolve, reject) => {
-      this._resolve = resolve
-      this._reject = reject
-      this._doConnect(sid)
+      rec.resolve = resolve
+      rec.reject = reject
+      this._doConnect(sid, rec)
     })
   }
 
-  _doConnect(sid) {
-    if (this._conn) { this._conn.onclose = null; this._conn.onerror = null; this._conn.onmessage = null; try { this._conn.close() } catch {}; this._conn = null }
+  _doConnect(sid, rec) {
+    if (rec.conn) { rec.conn.onclose = null; rec.conn.onerror = null; rec.conn.onmessage = null; try { rec.conn.close() } catch {}; rec.conn = null }
     // 浏览器 WebSocket 无法设置自定义 header，API Key 走 ?api_key= 查询参数（后端 WS 握手校验）
     const key = getApiKey ? getApiKey() : ''
     const auth = key ? `?api_key=${encodeURIComponent(key)}` : ''
+    let conn
     try {
-      this._conn = new WebSocket(`ws://${this._host()}/stream/ws/${sid}${auth}`)
+      conn = new WebSocket(`ws://${this._host()}/stream/ws/${sid}${auth}`)
     } catch (e) {
-      this._reject?.(e)
-      this._scheduleRetry(sid)
+      rec.reject?.(e)
+      this._scheduleRetry(sid, rec)
       return
     }
-    this._conn.onopen = () => {
-      this._attempt = 0
-      this._resolve?.()
-      if (this._timeoutId) { clearTimeout(this._timeoutId); this._timeoutId = null }
+    rec.conn = conn
+    conn.onopen = () => {
+      rec.attempt = 0
+      rec.resolve?.()
+      rec.resolve = null
+      if (rec.timeoutId) { clearTimeout(rec.timeoutId); rec.timeoutId = null }
     }
-    this._conn.onmessage = (e) => {
+    conn.onmessage = (e) => {
       try { const d = JSON.parse(e.data); this._emit(d.type || d.event, d) } catch {}
     }
-    this._conn.onclose = () => { if (this._shouldReconnect) this._scheduleRetry(sid) }
-    this._conn.onerror = (e) => { console.error('WS error:', e) }
-    this._timeoutId = setTimeout(() => { this._resolve?.() }, 8000)
+    conn.onclose = () => { if (rec.shouldReconnect) this._scheduleRetry(sid, rec) }
+    conn.onerror = (e) => { console.error('WS error:', e) }
+    rec.timeoutId = setTimeout(() => { rec.resolve?.(); rec.resolve = null }, 8000)
   }
 
-  _scheduleRetry(sid) {
-    if (this._attempt >= MAX_RETRY) { this._reject?.('max retries'); return }
-    const d = [1, 2, 4][this._attempt] * 1000
-    this._attempt++
-    setTimeout(() => this._doConnect(sid), d)
+  _scheduleRetry(sid, rec) {
+    if (rec.attempt >= MAX_RETRY) { rec.reject?.('max retries'); rec.reject = null; return }
+    const d = [1, 2, 4][rec.attempt] * 1000
+    rec.attempt++
+    setTimeout(() => this._doConnect(sid, rec), d)
   }
 
-  disconnect() {
-    this._shouldReconnect = false
-    if (this._conn) { this._conn.close(); this._conn = null }
-    if (this._timeoutId) { clearTimeout(this._timeoutId); this._timeoutId = null }
+  disconnect(sid) {
+    const rec = this._conns[sid]
+    if (!rec) return
+    rec.shouldReconnect = false
+    if (rec.conn) { rec.conn.close(); rec.conn = null }
+    if (rec.timeoutId) { clearTimeout(rec.timeoutId); rec.timeoutId = null }
+    delete this._conns[sid]
   }
 
-  send(data) {
-    if (this._conn && this._conn.readyState === WebSocket.OPEN) {
+  disconnectAll() {
+    Object.keys(this._conns).forEach(sid => this.disconnect(sid))
+  }
+
+  send(sid, data) {
+    const rec = this._conns[sid]
+    if (rec && rec.conn && rec.conn.readyState === WebSocket.OPEN) {
       _traceSeq++
       const payload = { ...data, trace_id: _traceId, trace_seq: _traceSeq }
-      this._conn.send(JSON.stringify(payload))
+      rec.conn.send(JSON.stringify(payload))
       return true
     }
     return false
