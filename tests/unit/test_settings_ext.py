@@ -751,6 +751,60 @@ class TestMemoryLibs:
         s = _new_settings(tmp_path, monkeypatch, memory_libs=libs)
         assert s.memory_lib_event_count("默认") == 0
 
+    def test_delete_memory_lib_physical_removes_files(self, tmp_path, monkeypatch):
+        """物理删除：删除记忆库时其 db/faiss/id_map/causal 文件被真正删除"""
+        from pathlib import Path as _P
+        d = tmp_path / "mem"
+        d.mkdir(parents=True, exist_ok=True)
+        files = {
+            "db": str(d / "memory_work.db"),
+            "faiss": str(d / "events_faiss_work.index"),
+            "id_map": str(d / "events_id_map_work.json"),
+            "causal": str(d / "causal_work.db"),
+        }
+        for f in files.values():
+            _P(f).write_text("data", encoding="utf-8")
+        libs = {"current": "默认", "libs": {"默认": {"db": "/d", "faiss": "/d.f", "id_map": "/d.m"}, "work": files}}
+        s = _new_settings(tmp_path, monkeypatch, memory_libs=libs)
+        monkeypatch.setattr(Settings, "switch_memory_lib", lambda self, n: True)
+        assert s.delete_memory_lib("work", physical=True) is True
+        # 物理文件已删除
+        for f in files.values():
+            assert not _P(f).exists(), f"{f} 应被物理删除"
+        saved = json.loads((tmp_path / ".cortex" / "memory_libs.json").read_text(encoding="utf-8"))
+        assert "work" not in saved["libs"]
+
+    def test_delete_memory_lib_physical_false_keeps_files(self, tmp_path, monkeypatch):
+        """physical=False 时不删文件（仅从列表移除）"""
+        from pathlib import Path as _P
+        d = tmp_path / "mem2"
+        d.mkdir(parents=True, exist_ok=True)
+        files = {"db": str(d / "memory_keep.db"), "faiss": str(d / "events_faiss_keep.index"), "id_map": str(d / "events_id_map_keep.json")}
+        for f in files.values():
+            _P(f).write_text("data", encoding="utf-8")
+        libs = {"current": "默认", "libs": {"默认": {"db": "/d", "faiss": "/d.f", "id_map": "/d.m"}, "keep": files}}
+        s = _new_settings(tmp_path, monkeypatch, memory_libs=libs)
+        monkeypatch.setattr(Settings, "switch_memory_lib", lambda self, n: True)
+        assert s.delete_memory_lib("keep", physical=False) is True
+        for f in files.values():
+            assert _P(f).exists(), f"{f} 在 physical=False 时应保留"
+
+    def test_delete_memory_lib_last_creates_default(self, tmp_path, monkeypatch):
+        """删到最后一个库 → 自动重建默认库"""
+        from pathlib import Path as _P
+        d = tmp_path / "mem3"
+        d.mkdir(parents=True, exist_ok=True)
+        only = {"db": str(d / "memory_only.db"), "faiss": str(d / "events_faiss_only.index"), "id_map": str(d / "events_id_map_only.json")}
+        _P(only["db"]).write_text("data", encoding="utf-8")
+        libs = {"current": "only", "libs": {"only": only}}
+        s = _new_settings(tmp_path, monkeypatch, memory_libs=libs)
+        monkeypatch.setattr(Settings, "switch_memory_lib", lambda self, n: True)
+        assert s.delete_memory_lib("only", physical=True) is True
+        assert _P(only["db"]).exists() is False
+        saved = json.loads((tmp_path / ".cortex" / "memory_libs.json").read_text(encoding="utf-8"))
+        assert "默认" in saved["libs"]
+        assert saved["current"] == "默认"
+
 
 # ---------------------------------------------------------------------------
 # model_post_init 目录创建 + 模块级兜底

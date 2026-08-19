@@ -7,6 +7,7 @@ from pydantic import field_validator
 from typing import Optional, List
 import os
 import sys
+import logging
 
 # macOS 双 libomp 兜底：
 # faiss 与 torch 各捆绑一份 libomp.dylib，同一进程两套 OpenMP 会 abort（OMP: Error #15）。
@@ -17,6 +18,8 @@ os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 # 记忆库切换互斥锁（模块级，避免作为类属性参与 pydantic pickle）
 _MEMORY_SWITCH_LOCK = __import__("threading").RLock()
+
+logger = logging.getLogger("settings")
 
 
 class Settings(BaseSettings):
@@ -1072,18 +1075,34 @@ class Settings(BaseSettings):
         self._save_memory_libs(data)
         return True
 
-    def delete_memory_lib(self, name: str) -> bool:
+    def delete_memory_lib(self, name: str, physical: bool = True) -> bool:
         """删除记忆库（允许删除任意库，包括默认库）。
 
+        physical=True 时物理删除该库的数据库/向量索引/映射文件（不可恢复）。
         删除后的兜底保证至少有一个记忆库可用：
         - 删的是当前库 → 自动切到剩余库（优先"默认"，否则第一个）
         - 删到最后一个库 → 自动重新生成一个新的"默认"库
         """
+        import os
         data = self.get_memory_libs()
         libs = data.get("libs", {})
         if name not in libs:
             return False
-        libs.pop(name, None)
+        lib_files = libs.pop(name, None)
+
+        # 物理删除该库关联的数据文件（db/faiss/id_map/causal）
+        if physical and lib_files:
+            for f in ("db", "faiss", "id_map", "causal"):
+                p = lib_files.get(f)
+                if not p:
+                    continue
+                try:
+                    path = Path(p)
+                    if path.exists() and path.is_file():
+                        path.unlink()
+                except Exception as e:
+                    logger.warning(f"[memory_lib] 物理删除文件失败 {p}: {e}")
+
         # 兜底：删到最后一个库 → 重新生成默认库
         if not libs:
             base = str(Path(self.MEMORY_DB_PATH).parent)
@@ -1102,7 +1121,6 @@ class Settings(BaseSettings):
                 data["current"] = sorted(libs.keys())[0]
         self._save_memory_libs(data)
         self.switch_memory_lib(data["current"])
-        return True
         return True
 
     def memory_lib_event_count(self, name: str) -> int:

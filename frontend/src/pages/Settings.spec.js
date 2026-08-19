@@ -118,13 +118,15 @@ describe('Settings.vue', () => {
     expect(post.body).toEqual({ name: 'lib_c' })
   })
 
-  it('deleteLib 删除记忆库（confirm 通过）', async () => {
+  it('deleteLib 删除记忆库（二次确认通过 → 物理删除）', async () => {
     mockApi()
     const w = await mountSettings()
     w.vm.deleteLib({ name: 'lib_b' })
     await new Promise((r) => setTimeout(r, 10))
     expect(dialogState().visible).toBe(true)
-    resolveDialog(true)
+    resolveDialog(true) // 第一次确认
+    await new Promise((r) => setTimeout(r, 10))
+    resolveDialog(true) // 第二次确认（物理删除不可恢复）
     await new Promise((r) => setTimeout(r, 30))
     const del = writes.find((x) => x.url.includes('/memory-libs/lib_b') && x.method === 'DELETE')
     expect(del).toBeTruthy()

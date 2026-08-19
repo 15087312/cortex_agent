@@ -75,10 +75,13 @@ async function renameLib(lib) {
   } catch (e) { toast.show('重命名失败: ' + (e.body?.error?.message || e.status), 'error') }
 }
 async function deleteLib(lib) {
-  if (!(await confirm(`确定删除记忆库「${lib.name}」？物理数据文件将保留，仅从列表移除。`))) return
+  // 第一次确认：是否要删除该记忆库
+  if (!(await confirm(`确定删除记忆库「${lib.name}」？`))) return
+  // 第二次确认：物理删除不可恢复
+  if (!(await confirm(`⚠️ 再次确认：删除「${lib.name}」将【物理删除】其数据库、向量索引与映射文件，${lib.name === '默认' ? '（默认库删除后会自动重建空的默认库）' : ''}此操作不可恢复！\n\n确定要彻底删除吗？`))) return
   try {
     await endpoints.deleteMemoryLib(lib.name)
-    toast.show('已删除记忆库: ' + lib.name, 'success')
+    toast.show('已物理删除记忆库: ' + lib.name, 'success')
     await loadMemoryLibs()
   } catch (e) { toast.show('删除失败: ' + (e.body?.error?.message || e.status), 'error') }
 }
