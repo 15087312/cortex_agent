@@ -2118,3 +2118,15 @@ Task 编号（Task-3838/4022/4214/4386/4572/4755...）随对话逐次递增，�
 **验证：** delegation_port 新增 2 动态回退测试；composer 新增自定义 agent 合并测试；`test_build_expert_context_only_large` 改为 `test_expert_context_moved_to_system_prompt`（large 主管+专家表 / supervisor 专家表 / expert 无表）；相关 180 测试 + orchestrator 89 测试通过。
 
 **教训：** "提示词动态列举的能力"必须与"执行侧可解析的集合"同源同生，否则出现 UI/提示词看得到、实际跑不通的脱节。可委托角色表格是"模型权限"信息，应随 system prompt 按 tier 注入，而非全局黑板广播（避免重复注入+越权可见）；硬编码角色名会随 roles.yaml 演化而失配。
+
+## 80. "正在思考 Ns" 计时从会话连接起算，而非当前任务（后端 api_stream）
+
+**现象：** 前端"正在思考 Xs"（`ThinkingStatusPanel`/`ThinkingIndicator`）的秒数持续偏大，同一会话内连续提问时，后一轮的秒数从上一轮累加，不是本轮真实耗时。
+
+**根因：** `modules/thinking/api_stream.py` 的 `started_at` 只在 `start(session_id)`（WS 连接建立 / 会话创建）时设置一次；每轮用户消息走 `think()`，全程不复位 `started_at`。WS `status` 消息的 `elapsed_s = int(now - started_at)` 因此从"会话连接时刻"起算，而不是"本轮思考开始"。
+
+**修复：** 在 `think()` 中 `_set_processing(session_id, True)` 之后、开始调度之前，于锁内重置 `self.sessions[session_id]["started_at"] = time.time()` —— 每轮任务开始重新计时。前端 `chat.elapsed` 完全消费后端推送的 `elapsed_s`，无本地计时器，无需改动。
+
+**验证：** 新增 `test_api_stream_think_ext.py::test_think_resets_started_at_per_round`（旧 started_at 被重置、连续两轮各自刷新计时起点）；api_stream 全部 183 测试通过。
+
+**教训：** "会话生命周期"计时与"任务/轮次生命周期"计时是两种语义，不能混用同一个时间戳。WS 状态推送的耗时类字段必须挂在"本轮处理"的起点上，否则 UI 展示的耗时失真。

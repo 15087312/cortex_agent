@@ -568,6 +568,10 @@ class StreamThinkingSystem:
             return ""
 
         await self._set_processing(session_id, True)
+        async with self._lock:
+            if session_id in self.sessions:
+                # 重置本轮思考计时：elapsed 从当前任务开始算，而非整个会话连接
+                self.sessions[session_id]["started_at"] = time.time()
         user_msg_id = await self._append_message(session_id, "user", user_input)
 
         try:

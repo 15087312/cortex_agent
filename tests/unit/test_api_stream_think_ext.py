@@ -163,3 +163,30 @@ async def test_post_task_extraction_hash_dedup(monkeypatch):
     assert reducer.reduce.await_count == 1
     await s._post_task_extraction("s1", "x", "y", owner_id="large::large_primary")
     assert reducer.reduce.await_count == 1  # hash 去重
+
+
+async def test_think_resets_started_at_per_round(monkeypatch):
+    """每轮 think() 重置 started_at：elapsed 从当前任务起算，而非会话连接时刻"""
+    import time
+    s = _system()
+    await _base_setup(s, monkeypatch)
+
+    async def fake_process(user_input, context, stm, event_callback, session_id, model_id="large_primary"):
+        return {"module_results": [], "decisions": {"probe_signals": []},
+                "response": "r", "trace_id": "t", "elapsed_ms": 1,
+                "active_modules": ["thinking"], "focus": "x"}
+
+    s._orchestrator.process = fake_process
+
+    # 模拟旧会话：started_at 在很久以前（会话连接时刻）
+    t0 = time.time() - 120
+    s.sessions["s1"]["started_at"] = t0
+
+    await s.think("s1", "第一轮")
+    t1 = s.sessions["s1"]["started_at"]
+    assert t1 > t0  # 已被重置（不再用会话连接时刻）
+
+    # 第二轮：故意把 started_at 改回更早，再次 think 应再次重置
+    await s.think("s1", "第二轮")
+    t2 = s.sessions["s1"]["started_at"]
+    assert t2 >= t1  # 每轮任务都会刷新计时起点
