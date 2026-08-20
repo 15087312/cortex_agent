@@ -3,6 +3,7 @@ import sys
 import types
 
 import modules.thinking.multi_model_orchestrator as mmo
+from modules.thinking.multi_model_orchestrator import MultiModelOrchestrator
 
 
 def _stub_settings(monkeypatch, get_agent_active, custom_agents):
@@ -75,3 +76,26 @@ def test_fallback_orchestrator_on_error(monkeypatch):
         types.SimpleNamespace(),  # 缺少方法 → 内部异常 → 回退 orchestrator
     )
     assert mmo.resolve_active_large_role() == "orchestrator"
+
+
+# ── 回归：调用点必须使用 resolve_active_large_role 的结果，而非硬编码 ──
+
+def test_probe_started_identity_key_follows_active_large_role(monkeypatch):
+    """probe_started 的 identity_key 必须是激活总指挥，而不是写死的 orchestrator"""
+    orch = MultiModelOrchestrator.__new__(MultiModelOrchestrator)
+    monkeypatch.setattr(mmo, "resolve_active_large_role", lambda: "custom_orchestrator")
+    content = orch._build_probe_started_content("帮我写代码", "sess123", skill_id="sk")
+    assert content["identity_key"] == "custom_orchestrator"
+    assert content["target_tier"] == "large"
+    assert content["action"] == "probe_started"
+
+
+def test_probe_started_content_fields(monkeypatch):
+    """probe_started 载荷字段完整（skill_id/return_to_session_id 等）"""
+    orch = MultiModelOrchestrator.__new__(MultiModelOrchestrator)
+    monkeypatch.setattr(mmo, "resolve_active_large_role", lambda: "orchestrator")
+    content = orch._build_probe_started_content("hi", "sess_x", skill_id="code")
+    assert content["skill_id"] == "code"
+    assert content["return_to_session_id"] == "sess_x"
+    assert content["task_description"] == "hi"
+    assert content["priority"] == 10

@@ -413,6 +413,28 @@ class MultiModelOrchestrator:
     # 5. 多模型思考 (核心)
     # ------------------------------------------------------------------
 
+    def _build_probe_started_content(
+        self, user_input: str, session_id: str, skill_id: str = ""
+    ) -> dict:
+        """构造 probe_started 命令内容（大模型激活）
+
+        identity_key 必须跟随编排页激活的总指挥角色（resolve_active_large_role），
+        不能硬编码 orchestrator——否则切换总指挥后启动会被启停开关拒绝。
+        """
+        return {
+            "action": "probe_started",
+            "probe_id": "probe_user_input",
+            "target_tier": "large",
+            "identity_key": resolve_active_large_role(),
+            "task_description": user_input,
+            "return_to_model_id": "",
+            "return_to_session_id": session_id,
+            "priority": 10,
+            "ttl_seconds": 3600,
+            "caller_tier": "system",
+            "skill_id": skill_id,
+        }
+
     async def _execute_multi_model_thinking(
         self,
         user_input: str,
@@ -600,19 +622,7 @@ class MultiModelOrchestrator:
                         msg_type=MessageType.SYSTEM,
                         sender="orchestrator",
                         recipient=f"model_runner_manager_{str(session_id)[:8]}",
-                        content={
-                            "action": "probe_started",
-                            "probe_id": "probe_user_input",
-                            "target_tier": "large",
-                            "identity_key": resolve_active_large_role(),
-                            "task_description": user_input,
-                            "return_to_model_id": "",
-                            "return_to_session_id": session_id or "",
-                            "priority": 10,
-                            "ttl_seconds": 3600,
-                            "caller_tier": "system",
-                            "skill_id": skill_id,
-                        },
+                        content=self._build_probe_started_content(user_input, session_id or "", skill_id),
                     )
                     await bus.send(probe_start_msg)
                     logger.info(f"[编排器] 直接激活大模型: session={str(session_id)[:8]}")
