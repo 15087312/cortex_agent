@@ -39,6 +39,25 @@ def get_active_sessions() -> List[Dict[str, Any]]:
         return list(_session_registry.values())
 
 
+def resolve_active_large_role() -> str:
+    """解析当前激活的总指挥角色 key
+
+    优先级：orchestrator（内置总指挥）> 激活的自定义 large agent。
+    与 chat_light/prompt_composer 的选人设逻辑保持一致，
+    确保编排页切换总指挥后，启动身份跟随激活的 large 角色。
+    """
+    try:
+        from config.settings import settings as _cfg
+        if _cfg.get_agent_active("orchestrator"):
+            return "orchestrator"
+        for ca in _cfg.get_custom_agents():
+            if ca.get("tier") == "large" and ca.get("role") and _cfg.get_agent_active(ca["role"]):
+                return ca["role"]
+    except Exception:
+        pass
+    return "orchestrator"
+
+
 class MultiModelOrchestrator:
     """多模型编排器"""
 
@@ -382,7 +401,7 @@ class MultiModelOrchestrator:
             logger.debug(f"[编排器] 读取强制技能失败 (非致命): {e}")
         try:
             from modules.thinking.skills import skill_manager
-            skill = skill_manager.match_skill(user_input, role="orchestrator")
+            skill = skill_manager.match_skill(user_input, role=resolve_active_large_role())
             if skill:
                 logger.info(f"[编排器] 技能匹配: {skill.id} ({skill.name})")
                 return skill.id
@@ -585,7 +604,7 @@ class MultiModelOrchestrator:
                             "action": "probe_started",
                             "probe_id": "probe_user_input",
                             "target_tier": "large",
-                            "identity_key": "orchestrator",
+                            "identity_key": resolve_active_large_role(),
                             "task_description": user_input,
                             "return_to_model_id": "",
                             "return_to_session_id": session_id or "",

@@ -2177,3 +2177,15 @@ help: `pyaudio` (v0.2.14) was included because `cortex-agent` depends on `pyaudi
 **验证：** 新增 `test_build_tables_filter_disabled_agents`（关闭的 code_supervisor/data_analyzer 不进入能力表）、`test_delegate_disabled_agent_rejected`（关闭角色委托被拒）；`test_build_supervisor_table_merges_custom_agents` 及 delegation 测试 mock `get_agent_active` 固定值隔离真实 yaml 状态；composer/identity/delegation_port/settings 相关 197 测试 + model_runner/orchestrator 360 测试通过。
 
 **教训：** "启停开关"必须贯通所有消费角色集合的路径：提示词能力表（决定模型可见哪些可委托对象）与调度入口（决定是否真能启动）各管一段，遗漏任一路径就会产生"提示词看得到、实际启动被拒"或"关闭了仍出现在上下文"的脱节。配置变更（active 切换）后务必失效身份缓存，否则改动不生效。
+
+## 84. 编排页切换总指挥后启动仍走 orchestrator，被启停开关拒绝（编排器硬编码身份）
+
+**现象：** 用户在编排页启用自定义总指挥（tier=large，如 `123`）后，发消息触发思考时报 `[ModelRunnerManager] orchestrator 已被禁用（编排页激活开关），拒绝启动`，总指挥无法运行。编排页启停逻辑为"总指挥层只保留一个激活"（`deactivate_same_tier`：启用 `123` 时把 `orchestrator` 置 false），但启动侧却始终用 `orchestrator` 身份。
+
+**根因：** `multi_model_orchestrator` 直接激活大模型时**硬编码** `identity_key: "orchestrator"`（probe_started 消息）与 `match_skill(role="orchestrator")`，未读取编排页选中的激活 large 角色。§83 给 `start_runner` 加了 `get_agent_active() is False → 拒绝启动` 后，这个硬编码被"放大"：编排器仍请求 orchestrator，但 orchestrator 已因同层互斥被停用 → 启动被拒，即使自定义总指挥 `123` 处于激活态。对话侧（chat_light）的人设选择早已支持"orchestrator 优先，否则激活的自定义 large"（prompt_composer），编排器未同步。
+
+**修复：** `multi_model_orchestrator` 新增模块级 `resolve_active_large_role()`：orchestrator 激活时返回 `orchestrator`，否则返回第一个 `tier=large` 且 `get_agent_active=True` 的自定义 agent，异常时兜底 orchestrator。probe_started 的 `identity_key` 与 `match_skill` 的 `role` 均改用它。
+
+**验证：** 新增 `tests/unit/test_resolve_active_large_role.py` 6 用例（orchestrator 优先 / 自定义 large 跟随 / 多个自定义取激活首个 / supervisor 不参与 / 异常兜底）；编排器 78 测试通过。真实环境 `~/.cortex/personas.yaml`（orchestrator=false, 123=true）下 `resolve_active_large_role()` 返回 `123`。
+
+**教训：** 硬编码默认角色名（orchestrator）是"身份单点"假设，一旦编排页允许同层多选互斥（总指挥层唯一激活），任何绕过该抽象、直接写死角色 key 的路径都会与启停状态脱节。启动类路径应统一经过"解析当前激活角色"的同一辅助函数，而不是分散硬编码；§79（delegation ROLE_TO_IDENTITY 硬编码）、§83（能力表不过滤 active）属同一类"角色集合来源不一致"问题。
