@@ -64,6 +64,18 @@ class ProbeDelegationAdapter:
 
             target_tier, identity_key = identity
 
+            # 编排页启停检查：已关闭的主管/专家拒绝委托（与能力表过滤一致，
+            # 避免"提示词看不到、委托却接受"的脱节）
+            try:
+                from config.settings import settings as _active_cfg
+                if not _active_cfg.get_agent_active(identity_key):
+                    return DelegationResult(
+                        success=False,
+                        error=f"委托角色已禁用: {identity_key}（编排页激活开关）",
+                    )
+            except Exception:
+                pass
+
             ppm = get_probe_permission_manager()
             error = ppm.validate_probe_start(request.caller_tier, target_tier, identity_key)
             if error:

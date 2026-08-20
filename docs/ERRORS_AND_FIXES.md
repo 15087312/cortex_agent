@@ -2172,8 +2172,8 @@ help: `pyaudio` (v0.2.14) was included because `cortex-agent` depends on `pyaudi
 
 **根因：** `config/prompts/composer.py::_merged_roles()`（能力表数据源）合并 roles.yaml + 编排页自定义 agent 时**不查询 `settings.get_agent_active()`**，导致关闭状态对 system prompt 组装完全无效。启停状态存于 `personas.yaml` 的 `agent_active`（默认 True），但能力表路径从未读取。运行时调度 `start_runner` 已有 `get_agent_active() is False → 拒绝启动` 检查（model_runner.py:3044），但提示词侧缺口使"已关闭的角色仍出现在可委托列表"，模型会误以为可委托。
 
-**修复：** `config/prompts/composer.py::_merged_roles()` 合并前统一过滤 active=false 的角色（roles.yaml 内置 + 自定义 agent 均按 `settings.get_agent_active(key)` 过滤，缺失方法时兜底全 True 以兼容测试/外部调用）。身份表 `get_identities()` **不**过滤（保留调度可解析，委托时由 `start_runner` 的 active 检查拒绝启动，避免"未知身份模板"误报）。`settings.set_agent_active`/`deactivate_same_tier` 补调 `_invalidate_identity_cache()`，保证启停变更即时反映。
+**修复：** `config/prompts/composer.py::_merged_roles()` 合并前统一过滤 active=false 的角色（roles.yaml 内置 + 自定义 agent 均按 `settings.get_agent_active(key)` 过滤，缺失方法时兜底全 True 以兼容测试/外部调用）。身份表 `get_identities()` **不**过滤（保留调度可解析，委托时由 `start_runner` 的 active 检查拒绝启动，避免"未知身份模板"误报）。`settings.set_agent_active`/`deactivate_same_tier` 补调 `_invalidate_identity_cache()`，保证启停变更即时反映。另补 `delegation_port.delegate` 在委托前检查 `get_agent_active(identity_key)`，关闭的角色直接拒绝委托（与能力表过滤一致，避免"提示词看不到、委托却接受然后启动失败"的脱节）。
 
-**验证：** 新增 `test_build_tables_filter_disabled_agents`（关闭的 code_supervisor/data_analyzer 不进入能力表）；`test_build_supervisor_table_merges_custom_agents` mock `get_agent_active` 固定 True 隔离真实 yaml 状态；composer/identity/delegation_port/settings 共 154 测试通过。
+**验证：** 新增 `test_build_tables_filter_disabled_agents`（关闭的 code_supervisor/data_analyzer 不进入能力表）、`test_delegate_disabled_agent_rejected`（关闭角色委托被拒）；`test_build_supervisor_table_merges_custom_agents` 及 delegation 测试 mock `get_agent_active` 固定值隔离真实 yaml 状态；composer/identity/delegation_port/settings 相关 197 测试 + model_runner/orchestrator 360 测试通过。
 
 **教训：** "启停开关"必须贯通所有消费角色集合的路径：提示词能力表（决定模型可见哪些可委托对象）与调度入口（决定是否真能启动）各管一段，遗漏任一路径就会产生"提示词看得到、实际启动被拒"或"关闭了仍出现在上下文"的脱节。配置变更（active 切换）后务必失效身份缓存，否则改动不生效。

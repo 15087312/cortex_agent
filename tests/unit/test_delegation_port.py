@@ -20,6 +20,12 @@ def _adapter():
     return ProbeDelegationAdapter.__new__(ProbeDelegationAdapter)
 
 
+def _stub_active(monkeypatch, active=True):
+    """隔离真实 personas.yaml 的启停状态：默认全部启用（测试默认场景）"""
+    from config.settings import Settings
+    monkeypatch.setattr(Settings, "get_agent_active", lambda self, role: active)
+
+
 def test_dataclass_defaults():
     r = DelegationResult(success=True)
     assert r.probe_id == ""
@@ -43,6 +49,7 @@ def test_delegate_unknown_role():
 
 
 def test_delegate_permission_denied(monkeypatch):
+    _stub_active(monkeypatch, True)
     import modules.thinking.probes.probe_permission as pp
     ppm = MagicMock()
     ppm.validate_probe_start.return_value = "无权限"
@@ -54,6 +61,7 @@ def test_delegate_permission_denied(monkeypatch):
 
 
 def test_delegate_success(monkeypatch):
+    _stub_active(monkeypatch, True)
     import modules.thinking.probes.probe_permission as pp
     import modules.thinking.identity as ident_mod
     import modules.thinking.communication.message_bus as mb
@@ -75,6 +83,7 @@ def test_delegate_success(monkeypatch):
 
 def test_delegate_think_timeout_passed(monkeypatch):
     """委托时 wait_seconds 作为 think_timeout 传入 probe_started 消息"""
+    _stub_active(monkeypatch, True)
     import modules.thinking.probes.probe_permission as pp
     import modules.thinking.identity as ident_mod
     import modules.thinking.communication.message_bus as mb
@@ -96,6 +105,7 @@ def test_delegate_think_timeout_passed(monkeypatch):
 
 def test_delegate_think_timeout_fallback(monkeypatch):
     """委托未指定 wait_seconds → 使用兜底超时并告警"""
+    _stub_active(monkeypatch, True)
     import modules.thinking.probes.probe_permission as pp
     import modules.thinking.identity as ident_mod
     import modules.thinking.communication.message_bus as mb
@@ -132,3 +142,14 @@ def test_resolve_role_dynamic_fallback_substr(monkeypatch):
     monkeypatch.setattr("modules.thinking.identity.get_identities", lambda: fake)
     assert _resolve_role("security") == ("supervisor", "security_supervisor")
     assert _resolve_role("ghost") is None
+
+
+def test_delegate_disabled_agent_rejected(monkeypatch):
+    """编排页关闭的角色委托被拒绝（与能力表过滤一致）"""
+    _stub_active(monkeypatch, False)
+    import modules.thinking.identity as ident_mod
+    monkeypatch.setattr(ident_mod, "get_identities", lambda: {"code_writer": {}})
+    a = _adapter()
+    result = asyncio.run(a.delegate(_req(role="expert_code_writer", task_id="t1")))
+    assert result.success is False
+    assert "禁用" in result.error
