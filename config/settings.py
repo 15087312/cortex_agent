@@ -492,6 +492,7 @@ class Settings(BaseSettings):
         active_map = data.setdefault("agent_active", {})
         active_map[role] = active
         self._save_personas_yaml(data)
+        self._invalidate_identity_cache()
 
     def deactivate_same_tier(self, role: str, tier: str, builtin_roles: dict) -> None:
         """同层只保留一个激活：停用同层其他 agent（总指挥层专用）"""
@@ -506,6 +507,7 @@ class Settings(BaseSettings):
             if ca.get("role") != role and ca.get("tier") == tier:
                 active_map[ca["role"]] = False
         self._save_personas_yaml(data)
+        self._invalidate_identity_cache()
 
     def get_agent_active(self, role: str) -> bool:
         """获取 agent 启用状态（默认 True）"""

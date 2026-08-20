@@ -229,13 +229,24 @@ class PromptComposer:
         return ""
 
     def _merged_roles(self):
-        """roles.yaml（composer 注入的 loader 优先）+ 编排页自定义 agent"""
+        """roles.yaml（composer 注入的 loader 优先）+ 编排页自定义 agent。
+
+        过滤 active=false 的角色：编排页关闭的主管/专家不进入能力表
+        （可委托列表实时反映启用状态，关闭即从 system prompt 移除）。
+        """
         roles = dict(self._roles.get("roles", {}) or {})
         try:
             from config.settings import settings as _settings
+            _is_active = getattr(_settings, "get_agent_active", None) or (lambda r: True)
+            # 编排页启停状态（默认 True）；roles.yaml 内置与自定义 agent 统一过滤
+            for key in list(roles.keys()):
+                if not _is_active(key):
+                    del roles[key]
             for ca in _settings.get_custom_agents():
                 role = (ca.get("role") or "").strip()
                 if not role or role in roles:
+                    continue
+                if not _is_active(role):
                     continue
                 roles[role] = {
                     "name": ca.get("name") or role,

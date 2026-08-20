@@ -300,6 +300,7 @@ def test_build_supervisor_table_merges_custom_agents(monkeypatch):
         Settings, "get_custom_agents",
         lambda self: [{"role": "security_supervisor", "name": "安全主管", "tier": "supervisor", "expertise": ["安全审计"]}],
     )
+    monkeypatch.setattr(Settings, "get_agent_active", lambda self, role: True)
     c = _composer({
         "roles": {"roles": {
             "code_supervisor": {"tier": "supervisor", "expertise": ["代码"]},
@@ -308,3 +309,27 @@ def test_build_supervisor_table_merges_custom_agents(monkeypatch):
     tbl = c._build_supervisor_table()
     assert "security_supervisor" in tbl
     assert "code_supervisor" in tbl
+
+
+def test_build_tables_filter_disabled_agents(monkeypatch):
+    """编排页关闭的主管/专家不进入可委托能力表"""
+    from config.settings import Settings
+    monkeypatch.setattr(Settings, "get_custom_agents", lambda self: [])
+    monkeypatch.setattr(
+        Settings, "get_agent_active",
+        lambda self, role: role != "code_supervisor" and role != "data_analyzer",
+    )
+    c = _composer({
+        "roles": {"roles": {
+            "code_supervisor": {"tier": "supervisor", "expertise": ["代码"]},
+            "design_supervisor": {"tier": "supervisor", "expertise": ["设计"]},
+            "data_analyzer": {"tier": "expert", "expertise": ["数据分析"]},
+            "ui_designer": {"tier": "expert", "expertise": ["UI"]},
+        }}
+    })
+    sup = c._build_supervisor_table()
+    assert "design_supervisor" in sup
+    assert "code_supervisor" not in sup
+    exp = c._build_expert_table()
+    assert "ui_designer" in exp
+    assert "data_analyzer" not in exp
