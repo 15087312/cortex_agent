@@ -564,6 +564,7 @@ class ModelRunner:
                     "dialog_id": f"stream_{self.model_id}_{turn}",
                     "tier": self.tier,
                     "streaming": True,
+                    "session_id": self.session_id,
                 },
             )
             bus = get_message_bus()
@@ -737,6 +738,40 @@ class ModelRunner:
         if self._wakeup_event:
             self._wakeup_event.set()
 
+    def _are_all_delegations_done(self) -> bool:
+        """检查是否所有 pending 委托都已完成（供批量唤醒判断）"""
+        if not self._thinker or not hasattr(self._thinker, '_pending_delegations'):
+            return True
+        return all(
+            v.get("status") != "pending"
+            for v in self._thinker._pending_delegations.values()
+        )
+
+    def _count_pending_delegations(self) -> int:
+        """返回仍在 pending 状态的委托数量"""
+        if not self._thinker or not hasattr(self._thinker, '_pending_delegations'):
+            return 0
+        return sum(
+            1 for v in self._thinker._pending_delegations.values()
+            if v.get("status") == "pending"
+        )
+
+    def _collect_final_delegation_summary(self) -> str:
+        """所有委托完成后，收集汇总结果供唤醒提示词使用"""
+        if not self._thinker or not hasattr(self._thinker, '_pending_delegations'):
+            return ""
+        lines = ["【所有委托任务已完成】"]
+        for key, v in self._thinker._pending_delegations.items():
+            role = v.get("role", "")
+            task = v.get("task", "")
+            status = v.get("status", "")
+            response = v.get("response", "")[:200]
+            line = f"- {role}: {task} [{status}]"
+            if response:
+                line += f"\n  结果摘要: {response}"
+            lines.append(line)
+        return "\n".join(lines)
+
     async def _wait_for_wakeup_event(
         self,
         timeout: float = 300.0,
@@ -790,9 +825,10 @@ class ModelRunner:
                             delegation_id = content.get('delegation_id', '')  # 委托链 key（probe_id）
                             task_id = content.get('task_id', '')              # 本地 pending key
 
-                            # 本地 pending 追踪用 task_id；黑板委托链用 delegation_id
-                            if self._thinker and (task_id or delegation_id):
-                                self._thinker._process_delegation_response(result, task_id or delegation_id)
+                            # 本地 pending 追踪用 delegation_id（probe_id，每个委托唯一）；
+                            # 旧逻辑用 task_id（caller 共享），多委托并行时会重复匹配同一个 key。
+                            if self._thinker and delegation_id:
+                                self._thinker._process_delegation_response(result, delegation_id)
 
                             # 回写黑板委托链：标记已完成 + 保存结果上下文
                             bb = getattr(self, "blackboard", None)
@@ -825,10 +861,27 @@ class ModelRunner:
                                 f"{result}"
                             )
                             logger.info(
-                                f"[ModelRunner] {self.model_id} 被唤醒：收到 {source} "
+                                f"[ModelRunner] {self.model_id} 收到 {source} "
                                 f"({source_tier}) 的任务结果 (delegation_id={delegation_id})"
                             )
-                            return wakeup_msg
+                            # ── 批量唤醒：检查是否所有委托都已完成 ──
+                            # 有待处理委托时，等所有委托都完成才唤醒（并行场景）；
+                            # 无 pending 委托时直接唤醒（单委托或非委托场景）。
+                            pending_count = self._count_pending_delegations()
+                            if pending_count > 0:
+                                # 还有未完成的委托，继续等待
+                                logger.info(
+                                    f"[ModelRunner] {self.model_id} 还有 {pending_count} 个委托未完成，继续等待"
+                                )
+                                continue
+                            else:
+                                # 所有委托已完成（或无委托），唤醒
+                                # 如果有多个委托的结果，生成汇总摘要
+                                if len(self._thinker._pending_delegations) > 1:
+                                    final_summary = self._collect_final_delegation_summary()
+                                    if final_summary:
+                                        return final_summary
+                                return wakeup_msg
                         elif action in ('user_input', 'new_message'):
                             msg_content = str(content.get('content', ''))
                             if msg_content.strip():
@@ -1332,9 +1385,25 @@ class ModelRunner:
             logger.debug(f"[ModelRunner] todo 推送失败 (非致命): {e}")
 
     def _push_expert_output(self, content: str) -> None:
+        """推送主管/专家每轮循环输出到过程流（非气泡）。
+
+        entry_type='thinking'：前端识别为"过程流"步骤，而非最终回复气泡；
+        最终回复由黑板 write_response 广播（entry_type='response'）驱动气泡。
+        """
         content = (content or "").strip()
         if not content:
             return
+        # 持久化循环思考（role=thought），供会话恢复后重建过程流
+        try:
+            from modules.database.session_repo import get_session_repo
+            repo = get_session_repo()
+            if repo:
+                repo.save_message(self.session_id, "thought", content,
+                                  tier=self.tier,
+                                  metadata={"identity_name": self.identity.name or self.identity.role,
+                                            "entry_type": "thinking"})
+        except Exception:
+            pass
         try:
             from modules.thinking.api_stream import connection_manager, _build_event
             identity = getattr(self.identity, "name", "") or getattr(self.identity, "role", "")
@@ -1344,8 +1413,9 @@ class ModelRunner:
                 msg_type="thinking",
                 event="thinking_step",
                 content=content,
-                role=tier,
-                data={"identity_name": identity, "tier": tier},
+                role="thinking",
+                data={"identity_name": identity, "tier": tier,
+                      "entry_type": "thinking", "source": "loop"},
             )
             for sid in list(connection_manager.active_connections.keys()):
                 connection_manager.send_json_from_thread(sid, event)
@@ -1423,7 +1493,7 @@ class ModelRunner:
                     # 不能再拼进 user 消息（会造成 system 双份注入）。
                     result = await client.generate(
                         prompt,
-                        max_tokens=4096,
+                        max_tokens=client.max_tokens,
                         system_prompt=system_prompt,
                     )
                     return result if isinstance(result, str) else str(result)
@@ -1786,12 +1856,12 @@ class ModelRunner:
             if hasattr(client, "chat_stream"):
                 resp = await client.chat_stream(
                     messages=[_CM(role="user", content=prompt)],
-                    max_tokens=2048,
+                    max_tokens=client.max_tokens,
                 )
             else:
                 resp = await client.chat(
                     messages=[_CM(role="user", content=prompt)],
-                    max_tokens=2048,
+                    max_tokens=client.max_tokens,
                 )
             msg = getattr(resp, "message", None)
             if msg is not None:
@@ -1845,18 +1915,22 @@ class ModelRunner:
 
             # 运行中会话动态感知强制技能：本轮无活跃技能但设置了全局强制技能时，
             # 立即注入（含工具规则），保证设置强制技能后无需重启对话即生效
+            # 技能总开关关闭时跳过强制技能注入
             if not skill_id:
                 try:
                     from config.settings import settings as _sf
-                    _forced = _sf.get_forced_skill()
-                    if _forced:
-                        from modules.thinking.skills import skill_manager
-                        _fskill = skill_manager.get_skill(_forced)
-                        if _fskill and _fskill.enabled:
-                            self._active_skill = _fskill
-                            self._active_skill_tool_rules = _fskill.tool_rules
-                            skill_id = _fskill.id
-                            logger.info(f"[ModelRunner] 强制技能动态注入: {_forced}")
+                    if not getattr(_sf, "SKILLS_ENABLED", True):
+                        pass  # 技能系统关闭，不注入强制技能
+                    else:
+                        _forced = _sf.get_forced_skill()
+                        if _forced:
+                            from modules.thinking.skills import skill_manager
+                            _fskill = skill_manager.get_skill(_forced)
+                            if _fskill and _fskill.enabled:
+                                self._active_skill = _fskill
+                                self._active_skill_tool_rules = _fskill.tool_rules
+                                skill_id = _fskill.id
+                                logger.info(f"[ModelRunner] 强制技能动态注入: {_forced}")
                 except Exception:
                     pass
 
@@ -2147,7 +2221,7 @@ class ModelRunner:
                     kwargs = {
                         "messages": messages,
                         "tools": tools_with_control,
-                        "max_tokens": 4096,
+                        "max_tokens": client.max_tokens,
                         "max_retries": 2,
                     }
                     if self.tier == "supervisor":
@@ -2187,7 +2261,7 @@ class ModelRunner:
                     tool_calls = response.message.tool_calls
                     # 推送 deepseek 思考过程（reasoning_content）到前端
                     self._push_reasoning(getattr(response.message, "reasoning_content", ""))
-                    # 主管/专家的实际输出 → 前端独立气泡（对话区可见其运行过程）
+                    # 主管/专家的每轮循环输出 → 过程流（非气泡，entry_type='thinking'）
                     if self.tier in ("supervisor", "expert") and content and content.strip():
                         self._push_expert_output(content)
 
@@ -2349,29 +2423,38 @@ class ModelRunner:
                             elif tc.name == "request_skill":
                                 skill_id = args.get("skill_id", "")
                                 if skill_id:
-                                    # 强制技能锁定：用户设置了 forced_skill 时，不允许切换到其他技能
+                                    # 技能总开关检查
                                     try:
-                                        from config.settings import settings as _settings
-                                        _forced = _settings.get_forced_skill()
+                                        from config.settings import settings as _chk
+                                        _skills_on = getattr(_chk, "SKILLS_ENABLED", True)
                                     except Exception:
-                                        _forced = ""
-                                    if _forced and _forced != skill_id:
-                                        result = f"【技能切换被拒绝】系统已强制使用技能 '{_forced}'，不可切换到其他技能。使用 list_skills 查看当前可用技能。"
+                                        _skills_on = True
+                                    if not _skills_on:
+                                        result = "【技能系统已关闭】管理员已关闭技能系统，无法激活技能。"
                                     else:
-                                        from modules.thinking.skills import skill_manager
-                                        skill = skill_manager.get_skill(skill_id)
-                                        role = getattr(self.identity, "role", "")
-                                        allowed = skill and skill.enabled and (
-                                            skill in skill_manager.list_skills_for_role(role)
-                                        )
-                                        if allowed:
-                                            self._active_skill = skill
-                                            self._active_skill_tool_rules = skill.tool_rules  # type: ignore[union-attr]
-                                            logger.info(f"[ModelRunner] 技能已切换: {skill_id}")
-                                            preview = skill.description[:120].replace("\n", " ")  # type: ignore[union-attr]
-                                            result = f"【技能已激活】{skill.name}\n{preview}"  # type: ignore[union-attr]
+                                        # 强制技能锁定：用户设置了 forced_skill 时，不允许切换到其他技能
+                                        try:
+                                            from config.settings import settings as _settings
+                                            _forced = _settings.get_forced_skill()
+                                        except Exception:
+                                            _forced = ""
+                                        if _forced and _forced != skill_id:
+                                            result = f"【技能切换被拒绝】系统已强制使用技能 '{_forced}'，不可切换到其他技能。使用 list_skills 查看当前可用技能。"
                                         else:
-                                            result = f"【技能不可用】skill_id={skill_id} 不存在、已禁用或当前角色不可用。使用 list_skills 查看可用技能。"
+                                            from modules.thinking.skills import skill_manager
+                                            skill = skill_manager.get_skill(skill_id)
+                                            role = getattr(self.identity, "role", "")
+                                            allowed = skill and skill.enabled and (
+                                                skill in skill_manager.list_skills_for_role(role)
+                                            )
+                                            if allowed:
+                                                self._active_skill = skill
+                                                self._active_skill_tool_rules = skill.tool_rules  # type: ignore[union-attr]
+                                                logger.info(f"[ModelRunner] 技能已切换: {skill_id}")
+                                                preview = skill.description[:120].replace("\n", " ")  # type: ignore[union-attr]
+                                                result = f"【技能已激活】{skill.name}\n{preview}"  # type: ignore[union-attr]
+                                            else:
+                                                result = f"【技能不可用】skill_id={skill_id} 不存在、已禁用或当前角色不可用。使用 list_skills 查看可用技能。"
                             elif tc.name == "stop_skill":
                                 # 强制技能锁定：forced_skill 不可停用
                                 try:
@@ -2911,11 +2994,6 @@ class ModelRunner:
         parts.append(
             f"【你的任务】\n{self._task_description}\n"
             f"你是 {identity.name}（{identity.tier} 层 / {identity.role}）。"
-        )
-        parts.append(
-            f"【角色边界】\n{identity.personality}\n"
-            f"擅长: {', '.join(identity.expertise)}\n"
-            f"不擅长: {', '.join(identity.weaknesses)}"
         )
 
         # 技能叠加

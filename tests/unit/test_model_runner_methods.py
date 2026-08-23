@@ -98,7 +98,6 @@ def test_build_prompt_contains_identity():
     out = r._build_prompt(guidance="指引", dialog_context="【对话】...", expert_context="")
     assert "测试任务" in out
     assert "总指挥" in out
-    assert "擅长: 规划" in out
     assert "指引" in out
 
 

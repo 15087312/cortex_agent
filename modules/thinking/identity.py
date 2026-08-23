@@ -282,6 +282,7 @@ class ModelIdentity:
     model_name: str = ""
     max_tokens: int = 256
     temperature: float = 0.2
+    reasoning_effort: str = ""  # 推理强度：low/medium/high（留空使用模型默认）
     startup: str = "on_demand"
     default_skill: str = ""
     permissions: "ModelPermissions" = field(default_factory=lambda: ModelPermissions())

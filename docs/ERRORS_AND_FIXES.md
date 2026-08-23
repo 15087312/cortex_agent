@@ -2189,3 +2189,135 @@ help: `pyaudio` (v0.2.14) was included because `cortex-agent` depends on `pyaudi
 **验证：** 新增 `tests/unit/test_resolve_active_large_role.py` 6 用例（orchestrator 优先 / 自定义 large 跟随 / 多个自定义取激活首个 / supervisor 不参与 / 异常兜底）；编排器 78 测试通过。真实环境 `~/.cortex/personas.yaml`（orchestrator=false, 123=true）下 `resolve_active_large_role()` 返回 `123`。
 
 **教训：** 硬编码默认角色名（orchestrator）是"身份单点"假设，一旦编排页允许同层多选互斥（总指挥层唯一激活），任何绕过该抽象、直接写死角色 key 的路径都会与启停状态脱节。启动类路径应统一经过"解析当前激活角色"的同一辅助函数，而不是分散硬编码；§79（delegation ROLE_TO_IDENTITY 硬编码）、§83（能力表不过滤 active）属同一类"角色集合来源不一致"问题。
+
+
+## 85. 同一 AI 多次发言被合并到一个气泡（前端专家气泡机制）
+
+**现象：** 编排模式下同一个 AI（同 tier + 同身份）第一次和第二次发言被合并成同一个对话气泡，内容互相覆盖。用户期望：每次发言独立气泡，方便追溯对话历史。
+
+**根因：** 前端 `chat.js` 的 `addExpertMessage` 按 `tier` 做 key 去重复用已有气泡（`existing.content = content` 覆盖）。§86 修复了不同身份互相替换的问题（改用 `tier:identity` 复合 key），但**同身份的多次输出仍然复用同一个气泡**——第二次发言时命中已有同身份气泡，直接覆盖内容而非新建。
+
+**现象细节：**
+- `addExpertThinking`（思考缓冲）按身份累积到 `_pendingByTier`，`addExpertMessage` 时一次性输出到气泡，然后清空该身份的思考缓冲。
+- `addExpertTool`（工具调用）同理累积到 `_pendingTools`，输出到气泡。
+- 问题在于：同一个 AI 在同一轮对话中多次输出（如先思考、调工具、再输出），最终只保留最后一次的完整内容，之前的思考过程和工具调用丢失。
+
+**修复方向：** `addExpertMessage` 应为每次输出新建气泡，而非复用已有同身份气泡。思考/工具缓冲仍按身份累积，但在每次输出时**消耗并挂到该次输出气泡上**，不清空以便后续输出仍可引用。`switchToSession` 重放路径需对齐。
+
+**影响范围：** `frontend/src/stores/chat.js` 的 `addExpertMessage`、`addExpertThinking`、`addExpertTool`、`_clearExpertState`、`switchToSession` 重放路径。
+
+**当前状态：** 已识别，待实现修复。
+
+
+## 86. personas.yaml 内容丢失 / 系统提示词覆盖重启后消失（配置持久化风险）
+
+**现象：** `~/.cortex/personas.yaml` 之前存储的 `agent_active`（orchestrator=false, 123=true）、自定义 agent 信息全部丢失，文件只剩 `model_params: {}`。用户报告"完整系统提示词覆盖每次重启都会消失"。
+
+**根因调查：**
+
+已验证的正确路径（不丢数据）：
+- `set_system_override` / `set_persona` / `set_model_params` 等 setter 均采用 read-modify-write 模式（`_load_personas_yaml` 读全量 → 修改 → `_save_personas_yaml` 写回），**不会丢其他键**。
+- 后端 live server 实测：`PUT /config/persona/orchestrator` 写入 → `~/.cortex/personas.yaml` 落盘 → `GET /management/orchestration` 读回 → `POST /management/orchestration/preview` 组装 prompt 均正确使用覆盖。
+- `composer.build_system` 读 `get_system_override(req.role)` → 返回覆盖文本（优先于所有组装逻辑）。
+- 前端 `saveOverride` 正确发送 `{value, system_override}`，`savePersona` 不包含 `system_override` 字段 → 后端 `if body.system_override is not None` 跳过 → 不会误清。
+- 启动/关闭路径（`api/main.py` lifespan、`bootstrap.py`、`frontend/main.py` 子进程）均无写 personas.yaml 的代码。
+- `config/prompts/composer.py`、`modules/` 下无直接读写 personas.yaml 的代码。
+
+**未解答的疑问：**
+1. `personas.yaml` 之前的内容（agent_active、custom agents）是如何丢失的？所有 setter 都不会删除非目标键。
+2. 可能的触发场景：两个进程同时写（read-modify-write 竞态）、打包桌面 app 使用不同的 HOME/配置路径、用户手动删除/覆盖文件、某次 bug 导致 `_load_personas_yaml` 返回 `{}`（文件不存在或读取失败）后 set_* 写入空数据。
+3. 当前 `personas.yaml` 内容为 `model_params: {}`，是本次调查期间 round-trip 测试的 cleanup 副产物（测试前已只剩此内容）。
+
+**影响范围：** 所有通过 `set_*` 写入 personas.yaml 的功能（人设、系统覆盖、工具权限、模型参数、agent 启停、自定义 agent）。
+
+**当前状态：** 后端写入/读取路径验证正确，覆盖持久化无问题。`personas.yaml` 早期数据丢失的根因待进一步排查（可能需要增加文件写入日志或原子写监控）。
+
+
+## 87. personas.yaml 并发写丢失更新 —— 无进程级锁（后端）
+
+**现象：** 两个并发 API 请求（如同时更新 persona 和 tools）修改 personas.yaml，第二个写入覆盖第一个的更改。极端情况下导致 §86 的"重启后数据丢失"。
+
+**根因：** 所有 `set_*` 方法（`set_persona`/`set_system_override`/`set_role_tools`/`set_model_params`/`set_agent_active`/`set_custom_agent` 等）都采用 read-modify-write 模式（`_load_personas_yaml` → 修改 → `_save_personas_yaml`），但**无进程级锁**。多个并发请求同时读取同一版本文件，各自修改不同键后写回——后者覆盖前者。原子 `os.replace` 只防半写，不防 lost-update。
+
+**影响范围：** 14+ 个 `set_*` 方法共用同一个 `_save_personas_yaml`，任何两个并发调用都会丢数据。
+
+**修复建议：** 加文件级锁（如 `fcntl.flock` 或 `threading.Lock`），或改为单次写入合并（一个请求内多个 `set_*` 合并为一次 read-modify-write）。
+
+**同类排查：** `save_user_config`（settings.json）存在完全相同的问题。
+
+
+## 88. settings.json 并发写丢失更新（后端）
+
+**现象：** Settings 页面"保存模型表单"遍历多个 key 逐个 PUT，每个 PUT 触发 `save_user_config` 读-改-写 settings.json。并发两个浏览器 tab 或快速操作时，第二个写入覆盖第一个。
+
+**根因：** `save_user_config`（`config/settings.py:902`）读 settings.json → 添加 key → 写回，无锁。原子 `os.replace` 防半写不防 lost-update。`_load_user_config`（line 884）无重试逻辑（不像 `_load_personas_yaml` 有 retry），JSON 损坏时静默回退到 .env 默认值。
+
+**影响范围：** 所有通过 Settings 页面修改的配置项（模型参数、API Key、开关等）。
+
+**修复建议：** 加文件级锁或改用乐观锁（写入前校验文件未被修改）。
+
+
+## 89. delete_custom_agent 四次独立 read-modify-write 级联丢数据（后端）
+
+**现象：** 删除自定义 agent 时，`delete_custom_agent` 先删除 agent，然后**四次独立**调用 `set_persona`/`set_system_override`/`set_role_tools`/`set_model_params` 清理该 agent 的配置。中间任何一次写入被并发请求覆盖，都会留下孤立数据；进程崩溃则部分清理不完整。
+
+**根因：** `api/main.py:950-962`：五次独立的 read-modify-write，每次之间其他请求可插入修改。
+
+**影响范围：** 删除自定义 agent 后配置不一致（残留 persona/override/tools/params）。
+
+**修复建议：** 合并为单次 read-modify-write（一次读取、一次性删除所有键、一次写回）。
+
+
+## 90. _save_personas_yaml 吞掉异常 —— 调用方假设成功（后端）
+
+**现象：** `_save_personas_yaml` 写入失败时只 print warning，不抛异常。所有 14+ 个 `set_*` 调用方都假设写入成功，API 返回 success toast。用户看到"已保存"但实际没落盘，重启后恢复旧值。
+
+**根因：** `config/settings.py:589-604`：`except Exception` 捕获所有错误（磁盘满、权限错、文件锁冲突），只打印到 stderr。API endpoint 返回 `{"success": True}`。
+
+**影响范围：** 所有 personas.yaml 写入操作，静默丢失。
+
+**修复建议：** `_save_personas_yaml` 应返回 success/failure（同 `save_user_config` 的 bool 模式），调用方根据返回值决定是否告知用户。
+
+
+## 91. switchToSession 重放路径合并同一身份的多次输出（前端）
+
+**现象：** 切换会话时，同一身份（tier:identity）的多次输出（如"前端方案v1"、"前端方案v2"、"前端方案v3"）被合并为一个气泡，只显示最后一次。与 §85 同源。
+
+**根因：** `chat.js:208-286` 的 `switchToSession` 重放路径用 `expertAgg` 按 `tier:identity` 聚合所有 thinking/contents，最终取 `agg.contents[agg.contents.length - 1]`。中间输出丢失。
+
+**影响范围：** 切换会话后看到的对话历史不完整。
+
+**修复建议：** 重放路径每次输出新建气泡，而非按身份聚合。
+
+
+## 92. _session_dialog_history 并发覆盖 —— 同 session 两次请求互相覆盖（后端）
+
+**现象：** 同一会话快速发送两条消息，第二条的 dialog history 覆盖第一条的，导致第一条的前端展开面板显示错误的历史。
+
+**根因：** `multi_model_orchestrator.py:32-33` 的 `_session_dialog_history` 是模块级 dict，无锁。两条并发请求对同一 session_id 写入不同内容。
+
+**影响范围：** 并发对话时前端展开面板内容错乱。
+
+**修复建议：** 改用 per-session 锁或 per-request 独立存储。
+
+
+## 93. TurnContext fragments 按 source 覆盖 —— 同源不同内容丢失（后端）
+
+**现象：** 两个不同模块（如记忆检索和因果分析）产出的 context fragment 使用相同 `source` 名（如 `"memory"`），后者覆盖前者。
+
+**根因：** `pool.py:97`：`self.fragments[fragment.source] = fragment`，无去重/合并逻辑。
+
+**影响范围：** 黑板共享记忆可能丢失部分来源的上下文。
+
+**修复建议：** 改为 list（同 source 多 fragment 共存）或用 `source:sub_key` 复合 key。
+
+
+## 94. thinking 内容子串去重误杀 —— 短文本被长文本包含导致丢失（前端）
+
+**现象：** AI 思考步骤 A "分析需求" 和步骤 B "分析需求并制定方案"，B 包含 A 的子串，B 被 `includes()` 去重跳过。
+
+**根因：** `chat.js:341`：`if (pendingThinking.value.includes(line)) return` 用子串匹配而非精确匹配。
+
+**影响范围：** 思考步骤丢失（概率低但确实存在）。
+
+**修复建议：** 改为 `Set` 存储已输出的行（精确匹配），或用 `line.trim() === existing.trim()` 比较。

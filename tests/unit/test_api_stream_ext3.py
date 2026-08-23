@@ -423,6 +423,8 @@ def _long_session():
 
 async def _patched_reducer(monkeypatch, reducer=None):
     import modules.memory.event_reducer as er_mod
+    from config.settings import settings as _cfg
+    monkeypatch.setattr(_cfg, "MEMORY_SUMMARY_ENABLED", True)
     reducer = reducer or AsyncMock()
     reducer.reduce.return_value = []
     monkeypatch.setattr(er_mod, "EventReducer", lambda **kw: reducer)

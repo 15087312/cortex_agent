@@ -14,6 +14,7 @@ import SessionList from '@/components/SessionList.vue'
 import ModelSelector from '@/components/ModelSelector.vue'
 import ThinkingIndicator from '@/components/ThinkingIndicator.vue'
 import ThinkingStatusPanel from '@/components/ThinkingStatusPanel.vue'
+import ProcessPanel from '@/components/ProcessPanel.vue'
 import SessionSettings from '@/components/SessionSettings.vue'
 import Icon from '@/components/Icon.vue'
 
@@ -212,6 +213,14 @@ const _onStatus = (d) => {
   ;(d.data?.active_supervisors || []).forEach(s => add(s, 'supervisor', ''))
   ;(d.data?.active_experts || []).forEach(e => add(e, 'expert', e.supervisor || ''))
   chat.runners = list
+  // 过程流面板的模型状态沿用本次快照（显示"当时"运行的模型，非实时刷新）
+  chat.setProcessSnapshot({
+    large_model: d.data?.large_model || null,
+    active_supervisors: d.data?.active_supervisors || [],
+    active_experts: d.data?.active_experts || [],
+    context_tokens: d.data?.context_tokens || 0,
+    context_window_size: d.data?.context_window_size || 0,
+  })
 }
 
 const _onAck = (d) => {
@@ -262,9 +271,11 @@ onMounted(async () => {
   await session.loadSessions()
   await chat.init()
   // 支持从仪表盘等通过 ?session= 跳转到指定会话
+  // 必须走 switchToSession：加载历史消息 + 建立该会话的 WS 连接，
+  // 仅设置 sessionId（switchSession）会导致历史不加载、回复接收不到
   const qsid = route.query?.session
   if (qsid) {
-    try { await session.switchSession(String(qsid)) } catch {}
+    try { await chat.switchToSession(String(qsid)) } catch {}
   }
   ws.wsClient.on('thinking', _onThinking)
   ws.wsClient.on('message', _onMessage)

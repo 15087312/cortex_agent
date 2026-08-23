@@ -102,6 +102,39 @@ async def test_set_event_emitter_remove(bus):
     bus.set_event_emitter(None, session_id="s1")  # 删除不存在的 → 不抛
     bus.set_event_emitter(lambda e: None)
     bus.set_event_emitter(None)  # 清空
+
+
+async def test_parallel_sessions_emitters_isolated(bus):
+    """多会话并行：各会话发射器互不覆盖、事件只路由到对应会话"""
+    s1_events, s2_events = [], []
+    bus.set_event_emitter(s1_events.append, session_id="s1")
+    bus.set_event_emitter(s2_events.append, session_id="s2")
+
+    # 带 session_id 的广播 → 各自路由到对应发射器
+    m1 = Message(
+        msg_type=MessageType.BROADCAST, sender="a", recipient="b", content={},
+        metadata={"session_id": "s1"},
+    )
+    m2 = Message(
+        msg_type=MessageType.BROADCAST, sender="a", recipient="b", content={},
+        metadata={"session_id": "s2"},
+    )
+    bus._emit_event("broadcast", m1)
+    bus._emit_event("broadcast", m2)
+
+    assert len(s1_events) == 1
+    assert len(s2_events) == 1
+
+    # 删除 s1 发射器后，s1 事件不再触发任何发射器，s2 不受影响
+    bus.set_event_emitter(None, session_id="s1")
+    bus._emit_event("broadcast", m1)
+    bus._emit_event("broadcast", m2)
+    assert len(s1_events) == 1
+    assert len(s2_events) == 2
+
+    # 清理：防止泄漏检测误报
+    bus.set_event_emitter(None, session_id="s2")
+    bus.set_event_emitter(None)
     assert bus._event_emitters == {}
 
 

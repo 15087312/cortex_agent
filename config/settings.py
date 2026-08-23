@@ -19,6 +19,10 @@ os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 # 记忆库切换互斥锁（模块级，避免作为类属性参与 pydantic pickle）
 _MEMORY_SWITCH_LOCK = __import__("threading").RLock()
 
+# personas.yaml / settings.json 写入互斥锁（防止并发 read-modify-write 丢更新）
+_PERSONAS_YAML_LOCK = __import__("threading").Lock()
+_SETTINGS_JSON_LOCK = __import__("threading").Lock()
+
 logger = logging.getLogger("settings")
 
 
@@ -55,6 +59,7 @@ class Settings(BaseSettings):
         "SPATIAL_ENHANCEMENT_ENABLED",
         "MENTAL_ACTIVITY_ENABLED",   # 心理活动开关（良知内心独白）
         "MEMORY_SUMMARY_ENABLED",    # 记忆总结开关（EventReducer 自动提炼事件记忆）
+        "SKILLS_ENABLED",            # 技能系统总开关（关闭后模型不加载/不激活任何技能）
 
         # ── 搜索配置 ──
         "SEARCH_ENGINE_PRIORITY",    # 搜索引擎优先级（逗号分隔）
@@ -281,15 +286,15 @@ class Settings(BaseSettings):
 
     def set_persona(self, role: str, prompt: str) -> str:
         """设置指定角色的自定义人设（prompt 为空则清除），写入 ~/.cortex/personas.yaml"""
-        data = self._load_personas_yaml()
-        personas = data.setdefault("personas", {})
         prompt = (prompt or "").strip()
-        if prompt:
-            personas[role] = prompt
-        else:
-            personas.pop(role, None)
-        self._save_personas_yaml(data)
-        return personas.get(role, "")
+        def _m(data):
+            personas = data.setdefault("personas", {})
+            if prompt:
+                personas[role] = prompt
+            else:
+                personas.pop(role, None)
+            return personas.get(role, "")
+        return self._modify_personas_yaml(_m)
 
     @staticmethod
     def _compose_persona(personality: str, speaking_style: str = "",
@@ -351,17 +356,39 @@ class Settings(BaseSettings):
         data = self._load_personas_yaml()
         return (data.get("system_overrides", {}).get(role) or "").strip()
 
+    def set_persona_and_override(self, role: str, prompt: str, system_override: str = None) -> dict:
+        """原子写入 persona + system_override（同一请求内避免两次独立写入的竞态）"""
+        prompt = (prompt or "").strip()
+        def _m(data):
+            personas = data.setdefault("personas", {})
+            if prompt:
+                personas[role] = prompt
+            else:
+                personas.pop(role, None)
+            if system_override is not None:
+                overrides = data.setdefault("system_overrides", {})
+                so = (system_override or "").strip()
+                if so:
+                    overrides[role] = so
+                else:
+                    overrides.pop(role, None)
+            return {
+                "persona": personas.get(role, ""),
+                "system_override": (data.get("system_overrides", {}).get(role) or "").strip(),
+            }
+        return self._modify_personas_yaml(_m)
+
     def set_system_override(self, role: str, prompt: str) -> str:
         """设置指定角色的完整系统提示词覆盖（prompt 为空则清除），写入 yaml"""
-        data = self._load_personas_yaml()
-        overrides = data.setdefault("system_overrides", {})
         prompt = (prompt or "").strip()
-        if prompt:
-            overrides[role] = prompt
-        else:
-            overrides.pop(role, None)
-        self._save_personas_yaml(data)
-        return overrides.get(role, "")
+        def _m(data):
+            overrides = data.setdefault("system_overrides", {})
+            if prompt:
+                overrides[role] = prompt
+            else:
+                overrides.pop(role, None)
+            return overrides.get(role, "")
+        return self._modify_personas_yaml(_m)
 
     def get_role_tools(self, role: str) -> dict:
         """获取角色工具权限覆盖 {whitelist: [], blacklist: []}（未配置返回 {}）"""
@@ -371,17 +398,17 @@ class Settings(BaseSettings):
 
     def set_role_tools(self, role: str, cfg: dict) -> dict:
         """设置角色工具权限覆盖 {whitelist: [], blacklist: []}（空则清除），写入 yaml"""
-        data = self._load_personas_yaml()
-        rt = data.setdefault("role_tools", {})
-        if cfg and isinstance(cfg, dict) and (cfg.get("whitelist") or cfg.get("blacklist")):
-            rt[role] = {
-                "whitelist": list(cfg.get("whitelist") or []),
-                "blacklist": list(cfg.get("blacklist") or []),
-            }
-        else:
-            rt.pop(role, None)
-        self._save_personas_yaml(data)
-        return rt.get(role, {})
+        def _m(data):
+            rt = data.setdefault("role_tools", {})
+            if cfg and isinstance(cfg, dict) and (cfg.get("whitelist") or cfg.get("blacklist")):
+                rt[role] = {
+                    "whitelist": list(cfg.get("whitelist") or []),
+                    "blacklist": list(cfg.get("blacklist") or []),
+                }
+            else:
+                rt.pop(role, None)
+            return rt.get(role, {})
+        return self._modify_personas_yaml(_m)
 
     def get_model_params(self, role: str) -> dict:
         """获取角色模型参数覆盖 {temperature, max_tokens}（未配置返回 {}）"""
@@ -391,18 +418,18 @@ class Settings(BaseSettings):
 
     def set_model_params(self, role: str, cfg: dict) -> dict:
         """设置角色模型参数覆盖（空则清除），写入 yaml"""
-        data = self._load_personas_yaml()
-        mp = data.setdefault("model_params", {})
-        if cfg and isinstance(cfg, dict):
-            cleaned = {k: v for k, v in cfg.items() if v is not None and v != ""}
-            if cleaned:
-                mp[role] = cleaned
+        def _m(data):
+            mp = data.setdefault("model_params", {})
+            if cfg and isinstance(cfg, dict):
+                cleaned = {k: v for k, v in cfg.items() if v is not None and v != ""}
+                if cleaned:
+                    mp[role] = cleaned
+                else:
+                    mp.pop(role, None)
             else:
                 mp.pop(role, None)
-        else:
-            mp.pop(role, None)
-        self._save_personas_yaml(data)
-        return mp.get(role, {})
+            return mp.get(role, {})
+        return self._modify_personas_yaml(_m)
 
     def get_role_skills(self, role: str) -> List[str]:
         """获取角色可见技能白名单（[]=全部；["*"]=全部；其他=仅列出的技能 id）"""
@@ -414,15 +441,15 @@ class Settings(BaseSettings):
 
     def set_role_skills(self, role: str, skill_ids: List[str]) -> List[str]:
         """设置角色可见技能白名单（空/含 * 表示全部）"""
-        data = self._load_personas_yaml()
-        rs = data.setdefault("role_skills", {})
         ids = list(skill_ids or [])
-        if ids:
-            rs[role] = ids
-        else:
-            rs.pop(role, None)
-        self._save_personas_yaml(data)
-        return list(rs.get(role, []))
+        def _m(data):
+            rs = data.setdefault("role_skills", {})
+            if ids:
+                rs[role] = ids
+            else:
+                rs.pop(role, None)
+            return list(rs.get(role, []))
+        return self._modify_personas_yaml(_m)
 
     def get_forced_skill(self) -> str:
         """获取全局强制技能 id（非空时所有对话必须使用该技能，不可切换/停用）"""
@@ -431,14 +458,14 @@ class Settings(BaseSettings):
 
     def set_forced_skill(self, skill_id: str) -> str:
         """设置全局强制技能 id（空串清除）。返回当前生效值。"""
-        data = self._load_personas_yaml()
         skill_id = (skill_id or "").strip()
-        if skill_id:
-            data["forced_skill"] = skill_id
-        else:
-            data.pop("forced_skill", None)
-        self._save_personas_yaml(data)
-        return data.get("forced_skill", "")
+        def _m(data):
+            if skill_id:
+                data["forced_skill"] = skill_id
+            else:
+                data.pop("forced_skill", None)
+            return data.get("forced_skill", "")
+        return self._modify_personas_yaml(_m)
 
     # ── 自定义 Agent 管理（用户在前端新增的 agent，存 personas.yaml）──
 
@@ -458,24 +485,30 @@ class Settings(BaseSettings):
 
     def set_custom_agent(self, role: str, agent_data: dict) -> dict:
         """新增或更新自定义 agent"""
-        data = self._load_personas_yaml()
-        custom = data.setdefault("custom_agents", {})
         agent_data["role"] = role
-        custom[role] = agent_data
-        self._save_personas_yaml(data)
+        def _m(data):
+            custom = data.setdefault("custom_agents", {})
+            custom[role] = agent_data
+            return custom[role]
+        result = self._modify_personas_yaml(_m)
         self._invalidate_identity_cache()
-        return custom[role]
+        return result
 
     def delete_custom_agent(self, role: str) -> bool:
-        """删除自定义 agent（内置 agent 不可删）"""
-        data = self._load_personas_yaml()
-        custom = data.get("custom_agents", {})
-        if role in custom:
+        """删除自定义 agent（内置 agent 不可删），同时清理该角色的 persona/override/tools/params"""
+        def _m(data):
+            custom = data.get("custom_agents", {})
+            if role not in custom:
+                return False
             del custom[role]
-            self._save_personas_yaml(data)
-            self._invalidate_identity_cache()
+            for section, key in [("personas", role), ("system_overrides", role)]:
+                data.get(section, {}).pop(key, None)
+            for section in ("role_tools", "model_params", "role_skills"):
+                data.get(section, {}).pop(role, None)
             return True
-        return False
+        result = self._modify_personas_yaml(_m)
+        self._invalidate_identity_cache()
+        return result
 
     @staticmethod
     def _invalidate_identity_cache():
@@ -488,25 +521,39 @@ class Settings(BaseSettings):
 
     def set_agent_active(self, role: str, active: bool) -> None:
         """设置 agent 启用/禁用状态"""
-        data = self._load_personas_yaml()
-        active_map = data.setdefault("agent_active", {})
-        active_map[role] = active
-        self._save_personas_yaml(data)
+        def _m(data):
+            active_map = data.setdefault("agent_active", {})
+            active_map[role] = active
+        self._modify_personas_yaml(_m)
         self._invalidate_identity_cache()
 
     def deactivate_same_tier(self, role: str, tier: str, builtin_roles: dict) -> None:
         """同层只保留一个激活：停用同层其他 agent（总指挥层专用）"""
-        data = self._load_personas_yaml()
-        active_map = data.setdefault("agent_active", {})
-        # 内置 agent
-        for key, info in builtin_roles.items():
-            if key != role and info.get("tier") == tier:
-                active_map[key] = False
-        # 自定义 agent
-        for ca in self.get_custom_agents():
-            if ca.get("role") != role and ca.get("tier") == tier:
-                active_map[ca["role"]] = False
-        self._save_personas_yaml(data)
+        def _m(data):
+            active_map = data.setdefault("agent_active", {})
+            for key, info in builtin_roles.items():
+                if key != role and info.get("tier") == tier:
+                    active_map[key] = False
+            # 自定义 agent
+            for ca in data.get("custom_agents", {}).values():
+                if isinstance(ca, dict) and ca.get("role") != role and ca.get("tier") == tier:
+                    active_map[ca["role"]] = False
+        self._modify_personas_yaml(_m)
+        self._invalidate_identity_cache()
+
+    def deactivate_and_set_active(self, role: str, tier: str, builtin_roles: dict, active: bool) -> None:
+        """原子操作：停用同层其他 + 设置当前 agent 启用状态"""
+        def _m(data):
+            active_map = data.setdefault("agent_active", {})
+            if active and tier == "large":
+                for key, info in builtin_roles.items():
+                    if key != role and info.get("tier") == tier:
+                        active_map[key] = False
+                for ca in data.get("custom_agents", {}).values():
+                    if isinstance(ca, dict) and ca.get("role") != role and ca.get("tier") == tier:
+                        active_map[ca["role"]] = False
+            active_map[role] = active
+        self._modify_personas_yaml(_m)
         self._invalidate_identity_cache()
 
     def get_agent_active(self, role: str) -> bool:
@@ -534,37 +581,37 @@ class Settings(BaseSettings):
 
     def save_persona_preset(self, preset_id: str, name: str, personas: dict) -> dict:
         """保存人设预设（覆盖同 id）"""
-        data = self._load_personas_yaml()
-        presets = data.setdefault("persona_presets", {})
         preset_data = {"id": preset_id, "name": name, "personas": personas}
-        presets[preset_id] = preset_data
-        self._save_personas_yaml(data)
-        return preset_data
+        def _m(data):
+            presets = data.setdefault("persona_presets", {})
+            presets[preset_id] = preset_data
+            return preset_data
+        return self._modify_personas_yaml(_m)
 
     def delete_persona_preset(self, preset_id: str) -> bool:
         """删除人设预设"""
-        data = self._load_personas_yaml()
-        presets = data.get("persona_presets", {})
-        if preset_id in presets:
-            del presets[preset_id]
-            self._save_personas_yaml(data)
-            return True
-        return False
+        def _m(data):
+            presets = data.get("persona_presets", {})
+            if preset_id in presets:
+                del presets[preset_id]
+                return True
+            return False
+        return self._modify_personas_yaml(_m)
 
     def apply_persona_preset(self, preset_id: str) -> bool:
         """应用人设预设（将预设中的所有人设写入 personas）"""
-        preset = self.get_persona_preset(preset_id)
-        if not preset:
-            return False
-        data = self._load_personas_yaml()
-        personas = data.setdefault("personas", {})
-        for role, prompt in (preset.get("personas") or {}).items():
-            if prompt:
-                personas[role] = prompt
-            else:
-                personas.pop(role, None)
-        self._save_personas_yaml(data)
-        return True
+        def _m(data):
+            preset = (data.get("persona_presets", {}) or {}).get(preset_id)
+            if not isinstance(preset, dict):
+                return False
+            personas = data.setdefault("personas", {})
+            for role, prompt in (preset.get("personas") or {}).items():
+                if prompt:
+                    personas[role] = prompt
+                else:
+                    personas.pop(role, None)
+            return True
+        return self._modify_personas_yaml(_m)
 
 
     @property
@@ -586,22 +633,25 @@ class Settings(BaseSettings):
                 time.sleep(0.05)
         return {}
 
-    def _save_personas_yaml(self, data: dict) -> None:
-        """写入 ~/.cortex/personas.yaml（原子写，防读端读到半写）"""
+    def _modify_personas_yaml(self, mutator) -> dict:
+        """原子 read-modify-write: 锁覆盖整个周期，防止并发覆盖"""
+        with _PERSONAS_YAML_LOCK:
+            data = self._load_personas_yaml()
+            result = mutator(data)
+            self._save_personas_yaml(data)
+            return result
+
+    def _save_personas_yaml(self, data: dict) -> bool:
+        """写入 ~/.cortex/personas.yaml（原子写，调用方需持有 _PERSONAS_YAML_LOCK）"""
         import yaml
         import os
-        import sys
-        try:
-            path = self._personas_yaml_path
-            path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = path.with_suffix(".tmp")
-            tmp.write_text(
-                yaml.safe_dump(data, allow_unicode=True, sort_keys=False),
-                encoding="utf-8",
-            )
-            os.replace(tmp, path)
-        except Exception as e:
-            print(f"[WARNING] 人设 yaml 保存失败: {e}", file=sys.stderr)
+        path = self._personas_yaml_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        content = yaml.safe_dump(data, allow_unicode=True, sort_keys=False)
+        tmp.write_text(content, encoding="utf-8")
+        os.replace(tmp, path)
+        return True
 
     @property
     def effective_vision_api_url(self) -> str:
@@ -750,8 +800,9 @@ class Settings(BaseSettings):
     PERCEPTION_VOICE_API_MODEL: str = ""               # 云端 STT 模型名（留空用 whisper-1）
 
     # ── 思考辅助（可自由开关）────────────────────────────────
-    MENTAL_ACTIVITY_ENABLED: bool = True                 # 心理活动：良知系统内心独白（生成+推送）
+    MENTAL_ACTIVITY_ENABLED: bool = False                # 心理活动：良知系统内心独白（生成+推送）
     MEMORY_SUMMARY_ENABLED: bool = True                  # 记忆总结：会话结束后自动提炼为事件记忆（EventReducer）
+    SKILLS_ENABLED: bool = True                          # 技能系统总开关（关闭后模型不加载/不激活任何技能）
 
     # ── 语音输出（TTS） ──────────────────────────────────────
     OUTPUT_TTS_ENABLED: bool = True                      # TTS 输出总开关（文本转语音）
@@ -911,24 +962,26 @@ class Settings(BaseSettings):
             if keys is None:
                 keys = ["PERSONA_PROMPTS", "SYSTEM_PROMPT_OVERRIDES"]
             path = self._USER_CONFIG_PATH
-            data = {}
-            if path.exists():
-                try:
-                    data = json.loads(path.read_text(encoding="utf-8"))
-                except Exception:
-                    data = {}
-            for key in keys:
-                if hasattr(type(self), "model_fields") and key in type(self).model_fields:
-                    data[key] = getattr(self, key)
-            # 原子写：先写临时文件再替换，防读端读到半写
-            tmp = path.with_suffix(".tmp")
-            tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-            import os as _os
-            _os.replace(tmp, path)
+            with _SETTINGS_JSON_LOCK:
+                data = {}
+                if path.exists():
+                    try:
+                        data = json.loads(path.read_text(encoding="utf-8"))
+                    except Exception:
+                        data = {}
+                for key in keys:
+                    if hasattr(type(self), "model_fields") and key in type(self).model_fields:
+                        data[key] = getattr(self, key)
+                # 原子写：先写临时文件再替换，防读端读到半写
+                tmp = path.with_suffix(".tmp")
+                tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+                import os as _os
+                _os.replace(tmp, path)
             return True
         except Exception as e:
-            print(f"[WARNING] 用户配置保存失败: {e}", file=sys.stderr)
-            return False
+            import sys
+            print(f"[ERROR] 用户配置保存失败: {e}", file=sys.stderr)
+            raise
 
     # ------------------------------------------------------------------
     # 记忆库管理（多记忆库切换 + 命名）
@@ -980,17 +1033,12 @@ class Settings(BaseSettings):
     def _save_memory_libs(self, data: dict) -> None:
         import json
         import os
-        import sys
-        try:
-            path = self._memory_libs_path
-            path.parent.mkdir(parents=True, exist_ok=True)
-            # 原子写：先写临时文件再 os.replace，读端永远不会看到半写内容
-            tmp = path.with_suffix(".tmp")
-            tmp.write_text(
-                json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-            os.replace(tmp, path)
-        except Exception as e:
-            print(f"[WARNING] 记忆库配置保存失败: {e}", file=sys.stderr)
+        path = self._memory_libs_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(
+            json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, path)
 
     def _reset_memory_singletons(self) -> None:
         """切换记忆库后重置事件记忆相关单例，使其按新路径重新加载"""

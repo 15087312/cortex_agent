@@ -167,7 +167,7 @@ class SessionRepository:
     # ── 消息 ──
 
     def save_message(self, session_id: str, role: str, content: str,
-                     round_num: int = 0, tier: str = "") -> str:
+                     round_num: int = 0, tier: str = "", metadata: dict = None) -> str:
         """保存单条消息，返回消息 ID"""
         global _boot_has_spoken
         if role == "user":
@@ -175,6 +175,7 @@ class SessionRepository:
                 _boot_has_spoken = True
         if not content or not content.strip():
             return ""
+        import json as _json
         with self._session() as s:
             msg = ChatMessage(
                 session_id=session_id,
@@ -182,6 +183,7 @@ class SessionRepository:
                 content=content[:50000],  # 截断过长内容
                 round_num=round_num,
                 tier=tier,
+                metadata_json=_json.dumps(metadata or {}, ensure_ascii=False),
             )
             s.add(msg)
             s.flush()  # 立即生成 msg.id
@@ -237,6 +239,7 @@ class SessionRepository:
 
     def get_messages(self, session_id: str, limit: int = 100) -> List[Dict[str, Any]]:
         """获取会话消息（按时间正序）"""
+        import json as _json
         with self._session() as s:
             rows = s.query(ChatMessage).filter_by(
                 session_id=session_id
@@ -248,10 +251,12 @@ class SessionRepository:
                 "created_at": r.created_at.isoformat() if r.created_at else "",
                 "round_num": r.round_num,
                 "tier": r.tier,
+                "metadata": _json.loads(r.metadata_json or "{}") if r.metadata_json else {},
             } for r in rows]
 
     def get_recent_messages(self, session_id: str, limit: int = 20) -> List[Dict[str, Any]]:
         """获取最近 N 条消息（用于重连时恢复上下文）"""
+        import json as _json
         with self._session() as s:
             rows = s.query(ChatMessage).filter_by(
                 session_id=session_id
@@ -264,6 +269,7 @@ class SessionRepository:
                 "created_at": r.created_at.isoformat() if r.created_at else "",
                 "round_num": r.round_num,
                 "tier": r.tier,
+                "metadata": _json.loads(r.metadata_json or "{}") if r.metadata_json else {},
             } for r in rows]
 
     def get_session_summary(self, session_id: str) -> Optional[Dict[str, Any]]:

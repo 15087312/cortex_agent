@@ -60,7 +60,7 @@ async function loadData() {
       drafts.value[a.role] = a.custom_persona || ''
       overrides.value[a.role] = a.system_override || ''
       toolsCfg.value[a.role] = { whitelist: [...(a.role_tools?.whitelist || [])], blacklist: [...(a.role_tools?.blacklist || [])] }
-      modelParams.value[a.role] = { temperature: a.model_params?.temperature ?? '', max_tokens: a.model_params?.max_tokens ?? '' }
+      modelParams.value[a.role] = { temperature: a.model_params?.temperature ?? '', max_tokens: a.model_params?.max_tokens ?? '', reasoning_effort: a.model_params?.reasoning_effort ?? '' }
     })
   } catch {} finally { loading.value = false }
 }
@@ -116,6 +116,7 @@ async function saveModelParams(agent) {
   const body = {}
   if (p.temperature !== '') body.temperature = Number(p.temperature)
   if (p.max_tokens !== '') body.max_tokens = Number(p.max_tokens)
+  if (p.reasoning_effort !== '') body.reasoning_effort = p.reasoning_effort
   try {
     const r = await fetch('/api/config/model-params/' + encodeURIComponent(agent.role), {
       method: 'PUT',
@@ -518,6 +519,14 @@ onMounted(() => { loadData(); loadPresets() })
                     </label>
                     <label class="text-xs">最大 tokens
                       <input v-model="modelParams[agent.role].max_tokens" type="number" step="256" min="0" class="input w-110 ml-6" />
+                    </label>
+                    <label class="text-xs">推理强度 reasoning_effort
+                      <select v-model="modelParams[agent.role].reasoning_effort" class="input w-90 ml-6">
+                        <option value="">默认</option>
+                        <option value="low">low</option>
+                        <option value="medium">medium</option>
+                        <option value="high">high</option>
+                      </select>
                     </label>
                   </div>
 

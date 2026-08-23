@@ -264,7 +264,10 @@ async def set_forced_skill(body: dict = None):
             return {"success": False, "error": {"code": "SKILL_NOT_FOUND", "message": f"技能不存在: {skill_id}"}}
         if not s.enabled:
             return {"success": False, "error": {"code": "SKILL_DISABLED", "message": f"技能已禁用: {skill_id}"}}
-    settings.set_forced_skill(skill_id)
+    try:
+        settings.set_forced_skill(skill_id)
+    except Exception as e:
+        return {"success": False, "error": {"code": "SAVE_FAILED", "message": f"保存失败: {e}"}}
     skill = None
     if skill_id:
         from modules.thinking.skills import skill_manager
@@ -369,7 +372,10 @@ async def update_role_skills(role: str, body: dict = None):
     ids = body.get("skills") or []
     if not isinstance(ids, list):
         return {"success": False, "error": {"code": "VALIDATION_ERROR", "message": "skills 需为数组"}}
-    settings.set_role_skills(role, ids)
+    try:
+        settings.set_role_skills(role, ids)
+    except Exception as e:
+        return {"success": False, "error": {"code": "SAVE_FAILED", "message": f"保存失败: {e}"}}
     return {"success": True, "data": {"role": role, "skills": settings.get_role_skills(role)}}
 
 

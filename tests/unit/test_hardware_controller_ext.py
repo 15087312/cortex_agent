@@ -172,7 +172,9 @@ def _serial_ctrl(serial_mock=None, initialized=True):
 
 def test_serial_init_success(monkeypatch):
     fake = MagicMock()
-    monkeypatch.setattr("serial.Serial", lambda port, baud, timeout: fake)
+    fake_serial = types.ModuleType("serial")
+    fake_serial.Serial = lambda port, baud, timeout: fake
+    monkeypatch.setitem(sys.modules, "serial", fake_serial)
     c = SerialController(port="COM1", baudrate=9600)
     assert c._initialized is True
     assert c._serial is fake
@@ -190,7 +192,9 @@ def test_serial_init_importerror(monkeypatch):
 def test_serial_init_error(monkeypatch):
     def boom(*a, **k):
         raise Exception("no device")
-    monkeypatch.setattr("serial.Serial", boom)
+    fake_serial = types.ModuleType("serial")
+    fake_serial.Serial = staticmethod(boom)
+    monkeypatch.setitem(sys.modules, "serial", fake_serial)
     c = SerialController()
     assert c._initialized is False
 

@@ -143,15 +143,19 @@ class ContinuousThinker:
 
     def record_delegation(self, role: str, task: str, result: Any = None) -> None:
         import time
-        # 使用 task_id 作为 key（与 _process_delegation_response 的 delegation_id 一致）
+        # 优先使用 probe_id 作为唯一 key（每个委托的 probe_id 都不同，
+        # 即使同一轮发起多个委托也不会冲突）；task_id 是共享的 caller_task_id，
+        # 多委托并行时会重复导致覆盖。
+        probe_id = ""
         task_id = ""
         if isinstance(result, dict):
+            probe_id = result.get("probe_id", "") or result.get("metadata", {}).get("probe_id", "")
             task_id = result.get("task_id", "") or result.get("metadata", {}).get("task_id", "")
         elif hasattr(result, "metadata") and isinstance(result.metadata, dict):  # type: ignore[union-attr]
+            probe_id = result.metadata.get("probe_id", "")  # type: ignore[union-attr]
             task_id = result.metadata.get("task_id", "")  # type: ignore[union-attr]
-        if not task_id:
-            # 兜底：用签名作为 key
-            task_id = f"{role}::{task[:60]}"
+        # 优先级：probe_id > task_id > 签名兜底
+        delegation_key = probe_id or task_id or f"{role}::{task[:60]}"
         # 判断委托是否真正成功（result 对象可能有 success 字段）
         is_success = True
         error_msg = ""
@@ -162,10 +166,12 @@ class ContinuousThinker:
             is_success = bool(result.success)  # type: ignore[union-attr]
             error_msg = getattr(result, "error", "")
         if is_success:
-            if task_id not in self._pending_delegations:
-                self._pending_delegations[task_id] = {"round": len(self.history_thoughts) + 1, "role": role, "task": task[:120], "status": "pending", "timestamp": time.time()}
+            if delegation_key not in self._pending_delegations:
+                self._pending_delegations[delegation_key] = {"round": len(self.history_thoughts) + 1, "role": role, "task": task[:120], "status": "pending", "timestamp": time.time()}
                 self._delegation_results.append({"role": role, "task": task[:120], "success": True})
-                self.logger.info(f"[直通委托] 记录: role={role}, task_id={task_id}")
+                self.logger.info(f"[直通委托] 记录: role={role}, key={delegation_key}")
+            else:
+                self.logger.warning(f"[直通委托] 重复委托 key={delegation_key}，跳过重复记录")
         else:
             self._delegation_results.append({"role": role, "task": task[:120], "success": False, "error": error_msg or "委托失败：无法找到匹配的专家角色"})
             self.logger.warning(f"[直通委托] 失败: role={role}, task={task[:60]}, error={error_msg}")
@@ -692,32 +698,39 @@ class ContinuousThinker:
             pool.add(ContextFragment("delegation", dlg_status, ("large", "supervisor"), "委托链（协作过程）", 60))
 
         # 技能建议（强制技能优先：用户设置了 forced_skill 时直接提示已强制激活）
+        # 技能总开关关闭时跳过；system_override 生效时跳过（用户自定义完整提示词时不应注入额外内容）
         try:
-            from modules.thinking.skills import skill_manager
-            runner = getattr(self, '_runner_ref', None)
-            if not (runner and getattr(runner, '_active_skill', None)):
-                forced = ""
-                try:
-                    from config.settings import settings as _cfg
-                    forced = _cfg.get_forced_skill()
-                except Exception:
+            from config.settings import settings as _sk_cfg
+            if not getattr(_sk_cfg, "SKILLS_ENABLED", True):
+                pass  # 技能系统关闭，不注入技能建议
+            elif _sk_cfg.get_system_override(role):
+                pass  # 完整系统提示词覆盖生效，不注入技能建议到 user 消息
+            else:
+                from modules.thinking.skills import skill_manager
+                runner = getattr(self, '_runner_ref', None)
+                if not (runner and getattr(runner, '_active_skill', None)):
                     forced = ""
-                suggested = None
-                if forced:
-                    _fs = skill_manager.get_skill(forced)
-                    # 强制技能已禁用时回退自动匹配（与注入/request_skill 权限一致）
-                    suggested = _fs if (_fs and _fs.enabled) else None
-                if not suggested and not forced:
-                    suggested = skill_manager.match_skill(initial_question)
-                if suggested:
+                    try:
+                        from config.settings import settings as _cfg
+                        forced = _cfg.get_forced_skill()
+                    except Exception:
+                        forced = ""
+                    suggested = None
                     if forced:
-                        pool.add(ContextFragment("skill_suggestion",
-                            f"【强制技能】系统已强制使用技能「{suggested.name}」，无需手动激活。",
-                            ("large",), "技能建议", 70))
-                    else:
-                        pool.add(ContextFragment("skill_suggestion",
-                            f"【建议技能】当前场景推荐激活「{suggested.name}」，可用 request_skill(skill_id='{suggested.id}') 激活",
-                            ("large",), "技能建议", 70))
+                        _fs = skill_manager.get_skill(forced)
+                        # 强制技能已禁用时回退自动匹配（与注入/request_skill 权限一致）
+                        suggested = _fs if (_fs and _fs.enabled) else None
+                    if not suggested and not forced:
+                        suggested = skill_manager.match_skill(initial_question)
+                    if suggested:
+                        if forced:
+                            pool.add(ContextFragment("skill_suggestion",
+                                f"【强制技能】系统已强制使用技能「{suggested.name}」，无需手动激活。",
+                                ("large",), "技能建议", 70))
+                        else:
+                            pool.add(ContextFragment("skill_suggestion",
+                                f"【建议技能】当前场景推荐激活「{suggested.name}」，可用 request_skill(skill_id='{suggested.id}') 激活",
+                                ("large",), "技能建议", 70))
         except Exception:
             pass
 
@@ -1087,6 +1100,8 @@ class ContinuousThinker:
                 self._session_id, question[:50], min_rounds_required, rounds
             )
 
+            consecutive_dup_count = 0  # 连续重复思考计数（达上限则终止）
+
             for i in range(rounds):
                 if not self._running:
                     self.logger.info("思考被中断")
@@ -1190,11 +1205,20 @@ class ContinuousThinker:
                         avg_len = (len(prev_thought) + len(current_thought)) / 2
                         dup_threshold = 0.30 if avg_len < 80 else (0.40 if avg_len < 200 else 0.50)
                         if similarity > dup_threshold:
-                            wait_seconds = max(wait_seconds, 15.0)
+                            consecutive_dup_count += 1
                             self.logger.info(
                                 f"第{round_num}轮：检测到重复思考 (sim={similarity:.2f}, 阈值={dup_threshold})，"
+                                f"连续第{consecutive_dup_count}次"
+                            )
+                            if consecutive_dup_count >= 2:
+                                self.logger.info(f"连续{consecutive_dup_count}轮重复思考，终止思考")
+                                break
+                            wait_seconds = max(wait_seconds, 15.0)
+                            self.logger.info(
                                 f"延长等待至 {wait_seconds}s 避免空转"
                             )
+                        else:
+                            consecutive_dup_count = 0  # 非重复，重置计数
 
                 # 通知 runner 更新 continue_think 循环状态（并清除本轮已完成的 React 工具循环）
                 try:

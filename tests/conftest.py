@@ -69,6 +69,70 @@ def _memory_limit():
     yield
 
 
+import threading
+
+@pytest.fixture(autouse=True)
+def _reset_feature_flags(monkeypatch):
+    """每个测试前重置本地 config 中被禁用的功能开关和自定义代理为默认值。
+
+    开发者 ~/.cortex/settings.json 可能关闭了 MENTAL_ACTIVITY_ENABLED、
+    MEMORY_SUMMARY_ENABLED 等开关，也可能注册了自定义 agent，
+    但单元测试的 mock 是按"功能开启 + 无自定义 agent"路径写的。
+    此 fixture 在每个测试前把开关恢复为 True、清空自定义 agent，
+    测试结束后还原。
+    """
+    from config.settings import settings
+    flags = [
+        "MENTAL_ACTIVITY_ENABLED",
+        "MEMORY_SUMMARY_ENABLED",
+        "SPATIAL_ENHANCEMENT_ENABLED",
+        "PERCEPTION_ENABLED",
+        "PERCEPTION_SCREEN_ENABLED",
+        "PERCEPTION_MCP_ENABLED",
+        "PERCEPTION_INTERNAL_ENABLED",
+    ]
+    # EXECUTION_MODE 不是 bool，单独处理
+    saved_exec_mode = os.environ.get("EXECUTION_MODE")
+    os.environ["EXECUTION_MODE"] = "plan"
+    saved_app_env = os.environ.pop("APP_ENV", None)
+    os.environ["APP_ENV"] = "development"
+    saved = {f: getattr(settings, f, True) for f in flags}
+    saved_env = {f: os.environ.get(f) for f in flags}
+    for f in flags:
+        setattr(settings, f, True)
+        # 同时写 os.environ，确保测试中新建 Settings() 实例也读到正确值
+        os.environ[f] = "true"
+    # 清空自定义 agent：让 get_custom_agents() 返回 []，避免影响测试
+    from unittest.mock import patch as _mock_patch
+    _patcher = _mock_patch.object(settings, '_load_personas_yaml', return_value={})
+    _patcher.start()
+    # 阻止 ~/.cortex/settings.json 覆盖测试环境变量：指向不存在的路径
+    from config.settings import Settings as _SettingsCls
+    from pathlib import Path as _Path
+    _fake_uc_path = _Path.home() / ".cortex" / "__nonexistent_for_test__"
+    monkeypatch.setattr(_SettingsCls, "_USER_CONFIG_PATH", _fake_uc_path)
+    yield
+    _patcher.stop()
+    for f, v in saved.items():
+        setattr(settings, f, v)
+    # 还原 os.environ 中的 flag 值
+    for f in flags:
+        if saved_env.get(f) is not None:
+            os.environ[f] = saved_env[f]
+        else:
+            os.environ.pop(f, None)
+    # 还原 EXECUTION_MODE
+    if saved_exec_mode is not None:
+        os.environ["EXECUTION_MODE"] = saved_exec_mode
+    else:
+        os.environ.pop("EXECUTION_MODE", None)
+    # 还原 APP_ENV
+    if saved_app_env is not None:
+        os.environ["APP_ENV"] = saved_app_env
+    else:
+        os.environ.pop("APP_ENV", None)
+
+
 @pytest.fixture(scope="session", autouse=True)
 def block_real_native_libs():
     """unit 测试不真实加载重量级原生库。

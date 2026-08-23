@@ -27,6 +27,7 @@ class OpenAIProvider(ProviderBase):
         tool_choice: Optional[Any] = None,
         stream: bool = False,
         top_p: Optional[float] = None,
+        reasoning_effort: str = "",
     ) -> Dict[str, Any]:
         payload: Dict[str, Any] = {
             "model": self.model_name,
@@ -42,6 +43,14 @@ class OpenAIProvider(ProviderBase):
             payload["tools"] = tools
         if tool_choice:
             payload["tool_choice"] = tool_choice
+        if reasoning_effort and "deepseek" in self.model_name.lower():
+            payload["reasoning_effort"] = reasoning_effort
+        # DeepSeek thinking 模式：模型名含 deepseek/DeepSeek 时显式启用推理。
+        # DeepSeek API 自 V4(0731) 起，thinking 需为 ThinkingOptions 结构体
+        #   {"type": "enabled"/"disabled"}
+        # 而非旧版裸布尔值 boolean true（否则 400: expected struct ThinkingOptions）。
+        if "deepseek" in self.model_name.lower():
+            payload["thinking"] = {"type": "enabled"}
         return payload
 
     def parse_response(self, data: Dict[str, Any]) -> Dict[str, Any]:

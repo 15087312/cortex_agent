@@ -24,9 +24,14 @@ def test_match_skill_returns_id(monkeypatch):
     fake_skill = MagicMock()
     fake_skill.id = "code_review"
     fake_skill.name = "代码审查"
-    monkeypatch.setattr("modules.thinking.skills.skill_manager.match_skill",
-                        lambda q, role="": fake_skill)
+    captured = {}
+    def _match(q, role=""):
+        captured["role"] = role
+        return fake_skill
+    monkeypatch.setattr("modules.thinking.skills.skill_manager.match_skill", _match)
     assert orch._match_skill("帮我审查代码") == "code_review"
+    # 关键回归：role 必须跟随当前激活的总指挥，而非硬编码 orchestrator
+    assert captured["role"] == mmo.resolve_active_large_role()
 
 
 def test_match_skill_no_match(monkeypatch):

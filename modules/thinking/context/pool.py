@@ -88,6 +88,7 @@ class TurnContext:
         }
 
     def add(self, fragment: ContextFragment) -> None:
+        """添加 context fragment。同 source 的后续 fragment 会覆盖先前的（设计约定：每个 source 唯一）"""
         if not fragment.content:
             return
         h = hashlib.md5(fragment.content.encode()).hexdigest()[:16]

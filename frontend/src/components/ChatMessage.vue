@@ -3,6 +3,7 @@ import { computed, ref, watch, onBeforeUnmount } from 'vue'
 import { parseMarkdownSegments } from '@/utils/markdown.js'
 import CodeBlock from '@/components/CodeBlock.vue'
 import Icon from '@/components/Icon.vue'
+import ProcessPanel from '@/components/ProcessPanel.vue'
 
 const props = defineProps({
   message: { type: Object, required: true },
@@ -157,6 +158,11 @@ function submitIntent() {
           <div v-if="isThinkingLong(message)" class="thinking-toggle">{{ message._expanded ? '收起 ▲' : '展开 ▼' }}</div>
         </div>
       </div>
+    </template>
+
+    <!-- 过程流面板（持久化的连续思考 + 调度语言 + 模型状态快照） -->
+    <template v-else-if="kind === 'process'">
+      <ProcessPanel :content="message.content || ''" :runners="message.runners || null" :open="false" />
     </template>
 
     <!-- 心理活动 -->

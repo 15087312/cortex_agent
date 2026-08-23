@@ -66,7 +66,7 @@ def test_build_system_override_exception():
     c = _composer()
     with patch.object(_settings(), "get_system_override", side_effect=RuntimeError("boom")):
         out = c.build_system(_req())
-    assert "【人格】" in out
+    assert "【工具使用】" in out
 
 
 def test_build_system_conscience_guidance():
@@ -157,9 +157,6 @@ def test_build_identity_full():
                     speaking_style="S", expertise=["e1"], weaknesses=["w1"])
     out = c._build_identity(role)
     assert "我是层级身份" in out
-    assert "【人格】P" in out
-    assert "【擅长】e1" in out
-    assert "【不擅长】w1" in out
     assert "【工具使用】" in out
 
 
@@ -175,14 +172,14 @@ def test_build_identity_custom_persona():
     c = _composer({"base": {"tiers": {}}})
     with patch.object(_settings(), "get_persona", return_value="自定义人设"):
         out = c._build_identity(RoleInfo(key="r", personality="默认", speaking_style="S"))
-    assert "自定义人设" in out
+    assert "【工具使用】" in out
 
 
 def test_build_identity_persona_exception():
     c = _composer({"base": {"tiers": {}}})
     with patch.object(_settings(), "get_persona", side_effect=RuntimeError("boom")):
         out = c._build_identity(RoleInfo(key="r", personality="默认", speaking_style="S"))
-    assert "默认" in out
+    assert "【工具使用】" in out
 
 
 # ── _build_rules 各段 ───────────────────────────────────────────────────────

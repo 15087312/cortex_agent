@@ -59,19 +59,31 @@ export const useChatStore = defineStore('chat', () => {
   const processingSid = computed(() => processing.value ? session.sessionId : null)
   // 思考循环在线模型状态（由 thinking_progress 解析）：[{model_id, tier, name, status, status_detail, round, max_turns, supervisor, last_thought}]
   const runners = ref([])
+  // 过程流：本轮连续思考 + 调度语言（无身份标签），持久化到 DB，会话恢复后重建
+  const processFlow = ref([])
+  // 过程流面板的模型状态快照（显示"当时"情况，非实时）
+  const processSnapshot = ref(null)
   // 运行轨迹：工具调用/委托等中间步骤（借鉴 dsh，从对话流分离）
   const traces = ref([])
-  // 主管/专家气泡：按 tier 关联其思考过程（_thinking）与工具调用（_tools）
+  // 主管/专家气泡：按 "tier:identity" 关联其思考过程（_thinking）与工具调用（_tools）
+  // 仅按 tier 会导致同 tier 不同身份（identity_name）互相覆盖——后出现者替换前者
   const _expertBubbles = new Map()
   const _pendingByTier = {}
   const _pendingTools = {}
+  const _thinkingSeen = new Set()
 
   function _tierOf(d) {
     return String(d.data?.tier || d.data?.dialog_tier || d.tier || '').toLowerCase()
   }
 
+  // 气泡/缓冲的复合 key：同 tier 内不同身份互不干扰
+  function _bubbleKey(tier, ident) {
+    return ident ? `${tier}:${ident}` : tier
+  }
+
   function _clearExpertState() {
     _expertBubbles.clear()
+    _thinkingSeen.clear()
     for (const k of Object.keys(_pendingByTier)) _pendingByTier[k] = ''
     for (const k of Object.keys(_pendingTools)) _pendingTools[k] = []
   }
@@ -83,14 +95,15 @@ export const useChatStore = defineStore('chat', () => {
     const text = _stripReplyText(_cleanThinking(d.content))
     if (!text) return
     const ident = d.data?.identity_name || ''
+    const key = _bubbleKey(tier, ident)
     const line = (ident ? `【${ident}】` : '') + text
-    const bubble = _expertBubbles.get(tier)
+    const bubble = _expertBubbles.get(key)
     if (bubble) {
       const cur = bubble._thinking || ''
       if (!cur.includes(line)) bubble._thinking = cur ? cur + '\n\n' + line : line
     } else {
-      const cur = _pendingByTier[tier] || ''
-      if (!cur.includes(line)) _pendingByTier[tier] = cur ? cur + '\n\n' + line : line
+      const cur = _pendingByTier[key] || ''
+      if (!cur.includes(line)) _pendingByTier[key] = cur ? cur + '\n\n' + line : line
     }
   }
 
@@ -100,37 +113,28 @@ export const useChatStore = defineStore('chat', () => {
     if (tier !== 'supervisor' && tier !== 'expert') return
     const text = (traceText || _stripReplyText(_cleanThinking(d.content))).slice(0, 200)
     if (text) traces.value.push({ text, time: Date.now() })
-    const bubble = _expertBubbles.get(tier)
+    const ident = d.data?.identity_name || ''
+    const key = _bubbleKey(tier, ident)
+    const bubble = _expertBubbles.get(key)
     if (bubble) {
       const cur = bubble._tools || []
       if (!cur.includes(text)) bubble._tools = [...cur, text]
     } else {
-      const cur = _pendingTools[tier] || []
-      if (!cur.includes(text)) _pendingTools[tier] = [...cur, text]
+      const cur = _pendingTools[key] || []
+      if (!cur.includes(text)) _pendingTools[key] = [...cur, text]
     }
   }
 
-  // 主管/专家的实际输出 → 创建/复用独立气泡（携带该身份的思考过程与工具调用）
-  // 同 tier 复用已有气泡并更新内容，与 loadHistory 恢复的"聚合为一条"行为一致
+  // 主管/专家的实际输出 → 每次创建新气泡（同身份多次发言不合并）
+  // 思考/工具缓冲按身份累积，在每次输出时消费（增量：仅包含自上次输出以来的新内容）
   function addExpertMessage(d) {
     const tier = _tierOf(d)
     if (tier !== 'supervisor' && tier !== 'expert') return
     const ident = d.data?.identity_name || ''
+    const key = _bubbleKey(tier, ident)
     const name = ident || (tier === 'supervisor' ? '主管' : '专家')
     const content = d.content || ''
-    const existing = _expertBubbles.get(tier)
-    if (existing) {
-      // 复用：更新输出内容（保留旧输出供参考），合并新思考/工具
-      const mergedThinking = [existing._thinking || '', _pendingByTier[tier] || ''].filter(Boolean).join('\n\n')
-      const mergedTools = [...(existing._tools || []), ...(_pendingTools[tier] || [])]
-      existing.content = content || existing.content
-      if (mergedThinking) existing._thinking = mergedThinking
-      if (mergedTools.length) existing._tools = mergedTools
-      existing.name = name
-      _pendingByTier[tier] = ''
-      _pendingTools[tier] = []
-      return
-    }
+    // 每次输出创建新气泡，思考/工具从缓冲消费（不复用已有气泡）
     const msg = {
       role: tier,
       content,
@@ -138,14 +142,14 @@ export const useChatStore = defineStore('chat', () => {
       name,
       avatarCls: tier === 'supervisor' ? 'avatar-supervisor' : 'avatar-expert',
       id: '',
-      _thinking: _pendingByTier[tier] || '',
-      _tools: _pendingTools[tier] || [],
+      _thinking: _pendingByTier[key] || '',
+      _tools: _pendingTools[key] || [],
       _expanded: false,
     }
-    _pendingByTier[tier] = ''
-    _pendingTools[tier] = []
+    _pendingByTier[key] = ''
+    _pendingTools[key] = []
     messages.value.push({ _id: uid(), ...msg })
-    _expertBubbles.set(tier, messages.value[messages.value.length - 1])
+    _expertBubbles.set(key, messages.value[messages.value.length - 1])
   }
 
   async function init() {
@@ -163,6 +167,8 @@ export const useChatStore = defineStore('chat', () => {
     _connectedSids.value = new Set()
     runners.value = []
     traces.value = []
+    processFlow.value = []
+    processSnapshot.value = null
     _clearExpertState()
     ws.reset()
   }
@@ -194,8 +200,12 @@ export const useChatStore = defineStore('chat', () => {
     // ── 统一重放：持久化消息用同一 classifyThinking 分类（保证与运行时规则唯一） ──
     messages.value = []
     traces.value = []
-    // 恢复专用的 expert 聚合（与运行时 addExpertMessage 复用行为对齐）
-    const expertAgg = {}  // tier -> { thinking: [], tools: [], contents: [] }
+    processFlow.value = []
+    processSnapshot.value = null
+    // 若会话中已有 role=process 聚合记录（新格式），则跳过逐条 thought 折叠（避免重复）
+    const hasProcessAgg = msgs.some(m => m.role === 'process')
+    // 恢复专用的 expert 聚合：每次输出独立气泡，思考增量计算（非累积）
+    const expertAgg = {}  // "tier:identity" -> { lastThinking: '', tools: [], contents: [], name: '' }
     let pendingLargeThinking = ''
     for (const d of msgs) {
       const tier = d.tier || ''
@@ -210,23 +220,50 @@ export const useChatStore = defineStore('chat', () => {
         })
         continue
       }
+      // 过程流快照（role=process，后端持久化的连续思考+调度+模型状态） → 渲染为过程面板消息
+      if (d.role === 'process') {
+        messages.value.push({
+          _id: uid(),
+          kind: 'process',
+          role: 'system',
+          content: d.content || '',
+          runners: d.metadata?.runners || null,
+          _processOpen: false,
+          id: d.id || '',
+        })
+        continue
+      }
       // 思考/对话步骤 → 用统一 classifyThinking 分类，按类别累积
       if (d.role === 'thought') {
         const evt = { content: d.content || '', data: { tier, dialog_tier: tier } }
         const c = classifyThinking(evt)
         if (c.kind === 'skip' || c.kind === 'approval' || c.kind === 'intent') continue
+        const ident = d.identity_name || d.metadata?.identity_name || ''
+        const key = ident ? `${c.tier}:${ident}` : c.tier
         if (c.kind === 'tool_trace') {
+          if (hasProcessAgg) {
+            // 过程流聚合已包含工具/委托步骤 → 不再重复进轨迹或气泡
+            continue
+          }
           if (c.tier === 'supervisor' || c.tier === 'expert') {
-            const agg = (expertAgg[c.tier] = expertAgg[c.tier] || { thinking: [], tools: [], contents: [] })
+            const agg = (expertAgg[key] = expertAgg[key] || { lastThinking: '', tools: [], contents: [], name: ident })
             if (!agg.tools.includes(c.text)) agg.tools.push(c.text)
           } else {
             traces.value.push({ text: c.text, time: Date.now() })
           }
           continue
         }
+        if (c.kind === 'thinking' && hasProcessAgg) {
+          continue
+        }
         if (c.kind === 'expert') {
-          const agg = (expertAgg[c.tier] = expertAgg[c.tier] || { thinking: [], tools: [], contents: [] })
-          if (c.text) { agg.thinking.push(c.text); agg.contents.push(c.text) }
+          const agg = (expertAgg[key] = expertAgg[key] || { lastThinking: '', tools: [], contents: [], name: ident })
+          // 增量思考：当前累积减去上次已显示的 = 本次新增
+          const fullThinking = c.text || ''
+          const prevLen = agg.lastThinking.length
+          const incrThinking = fullThinking.slice(prevLen).trim()
+          agg.contents.push(incrThinking || fullThinking)
+          agg.lastThinking = fullThinking
           continue
         }
         if (c.kind === 'thinking') {
@@ -256,17 +293,18 @@ export const useChatStore = defineStore('chat', () => {
       }
       messages.value.push(msg)
     }
-    // 追加聚合的 supervisor/expert 专家气泡（与运行时 addExpertMessage 复用行为一致）
-    for (const [tier, agg] of Object.entries(expertAgg)) {
-      if (!agg.thinking.length && !agg.tools.length) continue
+    // 追加聚合的 supervisor/expert 专家气泡（仅真正有最终输出内容时；纯思考/工具进过程流）
+    for (const [key, agg] of Object.entries(expertAgg)) {
+      if (!agg.contents.length) continue
+      const tier = key.includes(':') ? key.split(':')[0] : key
       messages.value.push({
         _id: uid(),
         role: tier,
         kind: 'expert',
-        name: _nameFor(tier),
+        name: agg.name || _nameFor(tier),
         avatarCls: _avatarCls(tier),
         content: agg.contents[agg.contents.length - 1] || '',
-        _thinking: agg.thinking.join('\n\n'),
+        _thinking: agg.lastThinking,
         _tools: agg.tools,
         _expanded: false,
       })
@@ -304,30 +342,55 @@ export const useChatStore = defineStore('chat', () => {
       .replace(/【思考控制】[；;，,\s]*$/i, '')
       .trim()
   }
+
+  function _cleanThinkingText(d) {
+    // 去掉身份标签（【总指挥】【主管】【专家】等）与 "思考："/"【思考】" 前缀，还原纯思考内容。
+    // 保留结构性前缀（【委托】【创建主管】等）以继续匹配工具/委托分类。
+    return _stripReplyText(_cleanThinking(String(d?.content || '')))
+      .replace(/^【思考】\s*/, '')
+      .replace(/^【[^】]*(总指挥|主管|专家|orchestrator|supervisor|expert)[^】]*】\s*/i, '')
+      .replace(/^思考[：:]\s*/, '')
+      .trim()
+  }
+
   function addThinkingStep(d) {
-    const text = _stripReplyText(_cleanThinking(d.content))
-    if (!text) return
-    // 工具调用/委托等中间步骤 → 运行轨迹（不混入对话思考区）
-    if (_isToolTrace(text)) {
-      traces.value.push({ text: text.slice(0, 200), time: Date.now() })
-      // 主管/专家的工具调用 → 额外挂到该身份气泡
-      const tier = _tierOf(d)
-      if (tier === 'supervisor' || tier === 'expert') addExpertTool(d, text)
+    const treeRaw = String(d?.content || '')
+    const isTrace = _isToolTrace(treeRaw)
+    // 工具/委托等中间步骤 → 轨迹 + 过程流
+    if (isTrace) {
+      const text = treeRaw.slice(0, 200)
+      traces.value.push({ text, time: Date.now() })
+      addProcessStep(text)
       return
     }
-    // 主管/专家的推理 → 挂到该身份气泡（不混入总思考区）
+    const text = _cleanThinkingText(d)
+    if (!text) return
+    // DeepSeek 自带的 reason 字段（data.source==='reasoning'）→ 折叠进最终回复的思考区（保留，仅去标签）
+    if (String(d?.data?.source || '').toLowerCase() === 'reasoning') {
+      if (_thinkingSeen.has(text)) return
+      _thinkingSeen.add(text)
+      pendingThinking.value += (pendingThinking.value ? '\n\n' : '') + text
+      return
+    }
+    // 主管/专家的推理 → 过程流（不混入总思考区）
     const tier = _tierOf(d)
     if (tier === 'supervisor' || tier === 'expert') {
-      addExpertThinking(d)
+      addProcessStep(text)
       return
     }
-    // 带身份标注（deepseek 推理来自哪个模型）
-    const ident = d.data?.identity_name || d.data?.tier || ''
-    const line = (ident ? `【${ident}】` : '') + text
-    // 去重：流式增量可能重复推送相同片段
-    if (pendingThinking.value.includes(line)) return
-    pendingThinking.value += (pendingThinking.value ? '\n\n' : '') + line
+    // 大模型连续思考/调度语言 → 过程流
+    addProcessStep(text)
   }
+
+  // 去重：流式增量可能重复推送相同片段（用 Set 精确匹配，不用 includes 子串）
+  function addProcessStep(text) {
+    const line = _cleanThinkingText({ content: text })
+    if (!line) return
+    if (_thinkingSeen.has(line)) return
+    _thinkingSeen.add(line)
+    processFlow.value.push(line)
+  }
+
   function consumeThinking() {
     const t = pendingThinking.value
     pendingThinking.value = ''
@@ -341,6 +404,8 @@ export const useChatStore = defineStore('chat', () => {
       messages.value[idx] = { ...messages.value[idx], content: final }
     }
     streamingIdx.value = -1
+    // 本轮结束 → 将过程流固化为一条会话消息（持久化，刷新后仍恢复）
+    _persistLiveProcess()
     // 仅清理当前会话的处理状态（其他会话的处理状态保留，互不干扰）
     _processingSids.value.delete(session.sessionId)
     hint.value = ''
@@ -353,11 +418,30 @@ export const useChatStore = defineStore('chat', () => {
     if (!sid) return
     _processingSids.value.delete(sid)
     if (sid === session.sessionId) {
+      _persistLiveProcess()
       streamingIdx.value = -1
       hint.value = ''
       runners.value = []
       pendingThinking.value = ''
     }
+  }
+
+  // 将本轮累积的过程流固化为消息（有内容或快照才固化）；固化后清空待发缓冲
+  function _persistLiveProcess() {
+    const flow = processFlow.value || []
+    const snap = processSnapshot.value
+    if (!flow.length && !snap) return
+    messages.value.push({
+      _id: uid(),
+      kind: 'process',
+      role: 'system',
+      content: flow.join('\n\n'),
+      runners: snap,
+      _processOpen: false,
+    })
+    processFlow.value = []
+    processSnapshot.value = null
+    _thinkingSeen.clear()
   }
 
   async function _ensureConnected() {
@@ -421,6 +505,12 @@ export const useChatStore = defineStore('chat', () => {
     _stopped.value = false
     _processingSids.value.delete(session.sessionId)
     runners.value = []
+    processFlow.value = []
+    processSnapshot.value = null
+  }
+
+  function setProcessSnapshot(snap) {
+    processSnapshot.value = snap || null
   }
 
   // ── 消息操作（后端同步） ──
@@ -506,6 +596,8 @@ export const useChatStore = defineStore('chat', () => {
   // 返回: { kind: 'approval'|'intent'|'tool_trace'|'thinking'|'expert'|'skip', tier, text }
   function classifyThinking(d) {
     const tier = _tierOf(d)
+    // 广播条目类型（thought/response/thinking）：response=最终回复气泡；其余=过程流
+    const entryType = String(d.data?.entry_type || '').toLowerCase()
     // 安全审查/审批/提问 → 跳过（瞬态交互，不重建横幅、不折叠进思考区）
     if (tier === 'security') return { kind: 'skip', tier }
     // 安全审批 / 模型提问（实时才有 request_id；恢复时后端标 tier='security' 已在上方跳过）
@@ -518,8 +610,11 @@ export const useChatStore = defineStore('chat', () => {
     const text = _stripReplyText(_cleanThinking(d.content || ''))
     // 工具/委托等中间步骤 → 运行轨迹
     if (_isToolTrace(text)) return { kind: 'tool_trace', tier, text: text.slice(0, 200) }
-    // supervisor/expert 推理 → 专家气泡
-    if (tier === 'supervisor' || tier === 'expert') return { kind: 'expert', tier, text }
+    // supervisor/expert：entry_type='response' → 最终回复气泡；其余 → 过程流
+    if (tier === 'supervisor' || tier === 'expert') {
+      if (entryType === 'response') return { kind: 'expert', tier, text, entryType: 'response' }
+      return { kind: 'thinking', tier, text, entryType: entryType || 'process' }
+    }
     // 大模型思考 → 折叠到回复
     if (tier === 'thinking' || tier === 'large' || tier === '') return { kind: 'thinking', tier, text }
     return { kind: 'skip', tier }
@@ -533,16 +628,12 @@ export const useChatStore = defineStore('chat', () => {
       case 'approval': addApproval(d); return 'approval'
       case 'intent': addIntent(d); return 'intent'
       case 'tool_trace':
-        if (c.tier === 'supervisor' || c.tier === 'expert') addExpertTool(d, c.text)
-        else traces.value.push({ text: c.text, time: Date.now() })
+        addProcessStep(c.text)
+        traces.value.push({ text: c.text, time: Date.now() })
         return 'tool_trace'
       case 'expert': {
-        // role='supervisor'/'expert' 的实质输出 → 创建/复用气泡；
-        // role='thinking' 的推理 → 累积到该身份气泡的思考区（等输出时合并）
-        const role = String(d.role || '').toLowerCase()
-        const isOutput = (role === 'supervisor' || role === 'expert') && (d.content || '').trim()
-        if (isOutput) addExpertMessage(d)
-        else addExpertThinking(d)
+        // 仅 entry_type='response' 的最终回复创建气泡；过程推理走过程流
+        if (c.entryType === 'response') addExpertMessage(d)
         return 'expert'
       }
       case 'thinking':
@@ -554,10 +645,11 @@ export const useChatStore = defineStore('chat', () => {
 
   return {
     messages, processing, currentModel, streamingIdx, hint, elapsed,
-    stopped: _stopped, processingSid, runners, traces,
-    init, switchToSession, addMessage, addThinkingStep, addExpertThinking, addExpertTool,
+    stopped: _stopped, processingSid, runners, traces, processFlow, processSnapshot,
+    init, switchToSession, addMessage, addThinkingStep, addProcessStep, addExpertThinking, addExpertTool,
     addExpertMessage, consumeThinking, dispatchThinking, classifyThinking,
     finalizeStream, finalizeSession, sendMessage, retryLastInput, stop, clearMessages,
+    setProcessSnapshot,
     deleteMessageAt, editMessageAt,
     addApproval, approve, addIntent, answerIntent,
     markProcessing,

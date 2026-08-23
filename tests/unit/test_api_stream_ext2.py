@@ -586,6 +586,8 @@ async def test_post_task_extraction_no_session():
 
 async def test_post_task_extraction_hash_dup(monkeypatch):
     import modules.memory.event_reducer as er_mod
+    from config.settings import settings as _cfg
+    monkeypatch.setattr(_cfg, "MEMORY_SUMMARY_ENABLED", True)
     reducer = AsyncMock()
     monkeypatch.setattr(er_mod, "EventReducer", lambda **kw: reducer)
     s = _system()
@@ -601,6 +603,8 @@ async def test_post_task_extraction_hash_dup(monkeypatch):
 
 async def test_post_task_extraction_infer_owner(monkeypatch):
     import modules.memory.event_reducer as er_mod
+    from config.settings import settings as _cfg
+    monkeypatch.setattr(_cfg, "MEMORY_SUMMARY_ENABLED", True)
     reducer = AsyncMock()
     reducer.reduce.return_value = {"events": [1]}
     monkeypatch.setattr(er_mod, "EventReducer", lambda **kw: reducer)
@@ -620,6 +624,8 @@ async def test_post_task_extraction_infer_owner(monkeypatch):
 
 async def test_post_task_extraction_model_client_fail(monkeypatch):
     import modules.memory.event_reducer as er_mod
+    from config.settings import settings as _cfg
+    monkeypatch.setattr(_cfg, "MEMORY_SUMMARY_ENABLED", True)
     reducer = AsyncMock()
     reducer.reduce.return_value = []
     monkeypatch.setattr(er_mod, "EventReducer", lambda **kw: reducer)
@@ -636,6 +642,8 @@ async def test_post_task_extraction_model_client_fail(monkeypatch):
 
 async def test_post_task_extraction_reducer_error(monkeypatch):
     import modules.memory.event_reducer as er_mod
+    from config.settings import settings as _cfg
+    monkeypatch.setattr(_cfg, "MEMORY_SUMMARY_ENABLED", True)
     reducer = AsyncMock()
     reducer.reduce.side_effect = RuntimeError("reduce fail")
     monkeypatch.setattr(er_mod, "EventReducer", lambda **kw: reducer)

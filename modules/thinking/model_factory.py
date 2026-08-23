@@ -148,6 +148,7 @@ class ModelInstanceFactory:
             client = LargeModelClient.from_config()
         client.max_tokens = identity.max_tokens or 4096
         client.temperature = identity.temperature or 0.7
+        client.reasoning_effort = getattr(identity, "reasoning_effort", "") or ""
         # 输入上下文长度：以该模型层级的配置为标准（0 → 全局 CONTEXT_WINDOW_SIZE）
         if not getattr(identity, "context_length", 0):
             identity.context_length = settings.get_context_length("large")

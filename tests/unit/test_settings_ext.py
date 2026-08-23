@@ -28,6 +28,10 @@ def _sys_shim(monkeypatch):
 def _new_settings(tmp_path, monkeypatch, user_config=None, memory_libs=None,
                   personas_yaml=None, **overrides):
     """构建隔离 Settings：全部 ~/.cortex 路径通过 Path.home()→tmp_path 重定向。"""
+    # 清除 .env 注入的视觉模型环境变量，避免干扰"默认值"断言
+    for _ev in ("VISION_MLX_MODEL", "VISION_LOCAL_MODEL", "VISION_API_KEY",
+                "VISION_API_URL", "VISION_API_MODEL"):
+        monkeypatch.delenv(_ev, raising=False)
     cortex = tmp_path / ".cortex"
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
     monkeypatch.setattr(Settings, "_USER_CONFIG_PATH", cortex / "settings.json")

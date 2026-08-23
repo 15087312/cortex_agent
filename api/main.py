@@ -817,7 +817,11 @@ async def create_memory_lib(body: MemoryLibRequest):
     name = (body.name or "").strip()
     if not name:
         return JSONResponse(status_code=422, content=error_response(ErrorCode.VALIDATION_ERROR, "记忆库名不能为空").model_dump())
-    lib = settings.create_memory_lib(name)
+    try:
+        lib = settings.create_memory_lib(name)
+    except Exception as e:
+        logger.error(f"记忆库创建失败: {name} - {e}")
+        return JSONResponse(status_code=500, content=error_response(ErrorCode.INTERNAL_ERROR, f"创建失败: {e}").model_dump())
     if lib is None:
         return JSONResponse(status_code=409, content=error_response(ErrorCode.BAD_REQUEST, f"记忆库 '{name}' 已存在").model_dump())
     return {"success": True, "data": {"name": name, "lib": lib}}
@@ -827,8 +831,12 @@ async def create_memory_lib(body: MemoryLibRequest):
 async def switch_memory_lib(body: MemoryLibRequest):
     """切换当前记忆库"""
     name = (body.name or "").strip()
-    if not settings.switch_memory_lib(name):
-        return JSONResponse(status_code=404, content=error_response(ErrorCode.NOT_FOUND, f"记忆库 '{name}' 不存在").model_dump())
+    try:
+        if not settings.switch_memory_lib(name):
+            return JSONResponse(status_code=404, content=error_response(ErrorCode.NOT_FOUND, f"记忆库 '{name}' 不存在").model_dump())
+    except Exception as e:
+        logger.error(f"记忆库切换失败: {name} - {e}")
+        return JSONResponse(status_code=500, content=error_response(ErrorCode.INTERNAL_ERROR, f"切换失败: {e}").model_dump())
     return {"success": True, "data": {"current": name}}
 
 
@@ -839,33 +847,46 @@ async def rename_memory_lib(body: MemoryLibRequest):
     new = (body.new_name or "").strip()
     if not old or not new:
         return JSONResponse(status_code=422, content=error_response(ErrorCode.VALIDATION_ERROR, "需提供 old_name 与 new_name").model_dump())
-    if not settings.rename_memory_lib(old, new):
-        return JSONResponse(status_code=409, content=error_response(ErrorCode.BAD_REQUEST, "重命名失败（记忆库不存在或名称冲突）").model_dump())
+    try:
+        if not settings.rename_memory_lib(old, new):
+            return JSONResponse(status_code=409, content=error_response(ErrorCode.BAD_REQUEST, "重命名失败（记忆库不存在或名称冲突）").model_dump())
+    except Exception as e:
+        logger.error(f"记忆库重命名失败: {old} -> {new} - {e}")
+        return JSONResponse(status_code=500, content=error_response(ErrorCode.INTERNAL_ERROR, f"重命名失败: {e}").model_dump())
     return {"success": True, "data": {"old_name": old, "new_name": new}}
 
 
 @app.delete("/config/memory-libs/{name}")
 async def delete_memory_lib(name: str):
     """删除记忆库（默认库不可删；若删的是当前库则切回默认）"""
-    if not settings.delete_memory_lib(name):
-        return JSONResponse(status_code=404, content=error_response(ErrorCode.NOT_FOUND, f"记忆库 '{name}' 不存在或不可删除").model_dump())
+    try:
+        if not settings.delete_memory_lib(name):
+            return JSONResponse(status_code=404, content=error_response(ErrorCode.NOT_FOUND, f"记忆库 '{name}' 不存在或不可删除").model_dump())
+    except Exception as e:
+        logger.error(f"记忆库删除失败: {name} - {e}")
+        return JSONResponse(status_code=500, content=error_response(ErrorCode.INTERNAL_ERROR, f"删除失败: {e}").model_dump())
     return {"success": True, "data": {"deleted": name}}
 
 
 @app.put("/config/persona/{role}")
 async def update_persona(role: str, body: PutConfigRequest):
     """更新指定角色的人设提示词（value 为空则恢复默认；system_override 可选）"""
-    settings.set_persona(role, str(body.value or ""))
-    if body.system_override is not None:
-        settings.set_system_override(role, body.system_override)
-    # set_* 内部已写入 ~/.cortex/personas.yaml，重启后仍生效
+    try:
+        result = settings.set_persona_and_override(
+            role, str(body.value or ""),
+            body.system_override if body.system_override is not None else None,
+        )
+    except Exception as e:
+        logger.error(f"人设保存失败: {role} - {e}")
+        return JSONResponse(status_code=500, content={"success": False,
+                            "error": {"code": "SAVE_FAILED", "message": f"保存失败: {e}"}})
     logger.info(f"人设已更新: {role}")
     return {
         "success": True,
         "data": {
             "role": role,
-            "custom": settings.get_persona(role),
-            "system_override": settings.get_system_override(role),
+            "custom": result["persona"],
+            "system_override": result["system_override"],
         },
     }
 
@@ -884,7 +905,12 @@ async def update_role_tools(role: str, body: dict = None):
     if not isinstance(cfg, dict):
         return JSONResponse(status_code=422, content={"success": False,
                             "error": {"code": "VALIDATION_ERROR", "message": "tools 需为对象 {whitelist, blacklist}"}})
-    settings.set_role_tools(role, cfg)
+    try:
+        settings.set_role_tools(role, cfg)
+    except Exception as e:
+        logger.error(f"工具权限保存失败: {role} - {e}")
+        return JSONResponse(status_code=500, content={"success": False,
+                            "error": {"code": "SAVE_FAILED", "message": f"保存失败: {e}"}})
     logger.info(f"工具权限已更新: {role}")
     return {"success": True, "data": {"role": role, "tools": settings.get_role_tools(role)}}
 
@@ -903,8 +929,19 @@ async def update_model_params(role: str, body: dict = None):
     if not isinstance(params, dict):
         return JSONResponse(status_code=422, content={"success": False,
                             "error": {"code": "VALIDATION_ERROR", "message": "params 需为对象"}})
-    settings.set_model_params(role, params)
-    logger.info(f"模型参数已更新: {role}")
+    try:
+        settings.set_model_params(role, params)
+    except Exception as e:
+        logger.error(f"模型参数保存失败: {role} - {e}")
+        return JSONResponse(status_code=500, content={"success": False,
+                            "error": {"code": "SAVE_FAILED", "message": f"保存失败: {e}"}})
+    # 重建模型实例（新参数立即生效，无需重启）
+    try:
+        from modules.thinking.model_factory import get_model_factory
+        await get_model_factory().reload_from_config()
+        logger.info(f"模型参数已更新并重建实例: {role}")
+    except Exception as e:
+        logger.warning(f"模型参数已保存但实例重建失败: {e}")
     return {"success": True, "data": {"role": role, "params": settings.get_model_params(role)}}
 
 
@@ -942,22 +979,27 @@ async def create_custom_agent(body: dict = None):
         "expertise": body.get("expertise", ""),
         "model_id": body.get("model_id", ""),
     }
-    settings.set_custom_agent(role, agent_data)
+    try:
+        settings.set_custom_agent(role, agent_data)
+    except Exception as e:
+        logger.error(f"自定义 agent 保存失败: {role} - {e}")
+        return JSONResponse(status_code=500, content={"success": False,
+                            "error": {"code": "SAVE_FAILED", "message": f"保存失败: {e}"}})
     logger.info(f"自定义 agent 已创建: {role}")
     return {"success": True, "data": {"agent": agent_data}}
 
 
 @app.delete("/management/orchestration/agents/{role}")
 async def delete_custom_agent(role: str):
-    """删除自定义 agent"""
-    if settings.delete_custom_agent(role):
-        # 同时清理该角色的 persona/override/tools/params
-        settings.set_persona(role, "")
-        settings.set_system_override(role, "")
-        settings.set_role_tools(role, {})
-        settings.set_model_params(role, {})
-        logger.info(f"自定义 agent 已删除: {role}")
-        return {"success": True}
+    """删除自定义 agent（persona/override/tools/params 由 delete_custom_agent 一并清理）"""
+    try:
+        if settings.delete_custom_agent(role):
+            logger.info(f"自定义 agent 已删除: {role}")
+            return {"success": True}
+    except Exception as e:
+        logger.error(f"自定义 agent 删除失败: {role} - {e}")
+        return JSONResponse(status_code=500, content={"success": False,
+                            "error": {"code": "DELETE_FAILED", "message": f"删除失败: {e}"}})
     return JSONResponse(status_code=404, content={"success": False,
                         "error": {"code": "NOT_FOUND", "message": f"未找到自定义 agent: {role}"}})
 
@@ -981,10 +1023,16 @@ async def toggle_agent_active(role: str, body: dict = None):
         agent_tier = builtin_roles[role].get("tier", "")
     elif is_custom:
         agent_tier = (settings.get_custom_agent(role) or {}).get("tier", "")
-    # 总指挥层(large)只能有一个激活：激活时自动停用同层其他
-    if active and agent_tier == "large":
-        settings.deactivate_same_tier(role, agent_tier, builtin_roles)
-    settings.set_agent_active(role, active)
+    # 总指挥层(large)只能有一个激活：激活时自动停用同层其他（原子操作）
+    try:
+        if active and agent_tier == "large":
+            settings.deactivate_and_set_active(role, agent_tier, builtin_roles, active)
+        else:
+            settings.set_agent_active(role, active)
+    except Exception as e:
+        logger.error(f"Agent 启用状态保存失败: {role} - {e}")
+        return JSONResponse(status_code=500, content={"success": False,
+                            "error": {"code": "SAVE_FAILED", "message": f"保存失败: {e}"}})
     logger.info(f"Agent {role} active={active}")
     return {"success": True, "data": {"role": role, "active": active}}
 
@@ -1016,7 +1064,12 @@ async def save_persona_preset(body: dict = None):
             p = settings.get_persona(key)
             if p:
                 personas[key] = p
-    preset = settings.save_persona_preset(preset_id, name, personas)
+    try:
+        preset = settings.save_persona_preset(preset_id, name, personas)
+    except Exception as e:
+        logger.error(f"人设预设保存失败: {name} - {e}")
+        return JSONResponse(status_code=500, content={"success": False,
+                            "error": {"code": "SAVE_FAILED", "message": f"保存失败: {e}"}})
     logger.info(f"人设预设已保存: {name} ({preset_id})")
     return {"success": True, "data": {"preset": preset}}
 
@@ -1024,9 +1077,14 @@ async def save_persona_preset(body: dict = None):
 @app.delete("/management/persona-presets/{preset_id}")
 async def delete_persona_preset(preset_id: str):
     """删除人设预设"""
-    if settings.delete_persona_preset(preset_id):
-        logger.info(f"人设预设已删除: {preset_id}")
-        return {"success": True}
+    try:
+        if settings.delete_persona_preset(preset_id):
+            logger.info(f"人设预设已删除: {preset_id}")
+            return {"success": True}
+    except Exception as e:
+        logger.error(f"人设预设删除失败: {preset_id} - {e}")
+        return JSONResponse(status_code=500, content={"success": False,
+                            "error": {"code": "DELETE_FAILED", "message": f"删除失败: {e}"}})
     return JSONResponse(status_code=404, content={"success": False,
                         "error": {"code": "NOT_FOUND", "message": f"未找到预设: {preset_id}"}})
 
@@ -1034,9 +1092,14 @@ async def delete_persona_preset(preset_id: str):
 @app.put("/management/persona-presets/{preset_id}/apply")
 async def apply_persona_preset(preset_id: str):
     """应用人设预设（将预设人设写入当前生效值）"""
-    if settings.apply_persona_preset(preset_id):
-        logger.info(f"人设预设已应用: {preset_id}")
-        return {"success": True}
+    try:
+        if settings.apply_persona_preset(preset_id):
+            logger.info(f"人设预设已应用: {preset_id}")
+            return {"success": True}
+    except Exception as e:
+        logger.error(f"人设预设应用失败: {preset_id} - {e}")
+        return JSONResponse(status_code=500, content={"success": False,
+                            "error": {"code": "SAVE_FAILED", "message": f"应用失败: {e}"}})
     return JSONResponse(status_code=404, content={"success": False,
                         "error": {"code": "NOT_FOUND", "message": f"未找到预设: {preset_id}"}})
 
@@ -1105,7 +1168,7 @@ async def update_config(key: str, body: PutConfigRequest):
                 logger.info(f"模型配置已变更，重建模型实例: {key_upper}")
             except Exception as _reload_err:
                 logger.warning(f"模型实例重建失败（可手动重启后端）: {_reload_err}")
-        # 系统级配置：变更时立即生效（防休眠 caffeinate / 开机启动 LaunchAgent）
+        # 系统级配置：变更时立即生效（防休眠 caffeinate / 开机启动 LaunchAgent / 感知系统开关）
         try:
             if key_upper == "PREVENT_SLEEP":
                 from utils.power import apply as _apply_power
@@ -1113,6 +1176,16 @@ async def update_config(key: str, body: PutConfigRequest):
             elif key_upper == "LAUNCH_AT_STARTUP":
                 from utils.autostart import apply as _apply_autostart
                 _apply_autostart(bool(validated))
+            elif key_upper == "PERCEPTION_ENABLED":
+                from modules.perception.setup import get_perception_system
+                ps = get_perception_system()
+                if validated:
+                    ps.setup()
+                    ps.start()
+                    logger.info("感知系统已启动（运行时开启）")
+                else:
+                    ps.stop()
+                    logger.info("感知系统已停止（运行时关闭）")
         except Exception as e:
             logger.warning(f"系统级配置应用失败 {key}: {e}")
         logger.info(f"配置已更新: {actual} = {validated} (旧值: {old_value})")

@@ -110,6 +110,7 @@ def test_get_project_root_walk(monkeypatch):
 
 def test_parse_args_defaults(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["cortex"])
+    monkeypatch.setenv("MAX_WORKERS", "1")
     args = cm.parse_args()
     assert args.port == 8080
     assert args.workers == 1

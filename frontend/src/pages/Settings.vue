@@ -209,6 +209,9 @@ const triggerCooldown = numCfg('PERCEPTION_TRIGGER_COOLDOWN', 60)
 const triggerMinIntensity = numCfg('PERCEPTION_TRIGGER_MIN_INTENSITY', 50)
 const spatialEnhancement = boolCfg('SPATIAL_ENHANCEMENT_ENABLED', false)
 
+/* ── 技能系统 ── */
+const skillsEnabled = boolCfg('SKILLS_ENABLED', true)
+
 /* ── 语音识别（Whisper） ── */
 const voiceEnabled = boolCfg('PERCEPTION_VOICE_ENABLED', true)
 const voiceModel = segCfg('PERCEPTION_VOICE_MODEL', 'tiny')
@@ -681,6 +684,10 @@ onMounted(async () => {
           <div class="setting-row">
             <div class="lbl"><div class="t">记忆总结</div><div class="d">会话结束后自动提炼为事件记忆（EventReducer）</div></div>
             <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="memorySummaryEnabled" @change="memorySummaryEnabled = !memorySummaryEnabled" /><span class="toggle-slider"></span></label></div>
+          </div>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">技能系统</div><div class="d">关闭后模型不加载/不激活任何技能（request_skill 被拒绝）</div></div>
+            <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="skillsEnabled" @change="skillsEnabled = !skillsEnabled" /><span class="toggle-slider"></span></label></div>
           </div>
         </div>
 

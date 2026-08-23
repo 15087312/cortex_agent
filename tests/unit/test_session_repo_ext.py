@@ -206,6 +206,18 @@ def test_save_message_truncates_and_titles(repo):
     assert len(repo.get_all_sessions()[0]["title"]) == 200
 
 
+def test_save_message_metadata_persisted(repo):
+    repo.create_session("s1")
+    repo.save_message("s1", "thought", "步骤", tier="expert", metadata={"identity_name": "前端专家"})
+    msgs = repo.get_messages("s1")
+    assert msgs[0]["tier"] == "expert"
+    assert msgs[0]["metadata"].get("identity_name") == "前端专家"
+    # 未传 metadata → 空对象，不抛
+    repo.save_message("s1", "user", "hi")
+    msgs2 = repo.get_messages("s1")
+    assert msgs2[1]["metadata"] == {}
+
+
 def test_save_message_updates_counts(repo):
     repo.create_session("s1")
     repo.save_message("s1", "user", "a")

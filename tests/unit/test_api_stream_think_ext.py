@@ -139,6 +139,8 @@ async def test_think_stopped_cancelled(monkeypatch):
 
 async def test_post_task_extraction_owner_inference(monkeypatch):
     monkeypatch.setattr(stream.asyncio, "sleep", AsyncMock())
+    from config.settings import settings as _cfg
+    monkeypatch.setattr(_cfg, "MEMORY_SUMMARY_ENABLED", True)
     s = _system()
     s.sessions["s1"] = {"messages": [
         {"role": "user", "content": "a" * 60},
@@ -154,6 +156,8 @@ async def test_post_task_extraction_owner_inference(monkeypatch):
 
 
 async def test_post_task_extraction_hash_dedup(monkeypatch):
+    from config.settings import settings as _cfg
+    monkeypatch.setattr(_cfg, "MEMORY_SUMMARY_ENABLED", True)
     s = _system()
     s.sessions["s1"] = {"messages": [{"role": "user", "content": "a" * 60}], "_processed_hashes": set()}
     reducer = MagicMock()

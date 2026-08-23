@@ -31,6 +31,7 @@ class LargeModelClient(BaseModelClient):
         super().__init__(key, url, timeout or settings.MODEL_TIMEOUT)
         self.max_tokens = 4096
         self.temperature = 0.7
+        self.reasoning_effort = ""
         self.model_name = settings.LARGE_MODEL_NAME
         self._api_format = api_format or settings.LARGE_MODEL_API_FORMAT
 
@@ -91,6 +92,7 @@ class LargeModelClient(BaseModelClient):
             ],
             max_tokens=kwargs.get("max_tokens", self.max_tokens),
             temperature=kwargs.get("temperature", self.temperature),
+            reasoning_effort=kwargs.get("reasoning_effort", self.reasoning_effort),
         )
 
         last_error = None
@@ -250,6 +252,7 @@ class LargeModelClient(BaseModelClient):
             temperature=temperature,
             tools=tools,
             tool_choice=tool_choice,
+            reasoning_effort=kwargs.get("reasoning_effort", self.reasoning_effort),
         )
 
         max_retries = kwargs.get("max_retries", 2)
@@ -348,6 +351,7 @@ class LargeModelClient(BaseModelClient):
             tools=tools,
             tool_choice=tool_choice,
             stream=True,
+            reasoning_effort=kwargs.get("reasoning_effort", self.reasoning_effort),
         )
 
         # ── 发起流式请求并解析 SSE ──

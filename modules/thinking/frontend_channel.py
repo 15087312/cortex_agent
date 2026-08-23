@@ -144,8 +144,9 @@ async def push_content(
     role: str = "assistant",
     data: Optional[Dict[str, Any]] = None,
     persist: bool = True,
+    require_ack: bool = False,
 ) -> bool:
-    """统一推送出口：连续持久化 + WS 推送。
+    """统一推送出口：连续持久化 + WS 推送 + 版本号 + 可选 ACK。
 
     始终先持久化（防中途退出丢消息），再实时推送到活跃 WS 连接。
     返回是否实时送达（False 表示前端当前离线但消息已持久化，重连后可恢复）。
@@ -160,6 +161,7 @@ async def push_content(
         event=event,
         content=content,
         role=role,
+        require_ack=require_ack,
         data={**(data or {}), "message_id": msg_id},
     )
 

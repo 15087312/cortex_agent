@@ -202,6 +202,22 @@ def _resolve_identity_name(model_id: str) -> str:
     return ""
 
 
+# ── 事件缓冲区（供断线重连增量同步） ──
+import collections as _collections
+_event_buffers: Dict[str, _collections.deque] = {}  # session_id → deque(maxlen=200)
+_event_seq: Dict[str, int] = {}  # session_id → 单调递增序号
+def _record_event(session_id: str, envelope: Dict[str, Any]):
+    """记录事件到环形缓冲区，供前端断线重连后增量拉取"""
+    seq = _event_seq.get(session_id, 0) + 1
+    _event_seq[session_id] = seq
+    envelope["_seq"] = seq
+    buf = _event_buffers.get(session_id)
+    if buf is None:
+        buf = _collections.deque(maxlen=200)
+        _event_buffers[session_id] = buf
+    buf.append(envelope)
+
+
 def _build_event(
         *,
         session_id: str,
@@ -210,9 +226,10 @@ def _build_event(
         content: str = "",
         role: str = "system",
         data: Optional[Dict[str, Any]] = None,
+        require_ack: bool = False,
 ) -> Dict[str, Any]:
     """统一事件 envelope（WS/SSE 同构）"""
-    return {
+    envelope = {
         "type": msg_type,
         "event": event,
         "session_id": session_id,
@@ -221,6 +238,10 @@ def _build_event(
         "data": data or {},
         "timestamp": time.time(),
     }
+    if require_ack:
+        envelope["require_ack"] = True
+        envelope["ack_id"] = f"ack_{session_id[:8]}_{uuid.uuid4().hex[:8]}"
+    return envelope
 
 
 class StreamThinkingSystem:
@@ -344,7 +365,8 @@ class StreamThinkingSystem:
                     msgs[msg_index]["id"] = msg_id
         return msg_id
 
-    async def _persist_thought(self, session_id: str, content: str, tier: str = "") -> None:
+    async def _persist_thought(self, session_id: str, content: str, tier: str = "",
+                               identity_name: str = "") -> None:
         """持久化思考步骤到 DB（供前端切换会话后恢复展示）。
 
         只写 SQLite、不写入内存 messages —— 内存 messages 用于组装模型上下文
@@ -354,9 +376,68 @@ class StreamThinkingSystem:
         if not repo:
             return
         try:
-            repo.save_message(session_id, "thought", content, tier=tier)
+            repo.save_message(session_id, "thought", content, tier=tier,
+                              metadata={"identity_name": identity_name} if identity_name else None)
         except Exception as e:
             logger.debug(f"[SessionRepo] 保存思考步骤失败: {e}")
+
+    async def _persist_process(self, session_id: str, flow_text: str,
+                               runners_snapshot: dict = None) -> None:
+        """持久化一轮思考过程流（连续思考 + 调度语言 + 模型状态快照）到 DB。
+
+        前端切换会话后据此重建"过程流"面板（不随思考结束消失）。
+        """
+        repo = self._get_session_repo()
+        if not repo:
+            return
+        if not (flow_text or runners_snapshot):
+            return
+        import json as _json
+        metadata = {}
+        if runners_snapshot:
+            metadata["runners"] = runners_snapshot
+        try:
+            repo.save_message(session_id, "process", flow_text or "",
+                              tier="process",
+                              metadata=metadata if metadata else None)
+        except Exception as e:
+            logger.debug(f"[SessionRepo] 保存过程流失败: {e}")
+
+    def _collect_process_snapshot(self, session_id: str) -> dict:
+        """收集本轮运行的模型状态快照（含每模型上下文占用），供前端重建面板。"""
+        snapshot = {"large_model": None, "active_supervisors": [], "active_experts": [],
+                    "context_tokens": 0, "context_window_size": 128000}
+        try:
+            from modules.thinking.core.model_runner import _runner_managers, _runner_managers_lock
+            with _runner_managers_lock:
+                rm = _runner_managers.get(session_id)
+            if not rm:
+                return snapshot
+            for info in rm.list_runners():
+                tier = info.get("tier", "")
+                entry = {
+                    "name": info.get("name") or info.get("role", ""),
+                    "role": info.get("role", ""),
+                    "model_id": info.get("model_id", ""),
+                    "status": info.get("status", ""),
+                    "status_detail": info.get("status_detail", ""),
+                    "round": info.get("round", 0),
+                    "supervisor": info.get("supervisor", ""),
+                    "context_tokens": info.get("context_tokens", 0),
+                    "context_window_size": info.get("context_window_size", 128000),
+                }
+                if tier == "large":
+                    snapshot["large_model"] = entry
+                    if entry["context_tokens"]:
+                        snapshot["context_tokens"] = entry["context_tokens"]
+                        snapshot["context_window_size"] = entry["context_window_size"] or 128000
+                elif tier == "supervisor":
+                    snapshot["active_supervisors"].append(entry)
+                elif tier == "expert":
+                    snapshot["active_experts"].append(entry)
+        except Exception:
+            pass
+        return snapshot
 
     async def _proactive_context_trim(self, session_id: str):
         """水位线渐进裁剪 — 消息超窗口 80% 时丢弃最旧的 50%"""
@@ -399,6 +480,8 @@ class StreamThinkingSystem:
             envelope: Dict[str, Any],
             callback: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
     ):
+        # ── 记录事件到缓冲区（供增量同步 + 断线重连补偿） ──
+        _record_event(session_id, envelope)
         if callback:
             await callback(envelope)
         # WebSocket 路径：通过 connection_manager 发送
@@ -524,6 +607,16 @@ class StreamThinkingSystem:
         }
         if dialog_tier:
             result_data["dialog_tier"] = dialog_tier
+        # 广播条目类型（thought/response/user_input）：前端据此区分"过程流"与"最终气泡"
+        _entry_type = ""
+        if event_type == "model_comm":
+            try:
+                _ec = event.get("payload", {}).get("content") or {}
+                if isinstance(_ec, dict):
+                    _entry_type = _ec.get("entry_type", "")
+            except Exception:
+                pass
+            result_data["entry_type"] = _entry_type
         # 身份信息：供前端渲染不同的头像/名字（如 代码主管 / 总指挥）
         if event_type == "model_comm":
             result_data["model_id"] = model_id
@@ -656,6 +749,7 @@ class StreamThinkingSystem:
             self.sessions[session_id]["scheduler_task"] = scheduler_task
 
             last_progress_emit = 0.0
+            _last_bc_identity = None  # 连续同角色广播合并：只在首次显示标签
             while True:
                 if scheduler_task.done() and stage_queue.empty():
                     break
@@ -698,6 +792,8 @@ class StreamThinkingSystem:
                                         "react_loop": runner_info.get("react_loop"),
                                         "think_loop": runner_info.get("think_loop"),
                                         "last_thought": runner_info.get("last_thought", ""),
+                                        "context_tokens": runner_info.get("context_tokens", 0),
+                                        "context_window_size": runner_info.get("context_window_size", 128000),
                                     }
                                 # 主管
                                 elif tier == "supervisor" and running:
@@ -712,6 +808,8 @@ class StreamThinkingSystem:
                                         "react_loop": runner_info.get("react_loop"),
                                         "think_loop": runner_info.get("think_loop"),
                                         "last_thought": runner_info.get("last_thought", ""),
+                                        "context_tokens": runner_info.get("context_tokens", 0),
+                                        "context_window_size": runner_info.get("context_window_size", 128000),
                                     })
                                 # 专家（带上所属主管）
                                 elif tier == "expert" and running:
@@ -729,6 +827,8 @@ class StreamThinkingSystem:
                                         "react_loop": runner_info.get("react_loop"),
                                         "think_loop": runner_info.get("think_loop"),
                                         "last_thought": runner_info.get("last_thought", ""),
+                                        "context_tokens": runner_info.get("context_tokens", 0),
+                                        "context_window_size": runner_info.get("context_window_size", 128000),
                                     })
                     except Exception as e:
                         logger.debug(f"[活跃专家] 收集状态失败 (非致命): {e}")
@@ -764,6 +864,18 @@ class StreamThinkingSystem:
                     formatted = self._format_scheduler_event(stage_event)
                     if formatted is None:
                         continue  # 空内容轮次，跳过展示
+                    # ── 连续同角色广播合并：同一 identity 连续输出时，去掉重复标签 ──
+                    _cur_identity = (formatted.get("data") or {}).get("identity_name", "")
+                    _cur_tier = (formatted.get("data") or {}).get("dialog_tier", "")
+                    _cur_sender_key = _cur_identity or _cur_tier
+                    if _cur_sender_key and _cur_sender_key == _last_bc_identity:
+                        # 连续同角色：去掉 content 中的标签前缀（🧠 [总指挥] 等）
+                        import re as _re
+                        formatted["content"] = _re.sub(
+                            r'^[🧠📊🔧👤]\s*\[[^\]]+\](?:\s*\[[^\]]+\])?\s*',
+                            '', formatted["content"])
+                    if _cur_sender_key:
+                        _last_bc_identity = _cur_sender_key
                     # 会话执行图谱：记录"谁呼唤谁 / 谁回复谁"（model_comm 发言，用户输入不记录）
                     try:
                         _d = formatted.get("data") or {}
@@ -790,10 +902,28 @@ class StreamThinkingSystem:
                     # 前端恢复时识别并跳过（不折叠进大模型思考区，避免审批文本污染历史思考）
                     if formatted["data"].get("event_type") == "security":
                         event_role = "security"
+                    # 累积过程流文本（连续思考 + 调度语言），供本轮结束持久化。
+                    # 跳过"response"最终回复广播（同一文本已作为主管/专家气泡展示，避免重复打印）
+                    _fcontent = (formatted.get("content") or "").strip()
+                    _inject_entry_type = ""
+                    try:
+                        _payload_content = (formatted.get("data") or {}).get("payload", {}).get("content") or {}
+                        if isinstance(_payload_content, dict):
+                            _inject_entry_type = _payload_content.get("entry_type", "")
+                    except Exception:
+                        pass
+                    if _fcontent and _inject_entry_type != "response":
+                        async with self._lock:
+                            _proc = self.sessions.setdefault(session_id, {}).setdefault("_process_flow", [])
+                            if not _proc or _proc[-1] != _fcontent:
+                                _proc.append(_fcontent)
                     # 持久化思考/对话步骤（role=thought），切换会话后仍能恢复展示
                     # 只写 DB、不进内存 messages，避免污染 AI 上下文（见 _persist_thought）
                     try:
-                        await self._persist_thought(session_id, formatted["content"], tier=event_role)
+                        await self._persist_thought(
+                            session_id, formatted["content"], tier=event_role,
+                            identity_name=formatted.get("data", {}).get("identity_name", ""),
+                        )
                     except Exception:
                         pass
                     await self._emit(
@@ -1010,6 +1140,18 @@ class StreamThinkingSystem:
                 if isinstance(output, dict) and "sub_sessions" in output:
                     sub_sessions = output["sub_sessions"]
                     break
+
+            # 持久化本轮过程流（连续思考 + 调度语言 + 模型状态快照），供会话恢复
+            try:
+                proc_flow = "\n".join(
+                    self.sessions.get(session_id, {}).get("_process_flow", []) or []
+                )
+                proc_snapshot = self._collect_process_snapshot(session_id)
+                if proc_flow or proc_snapshot:
+                    await self._persist_process(session_id, proc_flow, proc_snapshot)
+                self.sessions.setdefault(session_id, {})["_process_flow"] = []
+            except Exception as e:
+                logger.debug(f"[Process] 持久化过程流失败: {e}")
 
             await self._emit(
                 session_id,
@@ -1380,6 +1522,34 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
                     ),
                 )
                 # 不 break — 保持 WebSocket 连接，允许后续发送新消息
+
+            elif msg_type == "sync":
+                # 断线重连后增量补偿：前端发送 last_seq，服务端推送缺失事件
+                last_seq = msg_data.get("last_seq", 0)
+                buf = _event_buffers.get(session_id)
+                if buf:
+                    missed = [ev for ev in buf if ev.get("_seq", 0) > last_seq]
+                    for ev in missed:
+                        await connection_manager.send_json(session_id, ev)
+                    await connection_manager.send_json(
+                        session_id,
+                        _build_event(
+                            session_id=session_id, msg_type="ack",
+                            event="sync_complete",
+                            content=f"已补发 {len(missed)} 条事件",
+                            role="system",
+                        ),
+                    )
+                else:
+                    await connection_manager.send_json(
+                        session_id,
+                        _build_event(
+                            session_id=session_id, msg_type="ack",
+                            event="sync_complete",
+                            content="无缓冲事件",
+                            role="system",
+                        ),
+                    )
 
             elif msg_type == "ping":
                 await connection_manager.send_json(

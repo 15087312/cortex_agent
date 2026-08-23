@@ -23,6 +23,9 @@ class FakeClient:
     def __init__(self, responses=None):
         self._responses = list(responses or [])
         self.chat_calls = 0
+        self.max_tokens = 4096
+        self.temperature = 0.7
+        self.reasoning_effort = ""
     async def chat(self, **kwargs):
         self.chat_calls += 1
         if self._responses:

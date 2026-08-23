@@ -147,14 +147,9 @@ class PromptComposer:
                 personality = custom
         except Exception:
             pass
-        lines = [f"【人格】{personality}", f"【风格】{role.speaking_style}"]
-        if role.expertise:
-            lines.append(f"【擅长】{'、'.join(role.expertise)}")
-        if role.weaknesses:
-            lines.append(f"【不擅长】{'、'.join(role.weaknesses)}")
-        lines.append("【约束】严格遵守你的角色边界，不要越权操作。")
+        lines = []
         if identity_text:
-            lines.insert(0, identity_text)
+            lines.append(identity_text)
         lines.append(
             "【工具使用】所有工具在用户本地电脑上执行。"
             "只能调用系统已列出的工具，禁止编造、推测或假设存在未列出的工具名。"

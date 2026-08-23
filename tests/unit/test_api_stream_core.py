@@ -197,6 +197,8 @@ async def test_post_task_extraction(monkeypatch):
     import modules.memory.event_reducer as er_mod
     import modules.memory.event_store as es_mod
     import modules.memory.embedding as emb_mod
+    from config.settings import settings as _cfg
+    monkeypatch.setattr(_cfg, "MEMORY_SUMMARY_ENABLED", True)
 
     reducer = AsyncMock()
     reducer.reduce.return_value = {"events": []}
