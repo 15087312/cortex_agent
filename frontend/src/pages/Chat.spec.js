@@ -181,6 +181,72 @@ describe('Chat 页面', () => {
     expect(renderedAfter).toBeGreaterThan(renderedBefore - 1 + 49) // 至少 +50 条进入渲染
   })
 
+  // ── 渲染测试：删除联动 / 分批渲染可见性 / 加载入口 ──
+
+  it('渲染：删除 AI 回复后过程流面板从 DOM 消失', async () => {
+    const w = await mountChat()
+    const chat = useChatStore()
+    chat.addMessage({ role: 'user', content: '问' })
+    chat.addMessage({ kind: 'process', role: 'system', content: '思考步骤A\n调度语言B', runners: null })
+    chat.addMessage({ role: 'assistant', content: '最终回答X' })
+    await flushPromises()
+    // 删除前：面板与回复都在渲染输出中（面板默认折叠 → 依次展开面板与过程流文本区）
+    expect(w.find('.process-panel').exists()).toBe(true)
+    await w.find('.process-panel-head').trigger('click')
+    await w.find('.process-flow-head').trigger('click')
+    await flushPromises()
+    expect(w.text()).toContain('思考步骤A')
+    expect(w.text()).toContain('最终回答X')
+    // 删除 assistant → 确认框通过 → 联动移除上方 process 面板，渲染同步更新
+    const p = w.vm.handleDeleteMessage(2)
+    await new Promise((r) => setTimeout(r, 10))
+    const { resolveDialog } = await import('@/composables/useDialog.js')
+    resolveDialog(true)
+    await p
+    await flushPromises()
+    expect(w.find('.process-panel').exists()).toBe(false)
+    expect(w.text()).not.toContain('思考步骤A')
+    expect(w.text()).toContain('问')
+  })
+
+  it('渲染：超过渲染上限时最新一批可见、更早的不可见，加载入口显示剩余条数', async () => {
+    const w = await mountChat()
+    const chat = useChatStore()
+    for (let i = 0; i < 120; i++) chat.addMessage({ role: 'user', content: 'm' + i })
+    await flushPromises()
+    const text = () => w.find('.chat-messages').text()
+    // 最新一条在渲染中；最早一批（前 70 条）不在 DOM
+    expect(text()).toContain('m119')
+    expect(text()).not.toContain('m0')
+    expect(text()).not.toContain('m69')
+    // 加载入口显示剩余数量
+    const entry = w.find('.chat-load-more')
+    expect(entry.exists()).toBe(true)
+    expect(entry.text()).toContain('还有 70 条')
+    // 上滑自动加载一批后：m20 进入渲染、m19 仍隐藏，剩余数减少
+    _mockDims(w, { scrollTop: 10, scrollHeight: 5000, clientHeight: 600 })
+    await w.find('.chat-messages').trigger('scroll')
+    await new Promise((r) => setTimeout(r, 30))
+    expect(text()).toContain('m20')
+    expect(text()).not.toContain('m19')
+    expect(w.find('.chat-load-more').text()).toContain('还有 20 条')
+  })
+
+  it('渲染：空会话无回到底部按钮，有消息且离底时才出现', async () => {
+    const w = await mountChat()
+    expect(useChatStore().messages.length).toBe(0)
+    expect(w.find('.chat-scroll-bottom').exists()).toBe(false)
+    const chat = useChatStore()
+    chat.addMessage({ role: 'assistant', content: '答' })
+    await flushPromises()
+    // 在底部附近（jsdom 默认尺寸 0）→ 不出现
+    expect(w.find('.chat-scroll-bottom').exists()).toBe(false)
+    // 模拟离底 → 出现
+    _mockDims(w, { scrollTop: 0, scrollHeight: 900, clientHeight: 300 })
+    await w.find('.chat-messages').trigger('scroll')
+    expect(w.find('.chat-scroll-bottom').exists()).toBe(true)
+  })
+
   it('审批/提问通过页面处理函数回传 WS', async () => {
     const w = await mountChat()
     const chat = useChatStore()
