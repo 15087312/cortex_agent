@@ -42,8 +42,11 @@ def _new_settings(tmp_path, monkeypatch, user_config=None, memory_libs=None,
         cortex.mkdir(parents=True, exist_ok=True)
         (cortex / "memory_libs.json").write_text(json.dumps(memory_libs), encoding="utf-8")
     if personas_yaml is not None:
-        cortex.mkdir(parents=True, exist_ok=True)
-        (cortex / "personas.yaml").write_text(personas_yaml, encoding="utf-8")
+        # 写入 _personas_yaml_path 当前指向的位置（conftest 已重定向到临时目录，
+        # 确保写入不落到真实 ~/.cortex/personas.yaml）
+        _dest = Settings(_env_file=None)._personas_yaml_path
+        _dest.parent.mkdir(parents=True, exist_ok=True)
+        _dest.write_text(personas_yaml, encoding="utf-8")
     return Settings(_env_file=None, **overrides)
 
 
@@ -315,25 +318,28 @@ class TestPersonasYaml:
         assert s._load_personas_yaml() == {}
 
     def test_load_personas_yaml_retries_on_read_error(self, tmp_path, monkeypatch):
+        """文件存在但无法读取 → 抛 RuntimeError（防基于空字典写入清空数据）"""
         monkeypatch.setattr(Settings, "_personas_yaml_path", tmp_path)
         monkeypatch.setattr("time.sleep", lambda _: None)
         s = _new_settings(tmp_path, monkeypatch)
-        assert s._load_personas_yaml() == {}
+        with pytest.raises(RuntimeError, match="无法读取"):
+            s._load_personas_yaml()
 
     def test_save_personas_yaml_atomic(self, tmp_path, monkeypatch):
         import yaml as _yaml
         s = _new_settings(tmp_path, monkeypatch)
         s.set_persona("user", "你好")
-        saved = _yaml.safe_load((tmp_path / ".cortex" / "personas.yaml").read_text(encoding="utf-8"))
+        _dest = s._personas_yaml_path
+        saved = _yaml.safe_load(_dest.read_text(encoding="utf-8"))
         assert saved["personas"]["user"] == "你好"
-        assert not (tmp_path / ".cortex" / "personas.tmp").exists()
+        assert not _dest.with_suffix(".tmp").exists()
 
-    def test_save_personas_yaml_failure_warns(self, tmp_path, monkeypatch, capsys):
+    def test_save_personas_yaml_failure_raises(self, tmp_path, monkeypatch):
+        # §96：保存失败不再静默吞掉，向上抛出由 API 层转错误响应
         s = _new_settings(tmp_path, monkeypatch)
         monkeypatch.setattr("os.replace", lambda *a, **k: (_ for _ in ()).throw(OSError("boom")))
-        s.set_persona("user", "你好")
-        err = capsys.readouterr().err
-        assert "人设 yaml 保存失败" in err
+        with pytest.raises(OSError, match="boom"):
+            s.set_persona("user", "你好")
 
 
 # ---------------------------------------------------------------------------
@@ -455,14 +461,15 @@ class TestUserConfig:
         data = json.loads((tmp_path / ".cortex" / "settings.json").read_text(encoding="utf-8"))
         assert data["LOG_LEVEL"] == "INFO"
 
-    def test_save_user_config_failure(self, tmp_path, monkeypatch, capsys):
+    def test_save_user_config_failure_raises(self, tmp_path, monkeypatch):
+        # §96：保存失败不再静默吞掉，向上抛出由 API 层转错误响应
         monkeypatch.setattr(Settings, "_USER_CONFIG_PATH", tmp_path / "settings.json")
         monkeypatch.setattr(Settings, "_personas_yaml_path", tmp_path / "personas.yaml")
         monkeypatch.setattr(Settings, "_memory_libs_path", tmp_path / "memory_libs.json")
         s = Settings(_env_file=None)
         monkeypatch.setattr("os.replace", lambda *a, **k: (_ for _ in ()).throw(OSError("boom")))
-        assert s.save_user_config(["LOG_LEVEL"]) is False
-        assert "用户配置保存失败" in capsys.readouterr().err
+        with pytest.raises(OSError, match="boom"):
+            s.save_user_config(["LOG_LEVEL"])
 
 
 # ---------------------------------------------------------------------------
@@ -522,11 +529,12 @@ class TestMemoryLibs:
         data = json.loads((tmp_path / ".cortex" / "memory_libs.json").read_text(encoding="utf-8"))
         assert data["current"] == "x"
 
-    def test_save_memory_libs_failure(self, tmp_path, monkeypatch, capsys):
+    def test_save_memory_libs_failure_raises(self, tmp_path, monkeypatch):
+        # §96：保存失败不再静默吞掉，向上抛出由 API 层转错误响应
         s = _new_settings(tmp_path, monkeypatch)
         monkeypatch.setattr("os.replace", lambda *a, **k: (_ for _ in ()).throw(OSError("boom")))
-        s._save_memory_libs({"current": "x", "libs": {}})
-        assert "记忆库配置保存失败" in capsys.readouterr().err
+        with pytest.raises(OSError, match="boom"):
+            s._save_memory_libs({"current": "x", "libs": {}})
 
     def test_reset_memory_singletons_swallows_import_errors(self, tmp_path, monkeypatch):
         monkeypatch.setitem(sys.modules, "modules.memory.event_store", None)

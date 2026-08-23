@@ -3,7 +3,8 @@ import vue from '@vitejs/plugin-vue'
 import { resolve } from 'path'
 import { readFileSync } from 'fs'
 
-const pkg = JSON.parse(readFileSync(resolve(__dirname, 'package.json'), 'utf-8'))
+// 统一版本读取路径：以根目录 VERSION 文件为单一来源（与后端 cortex/version.py、pyproject.toml 同源）
+const __appVersion = readFileSync(resolve(__dirname, '../VERSION'), 'utf-8').trim()
 
 export default defineConfig({
   plugins: [vue()],
@@ -13,7 +14,7 @@ export default defineConfig({
     },
   },
   define: {
-    __APP_VERSION__: JSON.stringify(pkg.version),
+    __APP_VERSION__: JSON.stringify(__appVersion),
   },
   server: {
     port: 5173,

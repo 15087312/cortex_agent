@@ -703,7 +703,7 @@ class ContinuousThinker:
             from config.settings import settings as _sk_cfg
             if not getattr(_sk_cfg, "SKILLS_ENABLED", True):
                 pass  # 技能系统关闭，不注入技能建议
-            elif _sk_cfg.get_system_override(role):
+            elif getattr(_sk_cfg, "get_system_override", lambda _r: "")(role):
                 pass  # 完整系统提示词覆盖生效，不注入技能建议到 user 消息
             else:
                 from modules.thinking.skills import skill_manager

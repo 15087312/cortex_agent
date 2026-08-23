@@ -120,6 +120,7 @@ export const endpoints = {
   get: (path, signal) => request('GET', path, undefined, signal),
 
   health: (signal) => request('GET', '/health', undefined, signal),
+  latestVersion: (signal) => request('GET', '/system/latest-version', undefined, signal),
   dashboard: (signal) => request('GET', '/management/dashboard', undefined, signal),
   modules: (signal) => request('GET', '/management/modules', undefined, signal),
   refreshModule: (n, signal) => request('POST', '/management/modules/' + encodeURIComponent(n) + '/refresh', undefined, signal),

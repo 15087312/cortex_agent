@@ -693,16 +693,19 @@ def test_delete_memory_lib_success(client, reset_rate_limit, fake_settings, monk
 
 def test_update_persona_with_and_without_override(client, reset_rate_limit, fake_settings, monkeypatch):
     from config.settings import Settings
-    _mock_method(monkeypatch, Settings, "set_persona", return_value="p")
-    _mock_method(monkeypatch, Settings, "set_system_override", return_value="o")
-    _mock_method(monkeypatch, Settings, "get_persona", return_value="自定义")
-    _mock_method(monkeypatch, Settings, "get_system_override", return_value="覆盖")
+    # 原子写入：persona + system_override 合并为单次 set_persona_and_override
+    _mock_method(monkeypatch, Settings, "set_persona_and_override",
+                 side_effect=lambda role, value, so=None: {
+                     "persona": str(value or ""),
+                     "system_override": (so or "").strip(),
+                 })
     resp = client.put("/config/persona/assistant", json={"value": "新人格"})
     assert resp.status_code == 200
-    assert resp.json()["data"]["custom"] == "自定义"
+    assert resp.json()["data"]["custom"] == "新人格"
+    assert resp.json()["data"]["system_override"] == ""
     resp2 = client.put("/config/persona/assistant", json={"value": "新人格", "system_override": "全量覆盖"})
     assert resp2.status_code == 200
-    assert resp2.json()["data"]["system_override"] == "覆盖"
+    assert resp2.json()["data"]["system_override"] == "全量覆盖"
 
 
 def test_get_role_tools(client, reset_rate_limit, fake_settings, monkeypatch):
@@ -817,12 +820,14 @@ def test_toggle_agent_builtin_large_active(client, reset_rate_limit, fake_settin
     from config.settings import Settings
     _mock_loader(monkeypatch, roles={"commander": {"tier": "large"}})
     _mock_method(monkeypatch, Settings, "get_custom_agent", return_value=None)
-    _mock_method(monkeypatch, Settings, "deactivate_same_tier", return_value=None)
+    # 原子操作：停用同层 + 设置启用合并为 deactivate_and_set_active
+    _mock_method(monkeypatch, Settings, "deactivate_and_set_active", return_value=None)
     _mock_method(monkeypatch, Settings, "set_agent_active", return_value=None)
     resp = client.put("/management/orchestration/agents/commander/active", json={"active": True})
     assert resp.status_code == 200
     from config.settings import Settings as _S
-    _S.deactivate_same_tier.assert_called_once()
+    _S.deactivate_and_set_active.assert_called_once()
+    _S.set_agent_active.assert_not_called()
 
 
 def test_toggle_agent_custom_active(client, reset_rate_limit, fake_settings, monkeypatch):
@@ -1315,3 +1320,104 @@ def test_lifespan_perception_and_diff_disabled(life):
     assert not life["src"].start.called
     assert not life["hb"].start.called
     assert not life["ps"].stop.called
+
+
+# ---------------------------------------------------------------------------
+# GET /system/latest-version — 检查更新（GitHub release 比较）
+# ---------------------------------------------------------------------------
+
+def _auth_headers():
+    from api.main import _SIMPLE_API_KEY
+    return {"X-API-Key": _SIMPLE_API_KEY} if _SIMPLE_API_KEY else {}
+
+
+def test_latest_version_update_available(client, auth_key, reset_rate_limit, monkeypatch):
+    monkeypatch.setattr("api.main._CORTEX_VERSION", "2.0.0")
+    monkeypatch.setattr(
+        "api.main._fetch_latest_release_version",
+        lambda timeout=8.0: {"latest": "2.4.1", "url": "https://github.com/x/tag/v2.4.1", "source": "redirect"},
+    )
+    resp = client.get("/system/latest-version", headers=_auth_headers())
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["current"] == "2.0.0"
+    assert data["latest"] == "2.4.1"
+    assert data["update_available"] is True
+    assert "github.com" in data["release_url"]
+
+
+def test_latest_version_up_to_date(client, auth_key, reset_rate_limit, monkeypatch):
+    monkeypatch.setattr("api.main._CORTEX_VERSION", "2.4.1")
+    monkeypatch.setattr(
+        "api.main._fetch_latest_release_version",
+        lambda timeout=8.0: {"latest": "2.4.1", "url": "", "source": "api"},
+    )
+    resp = client.get("/system/latest-version", headers=_auth_headers())
+    assert resp.status_code == 200
+    assert resp.json()["data"]["update_available"] is False
+
+
+def test_latest_version_github_unreachable(client, auth_key, reset_rate_limit, monkeypatch):
+    def _boom(timeout=8.0):
+        raise RuntimeError("无法获取最新版本（GitHub 不可达或无发布）")
+    monkeypatch.setattr("api.main._fetch_latest_release_version", _boom)
+    resp = client.get("/system/latest-version", headers=_auth_headers())
+    assert resp.status_code == 502
+    body = resp.json()
+    assert body["success"] is False
+    assert body["error"]["code"] == "UPDATE_CHECK_FAILED"
+
+
+def test_parse_tag_version_variants():
+    from api.main import _parse_tag_version as p
+    assert p("v2.4.0") == "2.4.0"
+    assert p("V3.0.1-beta") == "3.0.1-beta"
+    assert p("2.5") == "2.5"
+    assert p("") == ""
+
+
+def test_cmp_versions_ordering():
+    from api.main import _cmp_versions as c
+    assert c("2.4.1", "2.4.0") == 1
+    assert c("2.3.9", "2.4.0") == -1
+    assert c("2.4.0", "2.4.0") == 0
+    assert c("3.0", "2.9.9") == 1
+    assert c("10.0.0", "9.99.99") == 1
+
+
+def test_fetch_latest_release_redirect(monkeypatch):
+    """重定向方式：Location 含 /tag/vX.Y.Z → 解析出版本"""
+    import api.main as m
+
+    class FakeResp:
+        status_code = 302
+        headers = {"Location": "https://github.com/x/y/releases/tag/v9.9.9"}
+
+    fake = MagicMock()
+    fake.get.return_value = FakeResp()
+    monkeypatch.setitem(__import__("sys").modules, "requests", fake)
+    info = m._fetch_latest_release_version()
+    assert info["latest"] == "9.9.9"
+    assert info["source"] == "redirect"
+
+
+def test_fetch_latest_release_api_fallback(monkeypatch):
+    """重定向失败 → 回退 GitHub API JSON"""
+    import api.main as m
+
+    class FakeRespRedirect:
+        status_code = 200  # 非重定向 → 跳过
+        headers = {}
+
+    class FakeRespApi:
+        def __init__(self):
+            self.ok = True
+        def json(self):
+            return {"tag_name": "v8.8.8", "html_url": "https://github.com/x/y/releases/tag/v8.8.8"}
+
+    fake = MagicMock()
+    fake.get.side_effect = [FakeRespRedirect(), FakeRespApi()]
+    monkeypatch.setitem(__import__("sys").modules, "requests", fake)
+    info = m._fetch_latest_release_version()
+    assert info["latest"] == "8.8.8"
+    assert info["source"] == "api"

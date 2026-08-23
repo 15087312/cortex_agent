@@ -33,6 +33,7 @@ class ProviderBase(ABC):
         tool_choice: Optional[Any] = None,
         stream: bool = False,
         top_p: Optional[float] = None,
+        reasoning_effort: str = "",  # 推理强度（DeepSeek 专用，其他 Provider 忽略）
     ) -> Dict[str, Any]:
         """构建请求体"""
 

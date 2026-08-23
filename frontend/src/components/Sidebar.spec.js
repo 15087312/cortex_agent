@@ -3,8 +3,13 @@ import { mount } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { createTestPinia } from '@/test/helpers.js'
 import { useThemeStore } from '@/stores/theme.js'
-import pkg from '../../package.json'
+import { resolve } from 'path'
+import { readFileSync } from 'fs'
+import { cwd } from 'process'
 import Sidebar from './Sidebar.vue'
+// 统一版本读取路径：以根目录 VERSION 文件为单一来源（与 vite define __APP_VERSION__ 同源），发版不破测试
+// 注：vitest 运行时 __dirname = frontend/（工作目录），故相对取 ../VERSION
+const appVersion = readFileSync(resolve(cwd(), '../VERSION'), 'utf-8').trim()
 
 function makeRouter() {
   return createRouter({
@@ -31,8 +36,8 @@ describe('Sidebar', () => {
     expect(w.text()).toContain('Cortex Agent')
     expect(w.text()).toContain('对话')
     expect(w.text()).toContain('设置')
-    // 版本号从 package.json 读取（与 vite define __APP_VERSION__ 同源），发版不破测试
-    expect(w.text()).toContain('v' + pkg.version)
+    // 版本号从根目录 VERSION 读取（与 vite define __APP_VERSION__ 同源），发版不破测试
+    expect(w.text()).toContain('v' + appVersion)
   })
 
   it('点击导航跳转', async () => {

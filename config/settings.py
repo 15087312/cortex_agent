@@ -619,22 +619,43 @@ class Settings(BaseSettings):
         return Path.home() / ".cortex" / "personas.yaml"
 
     def _load_personas_yaml(self) -> dict:
-        """读取 ~/.cortex/personas.yaml"""
+        """读取 ~/.cortex/personas.yaml
+
+        Returns:
+            dict: 文件内容（文件不存在时返回 {}）
+
+        Raises:
+            RuntimeError: 文件存在但无法读取/解析（防并发写半写或 YAML 损坏时静默返回 {} 导致后续写入清空数据）
+        """
         import yaml
         import time
-        for _ in range(2):
+        path = self._personas_yaml_path
+        if not path.exists():
+            return {}
+        last_err = None
+        for attempt in range(2):
             try:
-                if self._personas_yaml_path.exists():
-                    data = yaml.safe_load(self._personas_yaml_path.read_text(encoding="utf-8")) or {}
-                    return data if isinstance(data, dict) else {}
-                break
-            except Exception:
-                # 并发写可能读到半写 → 稍等后重试一次
-                time.sleep(0.05)
-        return {}
+                data = yaml.safe_load(path.read_text(encoding="utf-8"))
+                if not isinstance(data, dict):
+                    # 文件内容不是 dict（如纯字符串）→ 当作空，但不抛异常（旧文件兼容）
+                    return {}
+                return data
+            except Exception as e:
+                last_err = e
+                if attempt == 0:
+                    # 并发写可能读到半写 → 稍等后重试一次
+                    time.sleep(0.05)
+        # 两次都失败 → 抛异常，阻止后续 _modify_personas_yaml 基于空字典写入清空数据
+        raise RuntimeError(
+            f"personas.yaml 存在但无法读取（可能并发写半写或 YAML 损坏）: {path}"
+        ) from last_err
 
     def _modify_personas_yaml(self, mutator) -> dict:
-        """原子 read-modify-write: 锁覆盖整个周期，防止并发覆盖"""
+        """原子 read-modify-write: 锁覆盖整个周期，防止并发覆盖
+
+        Raises:
+            RuntimeError: 文件存在但无法读取（_load_personas_yaml 抛出）
+        """
         with _PERSONAS_YAML_LOCK:
             data = self._load_personas_yaml()
             result = mutator(data)
@@ -649,8 +670,16 @@ class Settings(BaseSettings):
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".tmp")
         content = yaml.safe_dump(data, allow_unicode=True, sort_keys=False)
-        tmp.write_text(content, encoding="utf-8")
-        os.replace(tmp, path)
+        try:
+            tmp.write_text(content, encoding="utf-8")
+            os.replace(tmp, path)
+        except Exception:
+            # 写入失败 → 清理残留 tmp 文件，防止下次读到半写
+            try:
+                tmp.unlink(missing_ok=True)
+            except Exception:
+                pass
+            raise
         return True
 
     @property

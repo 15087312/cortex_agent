@@ -19,6 +19,9 @@ logger = get_logger(__name__)
 class LargeModelClient(BaseModelClient):
     """大模型调用客户端 — 支持 DashScope / OpenAI 两种 API 格式"""
 
+    # 类级默认：__new__ 绕过 __init__ 构造的实例（测试/反序列化）也能安全读取
+    reasoning_effort = ""
+
     def __init__(
         self,
         api_key: str = None,

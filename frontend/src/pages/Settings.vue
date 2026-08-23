@@ -382,35 +382,28 @@ function copyDiag() { navigator.clipboard.writeText(JSON.stringify(diagData.valu
 
 /* ── 检查更新 ── */
 const checkingUpdate = ref(false)
-// 简单版本比较：x.y.z 同格式下按数值分段比较
-function cmpVersion(a, b) {
-  const pa = String(a || '').replace(/^v/, '').split('.').map(Number)
-  const pb = String(b || '').replace(/^v/, '').split('.').map(Number)
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    const x = pa[i] || 0, y = pb[i] || 0
-    if (x !== y) return x - y
-  }
-  return 0
-}
+const updateInfo = ref(null)  // {current, latest, update_available, release_url}
 async function checkUpdates() {
   checkingUpdate.value = true
   try {
-    const cur = String(appVersion).replace(/^v/, '')
-    // 从 GitHub Releases 拉最新 tag（真正的跨版本更新检查）
-    let latest = null
-    let gotRelease = false
-    try {
-      const r = await fetch('https://api.github.com/repos/15087312/cortex_agent/releases/latest', { signal: AbortSignal.timeout(8000) })
-      if (r.ok) { const j = await r.json(); latest = j.tag_name ? String(j.tag_name).replace(/^v/, '') : null; gotRelease = true }
-    } catch {}
-    if (gotRelease && latest) {
-      const diff = cmpVersion(latest, cur)
-      toast.show(diff > 0 ? '发现新版本: v' + latest + '（当前 v' + cur + '）' : '当前已是最新版本 v' + cur, diff > 0 ? 'info' : 'success')
+    // 后端代理检查 GitHub 最新 release（规避浏览器 CORS 与 API 限流）
+    const r = await endpoints.latestVersion()
+    if (r?.success && r.data) {
+      const d = r.data
+      updateInfo.value = d
+      if (d.update_available) {
+        toast.show('发现新版本: v' + d.latest + '（当前 v' + d.current + '）', 'info')
+        if (d.release_url) window.open(d.release_url, '_blank')
+      } else {
+        toast.show('当前已是最新版本 v' + d.current, 'success')
+      }
     } else {
-      // GitHub 不可达 / 无发布 → 警告提示
-      toast.show('无法连接 GitHub，检查更新失败（当前 v' + cur + '）', 'warning')
+      toast.show('无法连接 GitHub，检查更新失败（当前 v' + (r?.data?.current || appVersion) + '）', 'warning')
     }
-  } catch { toast.show('无法检查更新', 'warning') }
+  } catch (e) {
+    const cur = e?.body?.data?.current || appVersion
+    toast.show('无法连接 GitHub，检查更新失败（当前 v' + cur + '）', 'warning')
+  }
   checkingUpdate.value = false
 }
 function openLink(url) { window.open(url, '_blank') }
@@ -1056,6 +1049,7 @@ onMounted(async () => {
         <div class="settings-group">
           <div class="settings-version-row">
             <span class="settings-version-label">当前版本：v{{ appVersion }}</span>
+            <span v-if="updateInfo?.update_available" class="settings-update-badge" title="点击前往下载" @click="updateInfo.release_url && openLink(updateInfo.release_url)">新版本 v{{ updateInfo.latest }} 可用 ↗</span>
             <div class="settings-btn-row">
               <button class="btn btn-sm" @click="openDiagnostics">诊断日志</button>
               <button class="btn btn-sm" :disabled="checkingUpdate" @click="checkUpdates">{{ checkingUpdate ? '检查中…' : '检查更新' }}</button>

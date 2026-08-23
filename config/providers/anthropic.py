@@ -25,6 +25,7 @@ class AnthropicProvider(ProviderBase):
         tool_choice: Optional[Any] = None,
         stream: bool = False,
         top_p: Optional[float] = None,  # Anthropic 无 top_p，接受但忽略
+        reasoning_effort: str = "",  # DeepSeek 专用，Anthropic 忽略
     ) -> Dict[str, Any]:
         system_text = ""
         user_messages = []

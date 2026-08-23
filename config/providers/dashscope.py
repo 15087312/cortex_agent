@@ -24,6 +24,7 @@ class DashScopeProvider(ProviderBase):
         tool_choice: Optional[Any] = None,
         stream: bool = False,
         top_p: Optional[float] = None,  # DashScope 不支持 top_p，接受但忽略
+        reasoning_effort: str = "",  # DeepSeek 专用，DashScope 忽略
     ) -> Dict[str, Any]:
         payload: Dict[str, Any] = {
             "model": self.model_name,

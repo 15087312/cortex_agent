@@ -72,7 +72,7 @@ def _memory_limit():
 import threading
 
 @pytest.fixture(autouse=True)
-def _reset_feature_flags(monkeypatch):
+def _reset_feature_flags(monkeypatch, tmp_path):
     """每个测试前重置本地 config 中被禁用的功能开关和自定义代理为默认值。
 
     开发者 ~/.cortex/settings.json 可能关闭了 MENTAL_ACTIVITY_ENABLED、
@@ -102,17 +102,19 @@ def _reset_feature_flags(monkeypatch):
         setattr(settings, f, True)
         # 同时写 os.environ，确保测试中新建 Settings() 实例也读到正确值
         os.environ[f] = "true"
-    # 清空自定义 agent：让 get_custom_agents() 返回 []，避免影响测试
-    from unittest.mock import patch as _mock_patch
-    _patcher = _mock_patch.object(settings, '_load_personas_yaml', return_value={})
-    _patcher.start()
-    # 阻止 ~/.cortex/settings.json 覆盖测试环境变量：指向不存在的路径
+    # 清空自定义 agent：让 get_custom_agents() 返回 []，避免影响测试。
+    # 关键保护：同时重定向 _personas_yaml_path 到临时目录，
+    # 防止 settings.set_* 通过 _save_personas_yaml 写入真实 ~/.cortex/personas.yaml（导致用户人设丢失）。
     from config.settings import Settings as _SettingsCls
     from pathlib import Path as _Path
-    _fake_uc_path = _Path.home() / ".cortex" / "__nonexistent_for_test__"
+    import tempfile as _tmpfile
+    _fake_cortex = _Path(_tmpfile.mkdtemp(prefix="cortex_test_"))
+    _fake_personas = _fake_cortex / "personas.yaml"
+    monkeypatch.setattr(_SettingsCls, '_personas_yaml_path', property(lambda self: _fake_personas))
+    # 阻止 ~/.cortex/settings.json 覆盖测试环境变量
+    _fake_uc_path = _fake_cortex / "settings.json"
     monkeypatch.setattr(_SettingsCls, "_USER_CONFIG_PATH", _fake_uc_path)
     yield
-    _patcher.stop()
     for f, v in saved.items():
         setattr(settings, f, v)
     # 还原 os.environ 中的 flag 值

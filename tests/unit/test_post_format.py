@@ -98,7 +98,8 @@ class TestLargeModelPostFormat:
             sys_content = data["body"]["messages"][0]["content"]
 
             assert "系统主模型" in sys_content, "缺少层级身份声明"
-            assert "用户与系统之间的唯一桥梁" in sys_content, "缺少 orchestrator 人格"
+            # 角色边界段已从 system prompt 移除（§95）：人格/擅长不再注入
+            assert "【人格】" not in sys_content, "角色边界应已移除"
 
     @pytest.mark.asyncio
     async def test_system_prompt_contains_safety_rules(self):

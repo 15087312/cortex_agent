@@ -746,6 +746,98 @@ async def health_check():
     }
 
 
+# ── 检查更新：GitHub 最新 release 版本号（服务端代理，规避浏览器 CORS 与 API 限流）──
+
+_GITHUB_REPO = "15087312/cortex_agent"
+
+
+def _parse_tag_version(tag: str) -> str:
+    """从 tag 提取版本号（去 v 前缀）：'v2.4.0' → '2.4.0'"""
+    return (tag or "").strip().lstrip("vV").strip()
+
+
+def _cmp_versions(a: str, b: str) -> int:
+    """x.y.z 数值分段比较：a>b 返回 1，a<b 返回 -1，相等返回 0"""
+    def parts(v: str):
+        return [int(p) if p.isdigit() else 0 for p in (v or "").split(".")]
+    pa, pb = parts(a), parts(b)
+    for i in range(max(len(pa), len(pb))):
+        x = pa[i] if i < len(pa) else 0
+        y = pb[i] if i < len(pb) else 0
+        if x != y:
+            return 1 if x > y else -1
+    return 0
+
+
+def _fetch_latest_release_version(timeout: float = 8.0) -> dict:
+    """获取 GitHub 最新 release 版本。
+
+    优先用 releases/latest 页面重定向（不受 REST API 60次/小时限流），
+    失败再回退 GitHub API。
+    """
+    import requests as _requests
+
+    # 1) 重定向技巧：/releases/latest → 302 Location: .../tag/vX.Y.Z（无 API 配额）
+    try:
+        r = _requests.get(
+            f"https://github.com/{_GITHUB_REPO}/releases/latest",
+            allow_redirects=False,
+            timeout=timeout,
+            headers={"User-Agent": "cortex-agent-update-check"},
+        )
+        loc = r.headers.get("Location", "") or ""
+        if r.status_code in (301, 302, 303, 307, 308) and "/tag/" in loc:
+            tag = loc.rstrip("/").rsplit("/tag/", 1)[-1]
+            version = _parse_tag_version(tag)
+            if version:
+                return {"latest": version, "url": f"https://github.com/{_GITHUB_REPO}/releases/tag/{tag}", "source": "redirect"}
+    except Exception as e:
+        logger.debug(f"检查更新: 重定向方式失败: {e}")
+
+    # 2) 回退 GitHub API（有限流）
+    try:
+        r = _requests.get(
+            f"https://api.github.com/repos/{_GITHUB_REPO}/releases/latest",
+            timeout=timeout,
+            headers={"User-Agent": "cortex-agent-update-check", "Accept": "application/vnd.github+json"},
+        )
+        if r.ok:
+            j = r.json()
+            tag = j.get("tag_name") or ""
+            version = _parse_tag_version(tag)
+            if version:
+                return {"latest": version, "url": j.get("html_url") or f"https://github.com/{_GITHUB_REPO}/releases/latest", "source": "api"}
+    except Exception as e:
+        logger.debug(f"检查更新: API 方式失败: {e}")
+
+    raise RuntimeError("无法获取最新版本（GitHub 不可达或无发布）")
+
+
+@app.get("/system/latest-version")
+async def latest_version():
+    """检查更新 — 比较 GitHub 最新 release 与当前版本"""
+    cur = _CORTEX_VERSION.lstrip("vV")
+    try:
+        info = await asyncio.to_thread(_fetch_latest_release_version)
+    except Exception as e:
+        return JSONResponse(status_code=502, content={
+            "success": False,
+            "error": {"code": "UPDATE_CHECK_FAILED", "message": str(e)},
+            "data": {"current": cur},
+        })
+    latest = info["latest"]
+    return {
+        "success": True,
+        "data": {
+            "current": cur,
+            "latest": latest,
+            "update_available": _cmp_versions(latest, cur) > 0,
+            "release_url": info.get("url", ""),
+            "source": info.get("source", ""),
+        },
+    }
+
+
 # ---------------------------------------------------------------------------
 # Config Update API
 # ---------------------------------------------------------------------------

@@ -86,7 +86,19 @@ class TestExpertExecutionPermission:
         )
         assert allowed
 
-    def test_customer_cannot_admin(self):
+    def test_customer_cannot_admin(self, monkeypatch):
+        # 密闭化：屏蔽 model_factory 实例查找（全量跑时其他测试注册的实例
+        # 会经 tier 回退返回宽松权限），强制走角色默认权限表
+        import types as _types
+
+        class _EmptyFactory:
+            def get(self, _mid):
+                return None
+            def list_by_tier(self, _tier):
+                return []
+
+        import modules.thinking.model_factory as _mf
+        monkeypatch.setattr(_mf, "get_model_factory", lambda: _EmptyFactory())
         ctrl = _make_controller()
         allowed, _ = ctrl.check_execution_permission(
             "run_command", "expert", "expert_customer_001", "customer"

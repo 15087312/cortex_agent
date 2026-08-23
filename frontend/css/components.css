@@ -443,6 +443,13 @@ textarea.input { resize: vertical; min-height: 60px; font-family: var(--font-mon
 .settings-version-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
 .settings-version-label { font-size: 13px; color: var(--text-secondary); }
 .settings-btn-row { display: flex; gap: 8px; }
+.settings-update-badge {
+  font-size: 12px; font-weight: 600; cursor: pointer;
+  color: #16a34a; background: rgba(22,163,74,.12);
+  border: 1px solid rgba(22,163,74,.35);
+  border-radius: 999px; padding: 2px 10px;
+}
+.settings-update-badge:hover { background: rgba(22,163,74,.2); }
 
 /* 链接 */
 .settings-links { display: flex; flex-direction: column; gap: 6px; }

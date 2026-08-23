@@ -494,43 +494,37 @@ describe('Settings.vue', () => {
     expect(w.vm.diagLoading).toBe(false)
   })
 
-  it('checkUpdates GitHub 不可达时警告提示', async () => {
+  it('checkUpdates 后端不可达时警告提示', async () => {
     const pinia = createPinia()
     setActivePinia(pinia)
+    // 模拟后端检查更新失败（GitHub 不可达）
+    routeFetch([
+      { match: '/api/system/latest-version', ok: false, status: 502, data: { success: false, error: { code: 'UPDATE_CHECK_FAILED', message: 'GitHub 不可达' }, data: { current: '2.4.0' } } },
+      { match: '/api/', data: { success: true, data: {} } },
+    ])
     const w = await mountSettings(pinia)
     const { useToastStore } = await import('@/stores/toast.js')
     const toast = useToastStore()
-    // 模拟 GitHub 不可达（只拦 api.github.com，其余透传）
-    const origFetch = global.fetch
-    global.fetch = (url, ...args) => String(url).includes('api.github.com')
-      ? Promise.reject(new Error('offline'))
-      : origFetch(url, ...args)
-    try {
-      await w.vm.checkUpdates()
-      await new Promise((r) => setTimeout(r, 30))
-      expect(toast.toasts.some((t) => t.msg.includes('无法连接 GitHub') && t.type === 'warning')).toBe(true)
-    } finally {
-      global.fetch = origFetch
-    }
+    await w.vm.checkUpdates()
+    await new Promise((r) => setTimeout(r, 30))
+    expect(toast.toasts.some((t) => t.msg.includes('无法连接 GitHub') && t.type === 'warning')).toBe(true)
   })
 
-  it('checkUpdates GitHub 返回新版本时提示发现新版本', async () => {
+  it('checkUpdates 返回新版本时提示发现新版本并记录 updateInfo', async () => {
     const pinia = createPinia()
     setActivePinia(pinia)
+    routeFetch([
+      { match: '/api/system/latest-version', data: { success: true, data: { current: '2.4.0', latest: '99.0.0', update_available: true, release_url: 'https://github.com/x/tag/v99.0.0' } } },
+      { match: '/api/', data: { success: true, data: {} } },
+    ])
     const w = await mountSettings(pinia)
     const { useToastStore } = await import('@/stores/toast.js')
     const toast = useToastStore()
-    const origFetch = global.fetch
-    global.fetch = (url, ...args) => String(url).includes('api.github.com')
-      ? Promise.resolve({ ok: true, json: () => Promise.resolve({ tag_name: 'v99.0.0' }) })
-      : origFetch(url, ...args)
-    try {
-      await w.vm.checkUpdates()
-      await new Promise((r) => setTimeout(r, 30))
-      expect(toast.toasts.some((t) => t.msg.includes('发现新版本') && t.msg.includes('v99.0.0'))).toBe(true)
-    } finally {
-      global.fetch = origFetch
-    }
+    await w.vm.checkUpdates()
+    await new Promise((r) => setTimeout(r, 30))
+    expect(toast.toasts.some((t) => t.msg.includes('发现新版本') && t.msg.includes('v99.0.0'))).toBe(true)
+    // 版本行显示"新版本可用"徽标
+    expect(w.vm.updateInfo.update_available).toBe(true)
   })
 
   it('通用设置 tab：开机启动/防休眠/定位开关触发 saveCfg', async () => {
