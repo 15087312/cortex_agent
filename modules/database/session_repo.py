@@ -9,7 +9,7 @@ def _utcnow():
     """naive UTC now（替代弃用的 datetime.utcnow）"""
     return datetime.now(timezone.utc).replace(tzinfo=None)
 from typing import List, Optional, Dict, Any
-from sqlalchemy import desc
+from sqlalchemy import desc, and_, or_
 import threading
 
 from modules.database.connection import get_db_manager
@@ -196,18 +196,74 @@ class SessionRepository:
                     session_row.title = content[:200]
             return msg.id
 
-    def delete_message(self, session_id: str, message_id: str) -> bool:
-        """删除单条消息（同步更新会话消息计数）"""
+    def delete_message(self, session_id: str, message_id: str,
+                       include_thoughts: bool = False) -> bool:
+        """删除单条消息（同步更新会话消息计数）。
+
+        include_thoughts=True 且目标为 AI 消息（非 user）时，
+        同步删除该轮的关联思考过程（thought/process/mental），避免删除对话后
+        思考步骤在库中无限累积。
+        同轮判定：目标行与它之前最近一条非思考行之间的全部思考行。
+        """
         with self._session() as s:
             msg = s.query(ChatMessage).filter_by(
                 session_id=session_id, id=message_id
             ).first()
             if not msg:
                 return False
+            removed_extra = 0
+            if include_thoughts and (msg.role or "").lower() != "user":
+                # 轮次起点：目标之前最近一条非思考消息（含 id 决胜，处理同秒写入）
+                prev = (
+                    s.query(ChatMessage)
+                    .filter(
+                        ChatMessage.session_id == session_id,
+                        ChatMessage.id != message_id,
+                        ChatMessage.role.notin_(("thought", "process", "mental")),
+                        or_(
+                            ChatMessage.created_at < msg.created_at,
+                            and_(
+                                ChatMessage.created_at == msg.created_at,
+                                ChatMessage.id < message_id,
+                            ),
+                        ),
+                    )
+                    .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
+                    .first()
+                )
+                cond = ChatMessage.session_id == session_id
+                if prev is not None:
+                    cond = and_(
+                        cond,
+                        or_(
+                            ChatMessage.created_at > prev.created_at,
+                            and_(
+                                ChatMessage.created_at == prev.created_at,
+                                ChatMessage.id > prev.id,
+                            ),
+                        ),
+                    )
+                cond = and_(
+                    cond,
+                    ChatMessage.id != message_id,
+                    ChatMessage.role.in_(("thought", "process", "mental")),
+                    or_(
+                        ChatMessage.created_at < msg.created_at,
+                        and_(
+                            ChatMessage.created_at == msg.created_at,
+                            ChatMessage.id < message_id,
+                        ),
+                    ),
+                )
+                removed_extra = s.query(ChatMessage).filter(cond).delete(
+                    synchronize_session=False
+                )
             s.delete(msg)
             session_row = s.query(ChatSession).filter_by(session_id=session_id).first()
             if session_row:
-                session_row.message_count = max(0, session_row.message_count - 1)
+                session_row.message_count = max(
+                    0, session_row.message_count - 1 - removed_extra
+                )
                 session_row.last_active = _utcnow()
             return True
 

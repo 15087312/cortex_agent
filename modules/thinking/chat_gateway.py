@@ -1047,7 +1047,8 @@ async def update_session_title(session_id: str, body: dict = None):
 @router.delete("/sessions/{session_id}/messages/{message_id}")
 async def delete_message(session_id: str, message_id: str):
     if _resolve_mode() == "chatonly":
-        _get_chat_session_repo().delete_message(session_id, message_id)
+        # AI 消息联动删除同轮思考过程（与 agent 模式一致）
+        _get_chat_session_repo().delete_message(session_id, message_id, include_thoughts=True)
         return {"success": True, "data": {"message": "消息已删除"}}
     from modules.thinking import api_stream
     return await api_stream.delete_message(session_id, message_id)

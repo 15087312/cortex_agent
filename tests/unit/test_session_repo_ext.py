@@ -246,6 +246,44 @@ def test_delete_message_without_session_row(repo):
     assert repo.delete_message("s1", mid) is True  # 无 session_row → 跳过计数更新
 
 
+def test_delete_ai_message_removes_associated_thoughts(repo):
+    """删除 AI 消息联动清理同轮思考（thought/process/mental），防止思考步骤累积"""
+    repo.create_session("s1")
+    u1 = repo.save_message("s1", "user", "问1")
+    repo.save_message("s1", "thought", "思考1", tier="large")       # 同轮思考
+    repo.save_message("s1", "thought", "调度语言", tier="supervisor") # 同轮思考
+    repo.save_message("s1", "process", "过程流快照", tier="process")  # 同轮过程面板
+    a1 = repo.save_message("s1", "assistant", "答1")
+    u2 = repo.save_message("s1", "user", "问2")
+    a2 = repo.save_message("s1", "assistant", "答2")
+
+    assert repo.delete_message("s1", a1, include_thoughts=True) is True
+    msgs = repo.get_messages("s1")
+    contents = [m["content"] for m in msgs]
+    # 同轮 thought/process/mental 全部删除
+    assert "思考1" not in contents
+    assert "调度语言" not in contents
+    assert "过程流快照" not in contents
+    # 其他轮次消息不受影响
+    assert contents == ["问1", "问2", "答2"]
+    sess = next(x for x in repo.get_all_sessions() if x["session_id"] == "s1")
+    assert sess["message_count"] == 3
+
+    # 删除 user 消息 → 不触发窗口清理
+    repo.save_message("s1", "thought", "轮2思考", tier="large")
+    assert repo.delete_message("s1", u2, include_thoughts=True) is True
+    assert any(m["content"] == "轮2思考" for m in repo.get_messages("s1"))
+
+
+def test_delete_message_include_thoughts_false_keeps_thoughts(repo, now):
+    """默认行为不变：不传 include_thoughts 时只删消息本身"""
+    repo.create_session("s1")
+    mid = repo.save_message("s1", "assistant", "a")
+    repo.save_message("s1", "thought", "保留的思考", tier="large")
+    assert repo.delete_message("s1", mid) is True
+    assert [m["content"] for m in repo.get_messages("s1")] == ["保留的思考"]
+
+
 def test_clear_messages(repo, now):
     repo.create_session("s1")
     repo.save_message("s1", "user", "a")

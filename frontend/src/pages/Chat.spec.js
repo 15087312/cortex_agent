@@ -122,6 +122,65 @@ describe('Chat 页面', () => {
     vi.restoreAllMocks()
   })
 
+  // ── 滚动交互：底部悬浮按钮 + 上滑自动加载更早消息 ──
+  function _mockDims(w, { scrollTop, scrollHeight, clientHeight }) {
+    const el = w.find('.chat-messages').element
+    Object.defineProperty(el, 'scrollTop', { value: scrollTop, writable: true, configurable: true })
+    Object.defineProperty(el, 'scrollHeight', { value: scrollHeight, configurable: true })
+    Object.defineProperty(el, 'clientHeight', { value: clientHeight, configurable: true })
+    return el
+  }
+
+  it('滚动离开底部 → 显示回到底部按钮；回到底部 → 隐藏', async () => {
+    const w = await mountChat()
+    const chat = useChatStore()
+    chat.addMessage({ role: 'user', content: '问' })
+    chat.addMessage({ role: 'assistant', content: '答' })
+    await flushPromises()
+    // 初始在底部附近（dist=0）→ 无按钮
+    _mockDims(w, { scrollTop: 0, scrollHeight: 300, clientHeight: 300 })
+    await w.find('.chat-messages').trigger('scroll')
+    expect(w.find('.chat-scroll-bottom').exists()).toBe(false)
+    // 离开底部（dist=700 > 120）→ 按钮出现
+    _mockDims(w, { scrollTop: 0, scrollHeight: 1000, clientHeight: 300 })
+    await w.find('.chat-messages').trigger('scroll')
+    expect(w.find('.chat-scroll-bottom').exists()).toBe(true)
+    // 回到底部 → 按钮消失
+    _mockDims(w, { scrollTop: 700, scrollHeight: 1000, clientHeight: 300 })
+    await w.find('.chat-messages').trigger('scroll')
+    expect(w.find('.chat-scroll-bottom').exists()).toBe(false)
+  })
+
+  it('点击底部按钮强制滚到最下', async () => {
+    const w = await mountChat()
+    const chat = useChatStore()
+    chat.addMessage({ role: 'user', content: '问' })
+    chat.addMessage({ role: 'assistant', content: '答' })
+    const el = _mockDims(w, { scrollTop: 0, scrollHeight: 1000, clientHeight: 300 })
+    await w.find('.chat-messages').trigger('scroll')
+    expect(w.find('.chat-scroll-bottom').exists()).toBe(true)
+    await w.find('.chat-scroll-bottom').trigger('click')
+    // force 模式无视守卫：scrollTop 被赋值为 scrollHeight
+    await flushPromises()
+    expect(el.scrollTop).toBe(1000)
+  })
+
+  it('上滑到顶部附近自动加载更早消息（分批渲染）', async () => {
+    const w = await mountChat()
+    const chat = useChatStore()
+    for (let i = 0; i < 120; i++) chat.addMessage({ role: 'user', content: 'm' + i })
+    await flushPromises()
+    // 默认只渲染最后 RENDER_LIMIT(50) 条
+    const renderedBefore = w.findAll('.chat-messages > *').length
+    // 模拟滚到顶部附近：scrollTop < 80 且还有未渲染消息 → 自动加载一批
+    _mockDims(w, { scrollTop: 10, scrollHeight: 5000, clientHeight: 600 })
+    await w.find('.chat-messages').trigger('scroll')
+    await new Promise((r) => setTimeout(r, 20))
+    const renderedAfter = w.findAll('.chat-messages > *').length
+    expect(chat.messages.length).toBe(120)
+    expect(renderedAfter).toBeGreaterThan(renderedBefore - 1 + 49) // 至少 +50 条进入渲染
+  })
+
   it('审批/提问通过页面处理函数回传 WS', async () => {
     const w = await mountChat()
     const chat = useChatStore()

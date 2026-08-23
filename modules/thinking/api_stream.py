@@ -1725,11 +1725,11 @@ async def delete_message(session_id: str, message_id: str):
         system.sessions[session_id]["messages"] = [
             m for m in msgs if m.get("id") != message_id
         ]
-    # 再从数据库删除
+    # 再从数据库删除（AI 消息联动删除同轮思考过程，防止思考步骤累积）
     repo = system._get_session_repo()
     if repo:
         try:
-            repo.delete_message(session_id, message_id)
+            repo.delete_message(session_id, message_id, include_thoughts=True)
         except Exception as e:
             logger.debug(f"[SessionRepo] 删除消息失败: {e}")
     return {

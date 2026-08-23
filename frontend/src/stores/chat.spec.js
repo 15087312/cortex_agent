@@ -289,6 +289,24 @@ describe('useChatStore', () => {
     expect(ok).toBe(false)
   })
 
+  it('deleteMessageAt 删 AI 回复联动移除上方过程流面板；删 user 不动', async () => {
+    const chat = useChatStore()
+    chat.addMessage({ role: 'user', content: '问' })
+    chat.addMessage({ kind: 'process', role: 'system', content: '过程流', runners: null })
+    chat.addMessage({ role: 'assistant', content: '答' })
+    // 删除 assistant → 上方紧邻 process 面板一并移除
+    expect(await chat.deleteMessageAt(2)).toBe(true)
+    expect(chat.messages.map(m => m.kind || m.role)).toEqual(['user'])
+    // 再建一轮：删除 user 消息不联动
+    chat.addMessage({ kind: 'process', role: 'system', content: 'p2' })
+    chat.addMessage({ role: 'user', content: '问2' })
+    expect(await chat.deleteMessageAt(2)).toBe(true)
+    expect(chat.messages).toHaveLength(2)
+    // 剩余：user + 过程流面板（删 user 消息不联动）
+    expect(chat.messages[0].kind).toBeUndefined()
+    expect(chat.messages[1].kind).toBe('process')
+  })
+
   it('editMessageAt 本地更新内容并同步后端', async () => {
     const chat = useChatStore()
     const session = useSessionStore()

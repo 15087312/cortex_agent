@@ -83,12 +83,31 @@ const showThinkingWaiting = computed(() =>
 )
 
 function loadMoreMessages() {
+  if (loadingOlder.value) return
+  loadingOlder.value = true
   const el = messagesWrap.value
   const prevHeight = el ? el.scrollHeight : 0
   renderLimit.value += RENDER_STEP
   nextTick(() => {
     if (el) el.scrollTop = el.scrollHeight - prevHeight
+    loadingOlder.value = false
   })
+}
+
+// ── 滚动状态：底部悬浮按钮 + 上滑到顶部附近自动加载更早消息（分批渲染，不一次性全量） ──
+const isNearBottom = ref(true)
+const loadingOlder = ref(false)
+const NEAR_BOTTOM_PX = 120
+const LOAD_MORE_TOP_PX = 80
+
+function onMessagesScroll() {
+  const el = messagesWrap.value
+  if (!el) return
+  const distBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+  isNearBottom.value = distBottom < NEAR_BOTTOM_PX
+  if (el.scrollTop < LOAD_MORE_TOP_PX && hasMoreMessages.value && !loadingOlder.value) {
+    loadMoreMessages()
+  }
 }
 
 // ── 标题行内编辑 ──
@@ -257,13 +276,14 @@ const _onTodo = (d) => {
   loadTodos()
 }
 
-function scrollBottom() {
+function scrollBottom(force = false) {
   nextTick(() => {
     const el = messagesWrap.value
     if (!el) return
-    // 仅在用户接近底部时自动滚到底（读取历史时不打断）
-    if (el.scrollHeight - el.scrollTop - el.clientHeight > 120) return
+    // 仅在用户接近底部时自动滚到底（force=进入会话/发送消息时强制）
+    if (!force && el.scrollHeight - el.scrollTop - el.clientHeight > 120) return
     el.scrollTop = el.scrollHeight
+    isNearBottom.value = true
   })
 }
 
@@ -275,7 +295,11 @@ onMounted(async () => {
   // 仅设置 sessionId（switchSession）会导致历史不加载、回复接收不到
   const qsid = route.query?.session
   if (qsid) {
-    try { await chat.switchToSession(String(qsid)) } catch {}
+    try {
+      await chat.switchToSession(String(qsid))
+      renderLimit.value = RENDER_LIMIT
+      scrollBottom(true)
+    } catch {}
   }
   ws.wsClient.on('thinking', _onThinking)
   ws.wsClient.on('message', _onMessage)
@@ -332,7 +356,9 @@ async function handleNewSession() {
 
 async function handleSessionSelect(sid) {
   await chat.switchToSession(sid)
-  scrollBottom()
+  // 进入会话默认定位到最新消息（强制，不受"接近底部才滚"守卫限制）
+  renderLimit.value = RENDER_LIMIT
+  scrollBottom(true)
 }
 
 async function handleSessionDelete(sid) {
@@ -350,7 +376,8 @@ async function handleSessionDelete(sid) {
     } else {
       await chat.init()
     }
-    scrollBottom()
+    renderLimit.value = RENDER_LIMIT
+    scrollBottom(true)
   }
 }
 
@@ -475,7 +502,7 @@ function handleAnswerIntent(requestId, answer) {
       </div>
 
       <!-- 消息区 -->
-      <div ref="messagesWrap" class="chat-messages">
+      <div ref="messagesWrap" class="chat-messages" @scroll="onMessagesScroll">
         <div v-if="chat.messages.length === 0 && !chat.processing" class="chat-welcome">
           <div class="welcome-icon"><Icon name="message" :size="40" /></div>
           <h2>开始新对话</h2>
@@ -504,7 +531,7 @@ function handleAnswerIntent(requestId, answer) {
         </div>
 
         <div class="chat-load-more" v-if="hasMoreMessages" @click="loadMoreMessages">
-          加载更早消息（还有 {{ chat.messages.length - visibleMessages.length }} 条）
+          {{ loadingOlder ? '加载中…' : '加载更早消息（还有 ' + (chat.messages.length - visibleMessages.length) + ' 条）' }}
         </div>
 
         <ChatMessage
@@ -522,6 +549,19 @@ function handleAnswerIntent(requestId, answer) {
         <!-- 正在等待 AI 回复：显示在最后一条用户消息下方 -->
         <ThinkingIndicator v-if="showThinkingWaiting" :label="chat.elapsed ? '正在思考 ' + chat.elapsed + 's' : '正在思考'" />
       </div>
+
+      <!-- 回到底部悬浮按钮：离开底部时出现 -->
+      <transition name="chat-fade">
+        <button
+          v-if="!isNearBottom && chat.messages.length"
+          class="chat-scroll-bottom"
+          title="回到底部"
+          @click="scrollBottom(true)"
+        >
+          <Icon name="down" :size="16" />
+          <span v-if="chat.processing" class="chat-scroll-dot"></span>
+        </button>
+      </transition>
 
       <ChatInput :processing="chat.processing" :hint="chat.hint" @send="handleSend" @toast="(t) => toast.show(t.message, t.type)">
         <template #actions>

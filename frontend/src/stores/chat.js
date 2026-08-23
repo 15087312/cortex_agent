@@ -524,7 +524,14 @@ export const useChatStore = defineStore('chat', () => {
         return false
       }
     }
+    const wasAiFinal = ['assistant', 'large', 'supervisor', 'expert'].includes(String(m.role || '').toLowerCase())
+      || (m.kind === 'process')
     messages.value.splice(idx, 1)
+    // 删除 AI 最终回复时，联动移除其上方紧邻的过程流面板（与后端同轮思考清理一致）
+    if (wasAiFinal) {
+      const prev = messages.value[idx - 1]
+      if (prev && prev.kind === 'process') messages.value.splice(idx - 1, 1)
+    }
     return true
   }
 
