@@ -125,10 +125,9 @@ def request_intermediate_response(
                         cleaned = re.sub(r'<tool_use>.*?</tool_use>', '', cleaned, flags=re.DOTALL)
                         paragraphs = [p.strip() for p in cleaned.split('\n\n') if len(p.strip()) > 20]
                         if paragraphs:
-                            from modules.thinking.context.compression import get_compression_engine
-                            engine = get_compression_engine()
-                            max_tokens = max(max_length // 4, 50)
-                            intermediate_text = engine._truncate_to_tokens(paragraphs[-1], max_tokens)
+                            # 预览长度上限：按保守中文比例换算为字符数
+                            max_chars = max(max_length // 4, 50) * 2
+                            intermediate_text = paragraphs[-1][:max_chars]
                             break
         except Exception:
             pass

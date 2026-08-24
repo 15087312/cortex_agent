@@ -289,9 +289,6 @@ async def test_continuous_think_finalize_error(monkeypatch):
 def test_produce_intermediate_conclusion(monkeypatch):
     ct = ContinuousThinker.__new__(ContinuousThinker)
     ct.history_thoughts = ["【结论】\n这就是最终结论内容内容内容内容内容内容内容内容内容内容"]
-    engine = MagicMock()
-    engine._truncate_to_tokens = MagicMock(side_effect=lambda t, m: t)
-    monkeypatch.setattr("modules.thinking.context.compression.get_compression_engine", lambda: engine)
     out = ct.produce_intermediate_response()
     assert out.startswith("[preliminary]")
 

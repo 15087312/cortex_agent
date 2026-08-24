@@ -155,9 +155,6 @@ def test_produce_intermediate_structured(monkeypatch):
         "先前的短思考",
         "【回答】\n这是最终的回答内容内容内容内容内容内容内容内容内容\n\n【建议】\n另一个建议",
     ]
-    engine = MagicMock()
-    engine._truncate_to_tokens = MagicMock(side_effect=lambda t, m: t)
-    monkeypatch.setattr("modules.thinking.context.compression.get_compression_engine", lambda: engine)
     out = ct.produce_intermediate_response()
     assert out.startswith("[preliminary]")
 
@@ -165,9 +162,6 @@ def test_produce_intermediate_structured(monkeypatch):
 def test_produce_intermediate_fallback(monkeypatch):
     ct = ContinuousThinker.__new__(ContinuousThinker)
     ct.history_thoughts = ["这是一个很长的思考过程，包含了多个段落内容，用于测试回退路径是否正常工作。"]
-    engine = MagicMock()
-    engine._truncate_to_tokens = MagicMock(side_effect=lambda t, m: t)
-    monkeypatch.setattr("modules.thinking.context.compression.get_compression_engine", lambda: engine)
     out = ct.produce_intermediate_response()
     assert out.startswith("[preliminary]")
 

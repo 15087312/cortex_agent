@@ -81,14 +81,13 @@ def test_intermediate_with_thought(monkeypatch):
         lambda: [{"blackboard": bb}],
     )
     engine = MagicMock()
-    engine._truncate_to_tokens = MagicMock(return_value="截断内容")
     monkeypatch.setattr("modules.thinking.context.compression.get_compression_engine", lambda: engine)
     bus = MagicMock()
     bus.send = AsyncMock()
     monkeypatch.setattr("modules.thinking.communication.message_bus.get_message_bus", lambda: bus)
     out = pt.request_intermediate_response(max_length=100, _caller_role="expert")
     assert out["success"] is True
-    assert "截断内容" in out["content"]
+    assert "思考内容段落" in out["content"]
 
 
 def test_intermediate_send_fails(monkeypatch):
@@ -101,7 +100,6 @@ def test_intermediate_send_fails(monkeypatch):
         lambda: [{"blackboard": bb}],
     )
     engine = MagicMock()
-    engine._truncate_to_tokens = MagicMock(return_value="截断")
     monkeypatch.setattr("modules.thinking.context.compression.get_compression_engine", lambda: engine)
 
     def boom(*a, **k):
@@ -121,7 +119,6 @@ def test_intermediate_without_running_loop(monkeypatch):
         lambda: [{"blackboard": bb}],
     )
     engine = MagicMock()
-    engine._truncate_to_tokens = MagicMock(return_value="截断")
     monkeypatch.setattr("modules.thinking.context.compression.get_compression_engine", lambda: engine)
     bus = MagicMock()
     bus.send = AsyncMock()

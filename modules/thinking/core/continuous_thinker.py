@@ -1305,9 +1305,8 @@ class ContinuousThinker:
         if not self.history_thoughts:
             return ""
 
-        from modules.thinking.context.compression import get_compression_engine
-        engine = get_compression_engine()
-        max_tokens = max(max_length // 4, 50)
+        # 预览长度上限：按保守中文比例换算为字符数
+        max_chars = max(max_length // 4, 50) * 2
 
         # 从最新到最旧找有实质内容的思考
         for thought in reversed(self.history_thoughts):
@@ -1327,7 +1326,7 @@ class ContinuousThinker:
                 if matches:
                     combined = " ".join(m.strip() for m in matches if m.strip())
                     if len(combined) > 20:
-                        truncated = engine._truncate_to_tokens(combined, max_tokens)
+                        truncated = combined[:max_chars]
                         return f"[preliminary] {truncated}"
 
             # 回退：取末尾最像结论的段落（最后一段非工具调用内容）
@@ -1338,7 +1337,7 @@ class ContinuousThinker:
             if paragraphs:
                 last = paragraphs[-1]
                 if len(last) > 30:
-                    truncated = engine._truncate_to_tokens(last, max_tokens)
+                    truncated = last[:max_chars]
                     return f"[preliminary] {truncated}"
 
         return ""

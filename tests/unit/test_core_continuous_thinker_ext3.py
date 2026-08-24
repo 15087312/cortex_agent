@@ -489,7 +489,6 @@ def test_produce_intermediate_fallback_with_paragraphs(monkeypatch):
         "第一部分内容\n\n这是一段足够长的最终结论内容，用于测试段落回退逻辑，长度远超三十个字符限制，确保能被正确截取为初步回复"
     ])
     engine = MagicMock()
-    engine._truncate_to_tokens = MagicMock(return_value="截断")
     monkeypatch.setattr("modules.thinking.context.compression.get_compression_engine", lambda: engine)
     # 无【】标记也无工具调用 → 走段落回退
     out = t.produce_intermediate_response()
@@ -905,7 +904,6 @@ def test_produce_intermediate_pattern_too_short(monkeypatch):
     """结构化段落匹配但 combined ≤20 → 继续后续模式（1279->1275）"""
     t = _thinker(history_thoughts=["【回答】短"])
     engine = MagicMock()
-    engine._truncate_to_tokens = MagicMock(return_value="x")
     monkeypatch.setattr("modules.thinking.context.compression.get_compression_engine", lambda: engine)
     assert t.produce_intermediate_response() == ""
 
@@ -914,7 +912,6 @@ def test_produce_intermediate_no_matching_paragraph(monkeypatch):
     """段落匹配但 last ≤30 → 返回空（1288->1263, 1290->1263）"""
     t = _thinker(history_thoughts=["【回答】这是一个不超过三十字的内容。"])
     engine = MagicMock()
-    engine._truncate_to_tokens = MagicMock(return_value="x")
     monkeypatch.setattr("modules.thinking.context.compression.get_compression_engine", lambda: engine)
     assert t.produce_intermediate_response() == ""
 
@@ -923,7 +920,6 @@ def test_produce_intermediate_structured_too_short(monkeypatch):
     """结构化匹配 combined ≤20 → 继续下一 pattern（1279->1275）"""
     t = _thinker(history_thoughts=["【回答】短"])
     engine = MagicMock()
-    engine._truncate_to_tokens = MagicMock(return_value="x")
     monkeypatch.setattr("modules.thinking.context.compression.get_compression_engine", lambda: engine)
     assert t.produce_intermediate_response() == ""
 
@@ -932,7 +928,6 @@ def test_produce_intermediate_fallback_paragraphs_too_short(monkeypatch):
     """回退段落存在但 last ≤30 → 返回空（1288->1263 内的 last 长度分支）"""
     t = _thinker(history_thoughts=["【回答】短内容\n\n还是短"])
     engine = MagicMock()
-    engine._truncate_to_tokens = MagicMock(return_value="x")
     monkeypatch.setattr("modules.thinking.context.compression.get_compression_engine", lambda: engine)
     assert t.produce_intermediate_response() == ""
 
@@ -941,7 +936,6 @@ def test_produce_intermediate_structured_combined_short(monkeypatch):
     """结构化匹配但 combined ≤20 → 继续下一 pattern（1279->1275）"""
     t = _thinker(history_thoughts=["【回答】ok\n\n" + "长" * 40])
     engine = MagicMock()
-    engine._truncate_to_tokens = MagicMock(return_value="x")
     monkeypatch.setattr("modules.thinking.context.compression.get_compression_engine", lambda: engine)
     out = t.produce_intermediate_response()
     assert out.startswith("[preliminary]")  # 回退段落命中
@@ -951,7 +945,6 @@ def test_produce_intermediate_paragraphs_empty(monkeypatch):
     """段落都 ≤20 字符 → paragraphs 空 → 继续下一思考（1288->1263）"""
     t = _thinker(history_thoughts=["短" * 18 + "\n\n" + "短" * 18])
     engine = MagicMock()
-    engine._truncate_to_tokens = MagicMock(return_value="x")
     monkeypatch.setattr("modules.thinking.context.compression.get_compression_engine", lambda: engine)
     assert t.produce_intermediate_response() == ""
 
@@ -960,7 +953,6 @@ def test_produce_intermediate_last_paragraph_short(monkeypatch):
     """最后段落 ≤30 → 不返回（1290->1263）"""
     t = _thinker(history_thoughts=["短" * 25 + "\n\n" + "短" * 25])
     engine = MagicMock()
-    engine._truncate_to_tokens = MagicMock(return_value="x")
     monkeypatch.setattr("modules.thinking.context.compression.get_compression_engine", lambda: engine)
     assert t.produce_intermediate_response() == ""
 

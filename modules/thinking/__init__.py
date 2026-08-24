@@ -17,7 +17,7 @@
 - core/: ContinuousThinker, ModelRunner, DelegationPort, ControlTools
 - cognition/: CognitiveBlackboard (单源认知状态), ContextSlicer (分层视图)
 - communication/: ModelMessageBus (发布/订阅 + 点对点)
-- context/: TurnContext (上下文池), CompressionEngine (压缩), ContextController (路由)
+- context/: TurnContext (上下文池), CompressionEngine (token 粗估), ContextController (路由)
 - probes/: 探针工具 (probe_start/probe_stop/probe_list) + 权限管理
 - skills/: YAML 技能系统 (手动激活)
 - runtime_expert: RuntimeExpert 抽象基类 (预留，当前未在生产中使用)

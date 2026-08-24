@@ -1,5 +1,7 @@
 # 架构设计文档
 
+**Language / 语言**: [简体中文](./ARCHITECTURE.md) | [English](./ARCHITECTURE.en.md)
+
 > Cortex Agent 系统架构详解 — 四层分层、事件驱动黑板、多模型编排、协议解耦
 
 > **更新说明**：本文件已按当前代码同步（9 业务模块、`config/providers` 模型格式层、
@@ -436,19 +438,19 @@ ModelPermissions:
 - **事件日志**：最大 10000 条，TTL 自动清理
 - **会话上下文**：每会话独立的上下文视图
 
-### 7.2 压缩引擎（CompressionEngine）
+### 7.2 Token 估算与 LLM 总结（原压缩引擎）
 
-5 级压缩：
+> 历史说明：原 CompressionEngine 的 5 级规则压缩（NONE/LIGHT/MODERATE/HEAVY/AGGRESSIVE）
+> 已移除。token 控制统一交由 LLM 总结机制，规则截断不再使用。
 
-| 级别 | 策略 | 触发条件 |
-|------|------|---------|
-| NONE | 原样返回 | token 预算充足 |
-| LIGHT | 去空行和注释 | 轻微超限 |
-| MODERATE | LLM 摘要旧事件 | 中度超限 |
-| HEAVY | 结构化压缩，仅保留关键句 | 严重超限 |
-| AGGRESSIVE | 仅保留关键词和结论 | 极端超限 |
+现状：
 
-自动选择级别：根据 token 预算和当前占用量计算。
+| 组件 | 职责 |
+|------|------|
+| `CompressionEngine.estimate_tokens` | 中英文混合 token 粗估（供占用统计与阈值判断） |
+| `ModelRunner._maybe_summarize_context` | 工具循环中上下文超模型窗口 90% 时，调当前模型总结，messages 替换为【system + 摘要 + 原任务】 |
+| `chat_light/context_slicer.ContextSlicer` | 近 15 条保留全文，更旧部分调 LLM 总结为一条摘要；失败才降级首尾截断 |
+| `TurnContext._compact` | 超限仅告警不裁剪，交由上述总结机制与来源侧裁剪控制 |
 
 ### 7.3 审计器（Auditor）
 
