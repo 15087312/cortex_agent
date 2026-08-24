@@ -2,22 +2,24 @@
 import { ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useThemeStore } from '@/stores/theme.js'
+import { useLocaleStore } from '@/stores/locale.js'
 import Icon from '@/components/Icon.vue'
 
 const router = useRouter()
 const route = useRoute()
 const theme = useThemeStore()
+const locale = useLocaleStore()
 const appVersion = __APP_VERSION__
 
 const navSections = [
   {
-    label: '我的',
+    labelKey: 'nav.mine',
     items: [
-      { route: '/dashboard', label: '仪表盘', icon: 'dashboard' },
-      { route: '/chat', label: '对话', icon: 'message' },
-      { route: '/memory', label: '记忆', icon: 'file' },
-      { route: '/tasks', label: '定时任务', icon: 'circle' },
-      { route: '/settings', label: '设置', icon: 'settings' },
+      { route: '/dashboard', labelKey: 'nav.dashboard', icon: 'dashboard' },
+      { route: '/chat', labelKey: 'nav.chat', icon: 'message' },
+      { route: '/memory', labelKey: 'nav.memory', icon: 'file' },
+      { route: '/tasks', labelKey: 'nav.tasks', icon: 'circle' },
+      { route: '/settings', labelKey: 'nav.settings', icon: 'settings' },
     ]
   },
 ]
@@ -25,14 +27,14 @@ const navSections = [
 // 开发者分组（默认折叠）
 const devSections = [
   {
-    label: '开发者',
+    labelKey: 'nav.developer',
     items: [
-      { route: '/modules', label: '模块', icon: 'puzzle' },
-      { route: '/causal', label: '因果图', icon: 'network' },
-      { route: '/orchestration', label: '编排', icon: 'settings' },
-      { route: '/security', label: '安全', icon: 'shield' },
-      { route: '/perception', label: '感知', icon: 'eye' },
-      { route: '/system', label: '系统', icon: 'info' },
+      { route: '/modules', labelKey: 'nav.modules', icon: 'puzzle' },
+      { route: '/causal', labelKey: 'nav.causal', icon: 'network' },
+      { route: '/orchestration', labelKey: 'nav.orchestration', icon: 'settings' },
+      { route: '/security', labelKey: 'nav.security', icon: 'shield' },
+      { route: '/perception', labelKey: 'nav.perception', icon: 'eye' },
+      { route: '/system', labelKey: 'nav.system', icon: 'info' },
     ]
   },
 ]
@@ -50,8 +52,8 @@ function navTo(item) {
   <nav class="sidebar">
     <div class="sidebar-header"><img class="logo" src="/favicon.jpg" alt="Logo" /><span>Cortex Agent</span></div>
     <div class="sidebar-nav">
-      <template v-for="section in navSections" :key="section.label">
-        <div class="nav-section">{{ section.label }}</div>
+      <template v-for="section in navSections" :key="section.labelKey">
+        <div class="nav-section">{{ $t(section.labelKey) }}</div>
         <div
           v-for="item in section.items"
           :key="item.route"
@@ -60,13 +62,13 @@ function navTo(item) {
           @click="navTo(item)"
         >
           <span class="nav-item-icon"><Icon :name="item.icon" :size="16" /></span>
-          <span>{{ item.label }}</span>
+          <span>{{ $t(item.labelKey) }}</span>
         </div>
       </template>
 
       <!-- 开发者分组（默认折叠） -->
       <div class="nav-section dev-toggle" @click="devExpanded = !devExpanded">
-        <span>{{ devSections[0].label }}</span>
+        <span>{{ $t(devSections[0].labelKey) }}</span>
         <Icon :name="devExpanded ? 'down' : 'right'" :size="12" />
       </div>
       <template v-if="devExpanded">
@@ -78,13 +80,16 @@ function navTo(item) {
           @click="navTo(item)"
         >
           <span class="nav-item-icon"><Icon :name="item.icon" :size="16" /></span>
-          <span>{{ item.label }}</span>
+          <span>{{ $t(item.labelKey) }}</span>
         </div>
       </template>
     </div>
     <div class="sidebar-footer">
       <span class="version">v{{ appVersion }}</span>
-      <button class="theme-toggle" @click="theme.toggle()" title="切换主题">
+      <button class="theme-toggle" @click="locale.toggle()" :title="$t('common.language')" :aria-label="$t('common.language')">
+        {{ locale.locale === 'zh' ? 'EN' : '中文' }}
+      </button>
+      <button class="theme-toggle" @click="theme.toggle()" :title="$t('nav.toggleTheme')">
         <Icon :name="theme.isDark ? 'sun' : 'moon'" :size="16" />
       </button>
     </div>

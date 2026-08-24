@@ -2,8 +2,10 @@
 import { ref, onMounted, computed } from 'vue'
 import { endpoints } from '@/api.js'
 import { useToastStore } from '@/stores/toast.js'
+import { useI18n } from 'vue-i18n'
 import Icon from '@/components/Icon.vue'
 
+const { t } = useI18n()
 const toast = useToastStore()
 const sessions = ref([])
 const agents = ref([])
@@ -13,10 +15,10 @@ const loading = ref(true)
 const saving = ref(false)
 
 const TASK_TYPES = [
-  { value: 'daily', label: '每天定点' },
-  { value: 'interval', label: '每 N 分钟' },
-  { value: 'once', label: '单次触发' },
-  { value: 'cron', label: 'Cron 表达式' },
+  { value: 'daily', label: 'scheduledTasks.typeDaily' },
+  { value: 'interval', label: 'scheduledTasks.typeInterval' },
+  { value: 'once', label: 'scheduledTasks.typeOnce' },
+  { value: 'cron', label: 'scheduledTasks.typeCron' },
 ]
 
 function taskType(task) {
@@ -28,7 +30,7 @@ function taskType(task) {
 }
 function statusBadge(st) {
   if (!st) return null
-  const map = { success: ['#3fb950', '成功'], error: ['#f85149', '错误'] }
+  const map = { success: ['#3fb950', 'common.success'], error: ['#f85149', 'common.error'] }
   const [color, label] = map[st] || ['#8b949e', st]
   return { color, label }
 }
@@ -91,9 +93,9 @@ async function saveTasks() {
       body: JSON.stringify({ tasks: { tasks: normalized } }),
     })
     const d = await r.json()
-    if (d.success) toast.show('定时任务已保存', 'success')
-    else toast.show('保存失败: ' + (d.error?.message || ''), 'error')
-  } catch (e) { toast.show('保存失败', 'error') }
+    if (d.success) toast.show(t('scheduledTasks.saved'), 'success')
+    else toast.show(t('common.saveFailed') + ': ' + (d.error?.message || ''), 'error')
+  } catch (e) { toast.show(t('common.saveFailed'), 'error') }
   finally { saving.value = false }
 }
 
@@ -103,12 +105,12 @@ onMounted(loadSessions)
 <template>
   <div>
     <div class="page-header">
-      <h2>会话定时任务</h2>
-      <button class="btn btn-sm" @click="loadSessions"><Icon name="refresh" :size="14" /> 刷新</button>
+      <h2>{{ $t('scheduledTasks.title') }}</h2>
+      <button class="btn btn-sm" @click="loadSessions"><Icon name="refresh" :size="14" /> {{ $t('common.refresh') }}</button>
     </div>
     <div class="page-body">
       <div class="card" v-if="!loading">
-        <div class="card-header">选择会话（每会话定时任务独立）</div>
+        <div class="card-header">{{ $t('scheduledTasks.selectSession') }}</div>
         <select v-model="selected" class="input max-w-320" @change="loadTasks">
           <option v-for="s in sessions" :key="s.session_id" :value="s.session_id">{{ s.title || s.session_id.slice(0, 16) }}</option>
         </select>
@@ -116,15 +118,15 @@ onMounted(loadSessions)
 
       <div class="card dash-mt" v-if="selected">
         <div class="card-header card-header-flex">
-          <span>定时任务（到点调用与主动搭话相同的大模型逻辑 → 消息推送）</span>
-          <button class="btn btn-sm btn-primary" @click="addTask"><Icon name="plus" :size="13" /> 添加任务</button>
+          <span>{{ $t('scheduledTasks.tasksHint') }}</span>
+          <button class="btn btn-sm btn-primary" @click="addTask"><Icon name="plus" :size="13" /> {{ $t('scheduledTasks.addTask') }}</button>
         </div>
 
         <div v-if="tasks.length">
           <div v-for="(task, i) in tasks" :key="task.id" class="task-row">
             <div class="task-controls">
               <select v-model="task.type" class="input w-110" @change="onTypeChange(task)">
-                <option v-for="t in TASK_TYPES" :key="t.value" :value="t.value">{{ t.label }}</option>
+                <option v-for="t in TASK_TYPES" :key="t.value" :value="t.value">{{ $t(t.label) }}</option>
               </select>
 
               <template v-if="task.type === 'daily'">
@@ -132,38 +134,38 @@ onMounted(loadSessions)
               </template>
               <template v-else-if="task.type === 'interval'">
                 <input v-model.number="task.every_minutes" type="number" min="1" class="input w-80" @change="task.schedule = { kind: 'interval', every_minutes: task.every_minutes }" />
-                <span class="task-hint">分钟</span>
+                <span class="task-hint">{{ $t('scheduledTasks.minutes') }}</span>
               </template>
               <template v-else-if="task.type === 'once'">
                 <input v-model="task.at" class="input w-90" placeholder="HH:MM" @change="task.schedule = { kind: 'once', at: task.at }" />
               </template>
               <template v-else>
-                <input v-model="task.expr" class="input w-130" placeholder="分 时 日 月 周" @change="task.schedule = { kind: 'cron', expr: task.expr }" />
+                <input v-model="task.expr" class="input w-130" :placeholder="$t('scheduledTasks.cronPlaceholder')" @change="task.schedule = { kind: 'cron', expr: task.expr }" />
               </template>
 
-              <label class="toggle-switch" title="启用">
+              <label class="toggle-switch" :title="$t('common.enable')">
                 <input type="checkbox" v-model="task.enabled" /><span class="toggle-slider"></span>
               </label>
-              <span class="task-hint">启用</span>
-              <select v-model="task.action" class="input w-120" title="触发的逻辑">
-                <option value="chat">chat（大模型）</option>
+              <span class="task-hint">{{ $t('common.enable') }}</span>
+              <select v-model="task.action" class="input w-120" :title="$t('scheduledTasks.actionTitle')">
+                <option value="chat">{{ $t('scheduledTasks.chatAction') }}</option>
               </select>
-              <select v-model="task.agent_type" class="input w-140" title="使用的角色人格">
-                <option value="">总指挥（默认）</option>
+              <select v-model="task.agent_type" class="input w-140" :title="$t('scheduledTasks.agentTitle')">
+                <option value="">{{ $t('scheduledTasks.directorDefault') }}</option>
                 <option v-for="a in agents" :key="a.role" :value="a.role">{{ a.name }}（{{ a.role }}）</option>
               </select>
               <button class="btn btn-sm danger" @click="removeTask(i)"><Icon name="trash" :size="13" /></button>
               <span v-if="statusBadge(task.last_status)" :style="{ fontSize: '11px', padding: '2px 8px', borderRadius: '10px', background: statusBadge(task.last_status).color + '22', color: statusBadge(task.last_status).color }">
-                {{ statusBadge(task.last_status).label }}{{ task.last_run ? ' · ' + task.last_run : '' }}
+                {{ $t(statusBadge(task.last_status).label) }}{{ task.last_run ? ' · ' + task.last_run : '' }}
               </span>
             </div>
-            <textarea v-model="task.prompt" rows="2" class="input task-textarea" placeholder="可选提示词（留空用默认提醒语）"></textarea>
+            <textarea v-model="task.prompt" rows="2" class="input task-textarea" :placeholder="$t('scheduledTasks.promptPlaceholder')"></textarea>
           </div>
         </div>
-        <div v-else class="task-empty">暂无定时任务，点击"添加任务"创建</div>
+        <div v-else class="task-empty">{{ $t('scheduledTasks.emptyList') }}</div>
 
         <div class="task-save">
-          <button class="btn btn-sm btn-primary" :disabled="saving" @click="saveTasks">{{ saving ? '保存中...' : '保存任务' }}</button>
+          <button class="btn btn-sm btn-primary" :disabled="saving" @click="saveTasks">{{ saving ? $t('common.saving') : $t('scheduledTasks.saveTask') }}</button>
         </div>
       </div>
     </div>

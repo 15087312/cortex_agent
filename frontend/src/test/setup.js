@@ -3,6 +3,20 @@
 
 import { vi, afterEach, beforeEach } from 'vitest'
 import { config } from '@vue/test-utils'
+import { createI18n } from 'vue-i18n'
+import { locales } from '@/i18n/index.js'
+
+// 全局注入 i18n：所有组件 mount 测试无需逐一手动挂载即可使用 $t / t()
+config.global.plugins.push(
+  createI18n({
+    legacy: false,
+    locale: 'zh',
+    fallbackLocale: 'en',
+    messages: Object.fromEntries(
+      Object.entries(locales).map(([code, l]) => [code, l.messages]),
+    ),
+  }),
+)
 
 // 全局 fetch stub：默认返回空 JSON（各测试按需覆盖）
 const defaultFetch = vi.fn(async () => ({

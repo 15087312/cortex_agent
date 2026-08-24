@@ -1,8 +1,10 @@
 <script setup>
 import { ref, watch, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 
 // 展示当前会话实际参与的模型（从会话图谱节点推断），非选择器
 const props = defineProps({ sessionId: { type: String, default: '' } })
+const { t } = useI18n()
 const models = ref([])
 
 async function load() {
@@ -15,8 +17,8 @@ async function load() {
       .filter((n) => n.tier && n.tier !== 'user')
       .map((n) => ({ label: n.label || n.tier, tier: n.tier }))
     // 图谱无记录（如纯对话模式）→ 回退显示当前对话模型
-    if (!models.value.length) models.value = [{ label: '总指挥', tier: 'large' }]
-  } catch { models.value = [{ label: '总指挥', tier: 'large' }] }
+    if (!models.value.length) models.value = [{ label: t('modelSelector.commander'), tier: 'large' }]
+  } catch { models.value = [{ label: t('modelSelector.commander'), tier: 'large' }] }
 }
 
 onMounted(load)
@@ -27,7 +29,7 @@ watch(() => props.sessionId, load)
   <div class="chat-model-tags" v-if="models.length">
     <span v-for="m in models" :key="m.tier + m.label" class="chat-model-tag" :class="'tag-' + m.tier">{{ m.label }}</span>
   </div>
-  <span v-else class="chat-model-tags chat-model-tag">默认模型</span>
+  <span v-else class="chat-model-tags chat-model-tag">{{ $t('modelSelector.defaultModel') }}</span>
 </template>
 
 <style scoped>

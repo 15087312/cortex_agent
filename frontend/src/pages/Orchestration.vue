@@ -7,7 +7,9 @@ import Icon from '@/components/Icon.vue'
 import SkillsView from '@/pages/Skills.vue'
 import GraphView from '@/pages/Graph.vue'
 import ToolsView from '@/pages/Tools.vue'
+import { useI18n } from 'vue-i18n'
 
+const { t } = useI18n()
 const toast = useToastStore()
 const confirm = useConfirm()
 const agents = ref([])
@@ -23,7 +25,7 @@ const expanded = ref({})
 const preview = ref({ role: '', text: '', loading: false })
 const promptPreview = ref({ open: false, agentName: '', text: '', loading: false })
 
-const TIER_LABEL = { large: '总指挥', supervisor: '主管', expert: '专家' }
+const TIER_LABEL = { large: 'orchestration.tiers.large', supervisor: 'orchestration.tiers.supervisor', expert: 'orchestration.tiers.expert' }
 
 // AI 工具管理
 const aiTools = ref([])
@@ -74,9 +76,9 @@ async function savePersona(agent) {
       body: JSON.stringify({ value: drafts.value[agent.role] || '' }),
     })
     const d = await r.json()
-    if (d.success) toast.show(agent.name + ' 人设已保存', 'success')
-    else toast.show('保存失败: ' + (d.error?.message || ''), 'error')
-  } catch (e) { toast.show('保存失败', 'error') }
+    if (d.success) toast.show(t('orchestration.personaSaved', { name: agent.name }), 'success')
+    else toast.show(t('orchestration.saveFailed') + ': ' + (d.error?.message || ''), 'error')
+  } catch (e) { toast.show(t('orchestration.saveFailed'), 'error') }
   finally { saving.value = '' }
 }
 
@@ -89,9 +91,9 @@ async function saveOverride(agent) {
       body: JSON.stringify({ value: drafts.value[agent.role] || '', system_override: overrides.value[agent.role] || '' }),
     })
     const d = await r.json()
-    if (d.success) toast.show(agent.name + ' 完整提示词已保存', 'success')
-    else toast.show('保存失败: ' + (d.error?.message || ''), 'error')
-  } catch (e) { toast.show('保存失败', 'error') }
+    if (d.success) toast.show(t('orchestration.overrideSaved', { name: agent.name }), 'success')
+    else toast.show(t('orchestration.saveFailed') + ': ' + (d.error?.message || ''), 'error')
+  } catch (e) { toast.show(t('orchestration.saveFailed'), 'error') }
   finally { saving.value = '' }
 }
 
@@ -104,9 +106,9 @@ async function saveRoleTools(agent) {
       body: JSON.stringify({ tools: toolsCfg.value[agent.role] }),
     })
     const d = await r.json()
-    if (d.success) toast.show(agent.name + ' 工具权限已保存', 'success')
-    else toast.show('保存失败: ' + (d.error?.message || ''), 'error')
-  } catch (e) { toast.show('保存失败', 'error') }
+    if (d.success) toast.show(t('orchestration.toolsSaved', { name: agent.name }), 'success')
+    else toast.show(t('orchestration.saveFailed') + ': ' + (d.error?.message || ''), 'error')
+  } catch (e) { toast.show(t('orchestration.saveFailed'), 'error') }
   finally { saving.value = '' }
 }
 
@@ -124,9 +126,9 @@ async function saveModelParams(agent) {
       body: JSON.stringify({ params: body }),
     })
     const d = await r.json()
-    if (d.success) toast.show(agent.name + ' 模型参数已保存', 'success')
-    else toast.show('保存失败: ' + (d.error?.message || ''), 'error')
-  } catch (e) { toast.show('保存失败', 'error') }
+    if (d.success) toast.show(t('orchestration.paramsSaved', { name: agent.name }), 'success')
+    else toast.show(t('orchestration.saveFailed') + ': ' + (d.error?.message || ''), 'error')
+  } catch (e) { toast.show(t('orchestration.saveFailed'), 'error') }
   finally { saving.value = '' }
 }
 
@@ -140,7 +142,7 @@ async function previewPrompt(agent) {
     })
     const d = await r.json()
     promptPreview.value.text = d?.data?.prompt || ''
-  } catch { promptPreview.value.text = '获取失败' } finally { promptPreview.value.loading = false }
+  } catch { promptPreview.value.text = t('orchestration.fetchFailed') } finally { promptPreview.value.loading = false }
 }
 
 async function toggleTool(tool) {
@@ -153,8 +155,8 @@ async function toggleTool(tool) {
     })
     const d = await r.json()
     if (d.success) tool.enabled = next
-    else toast.show('操作失败: ' + (d.error?.message || ''), 'error')
-  } catch (e) { toast.show('操作失败', 'error') }
+    else toast.show(t('orchestration.opFailed') + ': ' + (d.error?.message || ''), 'error')
+  } catch (e) { toast.show(t('orchestration.opFailed'), 'error') }
 }
 
 async function toggleAgentActive(agent) {
@@ -169,8 +171,8 @@ async function toggleAgentActive(agent) {
     if (d.success) {
       // 重新加载数据以同步同层其他 agent 状态（总指挥层互斥）
       await loadData()
-    } else toast.show('操作失败: ' + (d.error?.message || ''), 'error')
-  } catch (e) { toast.show('操作失败', 'error') }
+    } else toast.show(t('orchestration.opFailed') + ': ' + (d.error?.message || ''), 'error')
+  } catch (e) { toast.show(t('orchestration.opFailed'), 'error') }
 }
 
 // ── per-role 工具权限集中配置 ──
@@ -191,9 +193,9 @@ async function saveRoleToolsSel() {
       body: JSON.stringify({ tools: roleToolCfg.value }),
     })
     const d = await r.json()
-    if (d.success) toast.show('角色工具权限已保存', 'success')
-    else toast.show('保存失败: ' + (d.error?.message || ''), 'error')
-  } catch (e) { toast.show('保存失败', 'error') }
+    if (d.success) toast.show(t('orchestration.roleToolsSaved'), 'success')
+    else toast.show(t('orchestration.saveFailed') + ': ' + (d.error?.message || ''), 'error')
+  } catch (e) { toast.show(t('orchestration.saveFailed'), 'error') }
   finally { saving.value = '' }
 }
 function toggleRoleTool(key, name) {
@@ -213,13 +215,13 @@ function toggleRoleAll(key) {
 async function viewSource(tool) {
   const name = typeof tool === 'string' ? tool : tool?.name
   if (!name) return
-  srcModal.value = { open: true, name, source: '加载中...', editable: false }
+  srcModal.value = { open: true, name, source: t('common.loading'), editable: false }
   try {
     const r = await fetch('/api/tools/source/' + encodeURIComponent(name), { headers: { Accept: 'application/json' } })
     const d = await r.json()
-    srcModal.value.source = d?.data?.source || '无法获取源码'
+    srcModal.value.source = d?.data?.source || t('orchestration.noSource')
     srcModal.value.editable = !!d?.data?.editable
-  } catch { srcModal.value.source = '获取源码失败' }
+  } catch { srcModal.value.source = t('orchestration.sourceFailed') }
 }
 function editAiFromSource() {
   const name = srcModal.value.name
@@ -281,21 +283,21 @@ async function submitAiForm() {
     })
     const d = await r.json()
     if (d.success) {
-      toast.show(editingAi.value ? '工具已更新' : '工具已创建', 'success')
+      toast.show(editingAi.value ? t('orchestration.toolUpdated') : t('orchestration.toolCreated'), 'success')
       showAiForm.value = false
       await loadData()
-    } else toast.show('失败: ' + (d.error?.message || ''), 'error')
-  } catch (e) { toast.show('失败', 'error') }
+    } else toast.show(t('orchestration.failed') + ': ' + (d.error?.message || ''), 'error')
+  } catch (e) { toast.show(t('orchestration.failed'), 'error') }
 }
 
 async function deleteAiTool(name) {
-  if (!(await confirm('确定删除 AI 工具 ' + name + '？'))) return
+  if (!(await confirm(t('orchestration.deleteAiToolConfirm', { name })))) return
   try {
     const r = await fetch('/api/tools/ai/' + encodeURIComponent(name), { method: 'DELETE' })
     const d = await r.json()
-    if (d.success) { toast.show('工具已删除', 'success'); await loadData() }
-    else toast.show('失败: ' + (d.error?.message || ''), 'error')
-  } catch (e) { toast.show('失败', 'error') }
+    if (d.success) { toast.show(t('orchestration.toolDeleted'), 'success'); await loadData() }
+    else toast.show(t('orchestration.failed') + ': ' + (d.error?.message || ''), 'error')
+  } catch (e) { toast.show(t('orchestration.failed'), 'error') }
 }
 
 // ── 自定义 Agent 管理 ──
@@ -309,7 +311,7 @@ function openAgentForm(tier) {
 
 async function submitAgentForm() {
   const f = agentForm.value
-  if (!f.role || !f.name) { toast.show('角色 ID 和名称不能为空', 'error'); return }
+  if (!f.role || !f.name) { toast.show(t('orchestration.roleNameRequired'), 'error'); return }
   try {
     const r = await fetch('/api/management/orchestration/agents', {
       method: 'POST',
@@ -318,23 +320,23 @@ async function submitAgentForm() {
     })
     const d = await r.json()
     if (d.success) {
-      toast.show('Agent 已创建: ' + f.name, 'success')
+      toast.show(t('orchestration.agentCreated', { name: f.name }), 'success')
       showAgentForm.value = false
       await loadData()
-    } else toast.show('创建失败: ' + (d.error?.message || ''), 'error')
-  } catch (e) { toast.show('创建失败', 'error') }
+    } else toast.show(t('orchestration.createFailed') + ': ' + (d.error?.message || ''), 'error')
+  } catch (e) { toast.show(t('orchestration.createFailed'), 'error') }
 }
 
 async function deleteAgent(agent) {
-  if (!(await confirm('确定删除 Agent「' + agent.name + '」？相关人设/权限配置将一并清除。'))) return
+  if (!(await confirm(t('orchestration.deleteAgentConfirm', { name: agent.name })))) return
   try {
     const r = await fetch('/api/management/orchestration/agents/' + encodeURIComponent(agent.role), { method: 'DELETE' })
     const d = await r.json()
     if (d.success) {
-      toast.show('Agent 已删除: ' + agent.name, 'success')
+      toast.show(t('orchestration.agentDeleted', { name: agent.name }), 'success')
       await loadData()
-    } else toast.show('删除失败: ' + (d.error?.message || ''), 'error')
-  } catch (e) { toast.show('删除失败', 'error') }
+    } else toast.show(t('orchestration.deleteFailed') + ': ' + (d.error?.message || ''), 'error')
+  } catch (e) { toast.show(t('orchestration.deleteFailed'), 'error') }
 }
 
 // ── 人设预设管理 ──
@@ -352,7 +354,7 @@ async function loadPresets() {
 }
 
 async function saveCurrentAsPreset() {
-  if (!presetName.value.trim()) { toast.show('请输入预设名称', 'error'); return }
+  if (!presetName.value.trim()) { toast.show(t('orchestration.presetNameRequired'), 'error'); return }
   try {
     const personas = {}
     agents.value.forEach((a) => {
@@ -366,12 +368,12 @@ async function saveCurrentAsPreset() {
     })
     const d = await r.json()
     if (d.success) {
-      toast.show('预设已保存: ' + presetName.value, 'success')
+      toast.show(t('orchestration.presetSaved', { name: presetName.value }), 'success')
       showPresetSave.value = false
       presetName.value = ''
       await loadPresets()
-    } else toast.show('保存失败', 'error')
-  } catch (e) { toast.show('保存失败', 'error') }
+    } else toast.show(t('orchestration.saveFailed'), 'error')
+  } catch (e) { toast.show(t('orchestration.saveFailed'), 'error') }
 }
 
 async function applyPreset(presetId) {
@@ -379,20 +381,20 @@ async function applyPreset(presetId) {
     const r = await fetch('/api/management/persona-presets/' + encodeURIComponent(presetId) + '/apply', { method: 'PUT' })
     const d = await r.json()
     if (d.success) {
-      toast.show('预设已应用', 'success')
+      toast.show(t('orchestration.presetApplied'), 'success')
       await loadData()
-    } else toast.show('应用失败', 'error')
-  } catch (e) { toast.show('应用失败', 'error') }
+    } else toast.show(t('orchestration.applyFailed'), 'error')
+  } catch (e) { toast.show(t('orchestration.applyFailed'), 'error') }
 }
 
 async function deletePreset(presetId) {
-  if (!(await confirm('确定删除此预设？'))) return
+  if (!(await confirm(t('orchestration.deletePresetConfirm')))) return
   try {
     const r = await fetch('/api/management/persona-presets/' + encodeURIComponent(presetId), { method: 'DELETE' })
     const d = await r.json()
-    if (d.success) { toast.show('预设已删除', 'success'); await loadPresets() }
-    else toast.show('删除失败', 'error')
-  } catch (e) { toast.show('删除失败', 'error') }
+    if (d.success) { toast.show(t('orchestration.presetDeleted'), 'success'); await loadPresets() }
+    else toast.show(t('orchestration.deleteFailed'), 'error')
+  } catch (e) { toast.show(t('orchestration.deleteFailed'), 'error') }
 }
 
 onMounted(() => { loadData(); loadPresets() })
@@ -401,16 +403,16 @@ onMounted(() => { loadData(); loadPresets() })
 <template>
   <div>
     <div class="page-header">
-      <h2>编排</h2>
-      <button class="btn btn-sm" @click="loadData"><Icon name="refresh" :size="14" /> 刷新</button>
+      <h2>{{ $t('orchestration.title') }}</h2>
+      <button class="btn btn-sm" @click="loadData"><Icon name="refresh" :size="14" /> {{ $t('common.refresh') }}</button>
     </div>
     <div class="page-body">
       <div class="seg mt-3">
-        <button :class="{ on: activeTab === 'agents' }" @click="activeTab = 'agents'">Agent 定义</button>
-        <button :class="{ on: activeTab === 'skills' }" @click="activeTab = 'skills'">技能</button>
-        <button :class="{ on: activeTab === 'graph' }" @click="activeTab = 'graph'">编排图</button>
-        <button :class="{ on: activeTab === 'permission' }" @click="activeTab = 'permission'">权限管理</button>
-        <button :class="{ on: activeTab === 'tools' }" @click="activeTab = 'tools'">工具管理 ({{ tools.length }})</button>
+        <button :class="{ on: activeTab === 'agents' }" @click="activeTab = 'agents'">{{ $t('orchestration.tabs.agents') }}</button>
+        <button :class="{ on: activeTab === 'skills' }" @click="activeTab = 'skills'">{{ $t('orchestration.tabs.skills') }}</button>
+        <button :class="{ on: activeTab === 'graph' }" @click="activeTab = 'graph'">{{ $t('orchestration.tabs.graph') }}</button>
+        <button :class="{ on: activeTab === 'permission' }" @click="activeTab = 'permission'">{{ $t('orchestration.tabs.permission') }}</button>
+        <button :class="{ on: activeTab === 'tools' }" @click="activeTab = 'tools'">{{ $t('orchestration.tabs.tools') }} ({{ tools.length }})</button>
       </div>
 
       <!-- 技能管理（合并自技能页） -->
@@ -428,23 +430,23 @@ onMounted(() => { loadData(); loadPresets() })
         <!-- 人设预设工具栏 -->
         <div class="flex-between mt-3 mb-3">
           <div class="flex gap-2">
-            <button class="btn btn-sm" @click="showPresetSave = true"><Icon name="save" :size="13" /> 保存当前人设为预设</button>
+            <button class="btn btn-sm" @click="showPresetSave = true"><Icon name="save" :size="13" /> {{ $t('orchestration.savePreset') }}</button>
           </div>
           <div v-if="personaPresets.length" class="flex gap-2 items-center">
-            <span class="text-xs text-muted">加载预设：</span>
+            <span class="text-xs text-muted">{{ $t('orchestration.loadPreset') }}：</span>
             <select class="input w-160 text-xs" v-model="selectedPreset">
-              <option value="">选择预设...</option>
+              <option value="">{{ $t('orchestration.selectPreset') }}...</option>
               <option v-for="p in personaPresets" :key="p.id" :value="p.id">{{ p.name }}</option>
             </select>
-            <button class="btn btn-sm btn-primary" :disabled="!selectedPreset" @click="applyPreset(selectedPreset)">应用</button>
-            <button class="btn btn-sm danger" :disabled="!selectedPreset" @click="deletePreset(selectedPreset)">删除</button>
+            <button class="btn btn-sm btn-primary" :disabled="!selectedPreset" @click="applyPreset(selectedPreset)">{{ $t('orchestration.apply') }}</button>
+            <button class="btn btn-sm danger" :disabled="!selectedPreset" @click="deletePreset(selectedPreset)">{{ $t('common.delete') }}</button>
           </div>
         </div>
         <div v-for="tier in ['large', 'supervisor', 'expert']" :key="tier">
           <div class="card mt-3">
             <div class="card-header flex-between">
-              <span>{{ TIER_LABEL[tier] }}（{{ grouped[tier]?.length || 0 }}）</span>
-              <button class="btn btn-sm" @click="openAgentForm(tier)"><Icon name="plus" :size="13" /> 新增</button>
+              <span>{{ $t(TIER_LABEL[tier]) }}（{{ grouped[tier]?.length || 0 }}）</span>
+              <button class="btn btn-sm" @click="openAgentForm(tier)"><Icon name="plus" :size="13" /> {{ $t('orchestration.add') }}</button>
             </div>
             <div v-if="grouped[tier]?.length">
               <div v-for="agent in grouped[tier]" :key="agent.role" class="agent-row">
@@ -460,18 +462,18 @@ onMounted(() => { loadData(); loadPresets() })
                     </label>
                     <strong>{{ agent.name }}</strong>
                     <span class="badge badge-gray badge-mono">{{ agent.role }}</span>
-                    <span class="badge badge-blue badge-sm">{{ agent.model_id || '默认模型' }}</span>
-                    <span v-if="agent.custom_persona" class="badge badge-green badge-sm">自定义人设</span>
-                    <span v-if="agent.system_override" class="badge badge-green badge-sm">完整覆盖</span>
-                    <span v-if="agent.role_tools?.whitelist?.length || agent.role_tools?.blacklist?.length" class="badge badge-green badge-sm">工具权限</span>
-                    <span v-if="Object.keys(agent.model_params || {}).length" class="badge badge-green badge-sm">模型参数</span>
-                    <span v-if="agent.is_custom" class="badge badge-purple badge-sm">自定义</span>
+                    <span class="badge badge-blue badge-sm">{{ agent.model_id || $t('orchestration.defaultModel') }}</span>
+                    <span v-if="agent.custom_persona" class="badge badge-green badge-sm">{{ $t('orchestration.customPersona') }}</span>
+                    <span v-if="agent.system_override" class="badge badge-green badge-sm">{{ $t('orchestration.fullOverride') }}</span>
+                    <span v-if="agent.role_tools?.whitelist?.length || agent.role_tools?.blacklist?.length" class="badge badge-green badge-sm">{{ $t('orchestration.toolPerms') }}</span>
+                    <span v-if="Object.keys(agent.model_params || {}).length" class="badge badge-green badge-sm">{{ $t('orchestration.modelParams') }}</span>
+                    <span v-if="agent.is_custom" class="badge badge-purple badge-sm">{{ $t('orchestration.custom') }}</span>
                   </div>
                   <div class="flex gap-2">
-                    <button class="btn btn-sm" @click="previewPrompt(agent)"><Icon name="eye" :size="13" /> 预览提示词</button>
+                    <button class="btn btn-sm" @click="previewPrompt(agent)"><Icon name="eye" :size="13" /> {{ $t('orchestration.previewPrompt') }}</button>
                     <button v-if="agent.is_custom" class="btn btn-sm danger" @click="deleteAgent(agent)"><Icon name="trash" :size="13" /></button>
                     <button class="btn btn-sm" @click="expanded[agent.role] = !expanded[agent.role]">
-                      {{ expanded[agent.role] ? '收起' : '更多设置' }}
+                      {{ expanded[agent.role] ? $t('orchestration.collapse') : $t('orchestration.moreSettings') }}
                     </button>
                   </div>
                 </div>
@@ -482,47 +484,47 @@ onMounted(() => { loadData(); loadPresets() })
                     v-model="drafts[agent.role]"
                     rows="2"
                     class="input persona-textarea"
-                    placeholder="自定义人设（留空则用默认人格）"
+                    :placeholder="$t('orchestration.personaPlaceholder')"
                   ></textarea>
                   <div class="flex-col gap-2">
                     <button class="btn btn-sm btn-primary" :disabled="saving === agent.role" @click="savePersona(agent)">
-                      {{ saving === agent.role ? '保存中...' : '保存' }}
+                      {{ saving === agent.role ? $t('orchestration.saving') : $t('common.save') }}
                     </button>
-                    <button v-if="agent.custom_persona" class="btn btn-sm" @click="clearCustom(agent)">恢复默认</button>
+                    <button v-if="agent.custom_persona" class="btn btn-sm" @click="clearCustom(agent)">{{ $t('orchestration.restoreDefault') }}</button>
                   </div>
                 </div>
                 <div v-if="agent.speaking_style || agent.expertise" class="muted-text mt-2">
-                  <span v-if="agent.speaking_style">风格：{{ agent.speaking_style }}</span>
-                  <span v-if="agent.expertise" class="ml-3">专长：{{ agent.expertise }}</span>
+                  <span v-if="agent.speaking_style">{{ $t('orchestration.style') }}：{{ agent.speaking_style }}</span>
+                  <span v-if="agent.expertise" class="ml-3">{{ $t('orchestration.expertise') }}：{{ agent.expertise }}</span>
                 </div>
 
                 <!-- 更多设置 -->
                 <div v-if="expanded[agent.role]" class="settings-panel">
                   <!-- 完整系统提示词覆盖 -->
                   <div class="flex-between mb-2">
-                    <span class="label">完整系统提示词覆盖（非空则跳过所有组装，直接使用）</span>
+                    <span class="label">{{ $t('orchestration.systemOverride') }}</span>
                     <div class="flex gap-2">
-                      <button class="btn btn-sm btn-primary" :disabled="saving === 'ov_' + agent.role" @click="saveOverride(agent)">保存覆盖</button>
-                      <button v-if="agent.system_override" class="btn btn-sm" @click="clearOverride(agent)">清除</button>
+                      <button class="btn btn-sm btn-primary" :disabled="saving === 'ov_' + agent.role" @click="saveOverride(agent)">{{ $t('orchestration.saveOverride') }}</button>
+                      <button v-if="agent.system_override" class="btn btn-sm" @click="clearOverride(agent)">{{ $t('orchestration.clear') }}</button>
                     </div>
                   </div>
-                  <textarea v-model="overrides[agent.role]" rows="4" class="input textarea-mono" placeholder="粘贴完整 system prompt（可含所有段）"></textarea>
+                  <textarea v-model="overrides[agent.role]" rows="4" class="input textarea-mono" :placeholder="$t('orchestration.overridePlaceholder')"></textarea>
 
                   <!-- 模型参数 -->
                   <div class="section-heading">
-                    <span class="label">模型参数</span>
-                    <button class="btn btn-sm btn-primary" :disabled="saving === 'mp_' + agent.role" @click="saveModelParams(agent)">保存参数</button>
+                    <span class="label">{{ $t('orchestration.modelParams') }}</span>
+                    <button class="btn btn-sm btn-primary" :disabled="saving === 'mp_' + agent.role" @click="saveModelParams(agent)">{{ $t('orchestration.saveParams') }}</button>
                   </div>
                   <div class="flex gap-4 items-center">
-                    <label class="text-xs">温度 temperature
+                    <label class="text-xs">{{ $t('orchestration.temperature') }}
                       <input v-model="modelParams[agent.role].temperature" type="number" step="0.1" min="0" max="2" class="input w-90 ml-6" />
                     </label>
-                    <label class="text-xs">最大 tokens
+                    <label class="text-xs">{{ $t('orchestration.maxTokens') }}
                       <input v-model="modelParams[agent.role].max_tokens" type="number" step="256" min="0" class="input w-110 ml-6" />
                     </label>
-                    <label class="text-xs">推理强度 reasoning_effort
+                    <label class="text-xs">{{ $t('orchestration.reasoningEffort') }}
                       <select v-model="modelParams[agent.role].reasoning_effort" class="input w-90 ml-6">
-                        <option value="">默认</option>
+                        <option value="">{{ $t('orchestration.default') }}</option>
                         <option value="low">low</option>
                         <option value="medium">medium</option>
                         <option value="high">high</option>
@@ -532,14 +534,14 @@ onMounted(() => { loadData(); loadPresets() })
 
                   <!-- 工具权限 -->
                   <div class="section-heading">
-                    <span class="label">工具权限（白名单：非空则整体替换默认；黑名单：剔除）</span>
-                    <button class="btn btn-sm btn-primary" :disabled="saving === 'tools_' + agent.role" @click="saveRoleTools(agent)">保存权限</button>
+                    <span class="label">{{ $t('orchestration.toolPermTitle') }}</span>
+                    <button class="btn btn-sm btn-primary" :disabled="saving === 'tools_' + agent.role" @click="saveRoleTools(agent)">{{ $t('orchestration.savePerms') }}</button>
                   </div>
                   <div class="grid-2 gap-3">
                     <div>
                       <div class="list-label flex-between">
-                        <span>白名单（{{ toolsCfg[agent.role]?.whitelist?.length || 0 }}）</span>
-                        <button class="btn btn-sm" @click="toggleAll(agent, 'whitelist')">{{ hasAll(agent, 'whitelist') ? '取消全部' : '全部 (*)' }}</button>
+                        <span>{{ $t('orchestration.whitelist', { count: toolsCfg[agent.role]?.whitelist?.length || 0 }) }}</span>
+                        <button class="btn btn-sm" @click="toggleAll(agent, 'whitelist')">{{ hasAll(agent, 'whitelist') ? $t('orchestration.unselectAll') : $t('orchestration.allWildcard') }}</button>
                       </div>
                       <div class="scroll-list">
                         <label v-for="tool in tools" :key="'w' + tool.name" class="tool-check">
@@ -549,7 +551,7 @@ onMounted(() => { loadData(); loadPresets() })
                       </div>
                     </div>
                     <div>
-                      <div class="list-label">黑名单（{{ toolsCfg[agent.role]?.blacklist?.length || 0 }}）</div>
+                      <div class="list-label">{{ $t('orchestration.blacklist', { count: toolsCfg[agent.role]?.blacklist?.length || 0 }) }}</div>
                       <div class="scroll-list">
                         <label v-for="tool in tools" :key="'b' + tool.name" class="tool-check">
                           <input type="checkbox" :checked="toolsCfg[agent.role]?.blacklist?.includes(tool.name)" @change="toggleToolList(agent, 'blacklist', tool.name)" />
@@ -562,7 +564,7 @@ onMounted(() => { loadData(); loadPresets() })
                 </div>
               </div>
             </div>
-            <div v-else class="empty-state">暂无该层 Agent</div>
+            <div v-else class="empty-state">{{ $t('orchestration.noAgentTier') }}</div>
           </div>
         </div>
       </div>
@@ -571,20 +573,20 @@ onMounted(() => { loadData(); loadPresets() })
       <div v-if="activeTab === 'permission'" v-show="!loading">
         <div class="card">
           <div class="card-header flex-between flex-wrap">
-            <span>角色工具权限（每角色分别配置可用工具）</span>
+            <span>{{ $t('orchestration.roleToolTitle') }}</span>
             <div class="flex gap-2">
               <select v-model="roleToolSel" class="input w-200 text-xs" @change="onRoleSel">
-                <option value="">选择角色</option>
+                <option value="">{{ $t('orchestration.selectRole') }}</option>
                 <option v-for="a in agents" :key="a.role" :value="a.role">{{ a.name }}（{{ a.role }}）</option>
               </select>
-              <button class="btn btn-sm btn-primary" :disabled="saving === 'role_tools'" @click="saveRoleToolsSel">保存权限</button>
+              <button class="btn btn-sm btn-primary" :disabled="saving === 'role_tools'" @click="saveRoleToolsSel">{{ $t('orchestration.savePerms') }}</button>
             </div>
           </div>
           <div v-if="roleToolSel" class="grid-2 gap-3 mt-3">
             <div>
               <div class="list-label flex-between">
-                <span>白名单（{{ roleToolCfg.whitelist.length }}）—— 非空则整体替换默认</span>
-                <button class="btn btn-sm" @click="toggleRoleAll('whitelist')">{{ roleToolCfg.whitelist.includes('*') ? '取消全部' : '全部 (*)' }}</button>
+                <span>{{ $t('orchestration.whitelistReplace', { count: roleToolCfg.whitelist.length }) }}</span>
+                <button class="btn btn-sm" @click="toggleRoleAll('whitelist')">{{ roleToolCfg.whitelist.includes('*') ? $t('orchestration.unselectAll') : $t('orchestration.allWildcard') }}</button>
               </div>
               <div class="scroll-list scroll-list-lg">
                 <label v-for="tool in tools" :key="'rw' + tool.name" class="tool-check">
@@ -594,7 +596,7 @@ onMounted(() => { loadData(); loadPresets() })
               </div>
             </div>
             <div>
-              <div class="list-label">黑名单（{{ roleToolCfg.blacklist.length }}）—— 剔除</div>
+              <div class="list-label">{{ $t('orchestration.blacklistRemove', { count: roleToolCfg.blacklist.length }) }}</div>
               <div class="scroll-list scroll-list-lg">
                 <label v-for="tool in tools" :key="'rb' + tool.name" class="tool-check">
                   <input type="checkbox" :checked="roleToolCfg.blacklist.includes(tool.name)" @change="toggleRoleTool('blacklist', tool.name)" />
@@ -603,7 +605,7 @@ onMounted(() => { loadData(); loadPresets() })
               </div>
             </div>
           </div>
-          <div v-else class="empty-state text-xs">选择角色后配置其可用工具（白名单替换默认 / 黑名单剔除）</div>
+          <div v-else class="empty-state text-xs">{{ $t('orchestration.selectRoleHint') }}</div>
         </div>
       </div>
 
@@ -614,19 +616,19 @@ onMounted(() => { loadData(); loadPresets() })
         <!-- AI 工具管理 -->
         <div class="card mt-3">
           <div class="card-header flex-between">
-            <span>AI 自创工具（{{ Object.keys(aiTools).length }}）—— 模型可提交代码动态注册</span>
-            <button class="btn btn-sm btn-primary" @click="openAiForm(null)"><Icon name="plus" :size="13" /> 新建工具</button>
+            <span>{{ $t('orchestration.aiToolsTitle', { count: Object.keys(aiTools).length }) }}</span>
+            <button class="btn btn-sm btn-primary" @click="openAiForm(null)"><Icon name="plus" :size="13" /> {{ $t('orchestration.newTool') }}</button>
           </div>
           <div v-if="showAiForm" class="form-section">
             <div class="grid-2 gap-2">
-              <input v-model="aiForm.tool_name" class="input text-sm" placeholder="工具名（函数名）" :disabled="!!editingAi" />
-              <input v-model="aiForm.description" class="input text-sm" placeholder="描述" />
+              <input v-model="aiForm.tool_name" class="input text-sm" :placeholder="$t('orchestration.toolNamePlaceholder')" :disabled="!!editingAi" />
+              <input v-model="aiForm.description" class="input text-sm" :placeholder="$t('orchestration.description')" />
             </div>
-            <textarea v-model="aiForm.code" rows="6" class="input textarea-mono mt-2" placeholder="Python 函数代码（禁止 import，用内置函数）"></textarea>
-            <input v-model="aiForm.params" class="input textarea-mono mt-2" placeholder='可选参数 JSON：{"query":{"type":"string","required":true}}' />
+            <textarea v-model="aiForm.code" rows="6" class="input textarea-mono mt-2" :placeholder="$t('orchestration.codePlaceholder')"></textarea>
+            <input v-model="aiForm.params" class="input textarea-mono mt-2" :placeholder="$t('orchestration.paramsPlaceholder')" />
             <div class="form-actions">
-              <button class="btn btn-sm" @click="showAiForm = false">取消</button>
-              <button class="btn btn-sm btn-primary" @click="submitAiForm">{{ editingAi ? '保存修改' : '创建工具' }}</button>
+              <button class="btn btn-sm" @click="showAiForm = false">{{ $t('common.cancel') }}</button>
+              <button class="btn btn-sm btn-primary" @click="submitAiForm">{{ editingAi ? $t('orchestration.saveChanges') : $t('orchestration.createTool') }}</button>
             </div>
           </div>
           <div v-if="Object.keys(aiTools).length">
@@ -637,24 +639,24 @@ onMounted(() => { loadData(); loadPresets() })
                   <span class="muted-text text-xs ml-2">{{ info.description || '' }}</span>
                 </div>
                 <div class="flex gap-2">
-                  <button class="btn btn-sm" @click="viewSource(name)"><Icon name="eye" :size="12" /> 脚本</button>
-                  <button class="btn btn-sm" @click="openAiForm(name)"><Icon name="pencil" :size="12" /> 编辑</button>
-                  <button class="btn btn-sm danger" @click="deleteAiTool(name)"><Icon name="trash" :size="12" /> 删除</button>
+                  <button class="btn btn-sm" @click="viewSource(name)"><Icon name="eye" :size="12" /> {{ $t('orchestration.script') }}</button>
+                  <button class="btn btn-sm" @click="openAiForm(name)"><Icon name="pencil" :size="12" /> {{ $t('common.edit') }}</button>
+                  <button class="btn btn-sm danger" @click="deleteAiTool(name)"><Icon name="trash" :size="12" /> {{ $t('common.delete') }}</button>
                 </div>
               </div>
             </div>
           </div>
-          <div v-else class="empty-state">暂无 AI 自创工具</div>
+          <div v-else class="empty-state">{{ $t('orchestration.noAiTools') }}</div>
         </div>
 
         <!-- 工具源码弹窗 -->
         <div v-if="srcModal.open" class="src-overlay" @click.self="srcModal.open = false">
           <div class="src-panel">
             <div class="src-head">
-              <span class="font-semibold">工具脚本：{{ srcModal.name }}{{ srcModal.editable ? '（可编辑）' : '（只读）' }}</span>
+              <span class="font-semibold">{{ $t('orchestration.toolScript', { name: srcModal.name, mode: srcModal.editable ? $t('orchestration.editable') : $t('orchestration.readonly') }) }}</span>
               <div class="flex gap-2">
-                <button v-if="srcModal.editable" class="btn btn-sm btn-primary" @click="editAiFromSource">编辑此工具</button>
-                <button class="btn btn-sm" @click="srcModal.open = false"><Icon name="x" :size="14" /> 关闭</button>
+                <button v-if="srcModal.editable" class="btn btn-sm btn-primary" @click="editAiFromSource">{{ $t('orchestration.editThisTool') }}</button>
+                <button class="btn btn-sm" @click="srcModal.open = false"><Icon name="x" :size="14" /> {{ $t('common.close') }}</button>
               </div>
             </div>
             <pre class="src-text">{{ srcModal.source }}</pre>
@@ -662,54 +664,54 @@ onMounted(() => { loadData(); loadPresets() })
         </div>
       </div>
 
-      <div v-else class="empty-state loading-state">加载中...</div>
+      <div v-else class="empty-state loading-state">{{ $t('common.loading') }}</div>
     </div>
 
     <!-- 新增 Agent 弹窗 -->
     <div v-if="showAgentForm" class="modal-overlay" @click.self="showAgentForm = false">
       <div class="modal" style="width:480px">
         <div class="modal-header">
-          <span>新增 {{ TIER_LABEL[agentForm.tier] || 'Agent' }}</span>
+          <span>{{ $t('orchestration.add') }} {{ $t(TIER_LABEL[agentForm.tier] || 'orchestration.agent') }}</span>
           <button class="btn btn-sm" @click="showAgentForm = false"><Icon name="x" :size="14" /></button>
         </div>
         <div class="modal-body">
           <div class="mb-2">
-            <label class="text-xs font-semibold">角色 ID *</label>
-            <input v-model="agentForm.role" class="input mt-1" placeholder="如 code_expert_2" />
-            <div class="text-xs text-muted mt-1">唯一标识，不可修改</div>
+            <label class="text-xs font-semibold">{{ $t('orchestration.roleId') }} *</label>
+            <input v-model="agentForm.role" class="input mt-1" :placeholder="$t('orchestration.roleIdPlaceholder')" />
+            <div class="text-xs text-muted mt-1">{{ $t('orchestration.roleIdHint') }}</div>
           </div>
           <div class="mb-2">
-            <label class="text-xs font-semibold">名称 *</label>
-            <input v-model="agentForm.name" class="input mt-1" placeholder="如 高级代码专家" />
+            <label class="text-xs font-semibold">{{ $t('orchestration.agentName') }} *</label>
+            <input v-model="agentForm.name" class="input mt-1" :placeholder="$t('orchestration.agentNamePlaceholder')" />
           </div>
           <div class="mb-2">
-            <label class="text-xs font-semibold">层级</label>
+            <label class="text-xs font-semibold">{{ $t('orchestration.tier') }}</label>
             <div class="seg mt-1">
-              <button :class="{ on: agentForm.tier === 'large' }" @click="agentForm.tier = 'large'">总指挥</button>
-              <button :class="{ on: agentForm.tier === 'supervisor' }" @click="agentForm.tier = 'supervisor'">主管</button>
-              <button :class="{ on: agentForm.tier === 'expert' }" @click="agentForm.tier = 'expert'">专家</button>
+              <button :class="{ on: agentForm.tier === 'large' }" @click="agentForm.tier = 'large'">{{ $t('orchestration.tiers.large') }}</button>
+              <button :class="{ on: agentForm.tier === 'supervisor' }" @click="agentForm.tier = 'supervisor'">{{ $t('orchestration.tiers.supervisor') }}</button>
+              <button :class="{ on: agentForm.tier === 'expert' }" @click="agentForm.tier = 'expert'">{{ $t('orchestration.tiers.expert') }}</button>
             </div>
           </div>
           <div class="mb-2">
-            <label class="text-xs font-semibold">人设描述</label>
-            <textarea v-model="agentForm.personality" rows="3" class="input mt-1" placeholder="角色的性格和工作方式"></textarea>
+            <label class="text-xs font-semibold">{{ $t('orchestration.personality') }}</label>
+            <textarea v-model="agentForm.personality" rows="3" class="input mt-1" :placeholder="$t('orchestration.personalityPlaceholder')"></textarea>
           </div>
           <div class="mb-2">
-            <label class="text-xs font-semibold">说话风格</label>
-            <input v-model="agentForm.speaking_style" class="input mt-1" placeholder="如 精确、简洁、技术化" />
+            <label class="text-xs font-semibold">{{ $t('orchestration.speakingStyle') }}</label>
+            <input v-model="agentForm.speaking_style" class="input mt-1" :placeholder="$t('orchestration.speakingStylePlaceholder')" />
           </div>
           <div class="mb-2">
-            <label class="text-xs font-semibold">专长（逗号分隔）</label>
-            <input v-model="agentForm.expertise" class="input mt-1" placeholder="如 代码实现, 算法设计" />
+            <label class="text-xs font-semibold">{{ $t('orchestration.expertiseLabel') }}</label>
+            <input v-model="agentForm.expertise" class="input mt-1" :placeholder="$t('orchestration.expertisePlaceholder')" />
           </div>
           <div class="mb-2">
-            <label class="text-xs font-semibold">模型 ID</label>
-            <input v-model="agentForm.model_id" class="input mt-1" placeholder="留空用默认模型" />
+            <label class="text-xs font-semibold">{{ $t('orchestration.modelId') }}</label>
+            <input v-model="agentForm.model_id" class="input mt-1" :placeholder="$t('orchestration.modelIdPlaceholder')" />
           </div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-sm" @click="showAgentForm = false">取消</button>
-          <button class="btn btn-sm btn-primary" @click="submitAgentForm">创建</button>
+          <button class="btn btn-sm" @click="showAgentForm = false">{{ $t('common.cancel') }}</button>
+          <button class="btn btn-sm btn-primary" @click="submitAgentForm">{{ $t('orchestration.create') }}</button>
         </div>
       </div>
     </div>
@@ -718,19 +720,19 @@ onMounted(() => { loadData(); loadPresets() })
     <div v-if="showPresetSave" class="modal-overlay" @click.self="showPresetSave = false">
       <div class="modal" style="width:380px">
         <div class="modal-header">
-          <span>保存人设预设</span>
+          <span>{{ $t('orchestration.savePresetTitle') }}</span>
           <button class="btn btn-sm" @click="showPresetSave = false"><Icon name="x" :size="14" /></button>
         </div>
         <div class="modal-body">
           <div class="mb-2">
-            <label class="text-xs font-semibold">预设名称</label>
-            <input v-model="presetName" class="input mt-1" placeholder="如 日常助手人设" @keydown.enter="saveCurrentAsPreset" />
-            <div class="text-xs text-muted mt-1">将保存当前所有角色的人设文本</div>
+            <label class="text-xs font-semibold">{{ $t('orchestration.presetName') }}</label>
+            <input v-model="presetName" class="input mt-1" :placeholder="$t('orchestration.presetNamePlaceholder')" @keydown.enter="saveCurrentAsPreset" />
+            <div class="text-xs text-muted mt-1">{{ $t('orchestration.presetNameHint') }}</div>
           </div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-sm" @click="showPresetSave = false">取消</button>
-          <button class="btn btn-sm btn-primary" @click="saveCurrentAsPreset">保存</button>
+          <button class="btn btn-sm" @click="showPresetSave = false">{{ $t('common.cancel') }}</button>
+          <button class="btn btn-sm btn-primary" @click="saveCurrentAsPreset">{{ $t('common.save') }}</button>
         </div>
       </div>
     </div>
@@ -739,15 +741,15 @@ onMounted(() => { loadData(); loadPresets() })
     <div v-if="promptPreview.open" class="modal-overlay" @click.self="promptPreview.open = false">
       <div class="modal" style="width:640px">
         <div class="modal-header">
-          <span>{{ promptPreview.agentName }} — System Prompt 预览</span>
+          <span>{{ promptPreview.agentName }} — {{ $t('orchestration.promptPreviewTitle') }}</span>
           <button class="btn btn-sm" @click="promptPreview.open = false"><Icon name="x" :size="14" /></button>
         </div>
         <div class="modal-body">
-          <div v-if="promptPreview.loading" class="empty-state">加载中...</div>
+          <div v-if="promptPreview.loading" class="empty-state">{{ $t('common.loading') }}</div>
           <pre v-else class="code-preview">{{ promptPreview.text }}</pre>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-sm" @click="promptPreview.open = false">关闭</button>
+          <button class="btn btn-sm" @click="promptPreview.open = false">{{ $t('common.close') }}</button>
         </div>
       </div>
     </div>

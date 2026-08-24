@@ -41,8 +41,8 @@ function cancel() {
         @keydown.esc="cancel"
       />
       <div class="modal-actions">
-        <button class="btn" @click="cancel">取消</button>
-        <button class="btn" :class="state.type === 'confirm' ? 'btn-danger' : 'btn-primary'" @click="ok">确定</button>
+        <button class="btn" @click="cancel">{{ $t('common.cancel') }}</button>
+        <button class="btn" :class="state.type === 'confirm' ? 'btn-danger' : 'btn-primary'" @click="ok">{{ $t('common.confirm') }}</button>
       </div>
     </div>
   </div>

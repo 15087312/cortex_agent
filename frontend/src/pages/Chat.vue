@@ -17,6 +17,7 @@ import ThinkingStatusPanel from '@/components/ThinkingStatusPanel.vue'
 import ProcessPanel from '@/components/ProcessPanel.vue'
 import SessionSettings from '@/components/SessionSettings.vue'
 import Icon from '@/components/Icon.vue'
+import { useI18n } from 'vue-i18n'
 
 const route = useRoute()
 const chat = useChatStore()
@@ -25,6 +26,7 @@ const ws = useWsStore()
 const toast = useToastStore()
 const confirm = useConfirm()
 const prompt = usePrompt()
+const { t } = useI18n()
 const sessionListCollapsed = ref(false)
 const showSettings = ref(false)
 const todos = ref([])
@@ -59,8 +61,8 @@ async function toggleTodo(t) {
     })
     const d = await r.json()
     if (d.success) t.status = next
-    else toast.show('更新失败: ' + (d.error?.message || ''), 'error')
-  } catch { toast.show('更新失败', 'error') }
+    else toast.show(t('chat.updateFailed') + ': ' + (d.error?.message || ''), 'error')
+  } catch { toast.show(t('chat.updateFailed'), 'error') }
 }
 const messagesWrap = ref(null)
 let watchTimer = null
@@ -121,14 +123,14 @@ function startEditTitle() {
 }
 async function commitTitle() {
   editingTitle.value = false
-  const val = titleDraft.value.trim() || '新会话'
+  const val = titleDraft.value.trim() || t('chat.newSession')
   if (session.sessionId && val && val !== session.currentTitle) {
     session.currentTitle = val
     try {
       await endpoints.updateSessionTitle(session.sessionId, val)
       await session.loadSessions()
     } catch {
-      toast.show('标题保存失败', 'error')
+      toast.show(t('chat.titleSaveFailed'), 'error')
     }
   }
 }
@@ -216,7 +218,7 @@ const _onError = (d) => {
     return
   }
   chat.finalizeStream('')
-  toast.show('错误: ' + (d.content || '未知'), 'error')
+  toast.show(t('chat.errorPrefix') + ': ' + (d.content || t('chat.unknown')), 'error')
 }
 
 const _onStatus = (d) => {
@@ -252,7 +254,7 @@ const _onAck = (d) => {
   }
   if (d.event === 'busy') {
     // 后端正忙且丢弃了本条 input → 提示并稍后重发（避免"一直加载"）
-    chat.hint = '会话正在处理中，请稍候…'
+    chat.hint = t('chat.sessionBusy')
     setTimeout(() => chat.retryLastInput(), 2500)
   }
 }
@@ -314,7 +316,7 @@ onMounted(async () => {
   watchTimer = setInterval(() => {
     if (chat.processing && !ws.wsClient.isConnected(session.sessionId)) {
       chat.finalizeStream('')
-      toast.show('连接已断开，本轮回复可能丢失', 'error')
+      toast.show(t('chat.connectionLost'), 'error')
     }
   }, 2000)
   // 初始加载 todo（切换会话时由 _onTodo / 会话变更刷新）
@@ -346,7 +348,7 @@ function handleSend({ text, attachments }) {
     .filter(a => a && String(a.type || '').startsWith('image/'))
     .map(a => a.data)
   chat.addMessage({ role: 'user', content: text, images })
-  chat.hint = '思考中...'
+  chat.hint = t('chat.thinking')
   scrollBottom()
 }
 
@@ -367,7 +369,7 @@ async function handleSessionDelete(sid) {
     await session.loadSessions()
     return
   }
-  if (!(await confirm('确定删除此会话？删除后不可恢复。'))) return
+  if (!(await confirm(t('chat.confirmDeleteSession')))) return
   await session.deleteSession(sid)
   if (sid === session.sessionId) {
     // 删除当前会话 → 切换到最近一个，否则回到新会话
@@ -383,14 +385,14 @@ async function handleSessionDelete(sid) {
 
 async function handleSessionRename(sid) {
   const s = session.sessions.find(x => x.session_id === sid)
-  const val = await prompt('重命名会话', s?.title || '')
+  const val = await prompt(t('chat.renameTitle'), s?.title || '')
   if (val === null || !val.trim()) return
   try {
     await endpoints.updateSessionTitle(sid, val.trim())
     await session.loadSessions()
     if (sid === session.sessionId) session.currentTitle = val.trim()
   } catch {
-    toast.show('重命名失败', 'error')
+    toast.show(t('chat.renameFailed'), 'error')
   }
 }
 
@@ -399,7 +401,7 @@ function handleCopyMessage(idx) {
   if (!msg?.content) return
   if (navigator.clipboard?.writeText) {
     navigator.clipboard.writeText(msg.content)
-      .then(() => toast.show('已复制', 'success'))
+      .then(() => toast.show(t('common.copied'), 'success'))
       .catch(() => copyTextFallback(msg.content))
   } else {
     copyTextFallback(msg.content)
@@ -416,42 +418,42 @@ function copyTextFallback(text) {
     ta.select()
     const ok = document.execCommand('copy')
     document.body.removeChild(ta)
-    toast.show(ok ? '已复制' : '复制失败', ok ? 'success' : 'error')
+    toast.show(ok ? t('common.copied') : t('chat.copyFailed'), ok ? 'success' : 'error')
   } catch {
-    toast.show('复制失败', 'error')
+    toast.show(t('chat.copyFailed'), 'error')
   }
 }
 
 async function handleDeleteMessage(idx) {
   const msg = chat.messages[idx]
   if (!msg) return
-  if (!(await confirm('确定删除这条消息？删除后 AI 上下文与数据库同步更新。'))) return
+  if (!(await confirm(t('chat.confirmDeleteMessage')))) return
   const ok = await chat.deleteMessageAt(idx)
-  if (!ok) toast.show('删除失败', 'error')
+  if (!ok) toast.show(t('chat.deleteFailed'), 'error')
 }
 
 async function handleEditMessage(idx) {
   const msg = chat.messages[idx]
   if (!msg?.id) {
-    toast.show('消息尚未保存，无法编辑', 'warning')
+    toast.show(t('chat.msgNotSaved'), 'warning')
     return
   }
-  const val = await prompt('编辑消息', msg.content)
+  const val = await prompt(t('chat.editMsgTitle'), msg.content)
   if (val === null) return
   const ok = await chat.editMessageAt(idx, val)
-  if (!ok) toast.show('编辑失败', 'error')
+  if (!ok) toast.show(t('chat.editFailed'), 'error')
 }
 
 async function handleClearChat() {
   if (chat.messages.length === 0) return
-  if (!(await confirm('确定清空当前对话？此操作会删除后端保存的消息记录，不可撤销'))) return
+  if (!(await confirm(t('chat.confirmClear')))) return
   chat.clearMessages()
   try {
     if (session.sessionId) {
       await fetch('/api/stream/session/' + encodeURIComponent(session.sessionId) + '/messages', { method: 'DELETE' })
       await session.loadSessions()
     }
-  } catch { toast.show('本地已清空，后端清空失败', 'error') }
+  } catch { toast.show(t('chat.localClearedBackendFailed'), 'error') }
 }
 
 function handleApprove(requestId, approved) {
@@ -491,13 +493,13 @@ function handleAnswerIntent(requestId, answer) {
           />
           <ModelSelector :session-id="session.sessionId" />
           <!-- 当前激活技能（来自 thinking_progress 的 large_model.active_skill） -->
-          <span v-if="activeSkill" class="chat-skill-chip" :title="'当前技能: ' + activeSkill">⚡ {{ activeSkill }}</span>
+          <span v-if="activeSkill" class="chat-skill-chip" :title="$t('chat.currentSkillTitle', { skill: activeSkill })">⚡ {{ activeSkill }}</span>
         </div>
         <div class="chat-header-right">
-          <button class="chat-btn-icon" @click="showTodos = !showTodos" title="待办列表"><Icon name="list" :size="15" /></button>
-          <button class="chat-btn-icon" @click="showSettings = true" v-if="session.sessionId" title="会话设置（主动搭话/定时任务）"><Icon name="settings" :size="15" /></button>
-          <button class="chat-btn-icon" @click="chat.stop()" v-if="chat.processing" title="停止"><Icon name="square" :size="15" /></button>
-          <button class="chat-btn-icon" @click="handleClearChat" title="清空对话"><Icon name="trash" :size="15" /></button>
+          <button class="chat-btn-icon" @click="showTodos = !showTodos" :title="$t('chat.todoList')"><Icon name="list" :size="15" /></button>
+          <button class="chat-btn-icon" @click="showSettings = true" v-if="session.sessionId" :title="$t('chat.sessionSettingsTitle')"><Icon name="settings" :size="15" /></button>
+          <button class="chat-btn-icon" @click="chat.stop()" v-if="chat.processing" :title="$t('chat.stop')"><Icon name="square" :size="15" /></button>
+          <button class="chat-btn-icon" @click="handleClearChat" :title="$t('chat.clearChat')"><Icon name="trash" :size="15" /></button>
         </div>
       </div>
 
@@ -505,12 +507,12 @@ function handleAnswerIntent(requestId, answer) {
       <div ref="messagesWrap" class="chat-messages" @scroll="onMessagesScroll">
         <div v-if="chat.messages.length === 0 && !chat.processing" class="chat-welcome">
           <div class="welcome-icon"><Icon name="message" :size="40" /></div>
-          <h2>开始新对话</h2>
-          <p>输入消息开始聊天，支持多模态文件上传和流式回复。</p>
+          <h2>{{ $t('chat.startNewChat') }}</h2>
+          <p>{{ $t('chat.welcomeDesc') }}</p>
           <div class="quick-actions">
-            <div class="quick-action" @click="handleSend({ text: '你好，请介绍一下你自己', attachments: [] })">打招呼</div>
-            <div class="quick-action" @click="handleSend({ text: '帮我分析一下项目结构', attachments: [] })">分析项目</div>
-            <div class="quick-action" @click="handleSend({ text: '给我写一段代码', attachments: [] })">写代码</div>
+            <div class="quick-action" @click="handleSend({ text: '你好，请介绍一下你自己', attachments: [] })">{{ $t('chat.quickGreeting') }}</div>
+            <div class="quick-action" @click="handleSend({ text: '帮我分析一下项目结构', attachments: [] })">{{ $t('chat.quickAnalyze') }}</div>
+            <div class="quick-action" @click="handleSend({ text: '给我写一段代码', attachments: [] })">{{ $t('chat.quickCode') }}</div>
           </div>
         </div>
 
@@ -520,8 +522,8 @@ function handleAnswerIntent(requestId, answer) {
         <!-- 运行轨迹：工具调用/委托等中间步骤（借鉴 dsh，从对话流分离） -->
         <div v-if="chat.traces.length" class="chat-traces">
           <div class="chat-traces-header" @click="tracesOpen = !tracesOpen">
-            <span>运行轨迹（{{ chat.traces.length }}）</span>
-            <span class="chevron">{{ tracesOpen ? '收起 ▲' : '展开 ▼' }}</span>
+            <span>{{ $t('chat.tracesTitle', { count: chat.traces.length }) }}</span>
+            <span class="chevron">{{ tracesOpen ? $t('chat.tracesCollapse') : $t('chat.tracesExpand') }}</span>
           </div>
           <div v-if="tracesOpen" class="chat-traces-body">
             <div v-for="(tr, i) in chat.traces" :key="i" class="trace-item">
@@ -531,7 +533,7 @@ function handleAnswerIntent(requestId, answer) {
         </div>
 
         <div class="chat-load-more" v-if="hasMoreMessages" @click="loadMoreMessages">
-          {{ loadingOlder ? '加载中…' : '加载更早消息（还有 ' + (chat.messages.length - visibleMessages.length) + ' 条）' }}
+          {{ loadingOlder ? $t('common.loading') : $t('chat.loadEarlier', { count: chat.messages.length - visibleMessages.length }) }}
         </div>
 
         <ChatMessage
@@ -547,7 +549,7 @@ function handleAnswerIntent(requestId, answer) {
         />
 
         <!-- 正在等待 AI 回复：显示在最后一条用户消息下方 -->
-        <ThinkingIndicator v-if="showThinkingWaiting" :label="chat.elapsed ? '正在思考 ' + chat.elapsed + 's' : '正在思考'" />
+        <ThinkingIndicator v-if="showThinkingWaiting" :label="chat.elapsed ? $t('chat.thinkingElapsed', { elapsed: chat.elapsed }) : $t('chat.thinkingState')" />
       </div>
 
       <!-- 回到底部悬浮按钮：离开底部时出现 -->
@@ -555,7 +557,7 @@ function handleAnswerIntent(requestId, answer) {
         <button
           v-if="!isNearBottom && chat.messages.length"
           class="chat-scroll-bottom"
-          title="回到底部"
+          :title="$t('chat.scrollBottom')"
           @click="scrollBottom(true)"
         >
           <Icon name="down" :size="16" />
@@ -565,7 +567,7 @@ function handleAnswerIntent(requestId, answer) {
 
       <ChatInput :processing="chat.processing" :hint="chat.hint" @send="handleSend" @toast="(t) => toast.show(t.message, t.type)">
         <template #actions>
-          <button v-if="chat.processing" class="btn btn-sm btn-stop" @click="chat.stop()"><Icon name="stop" :size="14" /> 停止</button>
+          <button v-if="chat.processing" class="btn btn-sm btn-stop" @click="chat.stop()"><Icon name="stop" :size="14" /> {{ $t('chat.stop') }}</button>
         </template>
       </ChatInput>
     </div>
@@ -573,8 +575,8 @@ function handleAnswerIntent(requestId, answer) {
     <!-- todo 待办面板（模型通过 todo 工具维护，按当前会话隔离） -->
     <div v-if="showTodos" class="todo-panel">
       <div class="todo-header">
-        <span>待办 ({{ todoDone }}/{{ todos.length }})</span>
-        <button class="chat-btn-icon" @click="showTodos = false" title="收起"><Icon name="right" :size="14" /></button>
+        <span>{{ $t('chat.todoCount', { done: todoDone, total: todos.length }) }}</span>
+        <button class="chat-btn-icon" @click="showTodos = false" :title="$t('chat.collapse')"><Icon name="right" :size="14" /></button>
       </div>
       <div class="todo-progress">
         <div class="todo-progress-bar" :style="{ width: (todos.length ? (todoDone / todos.length) * 100 : 0) + '%' }"></div>
@@ -583,13 +585,13 @@ function handleAnswerIntent(requestId, answer) {
         <div
           v-for="(t, i) in todos" :key="t.id || i"
           class="todo-item"
-          :title="t.status === 'completed' ? '点击恢复为待办' : '点击标记完成'"
+          :title="t.status === 'completed' ? $t('chat.todoClickRestore') : $t('chat.todoClickComplete')"
           @click="toggleTodo(t)"
         >
           <span class="todo-icon">{{ t.status === 'completed' ? '☑' : t.status === 'in_progress' ? '◐' : '☐' }}</span>
           <span class="todo-text" :class="{ done: t.status === 'completed' }">{{ t.content }}</span>
         </div>
-        <div v-if="!todos.length" class="todo-empty">暂无待办任务<br/><span class="todo-empty-hint">（模型会先用 todo 工具规划任务步骤，你也可点击完成）</span></div>
+        <div v-if="!todos.length" class="todo-empty">{{ $t('chat.todoEmpty') }}<br/><span class="todo-empty-hint">{{ $t('chat.todoEmptyHint') }}</span></div>
       </div>
     </div>
 

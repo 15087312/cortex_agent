@@ -99,8 +99,8 @@ describe('ScheduledTasks 页面', () => {
   it('statusBadge 颜色映射', async () => {
     const w = mountPage()
     await new Promise((r) => setTimeout(r, 10))
-    expect(w.vm.statusBadge('success')).toEqual({ color: '#3fb950', label: '成功' })
-    expect(w.vm.statusBadge('error')).toEqual({ color: '#f85149', label: '错误' })
+    expect(w.vm.statusBadge('success')).toEqual({ color: '#3fb950', label: 'common.success' })
+    expect(w.vm.statusBadge('error')).toEqual({ color: '#f85149', label: 'common.error' })
     expect(w.vm.statusBadge('pending')).toEqual({ color: '#8b949e', label: 'pending' })
     expect(w.vm.statusBadge(undefined)).toBeNull()
   })

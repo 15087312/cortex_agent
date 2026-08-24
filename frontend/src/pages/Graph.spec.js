@@ -65,9 +65,9 @@ describe('Graph 页面', () => {
   it('tierOf 映射与未知回退', async () => {
     const w = mountPage()
     await new Promise((r) => setTimeout(r, 10))
-    expect(w.vm.tierOf('user').label).toBe('用户')
-    expect(w.vm.tierOf('large').label).toBe('总指挥')
-    expect(w.vm.tierOf('nope').label).toBe('未知')
+    expect(w.vm.tierOf('user').label).toBe('graph.tierUser')
+    expect(w.vm.tierOf('large').label).toBe('graph.tierLarge')
+    expect(w.vm.tierOf('nope').label).toBe('graph.tierUnknown')
   })
 
   it('onSessionChange 切换会话加载图谱', async () => {

@@ -2,8 +2,10 @@
 import { ref, onMounted, onBeforeUnmount, computed } from 'vue'
 import { endpoints } from '@/api.js'
 import { useToastStore } from '@/stores/toast.js'
+import { useI18n } from 'vue-i18n'
 import Icon from '@/components/Icon.vue'
 
+const { t } = useI18n()
 const toast = useToastStore()
 const nodes = ref([])
 const edges = ref([])
@@ -179,7 +181,7 @@ async function handleShowTree(id) {
     detail.value = nr.data
     tree.value = tr.data
   } catch {
-    toast.show('加载因果链失败', 'error')
+    toast.show(t('causal.loadChainFailed'), 'error')
   } finally {
     treeLoading.value = false
   }
@@ -193,27 +195,27 @@ function nodeBadgeClass(type) {
 <template>
   <div>
     <div class="page-header">
-      <h2>因果图</h2>
+      <h2>{{ $t('causal.title') }}</h2>
       <div class="causal-toolbar">
         <span v-if="zoom !== 1" class="causal-zoom-text">{{ Math.round(zoom * 100) }}%</span>
-        <button class="btn btn-sm" @click="resetView" v-if="zoom !== 1">重置视图</button>
-        <button class="btn btn-sm" @click="loadData"><Icon name="refresh" :size="14" /> 刷新</button>
+        <button class="btn btn-sm" @click="resetView" v-if="zoom !== 1">{{ $t('causal.resetView') }}</button>
+        <button class="btn btn-sm" @click="loadData"><Icon name="refresh" :size="14" /> {{ $t('common.refresh') }}</button>
       </div>
     </div>
     <div class="page-body">
       <div class="stat-grid">
-        <div class="stat-card"><div class="stat-value">{{ stats.total_nodes || nodes.length }}</div><div class="stat-label">节点</div></div>
-        <div class="stat-card"><div class="stat-value">{{ stats.total_edges || edges.length }}</div><div class="stat-label">边</div></div>
-        <div class="stat-card"><div class="stat-value">{{ stats.total_events || 0 }}</div><div class="stat-label">关联事件</div></div>
-        <div class="stat-card"><div class="stat-value">{{ stats.linked_events || 0 }}</div><div class="stat-label">已链接</div></div>
+        <div class="stat-card"><div class="stat-value">{{ stats.total_nodes || nodes.length }}</div><div class="stat-label">{{ $t('causal.nodes') }}</div></div>
+        <div class="stat-card"><div class="stat-value">{{ stats.total_edges || edges.length }}</div><div class="stat-label">{{ $t('causal.edges') }}</div></div>
+        <div class="stat-card"><div class="stat-value">{{ stats.total_events || 0 }}</div><div class="stat-label">{{ $t('causal.totalEvents') }}</div></div>
+        <div class="stat-card"><div class="stat-value">{{ stats.linked_events || 0 }}</div><div class="stat-label">{{ $t('causal.linked') }}</div></div>
       </div>
 
       <!-- 因果关系图 -->
       <div class="card dash-mt">
         <div class="card-header card-header-flex">
-          <span>因果图谱（前 {{ displayNodes.length }} 节点 · 点击节点查看因果链）</span>
+          <span>{{ $t('causal.graphTitle', { count: displayNodes.length }) }}</span>
           <span v-if="hoveredNode" class="muted-sm">
-            {{ displayNodes.find(n => n.id === hoveredNode)?.label }} · {{ connectedNodeIds.size - 1 }} 个关联
+            {{ displayNodes.find(n => n.id === hoveredNode)?.label }} · {{ $t('causal.related', { count: connectedNodeIds.size - 1 }) }}
           </span>
         </div>
         <div
@@ -302,7 +304,7 @@ function nodeBadgeClass(type) {
               >{{ node.label.slice(0, 8) }}</text>
             </g>
           </svg>
-          <div v-else class="causal-empty-lg">因果数据将在此显示</div>
+          <div v-else class="causal-empty-lg">{{ $t('causal.dataEmpty') }}</div>
         </div>
         <!-- 图例 -->
         <div class="graph-legend">
@@ -310,15 +312,15 @@ function nodeBadgeClass(type) {
           <span class="legend-item"><span class="legend-dot legend-cause"></span>cause</span>
           <span class="legend-item"><span class="legend-dot legend-effect"></span>effect</span>
           <span class="legend-sep"></span>
-          <span class="legend-hint">滚轮缩放 · 拖拽平移 · 点击节点</span>
+          <span class="legend-hint">{{ $t('causal.legendHint') }}</span>
         </div>
       </div>
 
       <!-- 因果节点表 -->
       <div class="card dash-mt">
-        <div class="card-header">因果节点</div>
+        <div class="card-header">{{ $t('causal.nodesTitle') }}</div>
         <table class="data-table" v-if="nodes.length > 0">
-          <thead><tr><th>标签</th><th>类型</th><th>置信度</th><th>事件数</th><th>操作</th></tr></thead>
+          <thead><tr><th>{{ $t('causal.label') }}</th><th>{{ $t('common.type') }}</th><th>{{ $t('causal.confidence') }}</th><th>{{ $t('causal.eventCount') }}</th><th>{{ $t('common.action') }}</th></tr></thead>
           <tbody>
             <tr
               v-for="node in nodes" :key="node.id"
@@ -335,11 +337,11 @@ function nodeBadgeClass(type) {
                 <span class="conf-text">{{ (node.confidence||0).toFixed(2) }}</span>
               </td>
               <td>{{ node.event_count||0 }}</td>
-              <td><button class="btn btn-sm" @click="handleShowTree(node.id)" :disabled="treeLoading">因果链</button></td>
+              <td><button class="btn btn-sm" @click="handleShowTree(node.id)" :disabled="treeLoading">{{ $t('causal.chain') }}</button></td>
             </tr>
           </tbody>
         </table>
-        <div v-else class="empty-state causal-empty-lg2"><span class="empty-icon"><Icon name="network" :size="20" /></span><p class="empty-text">因果数据将在此显示</p></div>
+        <div v-else class="empty-state causal-empty-lg2"><span class="empty-icon"><Icon name="network" :size="20" /></span><p class="empty-text">{{ $t('causal.dataEmpty') }}</p></div>
       </div>
 
       <!-- 因果链详情 -->
@@ -347,9 +349,9 @@ function nodeBadgeClass(type) {
         <div class="card-header">
           <span class="chain-anchor-info">
             <Icon name="network" :size="16" />
-            因果链: {{ tree?.anchor?.label || detail.node?.label }}
+            {{ $t('causal.chainColon') }} {{ tree?.anchor?.label || detail.node?.label }}
           </span>
-          <span v-if="treeLoading" class="chain-loading">加载中...</span>
+          <span v-if="treeLoading" class="chain-loading">{{ $t('common.loading') }}</span>
         </div>
 
         <div class="chain-detail-body">
@@ -360,7 +362,7 @@ function nodeBadgeClass(type) {
               <div class="chain-anchor-label">{{ detail.node?.label }}</div>
               <div class="chain-meta">
                 <span class="badge" :class="nodeBadgeClass(detail.node?.type)">{{ detail.node?.type }}</span>
-                <span v-if="detail.node?.confidence" class="muted-sm">置信度 {{ (detail.node?.confidence||0).toFixed(2) }}</span>
+                <span v-if="detail.node?.confidence" class="muted-sm">{{ $t('causal.confidenceValue', { v: (detail.node?.confidence||0).toFixed(2) }) }}</span>
               </div>
             </div>
           </div>
@@ -369,7 +371,7 @@ function nodeBadgeClass(type) {
           <div v-if="detail.predecessors?.length" class="chain-section">
             <div class="chain-section-title">
               <span class="chain-arrow chain-arrow-back">←</span>
-              前驱节点
+              {{ $t('causal.predecessors') }}
               <span class="chain-count">{{ detail.predecessors.length }}</span>
             </div>
             <div class="chain-pills">
@@ -389,7 +391,7 @@ function nodeBadgeClass(type) {
           <div v-if="detail.successors?.length" class="chain-section">
             <div class="chain-section-title">
               <span class="chain-arrow chain-arrow-fwd">→</span>
-              后继节点
+              {{ $t('causal.successors') }}
               <span class="chain-count">{{ detail.successors.length }}</span>
             </div>
             <div class="chain-pills">
@@ -407,7 +409,7 @@ function nodeBadgeClass(type) {
 
           <!-- 空状态 -->
           <div v-if="!detail.predecessors?.length && !detail.successors?.length" class="chain-empty">
-            该节点暂无因果关系数据
+            {{ $t('causal.chainEmpty') }}
           </div>
         </div>
       </div>

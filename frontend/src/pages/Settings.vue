@@ -6,7 +6,9 @@ import { useToastStore } from '@/stores/toast.js'
 import { useConfirm, usePrompt } from '@/composables/useDialog.js'
 import Icon from '@/components/Icon.vue'
 import OutreachView from '@/pages/Outreach.vue'
+import { useI18n } from 'vue-i18n'
 
+const { t } = useI18n()
 const toast = useToastStore()
 const prompt = usePrompt()
 const confirm = useConfirm()
@@ -15,10 +17,10 @@ const appVersion = __APP_VERSION__
 
 /* ── Tabs ── */
 const tabGroups = [
-  { label: '用户', tabs: ['对话', '感知', '记忆库', '主动搭话'] },
-  { label: '高级', tabs: ['系统', '高级', '通用设置', '授权设置', '关于'] },
+  { labelKey: 'settings.group.user', tabs: ['chat', 'perception', 'memory', 'proactive'] },
+  { labelKey: 'settings.group.advanced', tabs: ['system', 'advanced', 'general', 'auth', 'about'] },
 ]
-const activeTab = ref('对话')
+const activeTab = ref('chat')
 
 /* ── 记忆库 ── */
 const memoryLibs = ref([])
@@ -39,21 +41,21 @@ async function loadMemoryLibs() {
         continue
       }
       memoryLibs.value = []
-      toast.show('记忆库列表加载失败: ' + (e.body?.error?.message || e.status || '网络错误'), 'error')
+      toast.show(t('settings.memory.loadFailed') + ': ' + (e.body?.error?.message || e.status || t('settings.networkError')), 'error')
     }
   }
   return false
 }
 
 // 切到「记忆库」tab 时重新加载（兜底 onMounted 时序/首次失败）
-watch(activeTab, (v) => { if (v === '记忆库') loadMemoryLibs() })
+watch(activeTab, (v) => { if (v === 'memory') loadMemoryLibs() })
 async function switchLib(name) {
   try {
     await endpoints.switchMemoryLib(name)
     memoryCurrent.value = name
-    toast.show('已切换到记忆库: ' + name, 'success')
+    toast.show(t('settings.memory.switchedTo') + ': ' + name, 'success')
     await loadMemoryLibs()
-  } catch (e) { toast.show('切换失败: ' + (e.body?.error?.message || e.status), 'error') }
+  } catch (e) { toast.show(t('settings.memory.switchFailed') + ': ' + (e.body?.error?.message || e.status), 'error') }
 }
 async function createLib() {
   const name = newLibName.value.trim()
@@ -61,29 +63,28 @@ async function createLib() {
   try {
     await endpoints.createMemoryLib(name)
     newLibName.value = ''
-    toast.show('已创建记忆库: ' + name, 'success')
+    toast.show(t('settings.memory.created') + ': ' + name, 'success')
     await loadMemoryLibs()
-  } catch (e) { toast.show('创建失败: ' + (e.body?.error?.message || e.status), 'error') }
+  } catch (e) { toast.show(t('settings.memory.createFailed') + ': ' + (e.body?.error?.message || e.status), 'error') }
 }
 async function renameLib(lib) {
-  const newName = await prompt('重命名记忆库', lib.name)
+  const newName = await prompt(t('settings.memory.renameTitle'), lib.name)
   if (newName === null || !newName.trim() || newName.trim() === lib.name) return
   try {
     await endpoints.renameMemoryLib(lib.name, newName.trim())
-    toast.show('已重命名', 'success')
+    toast.show(t('settings.memory.renamed'), 'success')
     await loadMemoryLibs()
-  } catch (e) { toast.show('重命名失败: ' + (e.body?.error?.message || e.status), 'error') }
+  } catch (e) { toast.show(t('settings.memory.renameFailed') + ': ' + (e.body?.error?.message || e.status), 'error') }
 }
 async function deleteLib(lib) {
-  // 第一次确认：是否要删除该记忆库
-  if (!(await confirm(`确定删除记忆库「${lib.name}」？`))) return
-  // 第二次确认：物理删除不可恢复
-  if (!(await confirm(`⚠️ 再次确认：删除「${lib.name}」将【物理删除】其数据库、向量索引与映射文件，${lib.name === '默认' ? '（默认库删除后会自动重建空的默认库）' : ''}此操作不可恢复！\n\n确定要彻底删除吗？`))) return
+  if (!(await confirm(t('settings.memory.deleteConfirm', { name: lib.name })))) return
+  const hint = lib.name === '默认' ? t('settings.memory.deleteDefaultHint') : ''
+  if (!(await confirm(t('settings.memory.deleteConfirm2', { name: lib.name, hint })))) return
   try {
     await endpoints.deleteMemoryLib(lib.name)
-    toast.show('已物理删除记忆库: ' + lib.name, 'success')
+    toast.show(t('settings.memory.physicallyDeleted') + ': ' + lib.name, 'success')
     await loadMemoryLibs()
-  } catch (e) { toast.show('删除失败: ' + (e.body?.error?.message || e.status), 'error') }
+  } catch (e) { toast.show(t('settings.memory.deleteFailed') + ': ' + (e.body?.error?.message || e.status), 'error') }
 }
 
 /* ── Config keys (persisted to backend) ── */
@@ -105,8 +106,8 @@ function _str(v, fallback) { return v != null ? String(v) : fallback }
 /** 保存 Cortex 配置（乐观更新 + 后端持久化） */
 async function saveCfg(k, v) {
   configStore.$patch((state) => { state.config = { ...state.config, [k]: v } })
-  try { await configStore.updateConfig(k, v); toast.show(k + ' 已更新', 'success') }
-  catch (e) { toast.show('保存失败: ' + (e.body?.error?.message || e.status), 'error') }
+  try { await configStore.updateConfig(k, v); toast.show(k + ' ' + t('settings.updated'), 'success') }
+  catch (e) { toast.show(t('settings.saveFailed') + ': ' + (e.body?.error?.message || e.status), 'error') }
 }
 function boolCfg(k, fallback) { return computed({ get: () => _bool(configStore.config[k], fallback), set: (v) => saveCfg(k, v) }) }
 function numCfg(k, fallback) {
@@ -157,9 +158,9 @@ async function saveGlobalDefault() {
   try {
     const r = await fetch('/api/config/PROACTIVE_OUTREACH_DEFAULT', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ value: JSON.stringify(cfg) }) })
     const d = await r.json()
-    if (d.success) toast.show('全局默认规则已保存', 'success')
-    else toast.show('保存失败', 'error')
-  } catch { toast.show('保存失败', 'error') }
+    if (d.success) toast.show(t('settings.proactive.savedGlobal'), 'success')
+    else toast.show(t('settings.saveFailed'), 'error')
+  } catch { toast.show(t('settings.saveFailed'), 'error') }
 }
 const ttsEnabled = boolCfg('OUTPUT_TTS_ENABLED', false)
 const mentalEnabled = boolCfg('MENTAL_ACTIVITY_ENABLED', true)
@@ -170,7 +171,7 @@ const petSessionId = txtCfg('DESKTOP_PET_SESSION_ID', 'pet_main')
 // ── 桌宠状态（实时显示 + 重置）──
 const petState = ref({})
 const petStateText = ref('')
-const petStateLabels = { mood: '心情', satiety: '饱食', energy: '精力', cleanliness: '清洁' }
+const petStateLabels = { mood: 'settings.pet.mood', satiety: 'settings.pet.satiety', energy: 'settings.pet.energy', cleanliness: 'settings.pet.cleanliness' }
 async function loadPetState() {
   try {
     const r = await fetch('/api/stream/pet/state', { headers: { Accept: 'application/json' } })
@@ -183,8 +184,8 @@ async function resetPetState() {
   try {
     const r = await fetch('/api/stream/pet/state/reset', { method: 'POST' })
     const d = await r.json()
-    if (d?.data?.values) { petState.value = d.data.values; toast.show('桌宠状态已重置', 'success') }
-  } catch (e) { toast.show('重置失败', 'error') }
+    if (d?.data?.values) { petState.value = d.data.values; toast.show(t('settings.pet.stateReset'), 'success') }
+  } catch (e) { toast.show(t('settings.resetFailed'), 'error') }
 }
 let petPollTimer = null
 onMounted(() => {
@@ -240,8 +241,8 @@ async function openFolder(folder) {
       body: JSON.stringify({ folder }),
     })
     const d = await r.json()
-    if (!d.success) toast.show('打开失败: ' + (d.error?.message || ''), 'error')
-  } catch (e) { toast.show('打开失败', 'error') }
+    if (!d.success) toast.show(t('settings.openFolderFailed') + ': ' + (d.error?.message || ''), 'error')
+  } catch (e) { toast.show(t('settings.openFolderFailed'), 'error') }
 }
 
 const installingDeps = ref(false)
@@ -257,10 +258,10 @@ async function installVoiceDeps() {
       toast.show(r.data.message, 'success')
     } else {
       installResult.value = r.data
-      toast.show('安装失败: ' + (r.data?.message || ''), 'error')
+      toast.show(t('settings.installFailed') + ': ' + (r.data?.message || ''), 'error')
     }
   } catch (e) {
-    toast.show('安装失败: ' + (e.message || ''), 'error')
+    toast.show(t('settings.installFailed') + ': ' + (e.message || ''), 'error')
   } finally {
     installingDeps.value = false
   }
@@ -268,9 +269,9 @@ async function installVoiceDeps() {
 
 /* ── 主模型配置（大/中/小三层，持久化到 ~/.cortex/settings.json）── */
 const modelTiers = [
-  { key: 'LARGE', label: '大模型', hint: '主对话 / 编排' },
-  { key: 'MEDIUM', label: '中模型', hint: '主管' },
-  { key: 'SMALL', label: '小模型', hint: '专家 / 轻量' },
+  { key: 'LARGE', labelKey: 'settings.modelTiers.large', hintKey: 'settings.modelTiers.largeHint' },
+  { key: 'MEDIUM', labelKey: 'settings.modelTiers.medium', hintKey: 'settings.modelTiers.mediumHint' },
+  { key: 'SMALL', labelKey: 'settings.modelTiers.small', hintKey: 'settings.modelTiers.smallHint' },
 ]
 const modelForm = ref({
   LARGE: { API_KEY: '', API_URL: '', NAME: '', API_FORMAT: '' },
@@ -304,14 +305,14 @@ async function saveModelForm() {
         if (val !== old) updates.push([key, val])
       }
     }
-    if (updates.length === 0) { toast.show('主模型配置无变化', 'info'); return }
+    if (updates.length === 0) { toast.show(t('settings.model.noChange'), 'info'); return }
     // 串行保存：每个 PUT 触发后端重建模型实例，并发会交错导致竞态
     for (const [k, v] of updates) {
       await configStore.updateConfig(k, v)
     }
-    toast.show('主模型配置已保存（智能体模式立即生效，纯对话新会话生效）', 'success')
+    toast.show(t('settings.model.saved'), 'success')
     loadModelForm()
-  } catch (e) { toast.show('保存失败: ' + (e.body?.error?.message || e.status), 'error') }
+  } catch (e) { toast.show(t('settings.saveFailed') + ': ' + (e.body?.error?.message || e.status), 'error') }
   finally { modelSaving.value = false }
 }
 
@@ -363,7 +364,7 @@ function startEditShortcut() { editingShortcut.value = true }
 function saveShortcut() { editingShortcut.value = false }
 
 const storagePath = ref('')
-function copyPath() { navigator.clipboard.writeText(storagePath.value).then(() => toast.show('路径已复制', 'success')) }
+function copyPath() { navigator.clipboard.writeText(storagePath.value).then(() => toast.show(t('settings.pathCopied'), 'success')) }
 
 /* ── 诊断 modal ── */
 const showDiag = ref(false)
@@ -378,7 +379,7 @@ async function openDiagnostics() {
   } catch (e) { diagData.value = { error: String(e) } }
   diagLoading.value = false
 }
-function copyDiag() { navigator.clipboard.writeText(JSON.stringify(diagData.value, null, 2)).then(() => toast.show('诊断日志已复制', 'success')) }
+function copyDiag() { navigator.clipboard.writeText(JSON.stringify(diagData.value, null, 2)).then(() => toast.show(t('settings.diagCopied'), 'success')) }
 
 /* ── 检查更新 ── */
 const checkingUpdate = ref(false)
@@ -392,17 +393,17 @@ async function checkUpdates() {
       const d = r.data
       updateInfo.value = d
       if (d.update_available) {
-        toast.show('发现新版本: v' + d.latest + '（当前 v' + d.current + '）', 'info')
+        toast.show(t('settings.update.found', { latest: d.latest, current: d.current }), 'info')
         if (d.release_url) window.open(d.release_url, '_blank')
       } else {
-        toast.show('当前已是最新版本 v' + d.current, 'success')
+        toast.show(t('settings.update.latest', { current: d.current }), 'success')
       }
     } else {
-      toast.show('无法连接 GitHub，检查更新失败（当前 v' + (r?.data?.current || appVersion) + '）', 'warning')
+      toast.show(t('settings.update.failed', { current: r?.data?.current || appVersion }), 'warning')
     }
   } catch (e) {
     const cur = e?.body?.data?.current || appVersion
-    toast.show('无法连接 GitHub，检查更新失败（当前 v' + cur + '）', 'warning')
+    toast.show(t('settings.update.failed', { current: cur }), 'warning')
   }
   checkingUpdate.value = false
 }
@@ -414,13 +415,13 @@ const SECRET_KEY_PAT = /(^|_)(API_KEY|KEY|TOKEN|SECRET|PASSWORD|PASSWD)(_|$)/
 function isSecretKey(k) { return SECRET_KEY_PAT.test(String(k)) }
 async function editConfig(k, v) {
   const vs = typeof v === 'object' ? JSON.stringify(v) : String(v)
-  const nv = await prompt('编辑 ' + k, vs)
+  const nv = await prompt(t('settings.editKey', { key: k }), vs)
   if (nv === null) return
   let val = nv
   if (val === 'true') val = true
   else if (val === 'false') val = false
   else if (!isNaN(val) && val.trim() !== '') val = Number(val)
-  try { await configStore.updateConfig(k, val); toast.show(k + ' 已更新', 'success') } catch (e) { toast.show('更新失败: ' + (e.body?.error?.message || e.status), 'error') }
+  try { await configStore.updateConfig(k, val); toast.show(k + ' ' + t('settings.updated'), 'success') } catch (e) { toast.show(t('settings.updateFailed') + ': ' + (e.body?.error?.message || e.status), 'error') }
 }
 
 /* ── 人设 ── */
@@ -444,121 +445,121 @@ onMounted(async () => {
 <template>
   <div class="settings-layout">
     <div class="settings-sidebar">
-      <template v-for="g in tabGroups" :key="g.label">
-        <div class="settings-group-label">{{ g.label }}</div>
+      <template v-for="g in tabGroups" :key="g.labelKey">
+        <div class="settings-group-label">{{ $t(g.labelKey) }}</div>
         <div
           v-for="tab in g.tabs"
           :key="tab"
           class="settings-tab"
           :class="{ active: activeTab === tab }"
           @click="activeTab = tab"
-        >{{ tab }}</div>
+        >{{ $t('settings.tabs.' + tab) }}</div>
       </template>
     </div>
 
     <div class="settings-content">
 
       <!-- ═══════════════ 对话 ═══════════════ -->
-      <div v-if="activeTab === '对话'" class="settings-section">
+      <div v-if="activeTab === 'chat'" class="settings-section">
         <div class="settings-group">
-          <div class="settings-group-title">用户称呼</div>
+          <div class="settings-group-title">{{ $t('settings.chat.userTitle') }}</div>
           <div class="setting-row">
-            <div class="lbl"><div class="t">用户称呼</div><div class="d">例如你的名字或昵称</div></div>
+            <div class="lbl"><div class="t">{{ $t('settings.chat.userTitle') }}</div><div class="d">{{ $t('settings.chat.userTitleDesc') }}</div></div>
             <div class="setting-ctl"><input class="input w-200" v-model="userName" /></div>
           </div>
         </div>
         <div class="settings-divider"></div>
         <div class="settings-group">
-          <div class="settings-group-title">对话模式</div>
-          <p class="settings-hint">选择后端处理对话的方式，切换后新消息立即生效</p>
+          <div class="settings-group-title">{{ $t('settings.chat.modeTitle') }}</div>
+          <p class="settings-hint">{{ $t('settings.chat.modeHint') }}</p>
           <div class="setting-row">
-            <div class="lbl"><div class="t">处理方式</div></div>
+            <div class="lbl"><div class="t">{{ $t('settings.chat.processing') }}</div></div>
             <div class="setting-ctl">
               <div class="seg">
-                <button :class="{ on: cortexMode === 'agent' }" @click="cortexMode = 'agent'" title="多模型协作：主管+专家分解任务，功能完整">智能体模式</button>
-                <button :class="{ on: cortexMode === 'chatonly' }" @click="cortexMode = 'chatonly'" title="轻量单模型直答，无多模型编排，响应更快">纯对话模式</button>
+                <button :class="{ on: cortexMode === 'agent' }" @click="cortexMode = 'agent'" :title="$t('settings.chat.agentTitle')">{{ $t('settings.chat.agentMode') }}</button>
+                <button :class="{ on: cortexMode === 'chatonly' }" @click="cortexMode = 'chatonly'" :title="$t('settings.chat.chatonlyTitle')">{{ $t('settings.chat.chatonlyMode') }}</button>
               </div>
             </div>
           </div>
         </div>
         <div class="settings-divider"></div>
         <div class="settings-group">
-          <div class="settings-group-title">执行模式</div>
-          <p class="settings-hint">工具调用的安全级别</p>
+          <div class="settings-group-title">{{ $t('settings.chat.execTitle') }}</div>
+          <p class="settings-hint">{{ $t('settings.chat.execHint') }}</p>
           <div class="setting-row">
-            <div class="lbl"><div class="t">安全级别</div></div>
+            <div class="lbl"><div class="t">{{ $t('settings.chat.safety') }}</div></div>
             <div class="setting-ctl">
               <div class="seg">
-                <button :class="{ on: execMode === 'plan' }" @click="execMode = 'plan'" title="禁止所有写操作">只读</button>
-                <button :class="{ on: execMode === 'edit' }" @click="execMode = 'edit'" title="写操作前需确认">确认</button>
-                <button :class="{ on: execMode === 'yolo' }" @click="execMode = 'yolo'" title="仅安全检测，跳过确认">宽松</button>
-                <button :class="{ on: execMode === 'control' }" @click="execMode = 'control'" title="MEDIUM+ 工具需单独确认">完全控制</button>
+                <button :class="{ on: execMode === 'plan' }" @click="execMode = 'plan'" :title="$t('settings.chat.planTitle')">{{ $t('settings.chat.plan') }}</button>
+                <button :class="{ on: execMode === 'edit' }" @click="execMode = 'edit'" :title="$t('settings.chat.confirmTitle')">{{ $t('common.confirm') }}</button>
+                <button :class="{ on: execMode === 'yolo' }" @click="execMode = 'yolo'" :title="$t('settings.chat.yoloTitle')">{{ $t('settings.chat.yolo') }}</button>
+                <button :class="{ on: execMode === 'control' }" @click="execMode = 'control'" :title="$t('settings.chat.controlTitle')">{{ $t('settings.chat.control') }}</button>
               </div>
             </div>
           </div>
         </div>
         <div class="settings-divider"></div>
         <div class="settings-group">
-          <div class="settings-group-title">搜索引擎</div>
-          <p class="settings-hint">按优先级尝试的搜索后端（逗号分隔，首个成功的返回）。可选：<code>searxng</code>、<code>ddg_html</code>、<code>ddg_lite</code>、<code>ddg_api</code>、<code>sogou</code>、<code>bing_cn</code>、<code>baidu</code>。留空使用默认顺序。</p>
+          <div class="settings-group-title">{{ $t('settings.chat.searchTitle') }}</div>
+          <p class="settings-hint">{{ $t('settings.chat.searchHint') }}</p>
           <div class="setting-row">
-            <div class="lbl"><div class="t">引擎优先级</div></div>
+            <div class="lbl"><div class="t">{{ $t('settings.chat.searchPriority') }}</div></div>
             <div class="setting-ctl"><input class="input w-360" v-model="searchEnginePriority" placeholder="ddg_html,ddg_lite,ddg_api,sogou,bing_cn,baidu" /></div>
           </div>
           <div class="setting-row">
-            <div class="lbl"><div class="t">searXNG 地址</div><div class="d">自部署元搜索实例（配置后 priority 含 searxng 时优先用其 JSON API）</div></div>
+            <div class="lbl"><div class="t">{{ $t('settings.chat.searxngUrl') }}</div><div class="d">{{ $t('settings.chat.searxngDesc') }}</div></div>
             <div class="setting-ctl"><input class="input w-360" v-model="searxngUrl" placeholder="https://searx.example.com" /></div>
           </div>
         </div>
         <div class="settings-divider"></div>
         <div class="settings-group">
-          <div class="settings-group-title">主模型配置</div>
-          <p class="settings-hint">大/中/小三层模型的 API Key、接口地址与模型名。保存后写入 <code>~/.cortex/settings.json</code>，智能体模式立即生效，纯对话模式新会话生效（无需重启）。</p>
-          <div v-for="t in modelTiers" :key="t.key" class="model-tier-block">
-            <div class="model-tier-title">{{ t.label }}<span class="setting-group-title-hint"> —— {{ t.hint }}</span></div>
+          <div class="settings-group-title">{{ $t('settings.model.title') }}</div>
+          <p class="settings-hint">{{ $t('settings.model.hint') }}</p>
+          <div v-for="tier in modelTiers" :key="tier.key" class="model-tier-block">
+            <div class="model-tier-title">{{ $t(tier.labelKey) }}<span class="setting-group-title-hint"> —— {{ $t(tier.hintKey) }}</span></div>
             <div class="setting-row">
-              <div class="lbl"><div class="t">API Key</div></div>
-              <div class="setting-ctl"><input class="input w-280" type="password" v-model="modelForm[t.key].API_KEY" placeholder="sk-..." autocomplete="off" /></div>
+              <div class="lbl"><div class="t">{{ $t('settings.model.apiKey') }}</div></div>
+              <div class="setting-ctl"><input class="input w-280" type="password" v-model="modelForm[tier.key].API_KEY" placeholder="sk-..." autocomplete="off" /></div>
             </div>
             <div class="setting-row">
-              <div class="lbl"><div class="t">API URL</div></div>
-              <div class="setting-ctl"><input class="input w-360" v-model="modelForm[t.key].API_URL" placeholder="https://api.deepseek.com/v1/chat/completions" /></div>
+              <div class="lbl"><div class="t">{{ $t('settings.model.apiUrl') }}</div></div>
+              <div class="setting-ctl"><input class="input w-360" v-model="modelForm[tier.key].API_URL" placeholder="https://api.deepseek.com/v1/chat/completions" /></div>
             </div>
             <div class="setting-row">
-              <div class="lbl"><div class="t">模型名</div></div>
-              <div class="setting-ctl"><input class="input w-220" v-model="modelForm[t.key].NAME" placeholder="deepseek-v4-flash" /></div>
+              <div class="lbl"><div class="t">{{ $t('settings.model.name') }}</div></div>
+              <div class="setting-ctl"><input class="input w-220" v-model="modelForm[tier.key].NAME" placeholder="deepseek-v4-flash" /></div>
             </div>
-            <div v-if="t.key === 'LARGE'" class="setting-row">
-              <div class="lbl"><div class="t">API 格式</div><div class="d">openai / dashscope / anthropic，留空自动检测</div></div>
+            <div v-if="tier.key === 'LARGE'" class="setting-row">
+              <div class="lbl"><div class="t">{{ $t('settings.model.apiFormat') }}</div><div class="d">{{ $t('settings.model.apiFormatDesc') }}</div></div>
               <div class="setting-ctl"><input class="input w-200" v-model="modelForm.LARGE.API_FORMAT" placeholder="openai" /></div>
             </div>
           </div>
           <div class="text-right">
-            <button class="btn btn-sm btn-primary" :disabled="modelSaving" @click="saveModelForm">{{ modelSaving ? '保存中…' : '保存主模型配置' }}</button>
+            <button class="btn btn-sm btn-primary" :disabled="modelSaving" @click="saveModelForm">{{ modelSaving ? $t('settings.model.saving') : $t('settings.model.saveMain') }}</button>
           </div>
         </div>
       </div>
 
       <!-- ═══════════════ 主动搭话 ═══════════════ -->
-      <div v-if="activeTab === '主动搭话'" class="settings-section">
+      <div v-if="activeTab === 'proactive'" class="settings-section">
         <div class="settings-group">
-          <div class="settings-group-title">主动搭话</div>
-          <p class="settings-hint">系统在合适时机主动关心你：触发后生成内容 → 存入会话历史 → 推送到前端 → 记入触发记录。</p>
+          <div class="settings-group-title">{{ $t('settings.proactive.title') }}</div>
+          <p class="settings-hint">{{ $t('settings.proactive.hint') }}</p>
           <!-- 触发逻辑说明 -->
           <div class="info-box">
-            <div class="info-box-title">触发逻辑（4 条规则，满足任一即触发）</div>
-            <div>· <b>定点发送</b>：到设定时间（±误差分钟窗口内）触发一次</div>
-            <div>· <b>屏幕触发</b>：屏幕变化比例达到阈值、且随机概率命中时触发</div>
-            <div>· <b>空闲触发</b>：用户空闲超过设定时长、且随机概率命中时触发</div>
-            <div>· <b>时段触发</b>：处于设定时段内、且随机概率命中时触发</div>
-            <div class="info-box-sub">公共前置条件</div>
-            <div>· 前端窗口在线（WebSocket 已连接）</div>
-            <div>· 距该会话上次主动搭话超过「综合冷却」时长</div>
-            <div class="info-box-sub">配置优先级</div>
-            <div>· <b>全局总开关</b>（强制执行：关=全部会话不触发）→ <b>会话规则</b>（需在设置里<b>单独开启</b>该会话才触发；开启后可配自己的规则）→ 全局默认规则（仅作为「已开启但未细配规则」会话的默认模板）</div>
+            <div class="info-box-title">{{ $t('settings.proactive.logicTitle') }}</div>
+            <div>· <b>{{ $t('settings.proactive.scheduleRule') }}</b>：{{ $t('settings.proactive.scheduleRuleDesc') }}</div>
+            <div>· <b>{{ $t('settings.proactive.screenRule') }}</b>：{{ $t('settings.proactive.screenRuleDesc') }}</div>
+            <div>· <b>{{ $t('settings.proactive.idleRule') }}</b>：{{ $t('settings.proactive.idleRuleDesc') }}</div>
+            <div>· <b>{{ $t('settings.proactive.windowRule') }}</b>：{{ $t('settings.proactive.windowRuleDesc') }}</div>
+            <div class="info-box-sub">{{ $t('settings.proactive.prereqTitle') }}</div>
+            <div>· {{ $t('settings.proactive.prereqOnline') }}</div>
+            <div>· {{ $t('settings.proactive.prereqCooldown') }}</div>
+            <div class="info-box-sub">{{ $t('settings.proactive.priorityTitle') }}</div>
+            <div>· <b>{{ $t('settings.proactive.globalSwitch') }}</b>（{{ $t('settings.proactive.priorityDesc1') }}）→ <b>{{ $t('settings.proactive.sessionRule') }}</b>（{{ $t('settings.proactive.priorityDesc2') }}）→ {{ $t('settings.proactive.globalDefaultRule') }}（{{ $t('settings.proactive.priorityDesc3') }}）</div>
           </div>
           <div class="setting-row mt-3">
-            <div class="lbl"><div class="t">全局总开关</div><div class="d">关闭后所有会话（含全局默认）都不触发主动搭话</div></div>
+            <div class="lbl"><div class="t">{{ $t('settings.proactive.globalSwitch') }}</div><div class="d">{{ $t('settings.proactive.globalSwitchDesc') }}</div></div>
             <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="proactiveEnabled" @change="proactiveEnabled = !proactiveEnabled" /><span class="toggle-slider"></span></label></div>
           </div>
         </div>
@@ -566,120 +567,120 @@ onMounted(async () => {
         <div class="settings-divider"></div>
         <!-- 会话规则（核心：按会话单独设置） -->
         <div class="settings-group">
-          <div class="settings-group-title">会话规则<span class="setting-group-title-hint"> —— 在设置里逐个开启会话，触发前提；开启后可配自己的规则</span></div>
+          <div class="settings-group-title">{{ $t('settings.proactive.sessionRule') }}<span class="setting-group-title-hint"> —— {{ $t('settings.proactive.sessionRuleHint') }}</span></div>
           <OutreachView :compact="true" />
         </div>
 
         <div class="settings-divider"></div>
         <!-- 全局默认规则（仅当会话未配置时生效，兜底） -->
         <div class="settings-group">
-          <div class="settings-group-title">全局默认规则<span class="setting-group-title-hint"> —— 仅作为「已单独开启但未细配规则」会话的默认模板</span></div>
+          <div class="settings-group-title">{{ $t('settings.proactive.globalDefaultRule') }}<span class="setting-group-title-hint"> —— {{ $t('settings.proactive.globalDefaultHint') }}</span></div>
           <div class="flex-col">
             <div class="setting-row">
-              <div class="lbl"><div class="t">启用全局默认规则</div><div class="d">作为已单独开启、但未配具体规则的会话的默认搭话规则</div></div>
+              <div class="lbl"><div class="t">{{ $t('settings.proactive.enableGlobalDefault') }}</div><div class="d">{{ $t('settings.proactive.enableGlobalDefaultDesc') }}</div></div>
               <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" v-model="globalDefault.enabled" /><span class="toggle-slider"></span></label></div>
             </div>
             <div class="setting-row">
-              <div class="lbl"><div class="t">定点发送</div><div class="d">到设定时间 ±误差窗口内触发一次搭话</div></div>
+              <div class="lbl"><div class="t">{{ $t('settings.proactive.scheduleTrigger') }}</div><div class="d">{{ $t('settings.proactive.scheduleTriggerDesc') }}</div></div>
               <div class="setting-ctl ctl-flex">
                 <label class="toggle-switch"><input type="checkbox" v-model="globalDefault.scheduleOn" /><span class="toggle-slider"></span></label>
-                <span class="text-muted">时间</span>
-                <input class="input w-80" v-model="globalDefault.scheduleTime" placeholder="14:00" :disabled="!globalDefault.scheduleOn" title="触发时刻，24小时制 HH:MM，如 14:00" />
-                <span class="text-muted">± 误差</span>
-                <input class="input w-60" type="number" v-model.number="globalDefault.scheduleJitter" :disabled="!globalDefault.scheduleOn" title="到点前后误差窗口（分钟），避免精确到秒的偶发" />
+                <span class="text-muted">{{ $t('common.time') }}</span>
+                <input class="input w-80" v-model="globalDefault.scheduleTime" placeholder="14:00" :disabled="!globalDefault.scheduleOn" :title="$t('settings.proactive.scheduleTimeTitle')" />
+                <span class="text-muted">{{ $t('settings.proactive.jitter') }}</span>
+                <input class="input w-60" type="number" v-model.number="globalDefault.scheduleJitter" :disabled="!globalDefault.scheduleOn" :title="$t('settings.proactive.scheduleJitterTitle')" />
                 <span class="text-muted">min</span>
               </div>
             </div>
             <div class="setting-row">
-              <div class="lbl"><div class="t">屏幕触发</div><div class="d">屏幕变化比例达到阈值、且随机概率命中时触发</div></div>
+              <div class="lbl"><div class="t">{{ $t('settings.proactive.screenTrigger') }}</div><div class="d">{{ $t('settings.proactive.screenTriggerDesc') }}</div></div>
               <div class="setting-ctl ctl-flex">
                 <label class="toggle-switch"><input type="checkbox" v-model="globalDefault.screenOn" /><span class="toggle-slider"></span></label>
-                <input class="input w-50" type="number" v-model.number="globalDefault.screenRatio" :disabled="!globalDefault.screenOn" title="变化阈值（0-1）：屏幕变化比例达到该值才可能触发" />
-                <span class="text-muted">阈值</span>
-                <input class="input w-50" type="number" v-model.number="globalDefault.screenProb" :disabled="!globalDefault.screenOn" title="触发概率（0-1）：条件满足后随机命中的概率" />
-                <span class="text-muted">概率</span>
-                <input class="input w-50" type="number" v-model.number="globalDefault.screenInterval" :disabled="!globalDefault.screenOn" title="判定间隔（秒）：两次屏幕规则判定的最小间隔" />
-                <span class="text-muted">间隔</span>
-                <input class="input w-50" type="number" v-model.number="globalDefault.screenCooldown" :disabled="!globalDefault.screenOn" title="冷却（分钟）：屏幕规则触发后该规则的额外冷却" />
-                <span class="text-muted">冷却</span>
+                <input class="input w-50" type="number" v-model.number="globalDefault.screenRatio" :disabled="!globalDefault.screenOn" :title="$t('settings.proactive.screenRatioTitle')" />
+                <span class="text-muted">{{ $t('settings.proactive.threshold') }}</span>
+                <input class="input w-50" type="number" v-model.number="globalDefault.screenProb" :disabled="!globalDefault.screenOn" :title="$t('settings.proactive.screenProbTitle')" />
+                <span class="text-muted">{{ $t('settings.proactive.probability') }}</span>
+                <input class="input w-50" type="number" v-model.number="globalDefault.screenInterval" :disabled="!globalDefault.screenOn" :title="$t('settings.proactive.screenIntervalTitle')" />
+                <span class="text-muted">{{ $t('settings.proactive.interval') }}</span>
+                <input class="input w-50" type="number" v-model.number="globalDefault.screenCooldown" :disabled="!globalDefault.screenOn" :title="$t('settings.proactive.screenCooldownTitle')" />
+                <span class="text-muted">{{ $t('settings.proactive.cooldown') }}</span>
               </div>
             </div>
             <div class="setting-row">
-              <div class="lbl"><div class="t">空闲触发</div><div class="d">用户空闲超过设定时长、且随机概率命中时触发</div></div>
+              <div class="lbl"><div class="t">{{ $t('settings.proactive.idleTrigger') }}</div><div class="d">{{ $t('settings.proactive.idleTriggerDesc') }}</div></div>
               <div class="setting-ctl ctl-flex">
                 <label class="toggle-switch"><input type="checkbox" v-model="globalDefault.idleOn" /><span class="toggle-slider"></span></label>
-                <input class="input w-50" type="number" v-model.number="globalDefault.idleMinutes" :disabled="!globalDefault.idleOn" title="空闲时长（分钟）：用户无操作达到该时长才可能触发" />
-                <span class="text-muted">空闲</span>
-                <input class="input w-50" type="number" v-model.number="globalDefault.idleProb" :disabled="!globalDefault.idleOn" title="触发概率（0-1）：满足空闲后随机命中的概率" />
-                <span class="text-muted">概率</span>
-                <input class="input w-50" type="number" v-model.number="globalDefault.idleInterval" :disabled="!globalDefault.idleOn" title="判定间隔（秒）：两次空闲规则判定的最小间隔" />
-                <span class="text-muted">间隔</span>
+                <input class="input w-50" type="number" v-model.number="globalDefault.idleMinutes" :disabled="!globalDefault.idleOn" :title="$t('settings.proactive.idleMinutesTitle')" />
+                <span class="text-muted">{{ $t('settings.proactive.idle') }}</span>
+                <input class="input w-50" type="number" v-model.number="globalDefault.idleProb" :disabled="!globalDefault.idleOn" :title="$t('settings.proactive.idleProbTitle')" />
+                <span class="text-muted">{{ $t('settings.proactive.probability') }}</span>
+                <input class="input w-50" type="number" v-model.number="globalDefault.idleInterval" :disabled="!globalDefault.idleOn" :title="$t('settings.proactive.idleIntervalTitle')" />
+                <span class="text-muted">{{ $t('settings.proactive.interval') }}</span>
               </div>
             </div>
             <div class="setting-row">
-              <div class="lbl"><div class="t">时段触发</div><div class="d">处于设定时段内、且随机概率命中时触发；跨午夜（如 22:00-02:00）也支持</div></div>
+              <div class="lbl"><div class="t">{{ $t('settings.proactive.windowTrigger') }}</div><div class="d">{{ $t('settings.proactive.windowTriggerDesc') }}</div></div>
               <div class="setting-ctl ctl-flex">
                 <label class="toggle-switch"><input type="checkbox" v-model="globalDefault.windowsOn" /><span class="toggle-slider"></span></label>
-                <input class="input w-flex-220" v-model="globalDefault.timeWindowsText" placeholder="09:00-12:00@0.5,14:00-18:00@0.8" :disabled="!globalDefault.windowsOn" title="格式：开始-结束@概率，多个用逗号分隔。概率省略默认 1.0" />
+                <input class="input w-flex-220" v-model="globalDefault.timeWindowsText" :placeholder="$t('settings.proactive.windowsPlaceholder')" :disabled="!globalDefault.windowsOn" :title="$t('settings.proactive.windowsTitle')" />
               </div>
             </div>
             <div class="text-right">
-              <button class="btn btn-sm btn-primary" @click="saveGlobalDefault">保存全局默认规则</button>
+              <button class="btn btn-sm btn-primary" @click="saveGlobalDefault">{{ $t('settings.proactive.saveGlobalDefault') }}</button>
             </div>
           </div>
         </div>
       </div>
 
       <!-- ═══════════════ 感知 ═══════════════ -->
-      <div v-if="activeTab === '感知'" class="settings-section">
+      <div v-if="activeTab === 'perception'" class="settings-section">
         <div class="settings-group">
-          <div class="settings-group-title">感知系统模块</div>
+          <div class="settings-group-title">{{ $t('settings.perception.modules') }}</div>
           <div class="setting-row">
-            <div class="lbl"><div class="t">感知系统总开关</div></div>
+            <div class="lbl"><div class="t">{{ $t('settings.perception.master') }}</div></div>
             <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="perceptionEnabled" @change="perceptionEnabled = !perceptionEnabled" /><span class="toggle-slider"></span></label></div>
           </div>
           <div class="setting-row">
-            <div class="lbl"><div class="t">屏幕监控</div><div class="d">监控屏幕变化</div></div>
+            <div class="lbl"><div class="t">{{ $t('settings.perception.screen') }}</div><div class="d">{{ $t('settings.perception.screenDesc') }}</div></div>
             <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="perceptionScreen" @change="perceptionScreen = !perceptionScreen" /><span class="toggle-slider"></span></label></div>
           </div>
           <div class="setting-row">
-            <div class="lbl"><div class="t">屏幕差异检测</div></div>
+            <div class="lbl"><div class="t">{{ $t('settings.perception.screenDiff') }}</div></div>
             <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="screenDiff" @change="screenDiff = !screenDiff" /><span class="toggle-slider"></span></label></div>
           </div>
           <div class="setting-row">
-            <div class="lbl"><div class="t">MCP 感知</div><div class="d">通过 MCP 服务器采集屏幕/界面</div></div>
+            <div class="lbl"><div class="t">{{ $t('settings.perception.mcp') }}</div><div class="d">{{ $t('settings.perception.mcpDesc') }}</div></div>
             <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="perceptionMcp" @change="perceptionMcp = !perceptionMcp" /><span class="toggle-slider"></span></label></div>
           </div>
           <div class="setting-row">
-            <div class="lbl"><div class="t">内部状态感知</div><div class="d">空闲/时间等内部状态差异</div></div>
+            <div class="lbl"><div class="t">{{ $t('settings.perception.internal') }}</div><div class="d">{{ $t('settings.perception.internalDesc') }}</div></div>
             <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="perceptionInternal" @change="perceptionInternal = !perceptionInternal" /><span class="toggle-slider"></span></label></div>
           </div>
           <div class="setting-row">
-            <div class="lbl"><div class="t">变化触发思考</div><div class="d">感知到高强度变化后自动触发 AI 思考</div></div>
+            <div class="lbl"><div class="t">{{ $t('settings.perception.triggerThink') }}</div><div class="d">{{ $t('settings.perception.triggerThinkDesc') }}</div></div>
             <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="triggerThink" @change="triggerThink = !triggerThink" /><span class="toggle-slider"></span></label></div>
           </div>
           <div class="setting-row">
-            <div class="lbl"><div class="t">触发冷却(秒)</div></div>
+            <div class="lbl"><div class="t">{{ $t('settings.perception.triggerCooldown') }}</div></div>
             <div class="setting-ctl"><input class="input w-110" type="number" v-model.number="triggerCooldown" /></div>
           </div>
           <div class="setting-row">
-            <div class="lbl"><div class="t">最小变化强度</div></div>
+            <div class="lbl"><div class="t">{{ $t('settings.perception.minIntensity') }}</div></div>
             <div class="setting-ctl"><input class="input w-110" type="number" v-model.number="triggerMinIntensity" /></div>
           </div>
           <div class="setting-row">
-            <div class="lbl"><div class="t">空间增强</div><div class="d">心理活动额外输出当前空间位置/动作序列</div></div>
+            <div class="lbl"><div class="t">{{ $t('settings.perception.spatial') }}</div><div class="d">{{ $t('settings.perception.spatialDesc') }}</div></div>
             <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="spatialEnhancement" @change="spatialEnhancement = !spatialEnhancement" /><span class="toggle-slider"></span></label></div>
           </div>
           <div class="setting-row">
-            <div class="lbl"><div class="t">心理活动</div><div class="d">良知系统内心独白（随对应模型人设变化）</div></div>
+            <div class="lbl"><div class="t">{{ $t('settings.perception.mental') }}</div><div class="d">{{ $t('settings.perception.mentalDesc') }}</div></div>
             <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="mentalEnabled" @change="mentalEnabled = !mentalEnabled" /><span class="toggle-slider"></span></label></div>
           </div>
           <div class="setting-row">
-            <div class="lbl"><div class="t">记忆总结</div><div class="d">会话结束后自动提炼为事件记忆（EventReducer）</div></div>
+            <div class="lbl"><div class="t">{{ $t('settings.perception.memorySummary') }}</div><div class="d">{{ $t('settings.perception.memorySummaryDesc') }}</div></div>
             <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="memorySummaryEnabled" @change="memorySummaryEnabled = !memorySummaryEnabled" /><span class="toggle-slider"></span></label></div>
           </div>
           <div class="setting-row">
-            <div class="lbl"><div class="t">技能系统</div><div class="d">关闭后模型不加载/不激活任何技能（request_skill 被拒绝）</div></div>
+            <div class="lbl"><div class="t">{{ $t('settings.perception.skills') }}</div><div class="d">{{ $t('settings.perception.skillsDesc') }}</div></div>
             <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="skillsEnabled" @change="skillsEnabled = !skillsEnabled" /><span class="toggle-slider"></span></label></div>
           </div>
         </div>
@@ -687,13 +688,13 @@ onMounted(async () => {
         <div class="settings-divider"></div>
 
         <div class="settings-group">
-          <div class="settings-group-title">语音识别（Whisper）</div>
+          <div class="settings-group-title">{{ $t('settings.voice.title') }}</div>
           <div class="setting-row">
-            <div class="lbl"><div class="t">语音输入</div></div>
+            <div class="lbl"><div class="t">{{ $t('settings.voice.input') }}</div></div>
             <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="voiceEnabled" @change="voiceEnabled = !voiceEnabled" /><span class="toggle-slider"></span></label></div>
           </div>
           <div class="setting-row">
-            <div class="lbl"><div class="t">识别模型</div><div class="d">Whisper 模型大小</div></div>
+            <div class="lbl"><div class="t">{{ $t('settings.voice.model') }}</div><div class="d">{{ $t('settings.voice.modelDesc') }}</div></div>
             <div class="setting-ctl">
               <div class="seg">
                 <button v-for="m in ['tiny', 'base', 'small', 'medium', 'large']" :key="m" :class="{ on: voiceModel === m }" @click="voiceModel = m">{{ m }}</button>
@@ -701,75 +702,75 @@ onMounted(async () => {
             </div>
           </div>
           <div class="setting-row">
-            <div class="lbl"><div class="t">触发模式</div></div>
+            <div class="lbl"><div class="t">{{ $t('settings.voice.triggerMode') }}</div></div>
             <div class="setting-ctl">
               <div class="seg">
-                <button :class="{ on: voiceMode === 'hotkey' }" @click="voiceMode = 'hotkey'">热键</button>
-                <button :class="{ on: voiceMode === 'wake' }" @click="voiceMode = 'wake'">唤醒词</button>
+                <button :class="{ on: voiceMode === 'hotkey' }" @click="voiceMode = 'hotkey'">{{ $t('settings.voice.hotkey') }}</button>
+                <button :class="{ on: voiceMode === 'wake' }" @click="voiceMode = 'wake'">{{ $t('settings.voice.wake') }}</button>
               </div>
             </div>
           </div>
           <div class="setting-row">
-            <div class="lbl"><div class="t">热键</div></div>
+            <div class="lbl"><div class="t">{{ $t('settings.voice.hotkey') }}</div></div>
             <div class="setting-ctl"><input class="input w-120" v-model="voiceHotkey" /></div>
           </div>
           <div class="setting-row">
-            <div class="lbl"><div class="t">唤醒词</div><div class="d">说话以唤醒词开头</div></div>
+            <div class="lbl"><div class="t">{{ $t('settings.voice.wakeWord') }}</div><div class="d">{{ $t('settings.voice.wakeWordDesc') }}</div></div>
             <div class="setting-ctl"><input class="input w-120" v-model="voiceWakePrefix" /></div>
           </div>
           <div class="setting-row">
-            <div class="lbl"><div class="t">结束词</div><div class="d">说话以结束词结尾</div></div>
+            <div class="lbl"><div class="t">{{ $t('settings.voice.endWord') }}</div><div class="d">{{ $t('settings.voice.endWordDesc') }}</div></div>
             <div class="setting-ctl"><input class="input w-120" v-model="voiceWakeSuffix" /></div>
           </div>
           <div class="setting-row">
-            <div class="lbl"><div class="t">语言</div></div>
+            <div class="lbl"><div class="t">{{ $t('settings.voice.language') }}</div></div>
             <div class="setting-ctl"><input class="input w-120" v-model="voiceLanguage" /></div>
           </div>
           <div class="setting-row">
-            <div class="lbl"><div class="t">能量阈值</div></div>
+            <div class="lbl"><div class="t">{{ $t('settings.voice.energy') }}</div></div>
             <div class="setting-ctl"><input class="input w-110" type="number" v-model.number="voiceEnergy" /></div>
           </div>
           <div class="setting-row">
-            <div class="lbl"><div class="t">超时(秒)</div></div>
+            <div class="lbl"><div class="t">{{ $t('settings.voice.timeout') }}</div></div>
             <div class="setting-ctl"><input class="input w-110" type="number" v-model.number="voiceTimeout" /></div>
           </div>
           <div class="setting-row">
-            <div class="lbl"><div class="t">最长录音(秒)</div></div>
+            <div class="lbl"><div class="t">{{ $t('settings.voice.maxDuration') }}</div></div>
             <div class="setting-ctl"><input class="input w-110" type="number" v-model.number="voiceMaxDuration" /></div>
           </div>
           <div class="setting-row">
-            <div class="lbl"><div class="t">检测到结束词停止</div></div>
+            <div class="lbl"><div class="t">{{ $t('settings.voice.endStop') }}</div></div>
             <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="voiceEndStop" @change="voiceEndStop = !voiceEndStop" /><span class="toggle-slider"></span></label></div>
           </div>
           <div class="setting-row">
-            <div class="lbl"><div class="t">识别后端</div><div class="d">本地 Whisper 或云端 API</div></div>
+            <div class="lbl"><div class="t">{{ $t('settings.voice.backend') }}</div><div class="d">{{ $t('settings.voice.backendDesc') }}</div></div>
             <div class="setting-ctl">
               <div class="seg">
-                <button :class="{ on: voiceBackend === 'local' }" @click="voiceBackend = 'local'">本地</button>
-                <button :class="{ on: voiceBackend === 'api' }" @click="voiceBackend = 'api'">云端</button>
+                <button :class="{ on: voiceBackend === 'local' }" @click="voiceBackend = 'local'">{{ $t('settings.voice.local') }}</button>
+                <button :class="{ on: voiceBackend === 'api' }" @click="voiceBackend = 'api'">{{ $t('settings.voice.cloud') }}</button>
               </div>
             </div>
           </div>
           <template v-if="voiceBackend === 'api'">
             <div class="setting-row">
-              <div class="lbl"><div class="t">API Key</div></div>
-              <div class="setting-ctl"><input class="input w-240" v-model="voiceApiKey" type="password" placeholder="OpenAI 兼容 /audio/transcriptions" /></div>
+              <div class="lbl"><div class="t">{{ $t('settings.model.apiKey') }}</div></div>
+              <div class="setting-ctl"><input class="input w-240" v-model="voiceApiKey" type="password" :placeholder="$t('settings.voice.apiKeyPlaceholder')" /></div>
             </div>
             <div class="setting-row">
-              <div class="lbl"><div class="t">API URL</div><div class="d">留空用 OpenAI</div></div>
+              <div class="lbl"><div class="t">{{ $t('settings.model.apiUrl') }}</div><div class="d">{{ $t('settings.voice.emptyOpenAI') }}</div></div>
               <div class="setting-ctl"><input class="input w-240" v-model="voiceApiUrl" placeholder="https://api.openai.com/v1/audio/transcriptions" /></div>
             </div>
             <div class="setting-row">
-              <div class="lbl"><div class="t">模型名</div><div class="d">留空用 whisper-1</div></div>
+              <div class="lbl"><div class="t">{{ $t('settings.model.name') }}</div><div class="d">{{ $t('settings.voice.apiModelDesc') }}</div></div>
               <div class="setting-ctl"><input class="input w-200" v-model="voiceApiModel" /></div>
             </div>
           </template>
           <div class="setting-row">
-            <div class="lbl"><div class="t">语音模型文件夹</div></div>
+            <div class="lbl"><div class="t">{{ $t('settings.voice.modelFolder') }}</div></div>
             <div class="setting-ctl flex-gap-8">
-              <button class="btn btn-sm" @click="openFolder('voice')">打开文件夹</button>
+              <button class="btn btn-sm" @click="openFolder('voice')">{{ $t('settings.voice.openFolder') }}</button>
               <button class="btn btn-sm btn-accent" @click="installVoiceDeps" :disabled="installingDeps">
-                {{ installingDeps ? '安装中...' : '一键安装依赖' }}
+                {{ installingDeps ? $t('settings.voice.installing') : $t('settings.voice.installDeps') }}
               </button>
             </div>
           </div>
@@ -780,7 +781,7 @@ onMounted(async () => {
                 <div v-for="(r, i) in installResult.results" :key="i" class="install-item">
                   <span class="pkg-name">{{ r.package }}</span>
                   <span class="pkg-status" :class="r.status">
-                    {{ r.status === 'already_installed' ? '✓ 已安装' : r.status === 'installed' ? '✓ 已安装' : '✗ 失败' }}
+                    {{ r.status === 'already_installed' || r.status === 'installed' ? $t('settings.voice.installed') : $t('settings.voice.installFailed') }}
                   </span>
                 </div>
                 <div class="install-msg">{{ installResult.message }}</div>
@@ -792,70 +793,70 @@ onMounted(async () => {
         <div class="settings-divider"></div>
 
         <div class="settings-group">
-          <div class="settings-group-title">视觉模型</div>
-          <p class="settings-hint">切换模型后需重启应用才能生效</p>
+          <div class="settings-group-title">{{ $t('settings.vision.title') }}</div>
+          <p class="settings-hint">{{ $t('settings.vision.hint') }}</p>
           <div class="setting-row">
-            <div class="lbl"><div class="t">对话图片模式</div><div class="d">直连模式需总指挥模型支持多模态（如 gpt-4o / qwen-vl）</div></div>
+            <div class="lbl"><div class="t">{{ $t('settings.vision.chatImageMode') }}</div><div class="d">{{ $t('settings.vision.chatImageModeDesc') }}</div></div>
             <div class="setting-ctl">
               <div class="seg">
-                <button :class="{ on: chatImageMode === 'describe' }" @click="chatImageMode = 'describe'" title="用独立视觉模型把图片转成文字描述">描述（独立视觉模型）</button>
-                <button :class="{ on: chatImageMode === 'direct' }" @click="chatImageMode = 'direct'" title="图片直接附给总指挥大模型">直连（总指挥多模态）</button>
+                <button :class="{ on: chatImageMode === 'describe' }" @click="chatImageMode = 'describe'" :title="$t('settings.vision.describeTitle')">{{ $t('settings.vision.describe') }}</button>
+                <button :class="{ on: chatImageMode === 'direct' }" @click="chatImageMode = 'direct'" :title="$t('settings.vision.directTitle')">{{ $t('settings.vision.direct') }}</button>
               </div>
             </div>
           </div>
           <div class="setting-row">
-            <div class="lbl"><div class="t">后端</div></div>
+            <div class="lbl"><div class="t">{{ $t('settings.vision.backend') }}</div></div>
             <div class="setting-ctl">
               <div class="seg">
-                <button :class="{ on: visionBackend === 'api' }" @click="visionBackend = 'api'; onVisionBackendChange()" title="OpenAI 兼容 API">API</button>
-                <button :class="{ on: visionBackend === 'local' }" @click="visionBackend = 'local'; onVisionBackendChange()" title="本地模型（自动检测）">本地</button>
+                <button :class="{ on: visionBackend === 'api' }" @click="visionBackend = 'api'; onVisionBackendChange()" :title="$t('settings.vision.apiTitle')">API</button>
+                <button :class="{ on: visionBackend === 'local' }" @click="visionBackend = 'local'; onVisionBackendChange()" :title="$t('settings.vision.localTitle')">{{ $t('settings.vision.local') }}</button>
               </div>
             </div>
           </div>
           <!-- API 模式 -->
           <template v-if="visionBackend === 'api'">
             <div class="setting-row">
-              <div class="lbl"><div class="t">API URL</div><div class="d">留空用 OpenAI</div></div>
+              <div class="lbl"><div class="t">{{ $t('settings.model.apiUrl') }}</div><div class="d">{{ $t('settings.vision.emptyOpenAI') }}</div></div>
               <div class="setting-ctl"><input class="input w-280" v-model="visionApiUrl" placeholder="https://api.openai.com/v1/chat/completions" /></div>
             </div>
             <div class="setting-row">
-              <div class="lbl"><div class="t">API Key</div></div>
+              <div class="lbl"><div class="t">{{ $t('settings.model.apiKey') }}</div></div>
               <div class="setting-ctl"><input class="input w-280" v-model="visionApiKey" type="password" placeholder="sk-..." /></div>
             </div>
             <div class="setting-row">
-              <div class="lbl"><div class="t">模型名</div><div class="d">如 gpt-4o, qwen-vl-max</div></div>
+              <div class="lbl"><div class="t">{{ $t('settings.model.name') }}</div><div class="d">{{ $t('settings.vision.apiModelDesc') }}</div></div>
               <div class="setting-ctl"><input class="input w-240" v-model="visionApiModel" /></div>
             </div>
             <div class="setting-row">
-              <div class="lbl"><div class="t">API 格式</div><div class="d">openai / dashscope，留空自动检测</div></div>
+              <div class="lbl"><div class="t">{{ $t('settings.model.apiFormat') }}</div><div class="d">{{ $t('settings.vision.apiFormatDesc') }}</div></div>
               <div class="setting-ctl"><input class="input w-160" v-model="visionApiFormat" placeholder="openai" /></div>
             </div>
           </template>
           <!-- 本地模式 -->
           <template v-if="visionBackend === 'local'">
             <div class="setting-row">
-              <div class="lbl"><div class="t">模型文件夹</div><div class="d">将模型文件夹放入此目录，自动检测</div></div>
+              <div class="lbl"><div class="t">{{ $t('settings.vision.modelFolder') }}</div><div class="d">{{ $t('settings.vision.modelFolderDesc') }}</div></div>
               <div class="setting-ctl flex-gap-8">
-                <button class="btn btn-sm" @click="openFolder('vision')">打开文件夹</button>
-                <button class="btn btn-sm" @click="loadVisionModels" title="刷新模型列表"><Icon name="refresh" :size="14" /></button>
+                <button class="btn btn-sm" @click="openFolder('vision')">{{ $t('settings.vision.openFolder') }}</button>
+                <button class="btn btn-sm" @click="loadVisionModels" :title="$t('common.refresh')"><Icon name="refresh" :size="14" /></button>
               </div>
             </div>
             <div v-if="visionModelDir" class="setting-row">
-              <div class="lbl"><div class="t">路径</div></div>
+              <div class="lbl"><div class="t">{{ $t('settings.vision.path') }}</div></div>
               <div class="setting-ctl"><code class="text-xs text-muted">{{ visionModelDir }}</code></div>
             </div>
             <div v-if="visionModelList.length" class="setting-row">
-              <div class="lbl"><div class="t">选择模型</div><div class="d">检测到 {{ visionModelList.length }} 个模型</div></div>
+              <div class="lbl"><div class="t">{{ $t('settings.vision.selectModel') }}</div><div class="d">{{ $t('settings.vision.detected', { count: visionModelList.length }) }}</div></div>
               <div class="setting-ctl">
                 <select class="input w-280" v-model="visionLocalModel">
-                  <option value="">自动选择</option>
+                  <option value="">{{ $t('settings.vision.auto') }}</option>
                   <option v-for="m in visionModelList" :key="m.path" :value="m.path">{{ m.name }}{{ m.model_type ? ' (' + m.model_type + ')' : '' }}</option>
                 </select>
               </div>
             </div>
             <div v-if="visionModelList.length === 0" class="setting-row">
-              <div class="lbl"><div class="t">状态</div></div>
-              <div class="setting-ctl"><span class="text-muted text-sm">未检测到模型 — 请将模型文件夹放入上方目录</span></div>
+              <div class="lbl"><div class="t">{{ $t('common.status') }}</div></div>
+              <div class="setting-ctl"><span class="text-muted text-sm">{{ $t('settings.vision.noModel') }}</span></div>
             </div>
           </template>
         </div>
@@ -863,113 +864,113 @@ onMounted(async () => {
         <div class="settings-divider"></div>
 
         <div class="settings-group">
-          <div class="settings-group-title">桌面宠物</div>
+          <div class="settings-group-title">{{ $t('settings.pet.title') }}</div>
           <div class="setting-row">
-            <div class="lbl"><div class="t">桌宠开关</div><div class="d">桌宠窗口 + 语音对话（实时生效）</div></div>
+            <div class="lbl"><div class="t">{{ $t('settings.pet.enabled') }}</div><div class="d">{{ $t('settings.pet.enabledDesc') }}</div></div>
             <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="petEnabled" @change="petEnabled = !petEnabled" /><span class="toggle-slider"></span></label></div>
           </div>
           <div class="setting-row">
-            <div class="lbl"><div class="t">主会话 ID</div><div class="d">桌宠对话记忆，永不删除</div></div>
+            <div class="lbl"><div class="t">{{ $t('settings.pet.sessionId') }}</div><div class="d">{{ $t('settings.pet.sessionIdDesc') }}</div></div>
             <div class="setting-ctl"><input class="input w-160" v-model="petSessionId" /></div>
           </div>
           <div class="setting-row">
-            <div class="lbl"><div class="t">当前状态</div><div class="d">互动影响状态，随时间衰减</div></div>
+            <div class="lbl"><div class="t">{{ $t('settings.pet.currentState') }}</div><div class="d">{{ $t('settings.pet.currentStateDesc') }}</div></div>
             <div class="setting-ctl flex-wrap">
               <span v-for="(label, key) in petStateLabels" :key="key" class="badge" :style="{ background: 'rgba(88,166,255,.12)', color: 'var(--accent)' }">
-                {{ label }} <b>{{ petState[key] ?? '-' }}</b>
+                {{ $t(label) }} <b>{{ petState[key] ?? '-' }}</b>
               </span>
             </div>
           </div>
           <div class="setting-row">
-            <div class="lbl"><div class="t">状态描述</div></div>
+            <div class="lbl"><div class="t">{{ $t('settings.pet.stateText') }}</div></div>
             <div class="setting-ctl"><span class="setting-hint-inline">{{ petStateText || '—' }}</span></div>
           </div>
           <div class="setting-row">
             <div class="lbl"></div>
             <div class="setting-ctl">
-              <button class="btn btn-sm" @click="resetPetState">重置状态</button>
-              <button class="btn btn-sm ml-2" @click="openFolder('pet')">打开桌宠模型文件夹</button>
+              <button class="btn btn-sm" @click="resetPetState">{{ $t('settings.pet.resetState') }}</button>
+              <button class="btn btn-sm ml-2" @click="openFolder('pet')">{{ $t('settings.pet.openFolder') }}</button>
             </div>
           </div>
-          <p class="settings-hint">语音触发：按 <b>{{ voiceHotkey }}</b> 或说"<b>{{ voiceWakePrefix }}</b>…"后开始说话，桌宠回复会语音播报并显示气泡。关闭开关后桌宠窗口自动隐藏。</p>
+          <p class="settings-hint">{{ $t('settings.pet.hint', { hotkey: voiceHotkey, wake: voiceWakePrefix }) }}</p>
         </div>
       </div>
 
       <!-- ═══════════════ 记忆库 ═══════════════ -->
-      <div v-if="activeTab === '记忆库'" class="settings-section">
+      <div v-if="activeTab === 'memory'" class="settings-section">
         <div class="settings-group">
-          <div class="settings-group-title">记忆库</div>
-          <p class="settings-hint">事件记忆按记忆库隔离存储，可命名多个库并切换当前使用的库。切换即时生效。</p>
+          <div class="settings-group-title">{{ $t('settings.memory.title') }}</div>
+          <p class="settings-hint">{{ $t('settings.memory.hint') }}</p>
           <div class="flex-start-gap">
-            <input class="input w-flex-260" v-model="newLibName" placeholder="新记忆库名称" @keydown.enter="createLib" />
-            <button class="btn btn-sm btn-primary" @click="createLib">新建记忆库</button>
-            <button class="btn btn-sm" @click="loadMemoryLibs" title="刷新记忆库列表"><Icon name="refresh" :size="14" /> 刷新</button>
+            <input class="input w-flex-260" v-model="newLibName" :placeholder="$t('settings.memory.newLibPlaceholder')" @keydown.enter="createLib" />
+            <button class="btn btn-sm btn-primary" @click="createLib">{{ $t('settings.memory.create') }}</button>
+            <button class="btn btn-sm" @click="loadMemoryLibs" :title="$t('common.refresh')"><Icon name="refresh" :size="14" /> {{ $t('common.refresh') }}</button>
           </div>
-          <div v-if="memoryLibs.length === 0" class="empty-state empty-padded"><p class="empty-text">暂无记忆库（可点击刷新）</p></div>
+          <div v-if="memoryLibs.length === 0" class="empty-state empty-padded"><p class="empty-text">{{ $t('settings.memory.empty') }}</p></div>
           <div v-for="lib in memoryLibs" :key="lib.name" class="card card-mb">
             <div class="card-header card-header-flex">
               <b>{{ lib.name }}</b>
-              <span v-if="lib.current" class="badge badge-blue">当前</span>
-              <span class="badge badge-gray">{{ lib.event_count ?? 0 }} 条事件</span>
+              <span v-if="lib.current" class="badge badge-blue">{{ $t('settings.memory.current') }}</span>
+              <span class="badge badge-gray">{{ $t('settings.memory.eventCount', { count: lib.event_count ?? 0 }) }}</span>
             </div>
             <div class="flex-mt">
-              <button v-if="!lib.current" class="btn btn-sm" @click="switchLib(lib.name)">切换到此库</button>
-              <button class="btn btn-sm" @click="renameLib(lib)">重命名</button>
-              <button v-if="lib.name !== '默认'" class="btn btn-sm danger" @click="deleteLib(lib)">删除</button>
+              <button v-if="!lib.current" class="btn btn-sm" @click="switchLib(lib.name)">{{ $t('settings.memory.switchTo') }}</button>
+              <button class="btn btn-sm" @click="renameLib(lib)">{{ $t('settings.memory.rename') }}</button>
+              <button v-if="lib.name !== '默认'" class="btn btn-sm danger" @click="deleteLib(lib)">{{ $t('common.delete') }}</button>
             </div>
           </div>
         </div>
       </div>
 
       <!-- ═══════════════ 系统 ═══════════════ -->
-      <div v-if="activeTab === '系统'" class="settings-section">
+      <div v-if="activeTab === 'system'" class="settings-section">
         <div class="settings-group">
-          <div class="settings-group-title">语音与输出</div>
+          <div class="settings-group-title">{{ $t('settings.system.voiceOutput') }}</div>
           <div class="setting-row">
-            <div class="lbl"><div class="t">TTS 语音输出</div><div class="d">回复时自动合成语音</div></div>
+            <div class="lbl"><div class="t">{{ $t('settings.system.ttsEnabled') }}</div><div class="d">{{ $t('settings.system.ttsEnabledDesc') }}</div></div>
             <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="ttsEnabled" @change="ttsEnabled = !ttsEnabled" /><span class="toggle-slider"></span></label></div>
           </div>
           <div class="setting-row">
-            <div class="lbl"><div class="t">合成后端</div><div class="d">本地 gTTS（内置）或云端 API</div></div>
+            <div class="lbl"><div class="t">{{ $t('settings.system.ttsBackend') }}</div><div class="d">{{ $t('settings.system.ttsBackendDesc') }}</div></div>
             <div class="setting-ctl">
               <div class="seg">
-                <button :class="{ on: ttsBackend === 'local' }" @click="ttsBackend = 'local'">本地</button>
-                <button :class="{ on: ttsBackend === 'api' }" @click="ttsBackend = 'api'">云端</button>
+                <button :class="{ on: ttsBackend === 'local' }" @click="ttsBackend = 'local'">{{ $t('settings.voice.local') }}</button>
+                <button :class="{ on: ttsBackend === 'api' }" @click="ttsBackend = 'api'">{{ $t('settings.voice.cloud') }}</button>
               </div>
             </div>
           </div>
           <template v-if="ttsBackend === 'api'">
             <div class="setting-row">
-              <div class="lbl"><div class="t">API Key</div></div>
-              <div class="setting-ctl"><input class="input w-240" v-model="ttsApiKey" type="password" placeholder="OpenAI 兼容 /audio/speech" /></div>
+              <div class="lbl"><div class="t">{{ $t('settings.model.apiKey') }}</div></div>
+              <div class="setting-ctl"><input class="input w-240" v-model="ttsApiKey" type="password" :placeholder="$t('settings.voice.apiKeyPlaceholder')" /></div>
             </div>
             <div class="setting-row">
-              <div class="lbl"><div class="t">API URL</div><div class="d">留空用 OpenAI</div></div>
+              <div class="lbl"><div class="t">{{ $t('settings.model.apiUrl') }}</div><div class="d">{{ $t('settings.vision.emptyOpenAI') }}</div></div>
               <div class="setting-ctl"><input class="input w-240" v-model="ttsApiUrl" placeholder="https://api.openai.com/v1/audio/speech" /></div>
             </div>
             <div class="setting-row">
-              <div class="lbl"><div class="t">模型名</div><div class="d">留空用 tts-1</div></div>
+              <div class="lbl"><div class="t">{{ $t('settings.model.name') }}</div><div class="d">{{ $t('settings.system.ttsApiModelDesc') }}</div></div>
               <div class="setting-ctl"><input class="input w-200" v-model="ttsApiModel" /></div>
             </div>
             <div class="setting-row">
-              <div class="lbl"><div class="t">音色</div><div class="d">alloy/echo/fable/onyx/nova/shimmer</div></div>
+              <div class="lbl"><div class="t">{{ $t('settings.system.voice') }}</div><div class="d">{{ $t('settings.system.voiceDesc') }}</div></div>
               <div class="setting-ctl"><input class="input w-200" v-model="ttsApiVoice" /></div>
             </div>
           </template>
         </div>
         <div class="settings-divider"></div>
         <div class="settings-group">
-          <div class="settings-group-title">调试与日志</div>
+          <div class="settings-group-title">{{ $t('settings.system.debugLog') }}</div>
           <div class="setting-row">
-            <div class="lbl"><div class="t">调试模式</div><div class="d">开启 DEBUG 日志（重启后生效）</div></div>
+            <div class="lbl"><div class="t">{{ $t('settings.system.debugMode') }}</div><div class="d">{{ $t('settings.system.debugModeDesc') }}</div></div>
             <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="debugEnabled" @change="debugEnabled = !debugEnabled" /><span class="toggle-slider"></span></label></div>
           </div>
           <div class="setting-row">
-            <div class="lbl"><div class="t">日志输出</div><div class="d">记录日志文件</div></div>
+            <div class="lbl"><div class="t">{{ $t('settings.system.logging') }}</div><div class="d">{{ $t('settings.system.loggingDesc') }}</div></div>
             <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="loggingEnabled" @change="loggingEnabled = !loggingEnabled" /><span class="toggle-slider"></span></label></div>
           </div>
           <div class="setting-row">
-            <div class="lbl"><div class="t">日志级别</div><div class="d">重启后生效</div></div>
+            <div class="lbl"><div class="t">{{ $t('settings.system.logLevel') }}</div><div class="d">{{ $t('settings.system.logLevelDesc') }}</div></div>
             <div class="setting-ctl">
               <div class="seg">
                 <button v-for="lv in ['DEBUG', 'INFO', 'WARNING', 'ERROR']" :key="lv" :class="{ on: logLevel === lv }" @click="logLevel = lv">{{ lv }}</button>
@@ -977,25 +978,25 @@ onMounted(async () => {
             </div>
           </div>
           <div class="setting-row">
-            <div class="lbl"><div class="t">最大工作线程</div><div class="d">重启后生效</div></div>
+            <div class="lbl"><div class="t">{{ $t('settings.system.maxWorkers') }}</div><div class="d">{{ $t('settings.system.restartHint') }}</div></div>
             <div class="setting-ctl"><input class="input w-110" type="number" v-model.number="maxWorkers" /></div>
           </div>
         </div>
       </div>
 
       <!-- ═══════════════ 高级 ═══════════════ -->
-      <div v-if="activeTab === '高级'" class="settings-section">
+      <div v-if="activeTab === 'advanced'" class="settings-section">
         <div class="settings-group">
-          <div class="settings-group-title">注意力 / 因果图</div>
-          <p class="settings-hint">进阶参数，谨慎修改</p>
-          <div v-if="advancedKeys.length === 0" class="empty-state empty-padded"><p class="empty-text">暂无高级参数</p></div>
+          <div class="settings-group-title">{{ $t('settings.advanced.title') }}</div>
+          <p class="settings-hint">{{ $t('settings.advanced.hint') }}</p>
+          <div v-if="advancedKeys.length === 0" class="empty-state empty-padded"><p class="empty-text">{{ $t('settings.advanced.empty') }}</p></div>
           <table v-else class="data-table">
-            <thead><tr><th>参数</th><th>当前值</th><th>操作</th></tr></thead>
+            <thead><tr><th>{{ $t('common.name') }}</th><th>{{ $t('settings.advanced.currentValue') }}</th><th>{{ $t('common.action') }}</th></tr></thead>
             <tbody>
               <tr v-for="k in advancedKeys" :key="k">
                 <td><code class="text-sm">{{ k }}</code></td>
                 <td><span class="mono-sm">{{ typeof configStore.config[k] === 'object' ? JSON.stringify(configStore.config[k]) : String(configStore.config[k]) }}</span></td>
-                <td><button class="btn btn-sm" @click="editConfig(k, configStore.config[k])">编辑</button></td>
+                <td><button class="btn btn-sm" @click="editConfig(k, configStore.config[k])">{{ $t('common.edit') }}</button></td>
               </tr>
             </tbody>
           </table>
@@ -1003,82 +1004,82 @@ onMounted(async () => {
       </div>
 
       <!-- ═══════════════ 通用设置 ═══════════════ -->
-      <div v-if="activeTab === '通用设置'" class="settings-section">
+      <div v-if="activeTab === 'general'" class="settings-section">
         <div class="settings-group">
           <label class="settings-row" @click.prevent="launchAtStartup = !launchAtStartup">
-            <span class="settings-row-label">开机启动</span>
-            <span class="flex-1-muted">登录后自动启动后端 + 桌面窗口（macOS LaunchAgent）</span>
+            <span class="settings-row-label">{{ $t('settings.general.launchAtStartup') }}</span>
+            <span class="flex-1-muted">{{ $t('settings.general.launchAtStartupDesc') }}</span>
             <span class="toggle-switch"><input type="checkbox" :checked="launchAtStartup" /><span class="toggle-slider"></span></span>
           </label>
           <label class="settings-row" @click.prevent="preventSleep = !preventSleep">
-            <span class="settings-row-label">防休眠</span>
-            <span class="flex-1-muted">保持系统不睡眠（caffeinate，macOS）</span>
+            <span class="settings-row-label">{{ $t('settings.general.preventSleep') }}</span>
+            <span class="flex-1-muted">{{ $t('settings.general.preventSleepDesc') }}</span>
             <span class="toggle-switch"><input type="checkbox" :checked="preventSleep" /><span class="toggle-slider"></span></span>
           </label>
           <label class="settings-row" @click.prevent="allowLocation = !allowLocation">
-            <span class="settings-row-label">授权访问地理位置</span>
-            <span class="flex-1-muted">允许前端获取位置（仅浏览器环境生效；桌面端需系统定位权限）</span>
+            <span class="settings-row-label">{{ $t('settings.general.allowLocation') }}</span>
+            <span class="flex-1-muted">{{ $t('settings.general.allowLocationDesc') }}</span>
             <span class="toggle-switch"><input type="checkbox" :checked="allowLocation" /><span class="toggle-slider"></span></span>
           </label>
         </div>
         <div class="settings-divider"></div>
         <div class="settings-group">
-          <div class="settings-group-title">启动快捷键</div>
+          <div class="settings-group-title">{{ $t('settings.general.shortcut') }}</div>
           <div class="settings-shortcut" @click="startEditShortcut">
             <input v-if="editingShortcut" ref="shortcutInput" v-model="shortcutKeys" class="input shortcut-input" @blur="saveShortcut" @keyup.enter="saveShortcut" />
             <span v-else class="shortcut-key">{{ shortcutKeys }}</span>
-            <span class="shortcut-desc">点击快捷键可编辑 — 按下后聚焦对话输入框（实时生效，无需重启）</span>
+            <span class="shortcut-desc">{{ $t('settings.general.shortcutDesc') }}</span>
           </div>
         </div>
         <div class="settings-divider"></div>
         <div class="settings-group">
-          <div class="settings-group-title">保留在 Dock 栏</div>
-          <p class="settings-hint">右键程序坞中 Cortex Agent 图标 &gt; 选项 &gt; 在程序坞中保留</p>
+          <div class="settings-group-title">{{ $t('settings.general.dock') }}</div>
+          <p class="settings-hint">{{ $t('settings.general.dockHint') }}</p>
         </div>
         <div class="settings-divider"></div>
         <div class="settings-group">
-          <div class="settings-group-title">文件存储位置</div>
+          <div class="settings-group-title">{{ $t('settings.general.storage') }}</div>
           <div class="settings-path-row">
             <span class="settings-path">{{ storagePath }}</span>
             <button class="btn btn-sm settings-copy-btn" @click="copyPath">
-              <img class="settings-logo" src="/favicon.jpg" alt="Logo" />复制
+              <img class="settings-logo" src="/favicon.jpg" alt="Logo" />{{ $t('common.copy') }}
             </button>
           </div>
         </div>
         <div class="settings-divider"></div>
         <div class="settings-group">
           <div class="settings-version-row">
-            <span class="settings-version-label">当前版本：v{{ appVersion }}</span>
-            <span v-if="updateInfo?.update_available" class="settings-update-badge" title="点击前往下载" @click="updateInfo.release_url && openLink(updateInfo.release_url)">新版本 v{{ updateInfo.latest }} 可用 ↗</span>
+            <span class="settings-version-label">{{ $t('settings.general.currentVersion', { version: appVersion }) }}</span>
+            <span v-if="updateInfo?.update_available" class="settings-update-badge" :title="$t('settings.general.goDownload')" @click="updateInfo.release_url && openLink(updateInfo.release_url)">{{ $t('settings.general.updateAvailable', { latest: updateInfo.latest }) }} ↗</span>
             <div class="settings-btn-row">
-              <button class="btn btn-sm" @click="openDiagnostics">诊断日志</button>
-              <button class="btn btn-sm" :disabled="checkingUpdate" @click="checkUpdates">{{ checkingUpdate ? '检查中…' : '检查更新' }}</button>
+              <button class="btn btn-sm" @click="openDiagnostics">{{ $t('settings.general.diagnostics') }}</button>
+              <button class="btn btn-sm" :disabled="checkingUpdate" @click="checkUpdates">{{ checkingUpdate ? $t('settings.general.checking') : $t('settings.general.checkUpdate') }}</button>
             </div>
           </div>
         </div>
         <div class="settings-divider"></div>
         <div class="settings-group">
           <div class="settings-links">
-            <a class="settings-link" href="#" @click.prevent="openLink('https://cortexagent.com/terms')">用户协议 <span class="link-arrow">↗</span></a>
-            <a class="settings-link" href="#" @click.prevent="openLink('https://cortexagent.com/privacy')">隐私政策 <span class="link-arrow">↗</span></a>
-            <a class="settings-link" href="#" @click.prevent="openLink('https://cortexagent.com')">进入官网 <span class="link-arrow">↗</span></a>
+            <a class="settings-link" href="#" @click.prevent="openLink('https://cortexagent.com/terms')">{{ $t('settings.general.terms') }} <span class="link-arrow">↗</span></a>
+            <a class="settings-link" href="#" @click.prevent="openLink('https://cortexagent.com/privacy')">{{ $t('settings.general.privacy') }} <span class="link-arrow">↗</span></a>
+            <a class="settings-link" href="#" @click.prevent="openLink('https://cortexagent.com')">{{ $t('settings.general.website') }} <span class="link-arrow">↗</span></a>
           </div>
         </div>
         <div class="settings-copyright">Copyright 1998 – 2026 Tencent. All Rights Reserved</div>
       </div>
 
       <!-- ═══════════════ 授权设置 ═══════════════ -->
-      <div v-if="activeTab === '授权设置'" class="settings-section">
+      <div v-if="activeTab === 'auth'" class="settings-section">
         <div class="settings-group">
-          <div class="settings-group-title">运行时配置 ({{ Object.keys(configStore.config).length }} 项)</div>
-          <div v-if="Object.keys(configStore.config).length === 0" class="empty-state empty-padded"><p class="empty-text">暂无配置项</p></div>
+          <div class="settings-group-title">{{ $t('settings.auth.title', { count: Object.keys(configStore.config).length }) }}</div>
+          <div v-if="Object.keys(configStore.config).length === 0" class="empty-state empty-padded"><p class="empty-text">{{ $t('settings.auth.empty') }}</p></div>
           <table v-else class="data-table">
-            <thead><tr><th>配置键</th><th>当前值</th><th>操作</th></tr></thead>
+            <thead><tr><th>{{ $t('settings.auth.key') }}</th><th>{{ $t('settings.advanced.currentValue') }}</th><th>{{ $t('common.action') }}</th></tr></thead>
             <tbody>
               <tr v-for="(v, k) in configStore.config" :key="k">
                 <td><code class="text-sm">{{ k }}</code></td>
                 <td><span class="config-cell-value">{{ isSecretKey(k) ? '••••••••' : (typeof v === 'object' ? JSON.stringify(v) : String(v)) }}</span></td>
-                <td><button class="btn btn-sm" @click="editConfig(k, v)">编辑</button></td>
+                <td><button class="btn btn-sm" @click="editConfig(k, v)">{{ $t('common.edit') }}</button></td>
               </tr>
             </tbody>
           </table>
@@ -1086,19 +1087,19 @@ onMounted(async () => {
       </div>
 
       <!-- ═══════════════ 关于 ═══════════════ -->
-      <div v-if="activeTab === '关于'" class="settings-section">
+      <div v-if="activeTab === 'about'" class="settings-section">
         <div class="settings-about">
           <img class="settings-logo-lg" src="/favicon.jpg" alt="Logo" />
           <div class="settings-about-title">Cortex Agent</div>
           <div class="settings-about-version">v{{ appVersion }}</div>
-          <p class="settings-about-desc">AI Agent 管理控制台 — Vue 3 + Pinia + WebSocket 流式聊天</p>
+          <p class="settings-about-desc">{{ $t('settings.about.desc') }}</p>
         </div>
         <div class="settings-divider"></div>
         <div class="settings-group">
           <div class="settings-links">
-            <a class="settings-link" href="#" @click.prevent="openLink('https://cortexagent.com/terms')">用户协议 <span class="link-arrow">↗</span></a>
-            <a class="settings-link" href="#" @click.prevent="openLink('https://cortexagent.com/privacy')">隐私政策 <span class="link-arrow">↗</span></a>
-            <a class="settings-link" href="#" @click.prevent="openLink('https://cortexagent.com')">进入官网 <span class="link-arrow">↗</span></a>
+            <a class="settings-link" href="#" @click.prevent="openLink('https://cortexagent.com/terms')">{{ $t('settings.general.terms') }} <span class="link-arrow">↗</span></a>
+            <a class="settings-link" href="#" @click.prevent="openLink('https://cortexagent.com/privacy')">{{ $t('settings.general.privacy') }} <span class="link-arrow">↗</span></a>
+            <a class="settings-link" href="#" @click.prevent="openLink('https://cortexagent.com')">{{ $t('settings.general.website') }} <span class="link-arrow">↗</span></a>
           </div>
         </div>
         <div class="settings-copyright">Copyright 1998 – 2026 Tencent. All Rights Reserved</div>
@@ -1111,16 +1112,16 @@ onMounted(async () => {
   <div v-if="showDiag" class="modal-overlay" @click.self="showDiag = false">
     <div class="modal diag-modal">
       <div class="modal-header">
-        <span>诊断日志</span>
+        <span>{{ $t('settings.general.diagnostics') }}</span>
         <button class="btn btn-sm" @click="showDiag = false">✕</button>
       </div>
       <div class="modal-body">
-        <div v-if="diagLoading" class="empty-state empty-padded-lg"><p class="empty-text">正在收集诊断信息…</p></div>
+        <div v-if="diagLoading" class="empty-state empty-padded-lg"><p class="empty-text">{{ $t('settings.diagCollecting') }}</p></div>
         <pre v-else class="diag-pre">{{ JSON.stringify(diagData, null, 2) }}</pre>
       </div>
       <div class="modal-footer">
-        <button class="btn btn-sm" :disabled="diagLoading || !diagData" @click="copyDiag">复制全部</button>
-        <button class="btn btn-sm" @click="showDiag = false">关闭</button>
+        <button class="btn btn-sm" :disabled="diagLoading || !diagData" @click="copyDiag">{{ $t('settings.diagCopyAll') }}</button>
+        <button class="btn btn-sm" @click="showDiag = false">{{ $t('common.close') }}</button>
       </div>
     </div>
   </div>

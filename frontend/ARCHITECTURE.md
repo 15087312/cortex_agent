@@ -1,5 +1,7 @@
 # Cortex Agent Frontend Architecture
 
+**Language / 语言**: [简体中文](./ARCHITECTURE.md) | [English](./ARCHITECTURE.en.md)
+
 > Vue 3 + Pinia + Vite, 无 TypeScript, 无 UI 框架；测试用 Vitest + @vue/test-utils
 > 48 个源文件: 17 组件, 15 页面, 6 Store, 4 Composable, 3 Utils；测试见 src/**/*.spec.js
 

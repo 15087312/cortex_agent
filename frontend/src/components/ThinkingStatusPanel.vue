@@ -41,17 +41,17 @@ const errorRunner = computed(() => props.runners.find(r => r.status === 'error')
   <div v-if="props.runners.length" class="think-panel-wrap">
     <div class="think-panel">
       <div class="think-panel-head">
-        <span class="think-panel-title"><Icon name="activity" :size="13" /> 思考循环</span>
+        <span class="think-panel-title"><Icon name="activity" :size="13" /> {{ $t('thinkingStatus.title') }}</span>
         <span class="think-panel-elapsed">{{ props.elapsed }}s</span>
       </div>
-      <div v-if="contextPct > 0" class="context-usage" :title="'上下文占用 ' + (props.contextTokens || 0).toLocaleString() + ' / ' + (props.contextWindowSize || 0).toLocaleString() + ' tokens'">
-        <span class="context-usage-label">上下文</span>
+      <div v-if="contextPct > 0" class="context-usage" :title="$t('thinkingStatus.contextUsage', { value: (props.contextTokens || 0).toLocaleString() + ' / ' + (props.contextWindowSize || 0).toLocaleString() + ' tokens' })">
+        <span class="context-usage-label">{{ $t('thinkingStatus.context') }}</span>
         <div class="context-usage-track"><div class="context-usage-fill" :class="{ warn: contextPct >= 70, danger: contextPct >= 90 }" :style="{ width: contextPct + '%' }" /></div>
         <span class="context-usage-pct">{{ contextPct }}%</span>
       </div>
       <div v-if="errorRunner" class="think-banner-error">
         <Icon name="alert" :size="14" />
-        <span><b>{{ errorRunner.name }}</b> 出错：{{ errorRunner.status_detail }}</span>
+        <span><b>{{ errorRunner.name }}</b> {{ $t('thinkingStatus.errorMsg', { detail: errorRunner.status_detail }) }}</span>
       </div>
       <div class="think-tree">
         <RunnerNode v-for="node in tree" :key="node.model_id" :node="node" :depth="0" />

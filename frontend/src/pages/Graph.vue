@@ -1,8 +1,10 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { endpoints } from '@/api.js'
+import { useI18n } from 'vue-i18n'
 import Icon from '@/components/Icon.vue'
 
+const { t } = useI18n()
 const sessions = ref([])
 const props = defineProps({ compact: { type: Boolean, default: false } })
 const selected = ref('')
@@ -11,13 +13,16 @@ const loading = ref(true)
 const graphLoading = ref(false)
 
 const TIERS = [
-  { tier: 'user', label: '用户', icon: 'user', color: '#22c55e' },
-  { tier: 'large', label: '总指挥', icon: 'brain', color: '#8b5cf6' },
-  { tier: 'supervisor', label: '主管', icon: 'list', color: '#3b82f6' },
-  { tier: 'expert', label: '实现专家', icon: 'wrench', color: '#f59e0b' },
+  { tier: 'user', label: 'graph.tierUser', icon: 'user', color: '#22c55e' },
+  { tier: 'large', label: 'graph.tierLarge', icon: 'brain', color: '#8b5cf6' },
+  { tier: 'supervisor', label: 'graph.tierSupervisor', icon: 'list', color: '#3b82f6' },
+  { tier: 'expert', label: 'graph.tierExpert', icon: 'wrench', color: '#f59e0b' },
 ]
 function tierOf(t) {
-  return TIERS.find((x) => x.tier === t) || { tier: '', label: '未知', icon: 'bot', color: '#8b949e' }
+  return TIERS.find((x) => x.tier === t) || { tier: '', label: 'graph.tierUnknown', icon: 'bot', color: '#8b949e' }
+}
+function nodeTitle(n) {
+  return t('graph.spokeTimes', { count: n.count }) + (n.last_content ? '\n' + n.last_content : '')
 }
 
 async function loadSessions() {
@@ -49,7 +54,7 @@ const layout = computed(() => {
   const isUnknownTier = (n) => !knownTiers.has(n.tier || '')
   const known = TIERS.filter((c) => nodes.some((n) => (n.tier || '') === c.tier))
   const hasUnknown = nodes.some(isUnknownTier)
-  const cols = known.concat(hasUnknown ? [{ tier: '', label: '未知', icon: 'bot', color: '#8b949e' }] : [])
+  const cols = known.concat(hasUnknown ? [{ tier: '', label: 'graph.tierUnknown', icon: 'bot', color: '#8b949e' }] : [])
   const W = 1120
   const colW = cols.length ? W / cols.length : W
   const nodeW = 168
@@ -106,13 +111,13 @@ onMounted(loadSessions)
 <template>
   <div>
     <div class="page-header" v-if="!compact">
-      <h2>会话图谱</h2>
-      <button class="btn btn-sm" @click="loadGraph"><Icon name="refresh" :size="14" /> 刷新</button>
+      <h2>{{ $t('graph.title') }}</h2>
+      <button class="btn btn-sm" @click="loadGraph"><Icon name="refresh" :size="14" /> {{ $t('common.refresh') }}</button>
     </div>
     <div class="page-body" v-if="!loading">
       <div class="card">
           <div class="card-header card-header-between">
-            <span>多 Agent 会话执行图谱（谁呼唤谁 / 谁回复谁）</span>
+            <span>{{ $t('graph.subtitle') }}</span>
             <select v-model="selected" class="input w-240 text-sm" @change="onSessionChange">
             <option v-for="s in sessions" :key="s.session_id" :value="s.session_id">{{ s.title || s.session_id.slice(0, 16) }}</option>
           </select>
@@ -152,29 +157,29 @@ onMounted(loadSessions)
             v-for="p in Object.values(layout.pos)" :key="p.node.id"
             class="g-node"
             :style="{ left: p.x + 'px', top: p.y + 'px', borderColor: tierOf(p.node.tier).color }"
-            :title="'发言 ' + p.node.count + ' 次' + (p.node.last_content ? '\n' + p.node.last_content : '')"
+            :title="nodeTitle(p.node)"
           >
             <div class="g-icon" :style="{ background: tierOf(p.node.tier).color }">
               <Icon :name="tierOf(p.node.tier).icon" :size="16" />
             </div>
             <div class="g-name">{{ p.node.label }}</div>
-            <div class="g-sub">{{ tierOf(p.node.tier).label }} · {{ p.node.count }}次</div>
+            <div class="g-sub">{{ $t(tierOf(p.node.tier).label) }} · {{ $t('graph.times', { count: p.node.count }) }}</div>
           </div>
 
           <!-- 空态 -->
-          <div v-if="!graph.nodes.length" class="graph-empty">该会话暂无执行图谱（对话触发多 Agent 协作后自动生成）</div>
+          <div v-if="!graph.nodes.length" class="graph-empty">{{ $t('graph.emptyGraph') }}</div>
         </div>
-        <div v-else class="graph-loading">加载中...</div>
+        <div v-else class="graph-loading">{{ $t('common.loading') }}</div>
 
         <!-- 图例 -->
         <div class="graph-legend">
-          <span><span class="lg-call"></span> 呼唤（上级委托下级执行）</span>
-          <span><span class="lg-reply"></span> 回复（结果反馈）</span>
-          <span v-for="t in TIERS" :key="t.tier" class="graph-legend-tier"><span class="lg-dot" :style="{ background: t.color }"></span>{{ t.label }}</span>
+          <span><span class="lg-call"></span> {{ $t('graph.legendCall') }}</span>
+          <span><span class="lg-reply"></span> {{ $t('graph.legendReply') }}</span>
+          <span v-for="t in TIERS" :key="t.tier" class="graph-legend-tier"><span class="lg-dot" :style="{ background: t.color }"></span>{{ $t(t.label) }}</span>
         </div>
       </div>
     </div>
-    <div class="page-body graph-loading" v-else>加载中...</div>
+    <div class="page-body graph-loading" v-else>{{ $t('common.loading') }}</div>
   </div>
 </template>
 

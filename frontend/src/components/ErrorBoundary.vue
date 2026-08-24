@@ -12,8 +12,8 @@ onErrorCaptured((err) => {
 <template>
   <div v-if="error" class="error-boundary">
     <div class="alert alert-error">
-      <span>页面加载失败: {{ error }}</span>
-      <button class="btn btn-sm" @click="error = null">重试</button>
+      <span>{{ $t('errorBoundary.loadFailed') }}: {{ error }}</span>
+      <button class="btn btn-sm" @click="error = null">{{ $t('common.retry') }}</button>
     </div>
   </div>
   <slot v-else />

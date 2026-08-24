@@ -63,8 +63,16 @@ describe('Sidebar', () => {
     await router.isReady()
     const theme = useThemeStore()
     theme.init()
-    await w.find('.theme-toggle').trigger('click')
+    await w.findAll('.theme-toggle')[1].trigger('click')
     expect(theme.isDark).toBe(true)
+  })
+
+  it('语言切换按钮切换 locale', async () => {
+    const w = mount(Sidebar, { global: { plugins: [createTestPinia(), router] } })
+    await router.isReady()
+    localStorage.clear()
+    await w.findAll('.theme-toggle')[0].trigger('click')
+    expect(localStorage.getItem('cortex_locale')).toBe('en')
   })
 
   it('当前路由高亮 active', async () => {

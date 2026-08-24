@@ -3,8 +3,10 @@ import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { endpoints } from '@/api.js'
 import { useToastStore } from '@/stores/toast.js'
 import { formatTime } from '@/utils/format.js'
+import { useI18n } from 'vue-i18n'
 import Icon from '@/components/Icon.vue'
 
+const { t } = useI18n()
 const toast = useToastStore()
 const props = defineProps({ compact: { type: Boolean, default: false } })
 const tools = ref([])
@@ -90,8 +92,8 @@ async function handleCall() {
   let params = {}
   try {
     params = showJson.value ? JSON.parse(jsonText.value) : buildParamsFromForm()
-  } catch { toast.show('参数格式错误', 'error'); return }
-  try { const r = await endpoints.callTool(selected.value, params); toolResult.value = JSON.stringify(r.data, null, 2) } catch (e) { toolResult.value = '错误: ' + (e.body?.error?.message || e.status) }
+  } catch { toast.show(t('tools.paramError'), 'error'); return }
+  try { const r = await endpoints.callTool(selected.value, params); toolResult.value = JSON.stringify(r.data, null, 2) } catch (e) { toolResult.value = t('tools.errorPrefix') + (e.body?.error?.message || e.status) }
 }
 
 const jsonText = ref('{}')
@@ -104,38 +106,38 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
 <template>
   <div>
     <div class="page-header" v-if="!compact">
-      <h2>工具管理</h2>
-      <button class="btn btn-sm" @click="loadData"><Icon name="refresh" :size="14" /> 刷新</button>
+      <h2>{{ $t('tools.title') }}</h2>
+      <button class="btn btn-sm" @click="loadData"><Icon name="refresh" :size="14" /> {{ $t('common.refresh') }}</button>
     </div>
     <div class="page-body">
       <div class="stat-grid grid-3-fixed">
-        <div class="stat-card"><div class="stat-icon stat-icon-blue"><Icon name="wrench" :size="18" /></div><div class="stat-value">{{ tools.length }}</div><div class="stat-label">总工具</div></div>
-        <div class="stat-card"><div class="stat-icon stat-icon-purple"><Icon name="layers" :size="18" /></div><div class="stat-value">{{ bySource }}</div><div class="stat-label">来源分类</div></div>
-        <div class="stat-card"><div class="stat-icon stat-icon-green"><Icon name="activity" :size="18" /></div><div class="stat-value">{{ events.length }}</div><div class="stat-label">最近调用</div></div>
+        <div class="stat-card"><div class="stat-icon stat-icon-blue"><Icon name="wrench" :size="18" /></div><div class="stat-value">{{ tools.length }}</div><div class="stat-label">{{ $t('tools.total') }}</div></div>
+        <div class="stat-card"><div class="stat-icon stat-icon-purple"><Icon name="layers" :size="18" /></div><div class="stat-value">{{ bySource }}</div><div class="stat-label">{{ $t('tools.sourceCategories') }}</div></div>
+        <div class="stat-card"><div class="stat-icon stat-icon-green"><Icon name="activity" :size="18" /></div><div class="stat-value">{{ events.length }}</div><div class="stat-label">{{ $t('tools.recentCalls') }}</div></div>
       </div>
 
       <div class="dash-grid">
         <div class="card card-scroll">
-          <div class="card-header">工具列表 ({{ tools.length }})</div>
-          <div class="tool-search"><input class="input w-full" v-model="query" placeholder="搜索工具..." /></div>
-          <div v-if="filteredTools.length === 0" class="empty-state tool-empty"><p class="empty-text">工具注册后自动出现于此</p></div>
+          <div class="card-header">{{ $t('tools.list') }} ({{ tools.length }})</div>
+          <div class="tool-search"><input class="input w-full" v-model="query" :placeholder="$t('tools.searchPlaceholder')" /></div>
+          <div v-if="filteredTools.length === 0" class="empty-state tool-empty"><p class="empty-text">{{ $t('tools.emptyList') }}</p></div>
           <div v-else v-for="t in filteredTools" :key="t.name" class="tool-item" :class="{ selected: selected === t.name }" @click="handleSelect(t.name)">
             <div class="tool-name">{{ t.name }}</div>
             <div v-if="t.description" class="tool-desc">{{ t.description }}</div>
           </div>
         </div>
         <div class="card card-scroll">
-          <div class="card-header">工具详情</div>
-          <div v-if="!selected" class="empty-state tool-empty"><p class="empty-text">选择一个工具查看详情并调用</p></div>
+          <div class="card-header">{{ $t('tools.detail') }}</div>
+          <div v-if="!selected" class="empty-state tool-empty"><p class="empty-text">{{ $t('tools.selectTool') }}</p></div>
           <div v-else class="tool-detail">
-            <div v-if="infoLoading" class="tool-loading">加载中...</div>
+            <div v-if="infoLoading" class="tool-loading">{{ $t('common.loading') }}</div>
             <template v-else>
-              <div class="detail-row"><span class="detail-label">描述</span>{{ toolInfo?.description || toolInfo?.name || '-' }}</div>
-              <div class="detail-row"><span class="detail-label">来源</span>{{ toolInfo?.source || 'builtin' }}</div>
+              <div class="detail-row"><span class="detail-label">{{ $t('common.description') }}</span>{{ toolInfo?.description || toolInfo?.name || '-' }}</div>
+              <div class="detail-row"><span class="detail-label">{{ $t('tools.source') }}</span>{{ toolInfo?.source || 'builtin' }}</div>
 
               <div class="tool-call-section">
-                <strong>调用工具</strong>
-                <button v-if="formFields.length" class="btn btn-sm" @click="showJson = !showJson">{{ showJson ? '表单模式' : 'JSON 模式' }}</button>
+                <strong>{{ $t('tools.callTool') }}</strong>
+                <button v-if="formFields.length" class="btn btn-sm" @click="showJson = !showJson">{{ showJson ? $t('tools.formMode') : $t('tools.jsonMode') }}</button>
               </div>
 
               <!-- 参数表单（简单参数） -->
@@ -150,16 +152,16 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
               <!-- JSON 参数（复杂/无 schema） -->
               <textarea v-else class="input tool-json-textarea" v-model="jsonText" placeholder='{"param": "value"}'></textarea>
 
-              <div class="tool-exec-btn"><button class="btn btn-sm" @click="handleCall"><Icon name="play" :size="14" /> 执行</button></div>
+              <div class="tool-exec-btn"><button class="btn btn-sm" @click="handleCall"><Icon name="play" :size="14" /> {{ $t('tools.execute') }}</button></div>
               <pre v-if="toolResult" class="json-output">{{ toolResult }}</pre>
             </template>
           </div>
         </div>
       </div>
 
-      <div class="card dash-mt"><div class="card-header">调用历史 ({{ events.length }})</div>
-        <table class="data-table" v-if="events.length > 0"><thead><tr><th>工具</th><th>时间</th></tr></thead><tbody><tr v-for="e in events" :key="e.id || e.timestamp"><td>{{ e.tool_name || e.name || '' }}</td><td>{{ formatTime(e.timestamp || e.time) }}</td></tr></tbody></table>
-        <div v-else class="empty-state tool-empty"><p class="empty-text">工具调用记录将显示在此</p></div>
+      <div class="card dash-mt"><div class="card-header">{{ $t('tools.history') }} ({{ events.length }})</div>
+        <table class="data-table" v-if="events.length > 0"><thead><tr><th>{{ $t('tools.tool') }}</th><th>{{ $t('common.time') }}</th></tr></thead><tbody><tr v-for="e in events" :key="e.id || e.timestamp"><td>{{ e.tool_name || e.name || '' }}</td><td>{{ formatTime(e.timestamp || e.time) }}</td></tr></tbody></table>
+        <div v-else class="empty-state tool-empty"><p class="empty-text">{{ $t('tools.historyEmpty') }}</p></div>
       </div>
     </div>
   </div>

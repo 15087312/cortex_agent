@@ -3,8 +3,10 @@ import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { endpoints } from '@/api.js'
 import { useToastStore } from '@/stores/toast.js'
 import { formatTime } from '@/utils/format.js'
+import { useI18n } from 'vue-i18n'
 import Icon from '@/components/Icon.vue'
 
+const { t } = useI18n()
 const toast = useToastStore()
 const props = defineProps({ compact: { type: Boolean, default: false } })
 const sessions = ref([])
@@ -13,7 +15,7 @@ const totalLogs = ref(0)
 const loading = ref(true)
 
 const enabledCount = computed(() => sessions.value.filter((s) => s.enabled).length)
-const reasonLabels = { schedule: '定点发送', screen: '屏幕变化', idle: '空闲', time_window: '时段' }
+const reasonLabels = { schedule: 'outreach.reasonSchedule', screen: 'outreach.reasonScreen', idle: 'outreach.reasonIdle', time_window: 'outreach.reasonTimeWindow' }
 
 async function loadAll() {
   loading.value = true
@@ -89,9 +91,9 @@ async function saveConfig(s) {
   }
   try {
     await endpoints.setOutreachConfig(s.session_id, cfg)
-    toast.show('已保存', 'success')
+    toast.show(t('common.saved'), 'success')
   } catch (e) {
-    toast.show('保存失败: ' + (e.body?.error?.message || e.status), 'error')
+    toast.show(t('common.saveFailed') + ': ' + (e.body?.error?.message || e.status), 'error')
   }
 }
 
@@ -103,69 +105,69 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
 <template>
   <div>
     <div class="page-header" v-if="!compact">
-      <h2>主动搭话</h2>
-      <button class="btn btn-sm" @click="loadAll"><Icon name="refresh" :size="14" /> 刷新</button>
+      <h2>{{ $t('outreach.title') }}</h2>
+      <button class="btn btn-sm" @click="loadAll"><Icon name="refresh" :size="14" /> {{ $t('common.refresh') }}</button>
     </div>
     <div class="page-body" v-if="!loading">
       <!-- 概览卡 -->
       <div class="stat-grid stat-grid-3">
-        <div class="stat-card"><div class="stat-icon stat-icon-blue"><Icon name="heart" :size="18" /></div><div class="stat-value">{{ enabledCount }}/5</div><div class="stat-label">已开启会话</div></div>
-        <div class="stat-card"><div class="stat-icon stat-icon-green"><Icon name="message" :size="18" /></div><div class="stat-value">{{ totalLogs }}</div><div class="stat-label">累计搭话</div></div>
-        <div class="stat-card"><div class="stat-icon stat-icon-yellow"><Icon name="clock" :size="18" /></div><div class="stat-value">{{ logs.length }}</div><div class="stat-label">最近记录</div></div>
+        <div class="stat-card"><div class="stat-icon stat-icon-blue"><Icon name="heart" :size="18" /></div><div class="stat-value">{{ enabledCount }}/5</div><div class="stat-label">{{ $t('outreach.enabledSessions') }}</div></div>
+        <div class="stat-card"><div class="stat-icon stat-icon-green"><Icon name="message" :size="18" /></div><div class="stat-value">{{ totalLogs }}</div><div class="stat-label">{{ $t('outreach.totalOutreach') }}</div></div>
+        <div class="stat-card"><div class="stat-icon stat-icon-yellow"><Icon name="clock" :size="18" /></div><div class="stat-value">{{ logs.length }}</div><div class="stat-label">{{ $t('outreach.recentLogs') }}</div></div>
       </div>
 
       <!-- 会话规则配置 -->
       <div class="card dash-mt">
-        <div class="card-header">会话规则（最多开启 5 个会话）</div>
-        <div class="outreach-hint">右侧开关 = 在设置里<b>单独开启</b>该会话的主动搭话（全局总开关强制有效）；开启后可展开配置自己的规则</div>
-        <div v-if="sessions.length === 0" class="empty-state outreach-empty"><p class="empty-text">暂无会话</p></div>
+        <div class="card-header">{{ $t('outreach.sessionsHint') }}</div>
+        <div class="outreach-hint">{{ $t('outreach.hintPrefix') }}<b>{{ $t('outreach.hintAction') }}</b>{{ $t('outreach.hintSuffix') }}</div>
+        <div v-if="sessions.length === 0" class="empty-state outreach-empty"><p class="empty-text">{{ $t('outreach.noSessions') }}</p></div>
         <div v-for="s in sessions" :key="s.session_id" class="outreach-session">
             <div class="outreach-head" @click="s._open = !s._open">
             <div class="outreach-session-head">
               <Icon :name="s._open ? 'down' : 'right'" :size="14" class="outreach-icon-muted" />
               <b class="outreach-session-title">{{ s.title }}</b>
-              <span v-if="s.enabled" class="badge badge-green">已开启</span>
-              <span v-else class="badge badge-gray">关闭</span>
+              <span v-if="s.enabled" class="badge badge-green">{{ $t('common.enabled') }}</span>
+              <span v-else class="badge badge-gray">{{ $t('common.disabled') }}</span>
             </div>
             <label class="toggle-switch" @click.stop><input type="checkbox" v-model="s.enabled" @change="saveConfig(s)" /><span class="toggle-slider"></span></label>
           </div>
           <div v-if="s._open" class="outreach-body">
             <div class="outreach-row outreach-row-align">
-              <span class="outreach-lbl">综合冷却</span>
-              <input class="input w-64" type="number" v-model.number="s.cooldownMin" title="同一会话两次主动搭话的最小间隔（分钟）" /> <span class="outreach-unit">min</span>
-              <span class="outreach-hint-text">两次搭话的最小间隔</span>
+              <span class="outreach-lbl">{{ $t('outreach.cooldown') }}</span>
+              <input class="input w-64" type="number" v-model.number="s.cooldownMin" :title="$t('outreach.cooldownTooltip')" /> <span class="outreach-unit">min</span>
+              <span class="outreach-hint-text">{{ $t('outreach.cooldownHint') }}</span>
             </div>
             <div class="outreach-row">
-              <span class="outreach-lbl">定点发送</span>
+              <span class="outreach-lbl">{{ $t('outreach.schedule') }}</span>
               <label class="toggle-switch" @click.stop><input type="checkbox" v-model="s.scheduleOn" /><span class="toggle-slider"></span></label>
-              <span class="outreach-unit" :class="{ off: !s.scheduleOn }">时间</span>
-              <input class="input w-80" v-model="s.scheduleTime" placeholder="14:00" :disabled="!s.scheduleOn" title="触发时刻，24小时制 HH:MM，如 14:00" />
-              <span class="outreach-unit" :class="{ off: !s.scheduleOn }">± 误差</span>
-              <input class="input w-56" type="number" v-model.number="s.scheduleJitter" title="到点前后误差窗口（分钟），避免精确到秒的偶发" :disabled="!s.scheduleOn" /> <span class="outreach-unit" :class="{ off: !s.scheduleOn }">min</span>
+              <span class="outreach-unit" :class="{ off: !s.scheduleOn }">{{ $t('common.time') }}</span>
+              <input class="input w-80" v-model="s.scheduleTime" placeholder="14:00" :disabled="!s.scheduleOn" :title="$t('outreach.timeTooltip')" />
+              <span class="outreach-unit" :class="{ off: !s.scheduleOn }">{{ $t('outreach.jitter') }}</span>
+              <input class="input w-56" type="number" v-model.number="s.scheduleJitter" :title="$t('outreach.jitterTooltip')" :disabled="!s.scheduleOn" /> <span class="outreach-unit" :class="{ off: !s.scheduleOn }">min</span>
             </div>
             <div class="outreach-row">
-              <span class="outreach-lbl">屏幕触发</span>
+              <span class="outreach-lbl">{{ $t('outreach.screen') }}</span>
               <label class="toggle-switch" @click.stop><input type="checkbox" v-model="s.screenOn" /><span class="toggle-slider"></span></label>
-              <input class="input w-52" type="number" v-model.number="s.screenRatio" title="变化阈值（0-1）：屏幕变化比例达到该值才可能触发" :disabled="!s.screenOn" /> <span class="outreach-unit" :class="{ off: !s.screenOn }">阈值</span>
-              <input class="input w-52" type="number" v-model.number="s.screenProb" title="触发概率（0-1）：条件满足后随机命中的概率" :disabled="!s.screenOn" /> <span class="outreach-unit" :class="{ off: !s.screenOn }">概率</span>
-              <input class="input w-52" type="number" v-model.number="s.screenInterval" title="判定间隔（秒）：两次屏幕规则判定的最小间隔" :disabled="!s.screenOn" /> <span class="outreach-unit" :class="{ off: !s.screenOn }">间隔 s</span>
-              <input class="input w-52" type="number" v-model.number="s.screenCooldown" title="冷却（分钟）：屏幕规则触发后该规则的额外冷却" :disabled="!s.screenOn" /> <span class="outreach-unit" :class="{ off: !s.screenOn }">冷却 min</span>
+              <input class="input w-52" type="number" v-model.number="s.screenRatio" :title="$t('outreach.screenRatioTooltip')" :disabled="!s.screenOn" /> <span class="outreach-unit" :class="{ off: !s.screenOn }">{{ $t('outreach.screenRatio') }}</span>
+              <input class="input w-52" type="number" v-model.number="s.screenProb" :title="$t('outreach.screenProbTooltip')" :disabled="!s.screenOn" /> <span class="outreach-unit" :class="{ off: !s.screenOn }">{{ $t('outreach.probability') }}</span>
+              <input class="input w-52" type="number" v-model.number="s.screenInterval" :title="$t('outreach.screenIntervalTooltip')" :disabled="!s.screenOn" /> <span class="outreach-unit" :class="{ off: !s.screenOn }">{{ $t('outreach.intervalS') }}</span>
+              <input class="input w-52" type="number" v-model.number="s.screenCooldown" :title="$t('outreach.screenCooldownTooltip')" :disabled="!s.screenOn" /> <span class="outreach-unit" :class="{ off: !s.screenOn }">{{ $t('outreach.cooldownMin') }}</span>
             </div>
             <div class="outreach-row">
-              <span class="outreach-lbl">空闲触发</span>
+              <span class="outreach-lbl">{{ $t('outreach.idle') }}</span>
               <label class="toggle-switch" @click.stop><input type="checkbox" v-model="s.idleOn" /><span class="toggle-slider"></span></label>
-              <input class="input w-52" type="number" v-model.number="s.idleMinutes" title="空闲时长（分钟）：用户无操作达到该时长才可能触发" :disabled="!s.idleOn" /> <span class="outreach-unit" :class="{ off: !s.idleOn }">空闲 min</span>
-              <input class="input w-52" type="number" v-model.number="s.idleProb" title="触发概率（0-1）：满足空闲后随机命中的概率" :disabled="!s.idleOn" /> <span class="outreach-unit" :class="{ off: !s.idleOn }">概率</span>
-              <input class="input w-52" type="number" v-model.number="s.idleInterval" title="判定间隔（秒）：两次空闲规则判定的最小间隔" :disabled="!s.idleOn" /> <span class="outreach-unit" :class="{ off: !s.idleOn }">间隔 s</span>
+              <input class="input w-52" type="number" v-model.number="s.idleMinutes" :title="$t('outreach.idleMinutesTooltip')" :disabled="!s.idleOn" /> <span class="outreach-unit" :class="{ off: !s.idleOn }">{{ $t('outreach.idleMin') }}</span>
+              <input class="input w-52" type="number" v-model.number="s.idleProb" :title="$t('outreach.idleProbTooltip')" :disabled="!s.idleOn" /> <span class="outreach-unit" :class="{ off: !s.idleOn }">{{ $t('outreach.probability') }}</span>
+              <input class="input w-52" type="number" v-model.number="s.idleInterval" :title="$t('outreach.idleIntervalTooltip')" :disabled="!s.idleOn" /> <span class="outreach-unit" :class="{ off: !s.idleOn }">{{ $t('outreach.intervalS') }}</span>
             </div>
             <div class="outreach-row outreach-row-wrap">
-              <span class="outreach-lbl">时段触发</span>
+              <span class="outreach-lbl">{{ $t('outreach.timeWindow') }}</span>
               <label class="toggle-switch" @click.stop><input type="checkbox" v-model="s.windowsOn" /><span class="toggle-slider"></span></label>
-              <input class="input w-flex-200" v-model="s.timeWindowsText" placeholder="09:00-12:00@0.5,14:00-18:00@0.8" :disabled="!s.windowsOn" title="格式：开始-结束@概率，多个用逗号分隔。概率省略默认 1.0，跨午夜（如 22:00-02:00）也支持" />
+              <input class="input w-flex-200" v-model="s.timeWindowsText" placeholder="09:00-12:00@0.5,14:00-18:00@0.8" :disabled="!s.windowsOn" :title="$t('outreach.windowsTooltipPre') + '开始-结束@概率' + $t('outreach.windowsTooltipPost')" />
             </div>
-            <div class="outreach-hint-mt">时段格式：<code>开始-结束@概率</code>，逗号分隔多项，如 <code>09:00-12:00@0.5,14:00-18:00@0.8</code>（概率省略默认 1.0，跨午夜也支持）</div>
+            <div class="outreach-hint-mt">{{ $t('outreach.windowsFormatLabel') }}<code>开始-结束@概率</code>{{ $t('outreach.windowsFormatMid') }}<code>09:00-12:00@0.5,14:00-18:00@0.8</code>{{ $t('outreach.windowsFormatTail') }}</div>
             <div class="outreach-save">
-              <button class="btn btn-sm btn-primary" @click="saveConfig(s)"><Icon name="check" :size="14" /> 保存</button>
+              <button class="btn btn-sm btn-primary" @click="saveConfig(s)"><Icon name="check" :size="14" /> {{ $t('common.save') }}</button>
             </div>
           </div>
         </div>
@@ -173,18 +175,18 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
 
       <!-- 触发记录 -->
       <div class="card dash-mt">
-        <div class="card-header">触发记录</div>
-        <div v-if="logs.length === 0" class="empty-state outreach-empty"><p class="empty-text">暂无主动搭话记录（开启会话并满足规则后触发）</p></div>
+        <div class="card-header">{{ $t('outreach.logsTitle') }}</div>
+        <div v-if="logs.length === 0" class="empty-state outreach-empty"><p class="empty-text">{{ $t('outreach.logsEmpty') }}</p></div>
         <div v-else class="activity-timeline">
           <div v-for="l in logs" :key="l.session_id + l.created_at" class="activity-item">
             <span class="activity-time">{{ formatTime(l.created_at) }}</span>
-            <span class="badge" :class="l.reason === 'screen' ? 'badge-yellow' : 'badge-blue'">{{ reasonLabels[l.reason] || l.reason }}</span>
+            <span class="badge" :class="l.reason === 'screen' ? 'badge-yellow' : 'badge-blue'">{{ l.reason === 'schedule' || l.reason === 'screen' || l.reason === 'idle' || l.reason === 'time_window' ? $t(reasonLabels[l.reason]) : l.reason }}</span>
             <span class="outreach-log-content">{{ l.content }}</span>
           </div>
         </div>
       </div>
     </div>
-    <div class="page-body" v-else>加载中...</div>
+    <div class="page-body" v-else>{{ $t('common.loading') }}</div>
   </div>
 </template>
 

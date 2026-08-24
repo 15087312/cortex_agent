@@ -4,7 +4,9 @@
 defineOptions({ name: 'ProcessPanel' })
 import { ref, computed } from 'vue'
 import Icon from './Icon.vue'
+import { useI18n } from 'vue-i18n'
 
+const { t } = useI18n()
 const props = defineProps({
   content: { type: String, default: '' },
   runners: { type: Object, default: null },
@@ -53,14 +55,15 @@ function ctxLabel(r) {
 }
 
 const STATUS_META = {
-  thinking: { label: '思考中', cls: 'st-thinking' },
-  tool_loop: { label: '调用工具', cls: 'st-tool' },
-  waiting_delegation: { label: '等待委托', cls: 'st-waiting' },
-  completed: { label: '已完成', cls: 'st-done' },
-  error: { label: '出错', cls: 'st-error' },
-  idle: { label: '待命', cls: 'st-idle' },
+  thinking: { key: 'thinking', cls: 'st-thinking' },
+  tool_loop: { key: 'tool_loop', cls: 'st-tool' },
+  waiting_delegation: { key: 'waiting_delegation', cls: 'st-waiting' },
+  completed: { key: 'completed', cls: 'st-done' },
+  error: { key: 'error', cls: 'st-error' },
+  idle: { key: 'idle', cls: 'st-idle' },
 }
 function meta(r) { return STATUS_META[r.status] || STATUS_META.idle }
+function statusLabel(r) { return t('processPanel.status.' + meta(r).key) }
 </script>
 
 <template>
@@ -68,8 +71,8 @@ function meta(r) { return STATUS_META[r.status] || STATUS_META.idle }
     <div class="process-panel-head" @click="panelOpen = !panelOpen">
       <Icon :name="panelOpen ? 'down' : 'right'" :size="12" />
       <Icon name="activity" :size="13" />
-      <span>思考过程</span>
-      <span v-if="content" class="process-count">{{ content.split('\n\n').length }} 步</span>
+      <span>{{ $t('processPanel.thinkingProcess') }}</span>
+      <span v-if="content" class="process-count">{{ $t('processPanel.steps', { count: content.split('\n\n').length }) }}</span>
     </div>
 
     <div v-if="panelOpen" class="process-panel-body">
@@ -80,7 +83,7 @@ function meta(r) { return STATUS_META[r.status] || STATUS_META.idle }
             <span class="process-node-dot"></span>
             <span class="process-node-name">{{ node.name || node.role || node.model_id }}</span>
             <span class="process-node-model">{{ node.model_id }}</span>
-            <span class="think-badge" :class="meta(node).cls">{{ meta(node).label }}</span>
+            <span class="think-badge" :class="meta(node).cls">{{ statusLabel(node) }}</span>
             <span class="process-node-ring" :title="ctxLabel(node)">
               <svg viewBox="0 0 20 20" width="20" height="20">
                 <circle cx="10" cy="10" r="8" fill="none" stroke="var(--border, rgba(255,255,255,.12))" stroke-width="2.5" />
@@ -97,7 +100,7 @@ function meta(r) { return STATUS_META[r.status] || STATUS_META.idle }
               <span class="process-node-dot"></span>
               <span class="process-node-name">{{ child.name || child.role || child.model_id }}</span>
               <span class="process-node-model">{{ child.model_id }}</span>
-              <span class="think-badge" :class="meta(child).cls">{{ meta(child).label }}</span>
+              <span class="think-badge" :class="meta(child).cls">{{ statusLabel(child) }}</span>
               <span class="process-node-ring" :title="ctxLabel(child)">
                 <svg viewBox="0 0 20 20" width="20" height="20">
                   <circle cx="10" cy="10" r="8" fill="none" stroke="var(--border, rgba(255,255,255,.12))" stroke-width="2.5" />
@@ -116,11 +119,11 @@ function meta(r) { return STATUS_META[r.status] || STATUS_META.idle }
       <!-- 过程流文本区（可折叠） -->
       <div v-if="content" class="process-flow">
         <div class="process-flow-head" @click="flowOpen = !flowOpen">
-          <span class="process-flow-toggle">{{ flowOpen ? '收起过程 ▲' : '展开过程 ▼' }}</span>
+          <span class="process-flow-toggle">{{ flowOpen ? $t('processPanel.collapseProcess') + ' ▲' : $t('processPanel.expandProcess') + ' ▼' }}</span>
         </div>
         <div v-if="flowOpen" class="process-flow-body">{{ content }}</div>
       </div>
-      <div v-else-if="!tree.length" class="process-empty">本轮无过程内容</div>
+      <div v-else-if="!tree.length" class="process-empty">{{ $t('processPanel.noContent') }}</div>
     </div>
   </div>
 </template>

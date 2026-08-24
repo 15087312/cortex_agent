@@ -6,6 +6,7 @@ import { useConfigStore } from '@/stores/config.js'
 import { useWakeLock, useGeolocation } from '@/composables/index.js'
 import { dialogState, resolveDialog } from '@/composables/useDialog.js'
 import { useToastStore } from '@/stores/toast.js'
+import { useI18n } from 'vue-i18n'
 import Sidebar from '@/components/Sidebar.vue'
 import StatusBar from '@/components/StatusBar.vue'
 import Toast from '@/components/Toast.vue'
@@ -26,6 +27,7 @@ useGeolocation()
 // 解析 '⌥ + T' / 'Cmd+K' / 'Ctrl+Shift+P' 等格式，真实消费后端配置（非摆设）
 const router = useRouter()
 const toast = useToastStore()
+const { t } = useI18n()
 
 function _isTyping(el) {
   const t = (el && el.tagName) || ''
@@ -87,7 +89,7 @@ function onKeydown(e) {
   }
   if (e.key === '?' && !_isTyping(e.target)) {
     e.preventDefault()
-    toast.show('快捷键: Cmd/Ctrl+K 或 / 聚焦输入 · Esc 取消', 'info')
+    toast.show(t('shortcut.hint'), 'info')
   }
 }
 
@@ -110,7 +112,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
                 <Suspense>
                   <component :is="Component" />
                   <template #fallback>
-                    <LoadingState text="加载中..." />
+                    <LoadingState :text="$t('app.loading')" />
                   </template>
                 </Suspense>
               </KeepAlive>

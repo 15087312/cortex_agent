@@ -12,7 +12,7 @@ onUnmounted(() => health.stop())
   <div class="status-bar">
     <div class="status-item">
       <span class="status-dot" :class="health.status"></span>
-      <span>{{ health.status === 'healthy' ? '系统健康' : health.status === 'degraded' ? '系统降级' : '未连接' }}</span>
+      <span>{{ health.status === 'healthy' ? $t('statusbar.healthy') : health.status === 'degraded' ? $t('statusbar.degraded') : $t('statusbar.disconnected') }}</span>
     </div>
     <div class="status-item"><span>{{ health.moduleCount }}</span></div>
     <div class="spacer"></div>

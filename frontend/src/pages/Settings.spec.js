@@ -80,9 +80,9 @@ describe('Settings.vue', () => {
     expect(w.text()).toContain('高级')
     expect(w.text()).toContain('通用设置')
     await w.findAll('.settings-tab').find((t) => t.text() === '感知').trigger('click')
-    expect(w.vm.activeTab).toBe('感知')
+    expect(w.vm.activeTab).toBe('perception')
     await w.findAll('.settings-tab').find((t) => t.text() === '记忆库').trigger('click')
-    expect(w.vm.activeTab).toBe('记忆库')
+    expect(w.vm.activeTab).toBe('memory')
   })
 
   it('加载并渲染记忆库列表', async () => {

@@ -1,6 +1,7 @@
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
 import Icon from '@/components/Icon.vue'
+import { useI18n } from 'vue-i18n'
 
 const props = defineProps({
   processing: { type: Boolean, default: false },
@@ -8,6 +9,7 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['send', 'toast'])
+const { t } = useI18n()
 const input = ref('')
 const attachments = ref([])
 const dragging = ref(false)
@@ -58,7 +60,7 @@ function handleFiles(fileList) {
   for (const file of files) {
     const isImage = file.type.startsWith('image/')
     if (!isImage && file.size >= 1024 * 1024) {
-      emit('toast', { message: '文件过大（最大 1MB）', type: 'error' })
+      emit('toast', { message: t('chatInput.fileTooLarge'), type: 'error' })
       continue
     }
     const reader = new FileReader()
@@ -123,14 +125,14 @@ function removeAttachment(i) {
     </div>
     <div class="chat-input-wrapper">
       <div class="chat-input-toolbar">
-        <button class="chat-btn-icon" @click="$refs.fileInput.click()" title="上传文件"><Icon name="paperclip" :size="16" /></button>
+        <button class="chat-btn-icon" @click="$refs.fileInput.click()" :title="$t('chatInput.uploadFile')"><Icon name="paperclip" :size="16" /></button>
         <input ref="fileInput" type="file" multiple accept="image/*,.pdf,.txt" hidden @change="handleFiles($event.target.files)" />
       </div>
       <textarea
         ref="fieldRef"
         class="chat-input-field"
         v-model="input"
-        :placeholder="processing ? 'AI 思考中，请稍候...' : '输入消息... (Enter发送, Shift+Enter换行)'"
+        :placeholder="processing ? $t('chatInput.thinkingPlaceholder') : $t('chatInput.inputPlaceholder')"
         rows="1"
         style="resize: none; overflow-y: hidden; line-height: 1.5; box-sizing: border-box;"
         @input="autoResize"
@@ -138,7 +140,7 @@ function removeAttachment(i) {
         @paste="handlePaste"
       ></textarea>
       <div class="chat-input-actions">
-        <span class="chat-input-hint">{{ hint || 'Enter 发送 · Shift+Enter 换行' }}</span>
+        <span class="chat-input-hint">{{ hint || $t('chatInput.enterHint') }}</span>
         <slot name="actions" />
         <button class="chat-send-btn" :disabled="processing" @click="handleSend"><Icon name="send" :size="16" /></button>
       </div>

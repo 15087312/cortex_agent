@@ -133,8 +133,8 @@ describe('Outreach 页面', () => {
   it('reasonLabels 映射', async () => {
     const w = mountPage()
     await new Promise((r) => setTimeout(r, 10))
-    expect(w.vm.reasonLabels.schedule).toBe('定点发送')
-    expect(w.vm.reasonLabels.screen).toBe('屏幕变化')
+    expect(w.vm.reasonLabels.schedule).toBe('outreach.reasonSchedule')
+    expect(w.vm.reasonLabels.screen).toBe('outreach.reasonScreen')
   })
 
   it('loadAll 失败不崩溃', async () => {

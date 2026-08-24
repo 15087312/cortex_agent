@@ -31,9 +31,9 @@ async function handleCopy() {
 <template>
   <div class="code-block">
     <div class="code-block-header">
-      <span class="lang-label">{{ language || '代码' }}</span>
+      <span class="lang-label">{{ language || $t('common.code') }}</span>
       <button class="copy-btn" @click="handleCopy">
-        <Icon :name="copied ? 'check' : 'copy'" :size="12" /> {{ copied ? '已复制' : '复制' }}
+        <Icon :name="copied ? 'check' : 'copy'" :size="12" /> {{ copied ? $t('common.copied') : $t('common.copy') }}
       </button>
     </div>
     <!-- v-html 仅用于语法高亮（hljs 输出不含用户输入，安全） -->

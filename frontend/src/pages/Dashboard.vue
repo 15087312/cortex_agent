@@ -3,8 +3,10 @@ import { ref, computed, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { endpoints } from '@/api.js'
 import Icon from '@/components/Icon.vue'
+import { useI18n } from 'vue-i18n'
 
 const router = useRouter()
+const { t } = useI18n()
 const loading = ref(true)
 const apiStatus = ref('-')
 const dash = ref(null)
@@ -38,7 +40,7 @@ const topPaths = computed(() => {
   return { arr, max }
 })
 
-function statusLabel(s) { return s === 'healthy' ? '正常' : s === 'degraded' ? '降级' : s }
+function statusLabel(s) { return s === 'healthy' ? t('dashboard.healthy') : s === 'degraded' ? t('dashboard.degraded') : s }
 function statusBadge(s) { return s === 'healthy' ? 'badge-green' : s === 'degraded' ? 'badge-yellow' : 'badge-red' }
 
 async function loadData() {
@@ -52,7 +54,7 @@ async function loadData() {
       endpoints.proactiveLogs(5).catch(() => null),
     ])
     dash.value = d?.data || null
-    apiStatus.value = health?.data?.status === 'healthy' ? '健康' : health?.data?.status || '-'
+    apiStatus.value = health?.data?.status === 'healthy' ? t('dashboard.healthy') : health?.data?.status || '-'
     libs.value = libsR?.data?.libs || []
     sessions.value = sess?.data || []
     perception.value = perc?.data || null
@@ -112,7 +114,7 @@ function openApiDetail(r) {
 }
 function closeApiDetail() { apiDetail.value = null }
 function formatBody(s) {
-  if (!s) return '（无记录）'
+  if (!s) return t('dashboard.noRecord')
   const text = String(s)
   try { return JSON.stringify(JSON.parse(text), null, 2) }
   catch { return text }
@@ -126,15 +128,15 @@ function copyApiBody(s) {
 <template>
   <div>
     <div class="page-header">
-      <h2>仪表盘</h2>
-      <button class="btn btn-sm" @click="loadData"><Icon name="refresh" :size="14" /> 刷新</button>
+      <h2>{{ $t('dashboard.title') }}</h2>
+      <button class="btn btn-sm" @click="loadData"><Icon name="refresh" :size="14" /> {{ $t('common.refresh') }}</button>
     </div>
     <div class="page-body" v-if="!loading">
       <!-- 顶部统计卡 -->
       <div class="health-grid">
-        <div class="health-card" @click="router.push('/chat')" title="点击进入对话">
+        <div class="health-card" @click="router.push('/chat')" :title="$t('dashboard.enterChat')">
           <div class="health-ring">
-            <svg viewBox="0 0 72 72"><circle class="ring-bg" cx="36" cy="36" r="30"/><circle class="ring-fill" cx="36" cy="36" r="30" :style="{ strokeDasharray: 188.5, strokeDashoffset: apiStatus === '健康' ? 0 : 94 }"/></svg>
+            <svg viewBox="0 0 72 72"><circle class="ring-bg" cx="36" cy="36" r="30"/><circle class="ring-fill" cx="36" cy="36" r="30" :style="{ strokeDasharray: 188.5, strokeDashoffset: apiStatus === $t('dashboard.healthy') ? 0 : 94 }"/></svg>
             <div class="ring-label"><Icon name="message" :size="18" /></div>
           </div>
           <div class="health-name">API {{ apiStatus }}</div>
@@ -144,89 +146,89 @@ function copyApiBody(s) {
             <svg viewBox="0 0 72 72"><circle class="ring-bg" cx="36" cy="36" r="30"/><circle class="ring-fill" cx="36" cy="36" r="30" :style="{ strokeDasharray: 188.5, strokeDashoffset: 188.5 * (1 - healthyCount / Math.max(modules.length || 1, 1)) }"/></svg>
             <div class="ring-label">{{ moduleOk }}</div>
           </div>
-          <div class="health-name">模块健康</div>
+          <div class="health-name">{{ $t('dashboard.moduleHealth') }}</div>
         </div>
-        <div class="health-card" @click="router.push('/memory')" title="点击查看记忆">
+        <div class="health-card" @click="router.push('/memory')" :title="$t('dashboard.viewMemory')">
           <div class="health-ring">
             <svg viewBox="0 0 72 72"><circle class="ring-bg" cx="36" cy="36" r="30"/><circle class="ring-fill" cx="36" cy="36" r="30" :style="{ strokeDasharray: 188.5, strokeDashoffset: 188.5 }"/></svg>
             <div class="ring-label"><Icon name="database" :size="18" /></div>
           </div>
-          <div class="health-name">记忆 {{ totalEvents }} 条</div>
+          <div class="health-name">{{ $t('dashboard.memoryCount', { count: totalEvents }) }}</div>
         </div>
-        <div class="health-card" @click="router.push('/chat')" title="点击进入对话">
+        <div class="health-card" @click="router.push('/chat')" :title="$t('dashboard.enterChat')">
           <div class="health-ring">
             <svg viewBox="0 0 72 72"><circle class="ring-bg" cx="36" cy="36" r="30"/><circle class="ring-fill" cx="36" cy="36" r="30" :style="{ strokeDasharray: 188.5, strokeDashoffset: 188.5 }"/></svg>
             <div class="ring-label">{{ totalSessions }}</div>
           </div>
-          <div class="health-name">会话</div>
+          <div class="health-name">{{ $t('dashboard.sessions') }}</div>
         </div>
-        <div class="health-card" title="API 请求总数">
+        <div class="health-card" :title="$t('dashboard.apiTotalTitle')">
           <div class="health-ring">
             <svg viewBox="0 0 72 72"><circle class="ring-bg" cx="36" cy="36" r="30"/><circle class="ring-fill" cx="36" cy="36" r="30" :style="{ strokeDasharray: 188.5, strokeDashoffset: totalApi ? 0 : 188.5, stroke: '#8b5cf6' }"/></svg>
             <div class="ring-label">{{ totalApi }}</div>
           </div>
-          <div class="health-name">API 请求</div>
+          <div class="health-name">{{ $t('dashboard.apiRequests') }}</div>
         </div>
-        <div class="health-card" title="已开启主动搭话的会话数">
+        <div class="health-card" :title="$t('dashboard.enabledOutreachTitle')">
           <div class="health-ring">
             <svg viewBox="0 0 72 72"><circle class="ring-bg" cx="36" cy="36" r="30"/><circle class="ring-fill" cx="36" cy="36" r="30" :style="{ strokeDasharray: 188.5, strokeDashoffset: enabledOutreach ? 0 : 188.5, stroke: '#22C55E' }"/></svg>
             <div class="ring-label">{{ enabledOutreach }}</div>
           </div>
-          <div class="health-name">主动搭话</div>
+          <div class="health-name">{{ $t('dashboard.outreach') }}</div>
         </div>
       </div>
 
       <!-- 当前环境 + 记忆库 -->
       <div class="dash-grid-2">
         <div class="card">
-          <div class="card-header">当前环境</div>
+          <div class="card-header">{{ $t('dashboard.currentEnv') }}</div>
           <div class="setting-row">
-            <div class="lbl"><div class="t">感知系统</div></div>
-            <div class="setting-ctl"><span class="badge" :class="perceptionRunning ? 'badge-green' : 'badge-red'">{{ perceptionRunning ? '运行中' : '已停止' }}</span></div>
+            <div class="lbl"><div class="t">{{ $t('dashboard.perception') }}</div></div>
+            <div class="setting-ctl"><span class="badge" :class="perceptionRunning ? 'badge-green' : 'badge-red'">{{ perceptionRunning ? $t('dashboard.running') : $t('dashboard.stopped') }}</span></div>
           </div>
           <div class="setting-row">
-            <div class="lbl"><div class="t">当前应用</div></div>
+            <div class="lbl"><div class="t">{{ $t('dashboard.currentApp') }}</div></div>
             <div class="setting-ctl dash-ctl-end"><span class="dash-muted">{{ activeApp }}</span></div>
           </div>
           <div class="setting-row">
-            <div class="lbl"><div class="t">当前窗口</div></div>
+            <div class="lbl"><div class="t">{{ $t('dashboard.currentWindow') }}</div></div>
             <div class="setting-ctl dash-ctl-end"><span class="dash-window-text">{{ activeWindow }}</span></div>
           </div>
         </div>
         <div class="card">
-          <div class="card-header">记忆库 ({{ libs.length }})</div>
+          <div class="card-header">{{ $t('dashboard.memoryLibs', { count: libs.length }) }}</div>
           <div v-if="libs.length">
             <div v-for="l in libs" :key="l.name" class="setting-row">
-              <div class="lbl"><div class="t">{{ l.name }} <span v-if="l.current" class="badge badge-blue">当前</span></div></div>
-              <div class="setting-ctl"><span class="dash-muted">{{ l.event_count ?? 0 }} 条</span></div>
+              <div class="lbl"><div class="t">{{ l.name }} <span v-if="l.current" class="badge badge-blue">{{ $t('dashboard.current') }}</span></div></div>
+              <div class="setting-ctl"><span class="dash-muted">{{ l.event_count ?? 0 }} {{ $t('dashboard.countSuffix') }}</span></div>
             </div>
           </div>
-          <div v-else class="dash-empty">暂无记忆库</div>
+          <div v-else class="dash-empty">{{ $t('dashboard.noMemoryLibs') }}</div>
         </div>
       </div>
 
       <!-- 模块状态 -->
       <div class="card dash-mt">
-        <div class="card-header">模块状态 ({{ modules.length }})</div>
+        <div class="card-header">{{ $t('dashboard.moduleStatus', { count: modules.length }) }}</div>
         <table class="data-table" v-if="modules.length > 0">
-          <thead><tr><th>模块</th><th>状态</th></tr></thead>
+          <thead><tr><th>{{ $t('dashboard.module') }}</th><th>{{ $t('common.status') }}</th></tr></thead>
           <tbody><tr v-for="m in modules" :key="m.name"><td><strong>{{ m.name }}</strong></td><td><span class="badge" :class="statusBadge(m.status)">{{ statusLabel(m.status) }}</span></td></tr></tbody>
         </table>
-        <div v-else class="dash-empty-lg">暂无模块数据</div>
+        <div v-else class="dash-empty-lg">{{ $t('dashboard.noModuleData') }}</div>
       </div>
 
       <!-- 最近会话（借鉴 DeterminFlow 会话表格） -->
       <div class="card dash-mt">
-        <div class="card-header">最近会话 ({{ sessions.length }})</div>
+        <div class="card-header">{{ $t('dashboard.recentSessions', { count: sessions.length }) }}</div>
         <div class="overflow-x-auto" v-if="recentSessions.length">
           <table class="data-table">
             <thead>
               <tr>
                 <th class="text-left">ID</th>
-                <th class="text-left">类型</th>
-                <th class="text-left">标题</th>
-                <th class="text-right">消息数</th>
-                <th class="text-right">更新时间</th>
+                <th class="text-left">{{ $t('common.type') }}</th>
+                <th class="text-left">{{ $t('dashboard.sessionTitle') }}</th>
+                <th class="text-right">{{ $t('dashboard.msgCount') }}</th>
+                <th class="text-right">{{ $t('dashboard.updatedAt') }}</th>
               </tr>
             </thead>
             <tbody>
@@ -240,13 +242,13 @@ function copyApiBody(s) {
             </tbody>
           </table>
         </div>
-        <div v-else class="dash-empty">暂无会话</div>
+        <div v-else class="dash-empty">{{ $t('dashboard.noSessions') }}</div>
       </div>
 
       <!-- 调用频率 + 主动搭话时间线（借鉴 DeterminFlow 双栏） -->
       <div class="dash-grid-2">
         <div class="card">
-          <div class="card-header">API 调用频率（当前页）</div>
+          <div class="card-header">{{ $t('dashboard.apiFreq') }}</div>
           <div v-if="topPaths.arr.length">
             <div v-for="t in topPaths.arr" :key="t.path" class="dash-freq-item">
               <div class="dash-freq-header">
@@ -258,12 +260,12 @@ function copyApiBody(s) {
               </div>
             </div>
           </div>
-          <div v-else class="dash-empty">暂无调用记录</div>
+          <div v-else class="dash-empty">{{ $t('dashboard.noCallRecords') }}</div>
         </div>
         <div class="card">
           <div class="card-header dash-card-header">
-            <span>主动搭话时间线</span>
-            <button class="btn btn-sm" @click="router.push('/outreach')">管理规则</button>
+            <span>{{ $t('dashboard.outreachTimeline') }}</span>
+            <button class="btn btn-sm" @click="router.push('/outreach')">{{ $t('dashboard.manageRules') }}</button>
           </div>
           <div v-if="proactiveLogs.length">
             <div v-for="(l, i) in proactiveLogs.slice(0, 8)" :key="l.created_at" class="dash-timeline-item">
@@ -271,46 +273,46 @@ function copyApiBody(s) {
               <span v-if="i < proactiveLogs.slice(0, 8).length - 1" class="dash-timeline-line"></span>
               <div class="dash-timeline-content">
                 <div class="dash-timeline-header">
-                  <span class="badge badge-blue dash-timeline-badge">{{ ({schedule:'定点',screen:'屏幕',idle:'空闲',time_window:'时段'})[l.reason] || l.reason }}</span>
+                  <span class="badge badge-blue dash-timeline-badge">{{ ({schedule: $t('dashboard.reasonSchedule'), screen: $t('dashboard.reasonScreen'), idle: $t('dashboard.reasonIdle'), time_window: $t('dashboard.reasonTimeWindow')})[l.reason] || l.reason }}</span>
                   <span class="dash-timeline-time">{{ (l.created_at||'').slice(5, 16) }}</span>
                 </div>
                 <div class="dash-timeline-text">{{ l.content }}</div>
               </div>
             </div>
           </div>
-          <div v-else class="dash-empty">暂无触发记录</div>
+          <div v-else class="dash-empty">{{ $t('dashboard.noTriggerRecords') }}</div>
         </div>
       </div>
 
       <!-- API 请求日志（持久化 + 筛选 + 分页 + 统计） -->
       <div class="card dash-mt">
         <div class="card-header dash-card-header-wrap">
-          <span>API 请求日志 ({{ apiReq.total }})</span>
+          <span>{{ $t('dashboard.apiLog', { count: apiReq.total }) }}</span>
           <div class="dash-filter-bar">
             <select v-model="apiReqFilter.method" @change="applyApiFilter" class="input w-90">
-              <option value="">全部方法</option><option value="POST">POST</option><option value="GET">GET</option>
+              <option value="">{{ $t('dashboard.allMethods') }}</option><option value="POST">POST</option><option value="GET">GET</option>
             </select>
             <select v-model="apiReqFilter.status" @change="applyApiFilter" class="input w-100">
-              <option value="">全部状态</option><option value="2">2xx</option><option value="3">3xx</option><option value="4">4xx</option><option value="5">5xx</option>
+              <option value="">{{ $t('dashboard.allStatuses') }}</option><option value="2">2xx</option><option value="3">3xx</option><option value="4">4xx</option><option value="5">5xx</option>
             </select>
             <select v-model="apiReqFilter.since_hours" @change="applyApiFilter" class="input w-100">
-              <option :value="0">全部时间</option><option :value="1">最近1小时</option><option :value="24">最近24小时</option><option :value="168">最近7天</option>
+              <option :value="0">{{ $t('dashboard.allTime') }}</option><option :value="1">{{ $t('dashboard.lastHour') }}</option><option :value="24">{{ $t('dashboard.last24h') }}</option><option :value="168">{{ $t('dashboard.last7d') }}</option>
             </select>
-            <input v-model="apiReqFilter.path" @keydown.enter="applyApiFilter" placeholder="路径筛选" class="input w-140" />
-            <button class="btn btn-sm" @click="applyApiFilter"><Icon name="search" :size="13" /> 筛选</button>
-            <button class="btn btn-sm" @click="applyApiFilter"><Icon name="refresh" :size="13" /> 刷新</button>
+            <input v-model="apiReqFilter.path" @keydown.enter="applyApiFilter" :placeholder="$t('dashboard.pathFilter')" class="input w-140" />
+            <button class="btn btn-sm" @click="applyApiFilter"><Icon name="search" :size="13" /> {{ $t('dashboard.filter') }}</button>
+            <button class="btn btn-sm" @click="applyApiFilter"><Icon name="refresh" :size="13" /> {{ $t('common.refresh') }}</button>
           </div>
         </div>
 
         <div v-if="apiReqStats" class="dash-api-stats">
-          <span>总计 <b>{{ apiReqStats.total }}</b></span>
-          <span>平均耗时 <b>{{ apiReqStats.avg_ms }}ms</b></span>
+          <span>{{ $t('dashboard.total') }} <b>{{ apiReqStats.total }}</b></span>
+          <span>{{ $t('dashboard.avgMs') }} <b>{{ apiReqStats.avg_ms }}ms</b></span>
           <span v-for="(v, k) in apiReqStats.by_method" :key="'m' + k">{{ k }}: <b>{{ v }}</b></span>
           <span v-for="(v, k) in apiReqStats.by_status" :key="'s' + k">{{ k }}xx: <b>{{ v }}</b></span>
         </div>
 
         <table class="data-table" v-if="apiReq.items.length">
-          <thead><tr><th>时间</th><th>方法</th><th>路径</th><th>状态</th><th>耗时</th><th></th></tr></thead>
+          <thead><tr><th>{{ $t('common.time') }}</th><th>{{ $t('dashboard.method') }}</th><th>{{ $t('dashboard.path') }}</th><th>{{ $t('common.status') }}</th><th>{{ $t('dashboard.costMs') }}</th><th></th></tr></thead>
           <tbody>
             <tr v-for="(r, i) in apiReq.items" :key="apiReqPage * API_PAGE + i">
               <td class="dash-api-time">{{ r.time }}</td>
@@ -319,12 +321,12 @@ function copyApiBody(s) {
               <td><span class="badge" :class="r.status < 400 ? 'badge-green' : 'badge-red'">{{ r.status }}</span></td>
               <td class="dash-api-ms">{{ r.ms != null ? r.ms + 'ms' : '-' }}</td>
               <td class="dash-api-action">
-                <button class="btn btn-sm" @click="openApiDetail(r)" :class="{ 'btn-primary': apiDetail === r }"><Icon name="search" :size="12" /> 详情</button>
+                <button class="btn btn-sm" @click="openApiDetail(r)" :class="{ 'btn-primary': apiDetail === r }"><Icon name="search" :size="12" /> {{ $t('common.details') }}</button>
               </td>
             </tr>
           </tbody>
         </table>
-        <div v-else class="dash-api-empty">暂无请求记录（发送 API 请求后会显示在这里）</div>
+        <div v-else class="dash-api-empty">{{ $t('dashboard.noRequestRecords') }}</div>
 
         <!-- 请求详情：参数 + 返回值 -->
         <div v-if="apiDetail" class="dash-detail">
@@ -336,31 +338,31 @@ function copyApiBody(s) {
               <span class="dash-detail-meta">{{ apiDetail.time }} · {{ apiDetail.ms != null ? apiDetail.ms + 'ms' : '-' }}</span>
             </div>
             <div class="dash-detail-actions">
-              <button class="btn btn-sm" @click="copyApiBody(apiDetail.request_body)"><Icon name="copy" :size="12" /> 复制请求</button>
-              <button class="btn btn-sm" @click="copyApiBody(apiDetail.response_body)"><Icon name="copy" :size="12" /> 复制返回</button>
-              <button class="btn btn-sm" @click="closeApiDetail()"><Icon name="x" :size="12" /> 关闭</button>
+              <button class="btn btn-sm" @click="copyApiBody(apiDetail.request_body)"><Icon name="copy" :size="12" /> {{ $t('dashboard.copyRequest') }}</button>
+              <button class="btn btn-sm" @click="copyApiBody(apiDetail.response_body)"><Icon name="copy" :size="12" /> {{ $t('dashboard.copyResponse') }}</button>
+              <button class="btn btn-sm" @click="closeApiDetail()"><Icon name="x" :size="12" /> {{ $t('common.close') }}</button>
             </div>
           </div>
           <div class="dash-detail-body">
             <div class="dash-detail-col">
-              <div class="dash-detail-label">请求参数</div>
+              <div class="dash-detail-label">{{ $t('dashboard.requestParams') }}</div>
               <pre class="diag-pre dash-detail-pre">{{ formatBody(apiDetail.request_body) }}</pre>
             </div>
             <div class="dash-detail-col">
-              <div class="dash-detail-label">返回值</div>
+              <div class="dash-detail-label">{{ $t('dashboard.responseValue') }}</div>
               <pre class="diag-pre dash-detail-pre">{{ formatBody(apiDetail.response_body) }}</pre>
             </div>
           </div>
         </div>
 
         <div class="dash-footer">
-          <span class="dash-footer-info">共 {{ apiReq.total }} 条</span>
-          <button class="btn btn-sm" :disabled="apiReqPage <= 0" @click="apiReqPrev">上一页</button>
-          <button class="btn btn-sm" :disabled="(apiReqPage + 1) * API_PAGE >= apiReq.total" @click="apiReqNext">下一页</button>
+          <span class="dash-footer-info">{{ $t('dashboard.totalCount', { count: apiReq.total }) }}</span>
+          <button class="btn btn-sm" :disabled="apiReqPage <= 0" @click="apiReqPrev">{{ $t('dashboard.prevPage') }}</button>
+          <button class="btn btn-sm" :disabled="(apiReqPage + 1) * API_PAGE >= apiReq.total" @click="apiReqNext">{{ $t('dashboard.nextPage') }}</button>
         </div>
       </div>
     </div>
-    <div class="page-body dash-loading" v-else>加载中...</div>
+    <div class="page-body dash-loading" v-else>{{ $t('app.loading') }}</div>
   </div>
 </template>
 

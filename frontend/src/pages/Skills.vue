@@ -3,8 +3,10 @@ import { ref, onMounted, computed } from 'vue'
 import { endpoints } from '@/api.js'
 import { useToastStore } from '@/stores/toast.js'
 import { useConfirm } from '@/composables/useDialog.js'
+import { useI18n } from 'vue-i18n'
 import Icon from '@/components/Icon.vue'
 
+const { t } = useI18n()
 const toast = useToastStore()
 const confirm = useConfirm()
 const props = defineProps({ compact: { type: Boolean, default: false } })
@@ -53,9 +55,9 @@ async function saveForced() {
     const d = await r.json()
     if (d.success) {
       forcedSkill.value = d?.data?.forced_skill || ''
-      toast.show('已强制所有对话使用技能「' + (d?.data?.skill?.name || forcedSel.value) + '」，下次对话立即生效', 'success')
-    } else toast.show('设置失败: ' + (d.error?.message || ''), 'error')
-  } catch (e) { toast.show('设置失败', 'error') }
+      toast.show(t('skills.forcedToast', { name: d?.data?.skill?.name || forcedSel.value }), 'success')
+    } else toast.show(t('skills.setFailed') + ': ' + (d.error?.message || ''), 'error')
+  } catch (e) { toast.show(t('skills.setFailed'), 'error') }
   finally { forcedSaving.value = false }
 }
 
@@ -71,9 +73,9 @@ async function clearForced() {
     if (d.success) {
       forcedSkill.value = ''
       forcedSel.value = ''
-      toast.show('已解除强制技能', 'success')
-    } else toast.show('解除失败: ' + (d.error?.message || ''), 'error')
-  } catch (e) { toast.show('解除失败', 'error') }
+      toast.show(t('skills.forcedCleared'), 'success')
+    } else toast.show(t('skills.clearFailed') + ': ' + (d.error?.message || ''), 'error')
+  } catch (e) { toast.show(t('skills.clearFailed'), 'error') }
   finally { forcedSaving.value = false }
 }
 
@@ -118,9 +120,9 @@ async function saveRoleSkills() {
       body: JSON.stringify({ skills: roleSkills.value }),
     })
     const d = await r.json()
-    if (d.success) toast.show('角色技能白名单已保存', 'success')
-    else toast.show('保存失败: ' + (d.error?.message || ''), 'error')
-  } catch (e) { toast.show('保存失败', 'error') }
+    if (d.success) toast.show(t('skills.roleSkillsSaved'), 'success')
+    else toast.show(t('common.saveFailed') + ': ' + (d.error?.message || ''), 'error')
+  } catch (e) { toast.show(t('common.saveFailed'), 'error') }
 }
 
 function openNew() {
@@ -154,8 +156,8 @@ async function submit() {
     keywords: parseList(form.value.keywords),
   }
   let trg = null, tr = null
-  try { trg = form.value.trigger ? JSON.parse(form.value.trigger) : null } catch { toast.show('触发规则 JSON 无效', 'error'); return }
-  try { tr = form.value.tool_rules ? JSON.parse(form.value.tool_rules) : null } catch { toast.show('工具权限 JSON 无效', 'error'); return }
+  try { trg = form.value.trigger ? JSON.parse(form.value.trigger) : null } catch { toast.show(t('skills.invalidTriggerJson'), 'error'); return }
+  try { tr = form.value.tool_rules ? JSON.parse(form.value.tool_rules) : null } catch { toast.show(t('skills.invalidToolRulesJson'), 'error'); return }
   body.trigger = trg
   body.tool_rules = tr
   saving.value = editing.value || 'new'
@@ -166,9 +168,9 @@ async function submit() {
       body: JSON.stringify(editing.value ? body : { id: form.value.id, ...body }),
     })
     const d = await r.json()
-    if (d.success) { toast.show(editing.value ? '技能已更新' : '技能已创建', 'success'); showForm.value = false; await loadData() }
-    else toast.show('失败: ' + (d.error?.message || ''), 'error')
-  } catch (e) { toast.show('失败', 'error') }
+    if (d.success) { toast.show(editing.value ? t('skills.updated') : t('skills.created'), 'success'); showForm.value = false; await loadData() }
+    else toast.show(t('skills.failedPrefix') + (d.error?.message || ''), 'error')
+  } catch (e) { toast.show(t('common.failed'), 'error') }
   finally { saving.value = '' }
 }
 
@@ -182,26 +184,26 @@ async function toggleEnabled(s) {
     })
     const d = await r.json()
     if (d.success) s.enabled = next
-    else toast.show('失败: ' + (d.error?.message || ''), 'error')
-  } catch (e) { toast.show('失败', 'error') }
+    else toast.show(t('skills.failedPrefix') + (d.error?.message || ''), 'error')
+  } catch (e) { toast.show(t('common.failed'), 'error') }
 }
 
 async function removeSkill(s) {
-  if (!(await confirm('确定删除技能「' + s.name + '」？'))) return
+  if (!(await confirm(t('skills.confirmDelete', { name: s.name })))) return
   try {
     const r = await fetch('/api/management/skills/' + encodeURIComponent(s.id), { method: 'DELETE' })
     const d = await r.json()
-    if (d.success) { toast.show('技能已删除', 'success'); await loadData() }
-    else toast.show('删除失败: ' + (d.error?.message || ''), 'error')
-  } catch (e) { toast.show('删除失败', 'error') }
+    if (d.success) { toast.show(t('skills.deleted'), 'success'); await loadData() }
+    else toast.show(t('skills.deleteFailed') + ': ' + (d.error?.message || ''), 'error')
+  } catch (e) { toast.show(t('skills.deleteFailed'), 'error') }
 }
 
 async function reloadSkills() {
   try {
     const r = await fetch('/api/management/skills/reload', { method: 'POST' })
     const d = await r.json()
-    if (d.success) { toast.show('已重载 ' + d.data.count + ' 个技能', 'success'); await loadData() }
-  } catch (e) { toast.show('重载失败', 'error') }
+    if (d.success) { toast.show(t('skills.reloaded', { count: d.data.count }), 'success'); await loadData() }
+  } catch (e) { toast.show(t('skills.reloadFailed'), 'error') }
 }
 
 onMounted(loadData)
@@ -210,35 +212,35 @@ onMounted(loadData)
 <template>
   <div>
     <div class="page-header" v-if="!compact">
-      <h2>技能管理</h2>
+      <h2>{{ $t('skills.title') }}</h2>
       <div class="btn-group">
-        <button class="btn btn-sm" @click="loadData"><Icon name="refresh" :size="14" /> 刷新</button>
-        <button class="btn btn-sm" @click="reloadSkills"><Icon name="refresh" :size="14" /> 重载</button>
-        <button class="btn btn-sm btn-primary" @click="openNew"><Icon name="plus" :size="14" /> 新建技能</button>
+        <button class="btn btn-sm" @click="loadData"><Icon name="refresh" :size="14" /> {{ $t('common.refresh') }}</button>
+        <button class="btn btn-sm" @click="reloadSkills"><Icon name="refresh" :size="14" /> {{ $t('skills.reload') }}</button>
+        <button class="btn btn-sm btn-primary" @click="openNew"><Icon name="plus" :size="14" /> {{ $t('skills.newSkill') }}</button>
       </div>
     </div>
     <div class="page-body" v-show="!loading">
       <!-- 全局强制技能：所有对话必须使用该技能（注入提示词，不可切换/停用） -->
       <div class="card" :style="{ border: forcedSkill ? '1px solid #d29922' : '', marginBottom: '12px' }">
         <div class="card-header card-header-wrap">
-          <span class="gap-sm">🔒 全局强制技能 <span class="text-xs-muted">（所有对话必须使用，注入提示词，模型不可切换/停用）</span></span>
-          <span v-if="forcedSkill" class="forced-status">当前强制：<b>{{ forcedName }}</b>（{{ forcedSkill }}）</span>
+          <span class="gap-sm">🔒 {{ $t('skills.forcedTitle') }} <span class="text-xs-muted">{{ $t('skills.forcedSubtitle') }}</span></span>
+          <span v-if="forcedSkill" class="forced-status">{{ $t('skills.forcedCurrent', { name: forcedName, id: forcedSkill }) }}</span>
         </div>
         <div class="filter-bar">
           <select v-model="forcedSel" class="input min-w-220 text-sm">
-            <option value="">选择要强制使用的技能…</option>
+            <option value="">{{ $t('skills.forcedPlaceholder') }}</option>
             <option v-for="s in skills.filter(x => x.enabled)" :key="s.id" :value="s.id">{{ s.name }}（{{ s.id }}）</option>
           </select>
           <button class="btn btn-sm btn-primary" :disabled="!forcedSel || forcedSaving || forcedSel === forcedSkill" @click="saveForced">
-            {{ forcedSaving ? '保存中…' : (forcedSel === forcedSkill ? '已强制' : '设为强制') }}
+            {{ forcedSaving ? $t('common.saving') : (forcedSel === forcedSkill ? $t('skills.forcedApplied') : $t('skills.setForced')) }}
           </button>
-          <button v-if="forcedSkill" class="btn btn-sm" :disabled="forcedSaving" @click="clearForced">解除强制</button>
+          <button v-if="forcedSkill" class="btn btn-sm" :disabled="forcedSaving" @click="clearForced">{{ $t('skills.clearForced') }}</button>
         </div>
       </div>
       <div class="detail-grid">
         <!-- 技能列表 -->
         <div class="card">
-          <div class="card-header">技能列表（{{ skills.length }}）</div>
+          <div class="card-header">{{ $t('skills.list') }}（{{ skills.length }}）</div>
           <div v-if="skills.length" class="scroll-list">
             <div
               v-for="s in filtered"
@@ -250,10 +252,10 @@ onMounted(loadData)
               <div class="item-header">
                 <div class="item-id-group">
                   <span class="skill-id">{{ s.id }}</span>
-                  <span v-if="s.metadata?.type === 'builtin'" class="badge badge-blue text-xs">内置</span>
-                  <span v-if="!s.enabled" class="badge badge-disabled">已禁用</span>
+                  <span v-if="s.metadata?.type === 'builtin'" class="badge badge-blue text-xs">{{ $t('skills.builtin') }}</span>
+                  <span v-if="!s.enabled" class="badge badge-disabled">{{ $t('skills.disabled') }}</span>
                 </div>
-                <label class="toggle-switch" @click.stop title="启用/禁用">
+                <label class="toggle-switch" @click.stop :title="$t('skills.toggleHint')">
                   <input type="checkbox" :checked="s.enabled" @change="toggleEnabled(s)" />
                   <span class="toggle-slider"></span>
                 </label>
@@ -262,27 +264,27 @@ onMounted(loadData)
               <div class="skill-desc">{{ s.description || '' }}</div>
             </div>
           </div>
-          <div v-else class="empty-state">暂无技能</div>
+          <div v-else class="empty-state">{{ $t('skills.noSkills') }}</div>
         </div>
 
         <!-- 详情/编辑 -->
         <div>
           <div class="card" v-if="showForm">
             <div class="card-header card-header-between">
-              <span>{{ editing ? '编辑技能：' + editing : '新建技能' }}</span>
-              <button class="btn btn-sm" @click="showForm = false"><Icon name="x" :size="13" /> 关闭</button>
+              <span>{{ editing ? $t('skills.editTitle', { id: editing }) : $t('skills.newSkill') }}</span>
+              <button class="btn btn-sm" @click="showForm = false"><Icon name="x" :size="13" /> {{ $t('common.close') }}</button>
             </div>
             <div class="form-grid">
-              <input v-model="form.id" class="input" placeholder="id（小写/数字/下划线，仅新建）" :disabled="!!editing" />
-              <input v-model="form.name" class="input" placeholder="名称（如：代码审查专家）" />
+              <input v-model="form.id" class="input" :placeholder="$t('skills.idPlaceholder')" :disabled="!!editing" />
+              <input v-model="form.name" class="input" :placeholder="$t('skills.namePlaceholder')" />
             </div>
-            <textarea v-model="form.description" rows="8" class="input form-textarea" placeholder="技能说明书正文（模型阅读后知道怎么做）"></textarea>
-            <input v-model="form.keywords" class="input form-input-sm" placeholder="关键词（逗号分隔，用于自动匹配）" />
+            <textarea v-model="form.description" rows="8" class="input form-textarea" :placeholder="$t('skills.descPlaceholder')"></textarea>
+            <input v-model="form.keywords" class="input form-input-sm" :placeholder="$t('skills.keywordsPlaceholder')" />
             <input v-model="form.trigger" class="input form-input-mono" placeholder='触发规则 JSON：{"include":["审查"],"exclude":["架构"],"min_score":1}' />
             <input v-model="form.tool_rules" class="input form-input-mono" placeholder='工具权限 JSON：{"allow_tools":["read_file"],"restrict_to":true}' />
             <div class="form-actions">
               <button class="btn btn-sm btn-primary" :disabled="saving === (editing || 'new')" @click="submit">
-                {{ saving === (editing || 'new') ? '保存中...' : '保存' }}
+                {{ saving === (editing || 'new') ? $t('common.saving') : $t('common.save') }}
               </button>
             </div>
           </div>
@@ -291,29 +293,29 @@ onMounted(loadData)
             <div class="card-header card-header-between">
               <span>{{ skillOf(selected).name }}（{{ selected }}）</span>
               <div class="btn-group">
-                <button class="btn btn-sm" @click="openEdit(selected)"><Icon name="pencil" :size="12" /> 编辑</button>
-                <button class="btn btn-sm danger" @click="removeSkill(skillOf(selected))"><Icon name="trash" :size="12" /> 删除</button>
+                <button class="btn btn-sm" @click="openEdit(selected)"><Icon name="pencil" :size="12" /> {{ $t('common.edit') }}</button>
+                <button class="btn btn-sm danger" @click="removeSkill(skillOf(selected))"><Icon name="trash" :size="12" /> {{ $t('common.delete') }}</button>
               </div>
             </div>
             <div class="detail-section">
               <div class="skill-meta">
-                来源：{{ skillOf(selected).source }} · 触发：{{ triggerText(skillOf(selected)) }} · 启用：{{ skillOf(selected).enabled ? '是' : '否' }}
+                {{ $t('skills.skillMeta', { source: skillOf(selected).source, trigger: triggerText(skillOf(selected)), enabled: skillOf(selected).enabled ? $t('common.yes') : $t('common.no') }) }}
               </div>
               <pre class="code-block" :style="{ width: '100%', fontFamily: 'monospace', border: selected ? '1px solid var(--border)' : '' }">{{ skillOf(selected).description }}</pre>
             </div>
           </div>
-          <div class="card empty-state-lg" v-else>选择左侧技能查看详情，或点击「新建技能」</div>
+          <div class="card empty-state-lg" v-else>{{ $t('skills.selectHint') }}</div>
 
           <!-- per-agent 技能可见性 -->
           <div class="card section-card">
             <div class="card-header card-header-wrap">
-              <span>角色技能白名单（角色可见的技能）</span>
+              <span>{{ $t('skills.roleWhitelist') }}</span>
               <div class="btn-group">
                 <select v-model="roleSel" class="input w-160 text-xs" @change="loadRoleSkills">
-                  <option value="">选择角色</option>
+                  <option value="">{{ $t('skills.selectRole') }}</option>
                   <option v-for="a in agents" :key="a.role" :value="a.role">{{ a.name }}（{{ a.role }}）</option>
                 </select>
-                <button class="btn btn-sm btn-primary" @click="saveRoleSkills">保存白名单</button>
+                <button class="btn btn-sm btn-primary" @click="saveRoleSkills">{{ $t('skills.saveWhitelist') }}</button>
               </div>
             </div>
             <div v-if="roleSel" class="role-grid">
@@ -323,10 +325,10 @@ onMounted(loadData)
               </label>
               <label class="role-label">
                 <input type="checkbox" :checked="roleSkills.includes('*')" @change="roleSkills = roleSkills.includes('*') ? [] : ['*']" />
-                <span class="fw-600">全部 (*)</span>
+                <span class="fw-600">{{ $t('skills.allSkills') }}</span>
               </label>
             </div>
-            <div v-else class="empty-state-sm">选择角色后配置其可见技能（空 = 全部可见）</div>
+            <div v-else class="empty-state-sm">{{ $t('skills.roleEmpty') }}</div>
           </div>
         </div>
       </div>
