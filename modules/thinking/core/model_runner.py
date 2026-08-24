@@ -877,7 +877,7 @@ class ModelRunner:
                             else:
                                 # 所有委托已完成（或无委托），唤醒
                                 # 如果有多个委托的结果，生成汇总摘要
-                                if len(self._thinker._pending_delegations) > 1:
+                                if self._thinker is not None and len(self._thinker._pending_delegations) > 1:
                                     final_summary = self._collect_final_delegation_summary()
                                     if final_summary:
                                         return final_summary

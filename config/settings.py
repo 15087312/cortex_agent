@@ -4,7 +4,9 @@
 from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import field_validator
-from typing import Optional, List
+from typing import Callable, List, Optional, TypeVar
+
+_T = TypeVar("_T")
 import os
 import sys
 import logging
@@ -704,7 +706,7 @@ class Settings(BaseSettings):
             f"personas.yaml 存在但无法读取（可能并发写半写或 YAML 损坏）: {path}"
         ) from last_err
 
-    def _modify_personas_yaml(self, mutator) -> dict:
+    def _modify_personas_yaml(self, mutator: Callable[[dict], _T]) -> _T:
         """原子 read-modify-write: 锁覆盖整个周期，防止并发覆盖
 
         Raises:

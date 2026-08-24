@@ -405,7 +405,7 @@ class StreamThinkingSystem:
 
     def _collect_process_snapshot(self, session_id: str) -> dict:
         """收集本轮运行的模型状态快照（含每模型上下文占用），供前端重建面板。"""
-        snapshot = {"large_model": None, "active_supervisors": [], "active_experts": [],
+        snapshot: dict[str, Any] = {"large_model": None, "active_supervisors": [], "active_experts": [],
                     "context_tokens": 0, "context_window_size": 128000}
         try:
             from modules.thinking.core.model_runner import _runner_managers, _runner_managers_lock
