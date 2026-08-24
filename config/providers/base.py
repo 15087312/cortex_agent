@@ -2,7 +2,31 @@
 Provider 基类 — 定义模型 API 适配器接口
 """
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 from typing import Dict, Any, List, Optional
+
+
+@dataclass
+class ProviderSpec:
+    """供应商目录条目（opencode 风格）
+
+    描述一个供应商如何接入：默认端点、协议格式、默认模型、认证方式等。
+    用户只需按 name 配置，即可自动获得 base_url / 格式 / 默认模型。
+    """
+
+    name: str
+    base_url: str = ""
+    api_format: str = "openai"
+    default_model: str = ""
+    env_key: str = ""
+    auth_header: str = "Authorization"  # 认证头名（Provider 内可覆盖）
+    auth_prefix: str = "Bearer "  # 认证值前缀
+    openai_compatible: bool = True  # 是否支持 OpenAI /chat/completions 格式
+    supports_tools: bool = True
+    supports_streaming: bool = True
+    supports_reasoning: bool = False  # 是否支持推理内容（reasoning_content）
+    doc: str = ""
+    aliases: List[str] = field(default_factory=list)
 
 
 class ProviderBase(ABC):
@@ -13,6 +37,9 @@ class ProviderBase(ABC):
     - 请求体组装
     - 响应解析
     """
+
+    #: 适配器对应的协议格式名（如 openai / anthropic / gemini / azure / bedrock / cohere / ollama / dashscope）
+    format_name: str = "openai"
 
     def __init__(self, api_key: str, base_url: str, model_name: str):
         self.api_key = api_key

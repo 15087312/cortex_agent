@@ -44,8 +44,11 @@ class Settings(BaseSettings):
 
         # ── 主模型配置（大/中/小三层，持久化到 ~/.cortex/settings.json）──
         "LARGE_MODEL_API_KEY", "LARGE_MODEL_API_URL", "LARGE_MODEL_NAME", "LARGE_MODEL_API_FORMAT",
+        "LARGE_MODEL_PROVIDER",
         "MEDIUM_MODEL_API_KEY", "MEDIUM_MODEL_API_URL", "MEDIUM_MODEL_NAME",
+        "MEDIUM_MODEL_PROVIDER",
         "SMALL_MODEL_API_KEY", "SMALL_MODEL_API_URL", "SMALL_MODEL_NAME",
+        "SMALL_MODEL_PROVIDER",
         "PERSONA_PROMPTS",# 自定义人设提示词（JSON: {role: prompt}）
         "SYSTEM_PROMPT_OVERRIDES",  # 完整系统提示词覆盖（JSON: {role: prompt}，高级设置）
         "OUTPUT_TTS_ENABLED",    # TTS 语音输出总开关
@@ -103,16 +106,21 @@ class Settings(BaseSettings):
     LARGE_MODEL_API_URL: str = ""
     LARGE_MODEL_NAME: str = ""
     LARGE_MODEL_API_FORMAT: str = ""  # "dashscope" / "openai" / 留空自动检测
+    # 供应商名简化配置（如 "deepseek"/"gemini"/"anthropic"）。设置后自动补齐
+    # URL / 格式 / 默认模型 / 密钥环境变量，见 config/providers/catalog.py
+    LARGE_MODEL_PROVIDER: str = ""
 
     # 中模型（必须在 .env 或 ~/.cortex/settings.json 中配置）
     MEDIUM_MODEL_API_KEY: str = ""
     MEDIUM_MODEL_API_URL: str = ""
     MEDIUM_MODEL_NAME: str = ""
+    MEDIUM_MODEL_PROVIDER: str = ""
 
     # 小模型（必须在 .env 或 ~/.cortex/settings.json 中配置）
     SMALL_MODEL_API_KEY: str = ""
     SMALL_MODEL_API_URL: str = ""
     SMALL_MODEL_NAME: str = ""
+    SMALL_MODEL_PROVIDER: str = ""
 
     # ── 各模型输入上下文长度（token 数）──
     # 以设置模型 API 时的「输入上下文长度」为标准（0 = 使用全局 CONTEXT_WINDOW_SIZE）
@@ -134,6 +142,52 @@ class Settings(BaseSettings):
         if model_key == "expert":
             return self.SMALL_MODEL_CONTEXT_LENGTH or self.CONTEXT_WINDOW_SIZE or 128000
         return self.CONTEXT_WINDOW_SIZE or 128000
+
+    def resolve_model_tier(self, tier: str = "large") -> dict:
+        """解析某层模型的实际接入配置（最简配置：只填 *_MODEL_PROVIDER 即可）
+
+        优先级（同层）: *_MODEL_PROVIDER 供应商目录 > 显式 API_URL/FORMAT。
+        返回 dict: {provider, base_url, api_format, model, api_key}。
+        未知供应商名回退显式配置。
+        """
+        field_map = {
+            "large": ("LARGE_MODEL_PROVIDER", "LARGE_MODEL_API_URL",
+                      "LARGE_MODEL_API_KEY", "LARGE_MODEL_API_FORMAT", "LARGE_MODEL_NAME"),
+            "supervisor": ("MEDIUM_MODEL_PROVIDER", "MEDIUM_MODEL_API_URL",
+                           "MEDIUM_MODEL_API_KEY", "", "MEDIUM_MODEL_NAME"),
+            "expert": ("SMALL_MODEL_PROVIDER", "SMALL_MODEL_API_URL",
+                       "SMALL_MODEL_API_KEY", "", "SMALL_MODEL_NAME"),
+        }.get(tier)
+        if not field_map:
+            return {"provider": "", "base_url": "", "api_key": "", "api_format": "", "model": ""}
+
+        p_f, u_f, k_f, fmt_f, m_f = field_map
+        provider_name = getattr(self, p_f) or ""
+        url = getattr(self, u_f) or ""
+        key = getattr(self, k_f) or ""
+        fmt = getattr(self, fmt_f) or "" if fmt_f else ""
+        model = getattr(self, m_f) or ""
+
+        if provider_name:
+            from config.providers.catalog import get_spec
+            spec = get_spec(provider_name)
+            if spec is not None:
+                if not key and spec.env_key:
+                    key = os.getenv(spec.env_key, "")
+                return {
+                    "provider": spec.name,
+                    "base_url": url or spec.base_url,
+                    "api_format": fmt or spec.api_format,
+                    "model": model or spec.default_model,
+                    "api_key": key,
+                }
+        return {
+            "provider": provider_name,
+            "base_url": url,
+            "api_format": fmt,
+            "model": model,
+            "api_key": key,
+        }
 
 
 

@@ -37,16 +37,24 @@ class SmallModelClient(BaseModelClient):
     ):
         key = api_key or settings.SMALL_MODEL_API_KEY or settings.LARGE_MODEL_API_KEY
         url = api_url or settings.SMALL_MODEL_API_URL or settings.LARGE_MODEL_API_URL
+        tier_cfg = settings.resolve_model_tier("expert") if settings.SMALL_MODEL_PROVIDER else None
+        if tier_cfg:
+            key = api_key or tier_cfg.get("api_key") or key
+            url = api_url or tier_cfg.get("base_url") or url
         super().__init__(key, url, timeout)
         self.model_name = model_name or settings.SMALL_MODEL_NAME
+        if tier_cfg:
+            self.model_name = tier_cfg.get("model") or self.model_name
         self.max_tokens = max_tokens
         self.temperature = temperature
         self.logger = setup_logger("small_model_client")
         self.supports_native_tools = True
         self._api_format = self.detect_api_format(self.api_url)
+        if tier_cfg and tier_cfg.get("api_format"):
+            self._api_format = tier_cfg["api_format"]
         # 接线 config.providers 格式层（headers/请求体/URL 归一化统一由 Provider 负责）
         from config.providers.registry import get_provider
-        self._provider = get_provider(self.model_name, key, url, self._api_format)
+        self._provider = get_provider(self.model_name, key, url, self._api_format, settings.SMALL_MODEL_PROVIDER)
         self._chat_url = self._provider.chat_url()
 
     @classmethod

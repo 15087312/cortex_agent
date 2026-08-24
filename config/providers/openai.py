@@ -9,8 +9,11 @@ from config.providers.base import ProviderBase
 class OpenAIProvider(ProviderBase):
     """OpenAI 兼容 API
 
-    适用: DeepSeek, OpenRouter, Groq, 百川, Mistral 等
+    适用: DeepSeek, OpenRouter, Groq, Mistral, 百川, 智谱, Kimi,
+    SiliconFlow, Fireworks, Together, xAI, NVIDIA NIM, Cerebras 等
     """
+
+    format_name = "openai"
 
     def build_headers(self) -> Dict[str, str]:
         return {

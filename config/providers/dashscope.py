@@ -9,6 +9,8 @@ from config.providers.base import ProviderBase
 class DashScopeProvider(ProviderBase):
     """阿里云 DashScope API"""
 
+    format_name = "dashscope"
+
     def build_headers(self) -> Dict[str, str]:
         return {
             "Authorization": f"Bearer {self.api_key}",

@@ -29,14 +29,15 @@ class LargeModelClient(BaseModelClient):
         timeout: int = 120,
         api_format: str = "",
     ):
-        key = api_key or settings.LARGE_MODEL_API_KEY
-        url = api_url or settings.LARGE_MODEL_API_URL
+        tier_cfg = settings.resolve_model_tier("large") if settings.LARGE_MODEL_PROVIDER else None
+        key = api_key or (tier_cfg or {}).get("api_key") or settings.LARGE_MODEL_API_KEY
+        url = api_url or (tier_cfg or {}).get("base_url") or settings.LARGE_MODEL_API_URL
         super().__init__(key, url, timeout or settings.MODEL_TIMEOUT)
         self.max_tokens = 4096
         self.temperature = 0.7
         self.reasoning_effort = ""
-        self.model_name = settings.LARGE_MODEL_NAME
-        self._api_format = api_format or settings.LARGE_MODEL_API_FORMAT
+        self.model_name = (tier_cfg or {}).get("model") or settings.LARGE_MODEL_NAME
+        self._api_format = api_format or (tier_cfg or {}).get("api_format") or settings.LARGE_MODEL_API_FORMAT
 
         # 自动检测 API 格式
         if not self._api_format:
@@ -45,7 +46,7 @@ class LargeModelClient(BaseModelClient):
         # 接线 config.providers 格式层（headers/请求体/URL 归一化统一由 Provider 负责；
         # 响应/流式解析保留客户端特有能力，见 config/providers/registry.py）
         from config.providers.registry import get_provider
-        self._provider = get_provider(self.model_name, key, url, self._api_format)
+        self._provider = get_provider(self.model_name, key, url, self._api_format, settings.LARGE_MODEL_PROVIDER)
         # chat_url() 做 /v1、/chat/completions、/messages 归一化，消除"配 /v1 直接 404"
         self._chat_url = self._provider.chat_url()
         logger.info(

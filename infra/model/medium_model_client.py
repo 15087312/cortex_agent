@@ -32,16 +32,25 @@ class MediumModelClient(BaseModelClient):
             timeout: 超时时间（秒）- 默认60秒支持深度推理
         """
         key = api_key or settings.MEDIUM_MODEL_API_KEY or settings.LARGE_MODEL_API_KEY
+        tier_cfg = settings.resolve_model_tier("supervisor") if settings.MEDIUM_MODEL_PROVIDER else None
+        if tier_cfg:
+            key = api_key or tier_cfg.get("api_key") or key
         url = api_url or settings.MEDIUM_MODEL_API_URL
+        if tier_cfg:
+            url = api_url or tier_cfg.get("base_url") or url
         super().__init__(key, url, timeout)
         self.max_tokens = 1024
         self.temperature = 0.1
         self.model_name = settings.MEDIUM_MODEL_NAME
+        if tier_cfg:
+            self.model_name = tier_cfg.get("model") or self.model_name
         self.supports_native_tools = True
         self._api_format = self.detect_api_format(self.api_url)
+        if tier_cfg and tier_cfg.get("api_format"):
+            self._api_format = tier_cfg["api_format"]
         # 接线 config.providers 格式层（headers/请求体/URL 归一化统一由 Provider 负责）
         from config.providers.registry import get_provider
-        self._provider = get_provider(self.model_name, key, url, self._api_format)
+        self._provider = get_provider(self.model_name, key, url, self._api_format, settings.MEDIUM_MODEL_PROVIDER)
         self._chat_url = self._provider.chat_url()
 
     @classmethod

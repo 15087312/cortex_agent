@@ -9,6 +9,8 @@ from config.providers.base import ProviderBase
 class AnthropicProvider(ProviderBase):
     """Anthropic Messages API"""
 
+    format_name = "anthropic"
+
     def build_headers(self) -> Dict[str, str]:
         return {
             "x-api-key": self.api_key,

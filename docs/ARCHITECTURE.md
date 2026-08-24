@@ -315,11 +315,61 @@ Pydantic Settings (config/settings.py)
 | 文件 | 类 | 职责 |
 |------|-----|------|
 | `config/settings.py` | `Settings` | 全局配置（模型API、功能开关、TTL、阈值） |
-| `config/providers/` | ProviderRegistry | 模型 API 格式统一适配（openai/anthropic/dashscope） |
+| `config/providers/` | ProviderRegistry | 模型 API 格式统一适配（openai/anthropic/dashscope/gemini/azure/bedrock/cohere/ollama） |
+| `config/providers/catalog.py` | ProviderSpec | 35+ 供应商目录：名称 → 默认端点/格式/模型/密钥（opencode 风格最简配置） |
 | `config/prompts/` | PromptComposer | 提示词组装（roles.yaml / base.yaml） |
 | `config/values_store.py` | ValueSystem | 价值观规则存储（add/remove/cleanup） |
 
-### 5.3 运行时配置修改
+### 5.3 模型 API 适配层（Provider Adapter Layer）
+
+`config/providers/` 是独立的「供应商 → 协议」适配层，位于模型客户端（`infra/model/*`）与
+外部 LLM API 之间，职责边界清晰：
+
+```
+infra/model/*_model_client.py   ← 只管 HTTP 时序/重试/序列化 ChatMessage
+        │  委托
+        ▼
+config/providers/registry.py    ← 解析：供应商名 > 显式格式 > URL 推断 > 默认 OpenAI
+        │  实例化
+        ▼
+config/providers/{openai,anthropic,dashscope,gemini,azure,bedrock,cohere,ollama}.py
+        │  每个适配器负责：
+        │    构建请求头（认证方式）
+        │    组装请求体（协议格式转换）
+        │    解析响应（还原为标准 {content, tool_calls, finish_reason, usage}）
+        │    解析 SSE 流
+config/providers/catalog.py      ← 35+ 供应商声明式目录（ProviderSpec）
+```
+
+**最简配置**：用户只需填写一个供应商名，其余自动补齐（`config/settings.py` 的
+`resolve_model_tier()`）：
+
+```dotenv
+LARGE_MODEL_PROVIDER=deepseek    # 自动用 api.deepseek.com/v1 + deepseek-chat + DEEPSEEK_API_KEY
+# 或
+LARGE_MODEL_PROVIDER=gemini       # 自动用 generativelanguage.../v1beta + gemini-2.0-flash
+# 或
+LARGE_MODEL_PROVIDER=anthropic     # 自动用 api.anthropic.com/v1 + claude-3-5-sonnet-...
+```
+
+解析优先级：`*_MODEL_PROVIDER`（查目录）> `*_MODEL_API_FORMAT`（显式格式）>
+URL 推断（`base_url` 含 `dashscope`/`anthropic`/`generativelanguage` 等）>
+默认 OpenAI 兼容。显式设置的 `*_MODEL_API_URL` / `*_MODEL_NAME` 始终覆盖目录默认值。
+
+协议矩阵：
+
+| 协议 | 适配器 | 认证方式 | 适用供应商 |
+|------|--------|----------|-----------|
+| openai | OpenAIProvider | `Authorization: Bearer` | OpenAI/DeepSeek/Groq/OpenRouter/Mistral/Kimi/GLM/MiniMax/SiliconFlow/… 30+ |
+| anthropic | AnthropicProvider | `x-api-key` | Anthropic Claude |
+| gemini | GeminiProvider | `x-goog-api-key` | Google Gemini/Vertex |
+| azure | AzureProvider | `api-key` + api-version | Azure OpenAI |
+| bedrock | BedrockProvider | AWS SigV4 | AWS Bedrock |
+| cohere | CohereProvider | `Authorization: Bearer` | Cohere |
+| ollama | OllamaProvider | 无 | 本地 Ollama |
+| dashscope | DashScopeProvider | `Authorization: Bearer` | 阿里百炼/ModelScope |
+
+### 5.4 运行时配置修改
 
 `PUT /config/{key}` 端点支持运行时修改，但有以下限制：
 - 仅白名单内的 key 可修改（`_MODIFIABLE_CONFIG_KEYS`）
