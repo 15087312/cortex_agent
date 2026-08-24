@@ -1,5 +1,7 @@
 # Cortex Agent
 
+**Language / 语言**: [简体中文](./README.md) | [English](./README.en.md)
+
 > **多模型协作 Agent 系统** —— 模型编排 · 连续思考 · 认知黑板 · 记忆与因果推理 · 安全审计 · 多端交互
 
 Cortex Agent 是一套可编排的多模型 Agent 工具，而不是一个简单的聊天机器人：内置事件驱动认知黑板、结构化记忆与因果推理、分级安全门控、85+ 工具与 MCP 扩展，并提供 **Web UI / Qt 桌面客户端 / 桌宠 / 终端** 四种交互方式，支持 Agent 多角色协作与纯对话（chatonly）两种路线。
@@ -377,6 +379,8 @@ PyInstaller 一次产出两个可执行文件（`pyinstaller pyinstaller.spec --
 | [docs/ERRORS_AND_FIXES.md](docs/ERRORS_AND_FIXES.md) | 错误原因与修复记录（§1-§27，含假测试/安全/覆盖修复经验） |
 | [frontend/ARCHITECTURE.md](frontend/ARCHITECTURE.md) | 前端架构 |
 | [frontend/README.md](frontend/README.md) | 前端使用/开发 |
+
+> 🌐 所有文档均提供英文版，文件名后缀 `.en.md`（如 [docs/ARCHITECTURE.en.md](docs/ARCHITECTURE.en.md)）；每份文档顶部可切换语言。
 
 ---
 

@@ -1,5 +1,7 @@
 # 待确认的高危行为变更
 
+**Language / 语言**: [简体中文](./BUGS_REQUIRING_CONFIRMATION.md) | [English](./BUGS_REQUIRING_CONFIRMATION.en.md)
+
 > 补测过程中发现的**可能影响生产行为**的问题。修复前需人工确认。
 > 非高危/非预期的普通错误 bug 已在测试补全过程中直接修复（见 docs/ERRORS_AND_FIXES.md）。
 

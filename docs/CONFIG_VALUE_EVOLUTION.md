@@ -1,5 +1,7 @@
 # 价值观自动进化系统 — 配置参考
 
+**Language / 语言**: [简体中文](./CONFIG_VALUE_EVOLUTION.md) | [English](./CONFIG_VALUE_EVOLUTION.en.md)
+
 > **已过时说明（2026）**：本文档描述的 `VALUE_ALIGNMENT_HANDLER_ENABLED`/`ValueAlignmentHandler`/
 > `RuleCompliancePerception`/`SecurityExpert` 等组件**已不存在**，`COMPANION_MODE` 已移除。
 > 当前价值观体系为：

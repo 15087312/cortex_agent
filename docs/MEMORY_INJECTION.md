@@ -1,5 +1,7 @@
 # 记忆系统与注入链路 — 深度梳理
 
+**Language / 语言**: [简体中文](./MEMORY_INJECTION.md) | [English](./MEMORY_INJECTION.en.md)
+
 > 本文完整追踪"事件记忆 / 会话记忆从创建到注入 LLM 提示词"的全链路，
 > 供排查记忆相关问题时快速定位。
 

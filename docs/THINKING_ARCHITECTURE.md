@@ -1,5 +1,7 @@
 # 思考模块内部架构
 
+**Language / 语言**: [简体中文](./THINKING_ARCHITECTURE.md) | [English](./THINKING_ARCHITECTURE.en.md)
+
 ## 核心执行模型：双层 ReAct 循环
 
 ### 概念

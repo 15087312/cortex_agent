@@ -1,5 +1,7 @@
 # 内存泄漏测试与检测体系
 
+**Language / 语言**: [简体中文](./MEMORY_LEAK_TESTING.md) | [English](./MEMORY_LEAK_TESTING.en.md)
+
 > 本文档记录项目的内存泄漏**检测机制**、**泄漏测试套件**、**运行方法与配置**。
 > 相关 bug 修复见 `docs/ERRORS_AND_FIXES.md` §30/32/35/36/37。
 

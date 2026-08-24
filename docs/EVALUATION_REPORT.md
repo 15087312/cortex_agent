@@ -1,5 +1,7 @@
 # 高级功能使用评估报告
 
+**Language / 语言**: [简体中文](./EVALUATION_REPORT.md) | [English](./EVALUATION_REPORT.en.md)
+
 > **历史快照说明**：本报告评估日期 2026-08-09。其中 **Attention 系统（modules/attention/）已删除**，
 > 评估测试目录 `tests/evaluation/` 已不存在，测试数字过时（当前 137 个测试文件 / 1700+ 项）。
 > 涉及 attention 的章节（5D 向量、紧急场景 0.8+、区分度优化）均已失效，保留仅作历史参考；

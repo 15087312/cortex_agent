@@ -1,5 +1,7 @@
 # 错误原因与修复记录
 
+**Language / 语言**: [简体中文](./ERRORS_AND_FIXES.md) | [English](./ERRORS_AND_FIXES.en.md)
+
 > 本文件记录开发过程中遇到的报错及其根因、修复方式，便于排查同类问题。
 
 ---
