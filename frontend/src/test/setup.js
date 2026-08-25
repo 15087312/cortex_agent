@@ -3,20 +3,10 @@
 
 import { vi, afterEach, beforeEach } from 'vitest'
 import { config } from '@vue/test-utils'
-import { createI18n } from 'vue-i18n'
-import { locales } from '@/i18n/index.js'
+import { useI18n } from '@/i18n/init.js'
 
-// 全局注入 i18n：所有组件 mount 测试无需逐一手动挂载即可使用 $t / t()
-config.global.plugins.push(
-  createI18n({
-    legacy: false,
-    locale: 'zh',
-    fallbackLocale: 'en',
-    messages: Object.fromEntries(
-      Object.entries(locales).map(([code, l]) => [code, l.messages]),
-    ),
-  }),
-)
+// 全局注入 i18n：复用运行时同一单例（init.js），保证 locale store 的切换在测试中也生效
+config.global.plugins.push(useI18n())
 
 // 全局 fetch stub：默认返回空 JSON（各测试按需覆盖）
 const defaultFetch = vi.fn(async () => ({
@@ -51,4 +41,6 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
+  // 重置 i18n 语言为默认 zh，避免测试间相互污染
+  try { useI18n().global.locale.value = 'zh' } catch {}
 })

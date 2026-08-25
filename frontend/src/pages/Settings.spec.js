@@ -854,3 +854,18 @@ describe('Settings.vue', () => {
     expect(w.vm.showDiag).toBe(false)
     vi.restoreAllMocks()
   })
+
+  it('通用设置：切换界面语言后渲染随之变化', async () => {
+    mockApi()
+    const w = await mountSettings()
+    // 切到通用设置 tab
+    await w.findAll('.settings-tab').find((t) => t.text() === '通用设置').trigger('click')
+    expect(w.find('.settings-lang-select').exists()).toBe(true)
+    // 默认中文
+    expect(w.find('.settings-row-label').text()).toContain('界面语言')
+    // 切换到英文
+    await w.find('.settings-lang-select').setValue('en')
+    await new Promise((r) => setTimeout(r, 10))
+    expect(w.find('.settings-row-label').text()).toContain('Interface Language')
+    w.unmount()
+  })

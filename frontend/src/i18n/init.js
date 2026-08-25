@@ -24,5 +24,5 @@ export function install(app) {
 }
 
 export function setLocale(code) {
-  useI18n().value = code
+  useI18n().global.locale.value = code
 }

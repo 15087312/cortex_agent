@@ -7,8 +7,10 @@ import { useConfirm, usePrompt } from '@/composables/useDialog.js'
 import Icon from '@/components/Icon.vue'
 import OutreachView from '@/pages/Outreach.vue'
 import { useI18n } from 'vue-i18n'
+import { useLocaleStore } from '@/stores/locale.js'
 
 const { t } = useI18n()
+const localeStore = useLocaleStore()
 const toast = useToastStore()
 const prompt = usePrompt()
 const confirm = useConfirm()
@@ -1006,6 +1008,15 @@ onMounted(async () => {
       <!-- ═══════════════ 通用设置 ═══════════════ -->
       <div v-if="activeTab === 'general'" class="settings-section">
         <div class="settings-group">
+          <label class="settings-row">
+            <span class="settings-row-label">{{ $t('settings.general.language') }}</span>
+            <span class="flex-1-muted">{{ $t('settings.general.languageDesc') }}</span>
+            <select class="input settings-lang-select" :value="localeStore.locale" @change="localeStore.setLocale($event.target.value)">
+              <option v-for="(lang, code) in $i18n.availableLocales" :key="code" :value="code">
+                {{ code === 'zh' ? '简体中文' : 'English' }}
+              </option>
+            </select>
+          </label>
           <label class="settings-row" @click.prevent="launchAtStartup = !launchAtStartup">
             <span class="settings-row-label">{{ $t('settings.general.launchAtStartup') }}</span>
             <span class="flex-1-muted">{{ $t('settings.general.launchAtStartupDesc') }}</span>

@@ -2,13 +2,11 @@
 import { ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useThemeStore } from '@/stores/theme.js'
-import { useLocaleStore } from '@/stores/locale.js'
 import Icon from '@/components/Icon.vue'
 
 const router = useRouter()
 const route = useRoute()
 const theme = useThemeStore()
-const locale = useLocaleStore()
 const appVersion = __APP_VERSION__
 
 const navSections = [
@@ -86,9 +84,6 @@ function navTo(item) {
     </div>
     <div class="sidebar-footer">
       <span class="version">v{{ appVersion }}</span>
-      <button class="theme-toggle" @click="locale.toggle()" :title="$t('common.language')" :aria-label="$t('common.language')">
-        {{ locale.locale === 'zh' ? 'EN' : '中文' }}
-      </button>
       <button class="theme-toggle" @click="theme.toggle()" :title="$t('nav.toggleTheme')">
         <Icon :name="theme.isDark ? 'sun' : 'moon'" :size="16" />
       </button>

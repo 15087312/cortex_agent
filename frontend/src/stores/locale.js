@@ -16,7 +16,7 @@ export const useLocaleStore = defineStore('locale', () => {
   }
 
   function apply() {
-    try { useI18n().value = locale.value } catch {}
+    try { useI18n().global.locale.value = locale.value } catch {}
     try { document.documentElement.setAttribute('lang', locale.value) } catch {}
   }
 

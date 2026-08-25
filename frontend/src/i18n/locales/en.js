@@ -598,6 +598,8 @@ export default {
       key: 'Config Key',
     },
     general: {
+      language: 'Interface Language',
+      languageDesc: 'Switch the interface display language',
       launchAtStartup: 'Launch at Startup',
       launchAtStartupDesc: 'Auto-start backend + desktop window after login (macOS LaunchAgent)',
       preventSleep: 'Prevent Sleep',

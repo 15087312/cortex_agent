@@ -595,6 +595,8 @@ export default {
       key: '配置键',
     },
     general: {
+      language: '界面语言',
+      languageDesc: '切换界面显示语言',
       launchAtStartup: '开机启动',
       launchAtStartupDesc: '登录后自动启动后端 + 桌面窗口（macOS LaunchAgent）',
       preventSleep: '防休眠',
