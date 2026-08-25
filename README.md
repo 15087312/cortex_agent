@@ -351,12 +351,11 @@ python scripts/release.py patch --tag --push    # 2.0.0 -> 2.0.1，提交 + 打 
 
 ### 打包产物（`dist/CortexAgent/`）
 
-PyInstaller 一次产出两个可执行文件（`pyinstaller pyinstaller.spec --clean --noconfirm`）：
+PyInstaller 产出**单个启动文件**（`pyinstaller pyinstaller.spec --clean --noconfirm`）：
 
 | 可执行文件 | 作用 |
 |-----------|------|
-| `Cortex_Client(.exe)` | 桌面客户端（PyQt6 + QtWebEngine），双击启动 |
-| `AI_Backend(.exe)`    | 后端 API（uvicorn），由客户端自动拉起（同目录） |
+| `Cortex_Client(.exe)` | 桌面客户端（PyQt6 + QtWebEngine），双击启动；启动时在后台线程内置运行后端 API，无需额外文件 |
 
 客户端内置 Vue 构建产物 `frontend/dist`（发布前需 `cd frontend && npm run build`）。
 

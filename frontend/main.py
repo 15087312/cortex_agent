@@ -360,10 +360,26 @@ def _port_in_use(port=8765):
         return s.connect_ex(("127.0.0.1", port)) == 0
 
 
-def _ensure_backend(port=8080):
-    """确保后端 API 已运行，未运行则拉起；端口被占时自动回退到空闲端口。
+def _start_backend_thread(port):
+    """在后台线程中启动 uvicorn 后端（单 exe 方案：不再拉起独立 AI_Backend.exe）。
 
-    - 打包版（PyInstaller）：启动同目录的 AI_Backend(.exe)
+    打包版里 api.main 等模块已由 PyInstaller 收集进同一 PYZ，可直接以字符串导入。
+    端口选择 + 落盘逻辑与后端启动保持一致。
+    """
+    import uvicorn
+    from utils.port_discovery import pick_free_port, save_backend_port
+
+    _port = pick_free_port(port)
+    save_backend_port(_port)
+    if _port != port:
+        print(f"[Cortex] 端口 {port} 被占用，已自动改用端口 {_port}", flush=True)
+    uvicorn.run("api.main:app", host="127.0.0.1", port=_port, log_level="warning")
+
+
+def _ensure_backend(port=8080):
+    """确保后端 API 已运行，未运行则启动；端口被占时自动回退到空闲端口。
+
+    - 打包版（PyInstaller 单 exe）：在本进程后台线程启动 uvicorn
     - 开发版：以当前解释器起 uvicorn 子进程（cwd=项目根，保证 api.main 可导入）
     """
     try:
@@ -378,19 +394,16 @@ def _ensure_backend(port=8080):
         pass
 
     try:
-        import subprocess
         env = dict(os.environ)
         env["SERVER_PORT"] = str(port)
         if getattr(sys, "frozen", False):
-            exe = os.path.join(
-                os.path.dirname(sys.executable),
-                "AI_Backend.exe" if sys.platform == "win32" else "AI_Backend",
+            _backend_thread = threading.Thread(
+                target=_start_backend_thread, args=(port,), daemon=True
             )
-            if os.path.isfile(exe):
-                subprocess.Popen([exe], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                return
-            print("[..] 未找到同目录 AI_Backend，跳过后端启动", flush=True)
+            _backend_thread.start()
+            print("[..] 已在后台线程启动后端 API", flush=True)
         else:
+            import subprocess
             root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             cmd = [sys.executable, "-m", "uvicorn", "api.main:app",
                    "--host", "127.0.0.1", "--port", str(port), "--log-level", "warning"]
