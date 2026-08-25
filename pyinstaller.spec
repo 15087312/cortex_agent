@@ -133,3 +133,70 @@ coll = COLLECT(
     upx_exclude=[],
     name='CortexAgent',
 )
+
+
+# ── 打包后修复：QtWebEngine macOS framework ──────────────────────
+# PyInstaller 收集 PyQt6 的 QtWebEngineCore.framework 时，Helper 可执行程序与资源
+# 未按 macOS framework 的标准布局放置，导致运行时
+#   (1) 找不到 QtWebEngineProcess / qtwebengine 资源（黑色界面/白屏）
+#   (2) QtWebEngineProcess 的 @rpath 无法解析到 QtWebEngineCore.framework（dyld 崩溃）
+# 这里在打包完成后自动修复布局，并把修复固化，避免每次手动改产物。
+def _post_fix_qtwebengine(outdir):
+    fw_rel = os.path.join("_internal", "PyQt6", "Qt6", "lib", "QtWebEngineCore.framework")
+    fw = os.path.join(outdir, fw_rel)
+    if not os.path.isdir(fw):
+        print(f"[spec] QtWebEngineCore.framework 未找到，跳过 WebEngine 修复: {fw}")
+        return
+
+    src_fw = None
+    try:
+        import PyQt6.Qt6  # noqa: F401
+        from PyInstaller.utils.hooks.qt import pyqt6_library_info
+        loc = pyqt6_library_info.location["LibrariesPath"]
+        cand = os.path.join(loc, "QtWebEngineCore.framework")
+        if os.path.isdir(cand):
+            src_fw = cand
+    except Exception:
+        pass
+    if not src_fw:
+        print("[spec] 未定位源 QtWebEngineCore.framework，跳过资源复制", flush=True)
+
+    # 1) 确保 Versions/A 下有 Helpers 与 Resources（symlink Helpers/Resources 指向这里）
+    import shutil
+    va = os.path.join(fw, "Versions", "A")
+    for sub in ("Helpers", "Resources"):
+        dst = os.path.join(va, sub)
+        src = os.path.join(src_fw, sub) if src_fw else None
+        if not os.path.isdir(dst) and src and os.path.isdir(src):
+            shutil.copytree(src, dst)
+            print(f"[spec] 已复制 QtWebEngineCore {sub} -> {dst}")
+        elif os.path.isdir(dst) and src and os.path.isdir(src):
+            # 已存在：补全缺失资源（framework 收集可能只留了部分文件）
+            for name in os.listdir(src):
+                s = os.path.join(src, name)
+                d = os.path.join(dst, name)
+                if os.path.isdir(s):
+                    if not os.path.isdir(d):
+                        shutil.copytree(s, d)
+                elif not os.path.exists(d):
+                    shutil.copy2(s, d)
+
+    # 2) 给 QtWebEngineProcess 追加 rpath，使 @rpath/QtWebEngineCore.framework 可解析
+    proc = os.path.join(
+        fw, "Versions", "A", "Helpers", "QtWebEngineProcess.app", "Contents", "MacOS", "QtWebEngineProcess"
+    )
+    if os.path.isfile(proc):
+        need = "@loader_path/../../../../../../.."  # MacOS -> Qt6/lib
+        import subprocess
+        rpaths = subprocess.check_output(
+            ["otool", "-l", proc], text=True, errors="replace"
+        )
+        if need not in rpaths:
+            subprocess.call(["install_name_tool", "-add_rpath", need, proc])
+            print(f"[spec] 已给 QtWebEngineProcess 添加 rpath {need}")
+        else:
+            print("[spec] QtWebEngineProcess rpath 已存在")
+
+
+_post_fix_qtwebengine(os.path.join(ROOT, "dist", "CortexAgent"))
+print("[spec] 打包后修复完成")
