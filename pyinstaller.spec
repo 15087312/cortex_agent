@@ -112,8 +112,10 @@ pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 exe_client = EXE(
     pyz,
     a.scripts,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
     [],
-    exclude_binaries=True,
     name='cortex',
     debug=False,
     bootloader_ignore_signals=False,
@@ -125,19 +127,26 @@ exe_client = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=os.path.join(ROOT, 'frontend/public/icon.ico') if os.path.exists(
-        os.path.join(ROOT, 'frontend/public/icon.ico')) else None,
+    icon=os.path.join(ROOT, 'frontend/public/cortex.icns') if os.path.exists(
+        os.path.join(ROOT, 'frontend/public/cortex.icns')) else None,
 )
 
-coll = COLLECT(
+# ── macOS 应用包（.app，可拖入 /Applications，双击如正常 App 启动，无终端）──
+app = BUNDLE(
     exe_client,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
-    strip=False,
-    upx=True,
-    upx_exclude=[],
-    name='cortex',
+    name='cortex.app',
+    icon=os.path.join(ROOT, 'frontend/public/cortex.icns') if os.path.exists(
+        os.path.join(ROOT, 'frontend/public/cortex.icns')) else None,
+    bundle_identifier='com.cortex.app',
+    info_plist={
+        'CFBundleName': 'cortex',
+        'CFBundleDisplayName': 'cortex',
+        'CFBundleShortVersionString': '0.0.1',
+        'CFBundleVersion': '0.0.1',
+        'NSHighResolutionCapable': True,
+        'LSMinimumSystemVersion': '11.0',
+        'NSPrincipalClass': 'NSApplication',
+    },
 )
 
 
@@ -148,10 +157,16 @@ coll = COLLECT(
 #   (2) QtWebEngineProcess 的 @rpath 无法解析到 QtWebEngineCore.framework（dyld 崩溃）
 # 这里在打包完成后自动修复布局，并把修复固化，避免每次手动改产物。
 def _post_fix_qtwebengine(outdir):
-    fw_rel = os.path.join("_internal", "PyQt6", "Qt6", "lib", "QtWebEngineCore.framework")
-    fw = os.path.join(outdir, fw_rel)
-    if not os.path.isdir(fw):
-        print(f"[spec] QtWebEngineCore.framework 未找到，跳过 WebEngine 修复: {fw}")
+    fw = None
+    # 兼容两种布局：COLLECT(onedir: _internal) 与 BUNDLE(.app: Contents/Frameworks)
+    for rel in ("_internal/PyQt6/Qt6/lib/QtWebEngineCore.framework",
+                "Contents/Frameworks/PyQt6/Qt6/lib/QtWebEngineCore.framework"):
+        cand = os.path.join(outdir, rel)
+        if os.path.isdir(cand):
+            fw = cand
+            break
+    if fw is None:
+        print(f"[spec] QtWebEngineCore.framework 未找到，跳过 WebEngine 修复: {outdir}")
         return
 
     src_fw = None
@@ -215,5 +230,9 @@ def _post_fix_qtwebengine(outdir):
             print("[spec] 已重新签名 QtWebEngineCore.framework")
 
 
-_post_fix_qtwebengine(os.path.join(ROOT, "dist", "cortex"))
+# 尝试修复 .app（BUNDLE）或 onedir（COLLECT）产物
+for _out in (os.path.join(ROOT, "dist", "cortex.app"), os.path.join(ROOT, "dist", "cortex")):
+    if os.path.isdir(_out):
+        _post_fix_qtwebengine(_out)
+        break
 print("[spec] 打包后修复完成")
