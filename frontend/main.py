@@ -503,18 +503,13 @@ def main():
     app.setQuitOnLastWindowClosed(False)
 
     # ── 单实例锁：同一时间只允许一个实例，避免重复启动多个窗口 ──
-    # 用 QLockFile 检测是否已有实例在运行；有则提示并退出（不新开窗口）。
+    # 用 QLockFile 检测是否已有实例在运行；有则静默退出（不新开窗口、不弹窗）。
     import tempfile
     _lock_path = os.path.join(tempfile.gettempdir(), "cortex_single_instance.lock")
     _instance_lock = QLockFile(_lock_path)
     _instance_lock.setStaleLockTime(0)
     if not _instance_lock.tryLock(100):
         print("[..] cortex 已在运行，本次启动退出", flush=True)
-        # 已有实例：提示用户（通过已运行实例的消息而非新窗口），直接退出
-        try:
-            QMessageBox.information(None, "cortex", "cortex 已在运行")
-        except Exception:
-            pass
         sys.exit(0)
 
     profile = QWebEngineProfile.defaultProfile()
@@ -559,4 +554,15 @@ def main():
 
 
 if __name__ == "__main__":
+    # PyInstaller + multiprocessing：spawn 子进程（resource_tracker/worker）也会进入
+    # __main__。必须只在真正的主进程创建 GUI，否则会重复创建窗口/弹"已在运行"。
+    try:
+        import multiprocessing
+        if multiprocessing.current_process().name != "MainProcess":
+            # 这是被 multiprocessing spawn 出的子进程：不创建 GUI，直接退出。
+            # （后端 API 由主进程内的后台线程承载，无需子进程。）
+            print("[..] 检测到非主进程，跳过 GUI 启动", flush=True)
+            sys.exit(0)
+    except Exception:
+        pass
     main()
