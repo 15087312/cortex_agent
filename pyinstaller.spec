@@ -71,6 +71,12 @@ datas += [
     (os.path.join(ROOT, ".env.example"), ".env.example"),
 ]
 
+# ── Embedding 模型（打入 exe，避免冷启动联网下载；见 main.py _setup_runtime_data）──
+_embed_models = os.path.join(ROOT, "data", "memory", "embeddings", "models")
+if os.path.isdir(_embed_models):
+    datas.append((_embed_models, "data/memory/embeddings/models"))
+    print(f"[spec] 打包 Embedding 模型: {_embed_models}")
+
 # ── Windows VC 运行库 ─────────────────────────────────────
 if sys.platform == "win32":
     for dll in ("msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll"):
@@ -196,6 +202,17 @@ def _post_fix_qtwebengine(outdir):
             print(f"[spec] 已给 QtWebEngineProcess 添加 rpath {need}")
         else:
             print("[spec] QtWebEngineProcess rpath 已存在")
+
+    # 3) 重新签名（关键！）：install_name_tool 会破坏代码签名，未重新签名时
+    #    macOS 以 "SIGKILL (Code Signature Invalid)" 杀掉渲染进程 → 黑屏。
+    #    必须对 QtWebEngineProcess.app 重新 adhoc 签名，并连同 framework 一起。
+    proc_app = os.path.join(fw, "Versions", "A", "Helpers", "QtWebEngineProcess.app")
+    if os.path.isdir(proc_app):
+        subprocess.call(["codesign", "--force", "--deep", "--sign", "-", proc_app])
+        print("[spec] 已重新签名 QtWebEngineProcess.app")
+        if os.path.isdir(fw):
+            subprocess.call(["codesign", "--force", "--deep", "--sign", "-", fw])
+            print("[spec] 已重新签名 QtWebEngineCore.framework")
 
 
 _post_fix_qtwebengine(os.path.join(ROOT, "dist", "CortexAgent"))

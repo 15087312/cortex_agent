@@ -3,6 +3,7 @@ import urllib.request
 import urllib.error
 import os
 import json
+import sys
 import socketserver
 
 # 防残留: 若启动本服务的 cortex 父进程被强杀，自动退出避免孤儿进程
@@ -13,7 +14,12 @@ except Exception:
     pass
 
 BACKEND_URL = "http://localhost:8080"
-FRONTEND_DIR = os.path.dirname(os.path.abspath(__file__))
+# 打包版（PyInstaller）：依赖解压在 sys._MEIPASS，frontend/dist 位于 _MEIPASS/frontend/dist；
+# 开发版：server.py 就在 frontend/ 目录下。
+if getattr(sys, "frozen", False):
+    FRONTEND_DIR = os.path.join(getattr(sys, "_MEIPASS", ""), "frontend")
+else:
+    FRONTEND_DIR = os.path.dirname(os.path.abspath(__file__))
 DIST_DIR = os.path.join(FRONTEND_DIR, "dist")
 
 
@@ -189,6 +195,10 @@ socketserver.TCPServer.allow_reuse_address = True
 def _ensure_dist():
     """dist/index.html 缺失时自动执行 npm run build（fresh clone 场景）。"""
     if os.path.isfile(os.path.join(DIST_DIR, "index.html")):
+        return
+    # 打包版（PyInstaller）一定内置 dist；缺失说明打包异常，不应尝试 npm build（环境无 npm 脚本）
+    if getattr(sys, "frozen", False):
+        print("[ERR] 打包版缺失 frontend/dist/index.html，前端将无法渲染")
         return
     import subprocess
     print("[..] 前端未构建 (dist 缺失)，正在执行 npm run build ...")

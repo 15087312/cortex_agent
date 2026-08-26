@@ -19,6 +19,18 @@ try:
 except Exception:
     pass
 
+# ── 打包版（PyInstaller）运行时数据路径 ──
+# 在 settings 单例实例化前设置环境变量，确保：
+#  - embedding 模型从内置 _MEIPASS/data 加载（不联网下载）
+#  - EMBEDDING_LOCAL_FILES_ONLY=True（避免网络依赖）
+if getattr(sys, "frozen", False):
+    _meipass = getattr(sys, "_MEIPASS", "") or os.path.dirname(sys.executable)
+    _embed_dir = os.path.join(_meipass, "data", "memory", "embeddings", "models")
+    if os.path.isdir(_embed_dir):
+        os.environ.setdefault("EMBEDDING_CACHE_FOLDER", _embed_dir)
+        os.environ.setdefault("EMBEDDING_LOCAL_FILES_ONLY", "True")
+        print(f"[..] Embedding 模型内置: {_embed_dir}")
+
 from PyQt6.QtWidgets import QApplication, QMainWindow, QMenu, QMessageBox, QSystemTrayIcon
 from PyQt6.QtCore import QUrl, QSettings, Qt, QRect
 from PyQt6.QtGui import (
@@ -412,6 +424,40 @@ def _ensure_backend(port=8080):
         print(f"[..] 后端启动失败: {e}", flush=True)
 
 
+def _setup_qtwebengine_paths():
+    """PyInstaller 打包版显式指定 QtWebEngine 的 process/资源/语言路径。
+
+    PyInstaller 收集 PyQt6 的 QtWebEngineCore.framework 后，Qt 默认路径推断
+    找不到 QtWebEngineProcess（黑屏/空白窗口）。macOS framework 布局与
+    Windows/Linux 不同，需按平台分别处理。
+    """
+    if not getattr(sys, "frozen", False):
+        return
+    base = getattr(sys, "_MEIPASS", "") or os.path.dirname(sys.executable)
+    if sys.platform == "darwin":
+        fw = os.path.join(base, "PyQt6", "Qt6", "lib", "QtWebEngineCore.framework")
+        proc = os.path.join(fw, "Versions", "A", "Helpers",
+                            "QtWebEngineProcess.app", "Contents", "MacOS", "QtWebEngineProcess")
+        res = os.path.join(fw, "Versions", "A", "Resources")
+        loc = os.path.join(res, "qtwebengine_locales")
+    else:
+        # Windows/Linux：PyQt6 常规布局
+        proc = os.path.join(base, "PyQt6", "Qt6", "bin",
+                            "QtWebEngineProcess.exe" if sys.platform == "win32" else "QtWebEngineProcess")
+        res = os.path.join(base, "PyQt6", "Qt6", "resources")
+        loc = os.path.join(res, "translations", "qtwebengine_locales")
+
+    if os.path.isfile(proc):
+        os.environ["QTWEBENGINEPROCESS_PATH"] = proc
+        print(f"[..] QTWEBENGINEPROCESS_PATH={proc}")
+    if os.path.isdir(res):
+        os.environ["QTWEBENGINE_RESOURCES_PATH"] = res
+        print(f"[..] QTWEBENGINE_RESOURCES_PATH={res}")
+    if os.path.isdir(loc):
+        os.environ["QTWEBENGINE_LOCALES_PATH"] = loc
+        print(f"[..] QTWEBENGINE_LOCALES_PATH={loc}")
+
+
 def main():
     global _server_thread
 
@@ -421,6 +467,9 @@ def main():
         traceback.print_exception(tp, val, tb)
         print("[DBG] 未捕获异常导致退出", flush=True)
     sys.excepthook = _excepthook
+
+    # 打包版：预先设置 QtWebEngine 路径（必须在 QApplication/WebEngine 初始化前）
+    _setup_qtwebengine_paths()
 
     # 确保后端 API (8080) 已运行（Qt 页面 /api 请求都代理到它）
     print("[..] 检查后端 API 服务 (8080)...")
