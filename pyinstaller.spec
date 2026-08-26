@@ -112,10 +112,8 @@ pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 exe_client = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
     [],
+    exclude_binaries=True,
     name='cortex',
     debug=False,
     bootloader_ignore_signals=False,
@@ -132,8 +130,12 @@ exe_client = EXE(
 )
 
 # ── macOS 应用包（.app，可拖入 /Applications，双击如正常 App 启动，无终端）──
+# onedir 模式：exe 依赖由 BUNDLE 收集到 Contents/Frameworks
 app = BUNDLE(
     exe_client,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
     name='cortex.app',
     icon=os.path.join(ROOT, 'frontend/public/cortex.icns') if os.path.exists(
         os.path.join(ROOT, 'frontend/public/cortex.icns')) else None,
