@@ -461,6 +461,13 @@ def _setup_qtwebengine_paths():
 def main():
     global _server_thread
 
+    # 诊断：多进程启动定位（谁在重复执行 main）
+    try:
+        import multiprocessing as _mp
+        print(f"[MAIN] pid={os.getpid()} ppid={os.getppid()} proc={_mp.current_process().name} argv={sys.argv}", flush=True)
+    except Exception as _e:
+        print(f"[MAIN] pid={os.getpid()} ppid={os.getppid()} (mp err {_e})", flush=True)
+
     # 未捕获异常打印（定位"自动退出"根因）
     def _excepthook(tp, val, tb):
         import traceback
@@ -554,15 +561,32 @@ def main():
 
 
 if __name__ == "__main__":
-    # PyInstaller + multiprocessing：spawn 子进程（resource_tracker/worker）也会进入
-    # __main__。必须只在真正的主进程创建 GUI，否则会重复创建窗口/弹"已在运行"。
+    # PyInstaller + multiprocessing：resource_tracker/semaphore_tracker 子进程
+    # （argv 形如 "-B -S -I -c from multiprocessing.resource_tracker import main;main(n)"）
+    # 也会进入 __main__ 且 current_process().name 是 "MainProcess"。
+    # PyInstaller 的 rthook 因 _args_from_interpreter_flags 不匹配而未拦截它们，
+    # 导致它们重复执行 main() 创建 QApplication/窗口。这里兜底识别并让它们
+    # 执行各自的 multiprocessing 辅助工作（exec 命令）后退出，不创建 GUI。
     try:
-        import multiprocessing
-        if multiprocessing.current_process().name != "MainProcess":
-            # 这是被 multiprocessing spawn 出的子进程：不创建 GUI，直接退出。
-            # （后端 API 由主进程内的后台线程承载，无需子进程。）
-            print("[..] 检测到非主进程，跳过 GUI 启动", flush=True)
+        _mp_child_cmd = ""
+        if "-c" in sys.argv:
+            _idx = sys.argv.index("-c")
+            if len(sys.argv) > _idx + 1:
+                _cmd = sys.argv[_idx + 1]
+                if any(k in _cmd for k in (
+                    "multiprocessing.resource_tracker",
+                    "multiprocessing.semaphore_tracker",
+                    "multiprocessing.forkserver",
+                    "multiprocessing.spawn",
+                )):
+                    _mp_child_cmd = _cmd
+        if _mp_child_cmd:
+            # 转交真正的 multiprocessing 辅助工作，不创建 GUI
+            exec(compile(_mp_child_cmd, "<multiprocessing>", "exec"))
             sys.exit(0)
-    except Exception:
-        pass
+    except SystemExit:
+        raise
+    except Exception as _e:
+        print(f"[..] multiprocessing 子进程转交失败: {_e}", flush=True)
+        sys.exit(0)
     main()
