@@ -33,7 +33,7 @@ describe('Sidebar', () => {
   it('渲染导航项与版本', async () => {
     const w = mount(Sidebar, { global: { plugins: [createTestPinia(), router] } })
     await router.isReady()
-    expect(w.text()).toContain('Cortex Agent')
+    expect(w.text()).toContain('cortex')
     expect(w.text()).toContain('对话')
     expect(w.text()).toContain('设置')
     // 版本号从根目录 VERSION 读取（与 vite define __APP_VERSION__ 同源），发版不破测试

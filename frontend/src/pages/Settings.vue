@@ -1101,7 +1101,7 @@ onMounted(async () => {
       <div v-if="activeTab === 'about'" class="settings-section">
         <div class="settings-about">
           <img class="settings-logo-lg" src="/favicon.jpg" alt="Logo" />
-          <div class="settings-about-title">Cortex Agent</div>
+          <div class="settings-about-title">cortex</div>
           <div class="settings-about-version">v{{ appVersion }}</div>
           <p class="settings-about-desc">{{ $t('settings.about.desc') }}</p>
         </div>

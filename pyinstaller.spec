@@ -1,10 +1,10 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""Cortex Agent 打包配置 — 单 exe（桌面客户端 + 内置后端）
+"""cortex 打包配置 — 单 exe（桌面客户端 + 内置后端）
 
 桌面客户端（PyQt6 + QtWebEngine）启动时在后台线程内置启动后端 API
 （见 frontend/main.py _start_backend_thread），不再生成独立的 AI_Backend。
 
-  - Cortex_Client(.exe)   唯一启动文件
+  - cortex(.exe)   唯一启动文件
     * 启动时后台线程运行 uvicorn（api.main:app）
     * 内置前端 server.py（8765）与 Vue 构建产物 frontend/dist
 
@@ -114,7 +114,7 @@ exe_client = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='Cortex_Client',
+    name='cortex',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -137,7 +137,7 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name='CortexAgent',
+    name='cortex',
 )
 
 
@@ -215,5 +215,5 @@ def _post_fix_qtwebengine(outdir):
             print("[spec] 已重新签名 QtWebEngineCore.framework")
 
 
-_post_fix_qtwebengine(os.path.join(ROOT, "dist", "CortexAgent"))
+_post_fix_qtwebengine(os.path.join(ROOT, "dist", "cortex"))
 print("[spec] 打包后修复完成")

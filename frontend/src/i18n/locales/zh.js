@@ -1,7 +1,7 @@
 export default {
   // ── 全局/公共 ──
   app: {
-    name: 'Cortex Agent',
+    name: 'cortex',
     loading: '加载中...',
   },
   common: {
@@ -606,7 +606,7 @@ export default {
       shortcut: '启动快捷键',
       shortcutDesc: '点击快捷键可编辑 — 按下后聚焦对话输入框（实时生效，无需重启）',
       dock: '保留在 Dock 栏',
-      dockHint: '右键程序坞中 Cortex Agent 图标 > 选项 > 在程序坞中保留',
+      dockHint: '右键程序坞中 cortex 图标 > 选项 > 在程序坞中保留',
       storage: '文件存储位置',
       currentVersion: '当前版本：v{version}',
       goDownload: '点击前往下载',

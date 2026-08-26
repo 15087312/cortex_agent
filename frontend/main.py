@@ -1,4 +1,4 @@
-"""Cortex Agent — macOS 桌面客户端
+"""cortex — macOS 桌面客户端
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 在后台启动 server.py，然后打开 Qt 窗口加载 Web UI。
 关闭窗口时隐藏到 Dock，Cmd+Q 完全退出。
@@ -32,7 +32,7 @@ if getattr(sys, "frozen", False):
         print(f"[..] Embedding 模型内置: {_embed_dir}")
 
 from PyQt6.QtWidgets import QApplication, QMainWindow, QMenu, QMessageBox, QSystemTrayIcon
-from PyQt6.QtCore import QUrl, QSettings, Qt, QRect
+from PyQt6.QtCore import QUrl, QSettings, Qt, QRect, QLockFile
 from PyQt6.QtGui import (
     QAction, QKeySequence, QIcon, QPixmap, QPainter,
     QColor, QFont, QPalette, QBrush, QPen, QLinearGradient,
@@ -96,7 +96,7 @@ class MainWindow(QMainWindow):
     def __init__(self, app):
         super().__init__()
         self._app = app
-        self._settings = QSettings("Cortex Agent", "Cortex Agent")
+        self._settings = QSettings("cortex", "cortex")
         self._dev_tools = None
         self._setup_window()
         self._setup_browser()
@@ -108,7 +108,7 @@ class MainWindow(QMainWindow):
         app.paletteChanged.connect(self._on_palette_change)
 
     def _setup_window(self):
-        self.setWindowTitle("Cortex Agent")
+        self.setWindowTitle("cortex")
         self.setMinimumSize(900, 600)
         self.setAttribute(Qt.WidgetAttribute.WA_QuitOnClose, False)
         self._apply_theme()
@@ -127,7 +127,7 @@ class MainWindow(QMainWindow):
         try:
             self._tray = QSystemTrayIcon(self)
             self._tray.setIcon(self._app.windowIcon() or _make_app_icon())
-            self._tray.setToolTip("Cortex Agent")
+            self._tray.setToolTip("cortex")
             menu = QMenu(self)
             show_action = menu.addAction("显示主窗口")
             show_action.triggered.connect(self._restore_from_tray)
@@ -158,9 +158,9 @@ class MainWindow(QMainWindow):
         # ── App Menu ───────────────────────────────────
         # macOS: actions with AboutRole/QuitRole/HideRole
         # are automatically moved to the system app menu.
-        app_menu = mb.addMenu("&Cortex Agent")
+        app_menu = mb.addMenu("&cortex")
 
-        a = QAction("About Cortex Agent", self)
+        a = QAction("About cortex", self)
         a.setMenuRole(QAction.MenuRole.AboutRole)
         a.triggered.connect(self._show_about)
         app_menu.addAction(a)
@@ -175,7 +175,7 @@ class MainWindow(QMainWindow):
 
         app_menu.addSeparator()
 
-        a = QAction("Quit Cortex Agent", self)
+        a = QAction("Quit cortex", self)
         a.setMenuRole(QAction.MenuRole.QuitRole)
         a.setShortcut(QKeySequence(QKeySequence.StandardKey.Quit))
         a.triggered.connect(self._quit_app)
@@ -290,8 +290,8 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         QMessageBox.about(
-            self, "About Cortex Agent",
-            f"<h3>Cortex Agent</h3><p>{version}</p>"
+            self, "About cortex",
+            f"<h3>cortex</h3><p>{version}</p>"
             f"<p>AI 智能体后端系统 — Web UI 桌面客户端</p>"
             f"<p style='color:gray; font-size:11px'>桌面客户端</p>"
         )
@@ -497,10 +497,25 @@ def main():
         signal.signal(signal.SIGTERM, _signal_handler)
 
     app = QApplication(sys.argv)
-    app.setApplicationName("Cortex Agent")
-    app.setOrganizationName("Cortex Agent")
+    app.setApplicationName("cortex")
+    app.setOrganizationName("cortex")
     app.setWindowIcon(_make_app_icon())
     app.setQuitOnLastWindowClosed(False)
+
+    # ── 单实例锁：同一时间只允许一个实例，避免重复启动多个窗口 ──
+    # 用 QLockFile 检测是否已有实例在运行；有则提示并退出（不新开窗口）。
+    import tempfile
+    _lock_path = os.path.join(tempfile.gettempdir(), "cortex_single_instance.lock")
+    _instance_lock = QLockFile(_lock_path)
+    _instance_lock.setStaleLockTime(0)
+    if not _instance_lock.tryLock(100):
+        print("[..] cortex 已在运行，本次启动退出", flush=True)
+        # 已有实例：提示用户（通过已运行实例的消息而非新窗口），直接退出
+        try:
+            QMessageBox.information(None, "cortex", "cortex 已在运行")
+        except Exception:
+            pass
+        sys.exit(0)
 
     profile = QWebEngineProfile.defaultProfile()
     profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.NoCache)
@@ -513,7 +528,7 @@ def main():
 
     window = MainWindow(app)
     window.show()
-    print("[OK] Cortex Agent 已启动")
+    print("[OK] cortex 已启动")
     print("[..] 如果窗口未自动加载，请手动打开 http://localhost:8765")
 
     # 桌宠独立进程：先启动 Qt，再延迟拉起桌宠；Qt 退出时终止（_stop_pet / atexit / 信号）

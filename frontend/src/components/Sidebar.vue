@@ -48,7 +48,7 @@ function navTo(item) {
 
 <template>
   <nav class="sidebar">
-    <div class="sidebar-header"><img class="logo" src="/favicon.jpg" alt="Logo" /><span>Cortex Agent</span></div>
+    <div class="sidebar-header"><img class="logo" src="/favicon.jpg" alt="Logo" /><span>cortex</span></div>
     <div class="sidebar-nav">
       <template v-for="section in navSections" :key="section.labelKey">
         <div class="nav-section">{{ $t(section.labelKey) }}</div>

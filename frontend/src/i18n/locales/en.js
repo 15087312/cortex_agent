@@ -1,6 +1,6 @@
 export default {
   app: {
-    name: 'Cortex Agent',
+    name: 'cortex',
     loading: 'Loading...',
   },
   common: {
@@ -609,7 +609,7 @@ export default {
       shortcut: 'Shortcut',
       shortcutDesc: 'Click to edit — focuses the chat input (live, no restart)',
       dock: 'Keep in Dock',
-      dockHint: 'Right-click the Cortex Agent icon in the Dock > Options > Keep in Dock',
+      dockHint: 'Right-click the cortex icon in the Dock > Options > Keep in Dock',
       storage: 'File Storage Location',
       currentVersion: 'Current version: v{version}',
       goDownload: 'Click to download',

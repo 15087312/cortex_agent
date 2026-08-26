@@ -33,7 +33,7 @@ BACKEND_PORT = _resolve_backend_port()
 BACKEND_URL = f"http://127.0.0.1:{BACKEND_PORT}"
 
 _MISSING_DIST_PAGE = """<!DOCTYPE html>
-<html lang="zh-CN"><head><meta charset="UTF-8"><title>Cortex Agent</title></head>
+<html lang="zh-CN"><head><meta charset="UTF-8"><title>cortex</title></head>
 <body style="font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#111;color:#eee">
 <div style="text-align:center;padding:24px">
 <h2>前端未构建</h2>
