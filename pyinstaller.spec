@@ -18,6 +18,16 @@ from PyInstaller.utils.hooks import collect_all, collect_submodules, collect_dat
 block_cipher = None
 ROOT = os.path.abspath(".")
 
+# ── 版本号：从 VERSION 读取（与 scripts/release.py 保持一致，避免硬编码漂移）──
+def _read_version() -> str:
+    try:
+        with open(os.path.join(ROOT, "VERSION"), "r", encoding="utf-8") as _f:
+            return _f.read().strip()
+    except Exception:
+        return "0.0.1"
+
+APP_VERSION = _read_version()
+
 datas = []
 binaries = []
 hiddenimports = []
@@ -69,6 +79,8 @@ datas += [
     (os.path.join(ROOT, "frontend/pet"), "frontend/pet"),
     (os.path.join(ROOT, "frontend/package.json"), "frontend/package.json"),
     (os.path.join(ROOT, ".env.example"), ".env.example"),
+    # VERSION 落在包根（_MEIPASS/VERSION），供 cortex/version.py 读取（否则健康检查显示 0.0.0-unknown）
+    (os.path.join(ROOT, "VERSION"), "."),
 ]
 
 # ── Embedding 模型（打入 exe，避免冷启动联网下载；见 main.py _setup_runtime_data）──
@@ -143,8 +155,8 @@ app = BUNDLE(
     info_plist={
         'CFBundleName': 'cortex',
         'CFBundleDisplayName': 'cortex',
-        'CFBundleShortVersionString': '0.0.1',
-        'CFBundleVersion': '0.0.1',
+        'CFBundleShortVersionString': APP_VERSION,
+        'CFBundleVersion': APP_VERSION,
         'NSHighResolutionCapable': True,
         'LSMinimumSystemVersion': '11.0',
         'NSPrincipalClass': 'NSApplication',
