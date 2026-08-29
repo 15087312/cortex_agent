@@ -332,6 +332,42 @@ describe('Chat 页面', () => {
     expect(chat.runners[2].supervisor).toBe('m2')
   })
 
+  it('WS status 上下文占用保持最近一次非零值（心跳带 0 不清空）', async () => {
+    const w = await mountChat()
+    const chat = useChatStore()
+    chat.markProcessing('s1', true)
+    // 真实 thinking_progress 始终携带 runner 结构；测试聚焦上下文字段本身
+    const runner = { large_model: { model_id: 'm1', status: 'thinking' } }
+    wsClient._emit('status', { session_id: 's1', data: { context_tokens: 5000, context_window_size: 10000, ...runner } })
+    wsClient._emit('status', { session_id: 's1', data: { context_tokens: 0, context_window_size: 0, ...runner } })
+    await flushPromises()
+    const pct = w.find('.context-usage-pct')
+    expect(pct.exists()).toBe(true)
+    expect(pct.text()).toBe('50%')
+  })
+
+  it('处理中显示实时过程流面板，结束后固化为过程消息', async () => {
+    const w = await mountChat()
+    const chat = useChatStore()
+    // 无处理状态时即使有 processFlow 也不渲染（v-if 依赖 processing）
+    chat.addProcessStep('第一步思考')
+    await flushPromises()
+    expect(w.find('.process-panel').exists()).toBe(false)
+    // 标记处理中 → 实时面板出现，内容为当前累积过程流
+    chat.markProcessing('s1', true)
+    chat.addProcessStep('第二步思考')
+    await flushPromises()
+    expect(w.find('.process-panel').exists()).toBe(true)
+    expect(w.find('.process-flow-body').text()).toContain('第一步思考')
+    expect(w.find('.process-flow-body').text()).toContain('第二步思考')
+    // 结束处理 → 实时面板消失，过程流固化为会话消息（持久化，刷新后可恢复）
+    chat.finalizeStream('')
+    await flushPromises()
+    expect(chat.processing).toBe(false)
+    expect(chat.processFlow.length).toBe(0)
+    expect(chat.messages.some(m => m.kind === 'process')).toBe(true)
+  })
+
   it('WS ack busy 设置提示并稍后重发', async () => {
     vi.useFakeTimers()
     await mountChat()

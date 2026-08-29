@@ -224,9 +224,11 @@ const _onError = (d) => {
 const _onStatus = (d) => {
   if (!_isCurrent(d)) return
   chat.elapsed = d.data?.elapsed_s || 0
-  // 上下文窗口占用（估算 token，用于显示上下文占比）
-  contextTokens.value = d.data?.context_tokens || 0
-  contextWindowSize.value = d.data?.context_window_size || 0
+  // 上下文窗口占用（估算 token，用于显示上下文占比）。
+  // 保持最近一次非零值：后端仅在大模型构建 prompt 时更新 tokens，
+  // 中间的心跳可能带 0，直接覆盖会让上下文条闪烁/消失。
+  if (d.data?.context_tokens) contextTokens.value = d.data.context_tokens
+  if (d.data?.context_window_size) contextWindowSize.value = d.data.context_window_size
   // 解析 thinking_progress → 在线模型状态（大循环 指挥/主管/专家 层级）
   const list = []
   const add = (r, tier, sup) => { if (r && r.model_id) list.push({ ...r, tier, supervisor: sup || '' }) }
@@ -354,10 +356,15 @@ function handleSend({ text, attachments }) {
 
 async function handleNewSession() {
   await chat.init()
+  contextTokens.value = 0
+  contextWindowSize.value = 0
 }
 
 async function handleSessionSelect(sid) {
   await chat.switchToSession(sid)
+  // 上下文占用按会话隔离：切换会话后清空，等待新会话的 thinking_progress 重新填充
+  contextTokens.value = 0
+  contextWindowSize.value = 0
   // 进入会话默认定位到最新消息（强制，不受"接近底部才滚"守卫限制）
   renderLimit.value = RENDER_LIMIT
   scrollBottom(true)
@@ -518,6 +525,14 @@ function handleAnswerIntent(requestId, answer) {
 
         <!-- 思考循环状态面板：大循环（指挥→主管→专家）/ 连续思考 / 工具循环 -->
         <ThinkingStatusPanel v-if="chat.processing && chat.runners.length" :runners="chat.runners" :elapsed="chat.elapsed" :context-tokens="contextTokens" :context-window-size="contextWindowSize" />
+
+        <!-- 本轮实时过程流：AI 运行过程中边思考边展示（结束后固化为消息，由 ProcessPanel 持久化恢复） -->
+        <ProcessPanel
+          v-if="chat.processing && chat.processFlow.length"
+          :content="chat.processFlow.join('\n\n')"
+          :runners="chat.processSnapshot"
+          :open="true"
+        />
 
         <!-- 运行轨迹：工具调用/委托等中间步骤（借鉴 dsh，从对话流分离） -->
         <div v-if="chat.traces.length" class="chat-traces">

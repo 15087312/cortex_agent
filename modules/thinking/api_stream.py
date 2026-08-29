@@ -218,6 +218,20 @@ def _record_event(session_id: str, envelope: Dict[str, Any]):
     buf.append(envelope)
 
 
+def _resolve_context_window(tier: str = "large") -> int:
+    """按模型层级解析输入上下文窗口大小（token 数）— 不硬编码，取自配置。
+
+    与 model_runner.context_window_size 同源：settings.get_context_length(tier)
+    （LARGE/MEDIUM/SMALL_MODEL_CONTEXT_LENGTH → CONTEXT_WINDOW_SIZE）。
+    配置缺失时返回 0（前端据此隐藏上下文条，而非显示一个编造的窗口值）。
+    """
+    try:
+        from config.settings import settings as _cfg
+        return int(_cfg.get_context_length(tier) or 0)
+    except Exception:
+        return 0
+
+
 def _build_event(
         *,
         session_id: str,
@@ -405,8 +419,9 @@ class StreamThinkingSystem:
 
     def _collect_process_snapshot(self, session_id: str) -> dict:
         """收集本轮运行的模型状态快照（含每模型上下文占用），供前端重建面板。"""
+        large_window = _resolve_context_window("large")
         snapshot: dict[str, Any] = {"large_model": None, "active_supervisors": [], "active_experts": [],
-                    "context_tokens": 0, "context_window_size": 128000}
+                    "context_tokens": 0, "context_window_size": large_window}
         try:
             from modules.thinking.core.model_runner import _runner_managers, _runner_managers_lock
             with _runner_managers_lock:
@@ -424,13 +439,13 @@ class StreamThinkingSystem:
                     "round": info.get("round", 0),
                     "supervisor": info.get("supervisor", ""),
                     "context_tokens": info.get("context_tokens", 0),
-                    "context_window_size": info.get("context_window_size", 128000),
+                    "context_window_size": info.get("context_window_size", 0),
                 }
                 if tier == "large":
                     snapshot["large_model"] = entry
                     if entry["context_tokens"]:
                         snapshot["context_tokens"] = entry["context_tokens"]
-                        snapshot["context_window_size"] = entry["context_window_size"] or 128000
+                        snapshot["context_window_size"] = entry["context_window_size"] or large_window
                 elif tier == "supervisor":
                     snapshot["active_supervisors"].append(entry)
                 elif tier == "expert":
@@ -451,7 +466,7 @@ class StreamThinkingSystem:
             from config.settings import settings
             window_size = settings.CONTEXT_WINDOW_SIZE
         except Exception:
-            window_size = 128000
+            window_size = _resolve_context_window("large")
         threshold = int(window_size * 0.8)
 
         total_content = "\n".join(
@@ -750,6 +765,10 @@ class StreamThinkingSystem:
 
             last_progress_emit = 0.0
             _last_bc_identity = None  # 连续同角色广播合并：只在首次显示标签
+            # 上下文占用：窗口大小由配置决定（不硬编码），tokens 保持最近一次有效值
+            # （large 仅在构建 prompt 时更新，若其恰好不 running 就重置为 0，前端会闪烁/消失）
+            last_ctx_tokens = 0
+            last_ctx_window = _resolve_context_window("large")
             while True:
                 if scheduler_task.done() and stage_queue.empty():
                     break
@@ -762,8 +781,8 @@ class StreamThinkingSystem:
                     active_experts = []
                     active_supervisors = []
                     large_model_info = {}
-                    context_tokens = 0
-                    context_window_size = 128000
+                    context_tokens = last_ctx_tokens
+                    context_window_size = last_ctx_window
                     try:
                         from modules.thinking.core.model_runner import _runner_managers, _runner_managers_lock
                         with _runner_managers_lock:
@@ -777,9 +796,16 @@ class StreamThinkingSystem:
                                 model_id = runner_info.get("model_id", "")
                                 # 大模型身份
                                 if tier == "large":
+                                    _win = runner_info.get("context_window_size", 0) or 0
+                                    if _win:
+                                        # 窗口大小由身份/配置决定，不随 running 变化
+                                        last_ctx_window = _win
                                     if running:
-                                        context_tokens = runner_info.get("context_tokens", 0)
-                                        context_window_size = runner_info.get("context_window_size", 128000)
+                                        _tok = runner_info.get("context_tokens", 0) or 0
+                                        if _tok:
+                                            last_ctx_tokens = _tok
+                                        context_tokens = last_ctx_tokens
+                                        context_window_size = last_ctx_window
                                     large_model_info = {
                                         "name": name,
                                         "role": role,
@@ -793,7 +819,7 @@ class StreamThinkingSystem:
                                         "think_loop": runner_info.get("think_loop"),
                                         "last_thought": runner_info.get("last_thought", ""),
                                         "context_tokens": runner_info.get("context_tokens", 0),
-                                        "context_window_size": runner_info.get("context_window_size", 128000),
+                                        "context_window_size": runner_info.get("context_window_size", 0),
                                     }
                                 # 主管
                                 elif tier == "supervisor" and running:
@@ -809,7 +835,7 @@ class StreamThinkingSystem:
                                         "think_loop": runner_info.get("think_loop"),
                                         "last_thought": runner_info.get("last_thought", ""),
                                         "context_tokens": runner_info.get("context_tokens", 0),
-                                        "context_window_size": runner_info.get("context_window_size", 128000),
+                                        "context_window_size": runner_info.get("context_window_size", 0),
                                     })
                                 # 专家（带上所属主管）
                                 elif tier == "expert" and running:
@@ -828,7 +854,7 @@ class StreamThinkingSystem:
                                         "think_loop": runner_info.get("think_loop"),
                                         "last_thought": runner_info.get("last_thought", ""),
                                         "context_tokens": runner_info.get("context_tokens", 0),
-                                        "context_window_size": runner_info.get("context_window_size", 128000),
+                                        "context_window_size": runner_info.get("context_window_size", 0),
                                     })
                     except Exception as e:
                         logger.debug(f"[活跃专家] 收集状态失败 (非致命): {e}")

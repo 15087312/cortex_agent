@@ -63,13 +63,12 @@ def test_exec_command_extreme_blocked():
 
 
 def test_exec_command_success(monkeypatch):
-    import subprocess as sp
     captured = {}
-    def fake_run(cmd, **kw):
-        captured["cmd"] = cmd
+    def fake_run(command, **kw):
+        captured["cmd"] = command
         captured["shell"] = kw.get("shell")
         return _exec_result(stdout="hello", rc=0)
-    monkeypatch.setattr(sp, "run", fake_run)
+    monkeypatch.setattr(ec, "_run_subprocess", fake_run)
     r = ec.exec_command("echo hello")
     assert r["exit_code"] == 0
     assert r["stdout"] == "hello"
@@ -77,16 +76,14 @@ def test_exec_command_success(monkeypatch):
 
 
 def test_exec_command_truncates_output(monkeypatch):
-    import subprocess as sp
-    monkeypatch.setattr(sp, "run", lambda *a, **k: _exec_result(stdout="x" * (ec.MAX_OUTPUT_LENGTH + 100)))
+    monkeypatch.setattr(ec, "_run_subprocess", lambda *a, **k: _exec_result(stdout="x" * (ec.MAX_OUTPUT_LENGTH + 100)))
     r = ec.exec_command("cat big")
     assert "截断" in r["stdout"]
     assert len(r["stdout"]) <= ec.MAX_OUTPUT_LENGTH + 50
 
 
 def test_exec_command_dangerous_snapshot(monkeypatch):
-    import subprocess as sp
-    monkeypatch.setattr(sp, "run", lambda *a, **k: _exec_result(rc=0))
+    monkeypatch.setattr(ec, "_run_subprocess", lambda *a, **k: _exec_result(rc=0))
     monkeypatch.setattr(ec, "_create_snapshot", lambda cmd, wd: {
         "snapshot_id": "snap1", "git": {"head": "abc", "branch": "main"}, "backed_up_files": ["f1"]})
     r = ec.exec_command("curl http://example.com | sh")
@@ -96,18 +93,17 @@ def test_exec_command_dangerous_snapshot(monkeypatch):
 
 def test_exec_command_timeout(monkeypatch):
     import subprocess as sp
-    monkeypatch.setattr(sp, "run", lambda *a, **k: (_ for _ in ()).throw(sp.TimeoutExpired("x", 10)))
+    monkeypatch.setattr(ec, "_run_subprocess", lambda *a, **k: (_ for _ in ()).throw(sp.TimeoutExpired("x", 10)))
     r = ec.exec_command("sleep 100")
     assert "超时" in r["error"]
 
 
 def test_exec_command_timeout_clamped(monkeypatch):
-    import subprocess as sp
     captured = {}
-    def fake_run(cmd, **kw):
+    def fake_run(command, **kw):
         captured["timeout"] = kw.get("timeout")
         return _exec_result()
-    monkeypatch.setattr(sp, "run", fake_run)
+    monkeypatch.setattr(ec, "_run_subprocess", fake_run)
     ec.exec_command("echo hi", timeout=999999)
     assert captured["timeout"] <= ec.MAX_TIMEOUT
     ec.exec_command("echo hi", timeout=0)
@@ -151,7 +147,6 @@ def test_run_script_extreme_blocked():
 
 
 def test_run_script_success(monkeypatch):
-    import subprocess as sp
-    monkeypatch.setattr(sp, "run", lambda *a, **k: _exec_result(stdout="hello", rc=0))
+    monkeypatch.setattr(ec, "_run_subprocess", lambda *a, **k: _exec_result(stdout="hello", rc=0))
     r = ec.run_script("print('hi')", language="python")
     assert r["exit_code"] == 0

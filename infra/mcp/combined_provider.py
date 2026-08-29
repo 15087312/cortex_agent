@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import time
+from concurrent.futures import CancelledError
 from typing import Any, Dict, List, Optional
 
 from utils.logger import setup_logger
@@ -219,11 +220,13 @@ class CombinedToolExecutor(ToolExecutorPort):
                 # 且带 timeout 安全清理
                 pool = _get_async_pool()
                 future = pool.submit(_run_async_in_thread, func, request.params)
-                result = future.result(timeout=600)
+                timeout = 600
+                result = future.result(timeout=timeout)
             else:
                 pool = _get_async_pool()
                 future = pool.submit(func, **request.params)
-                result = future.result(timeout=120)
+                timeout = 120
+                result = future.result(timeout=timeout)
             latency = (time.time() - start) * 1000
             return ToolCallResult(
                 success=True,
@@ -231,12 +234,35 @@ class CombinedToolExecutor(ToolExecutorPort):
                 tool_name=request.tool_name,
                 latency_ms=latency,
             )
-        except Exception as e:
+        except concurrent.futures.TimeoutError:
+            # future.result(timeout) 超时（TimeoutError 的 str 为空串，
+            # 直接 str(e) 会打出 "本地工具执行失败 exec_command: " 这种空消息）
             latency = (time.time() - start) * 1000
-            logger.error(f"[MCP] 本地工具执行失败 {request.tool_name}: {e}")
+            logger.error(f"[MCP] 本地工具执行超时（{timeout}s）: {request.tool_name}")
             return ToolCallResult(
                 success=False,
-                error=str(e),
+                error=f"工具执行超时（{timeout}秒）: {request.tool_name}",
+                tool_name=request.tool_name,
+                latency_ms=latency,
+            )
+        except CancelledError:
+            # 工具线程被取消（上层思考循环被 stop/新消息打断），同样无 str
+            latency = (time.time() - start) * 1000
+            logger.warning(f"[MCP] 本地工具执行被取消: {request.tool_name}")
+            return ToolCallResult(
+                success=False,
+                error=f"工具执行被取消: {request.tool_name}",
+                tool_name=request.tool_name,
+                latency_ms=latency,
+            )
+        except Exception as e:
+            latency = (time.time() - start) * 1000
+            logger.error(
+                f"[MCP] 本地工具执行失败 {request.tool_name} ({type(e).__name__}): {e}"
+            )
+            return ToolCallResult(
+                success=False,
+                error=str(e) or type(e).__name__,
                 tool_name=request.tool_name,
                 latency_ms=latency,
             )
@@ -259,8 +285,18 @@ class CombinedToolExecutor(ToolExecutorPort):
                 source="mcp",
                 latency_ms=latency_ms,
             )
+        except CancelledError:
+            latency_ms = (time.time() - start) * 1000
+            return ToolCallResult(
+                success=False,
+                error=f"MCP 工具执行被取消: {request.tool_name}",
+                tool_name=request.tool_name,
+                source="mcp",
+                latency_ms=latency_ms,
+            )
         except Exception as e:
             latency_ms = (time.time() - start) * 1000
+            logger.error(f"[MCP] MCP 工具执行异常 {request.tool_name} ({type(e).__name__}): {e}")
             return ToolCallResult(
                 success=False,
                 error=str(e) or f"MCP 工具执行异常: {request.tool_name}",

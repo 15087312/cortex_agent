@@ -307,6 +307,58 @@ def _prune_old_snapshots():
         logger.debug(f"[安全快照] 清理失败 (非致命): {e}")
 
 
+class _CommandResult:
+    """与 subprocess.CompletedProcess 同构的结果对象（避免依赖 Popen 内部）"""
+
+    __slots__ = ("stdout", "stderr", "returncode")
+
+    def __init__(self, stdout: str, stderr: str, returncode: int):
+        self.stdout = stdout
+        self.stderr = stderr
+        self.returncode = returncode
+
+
+def _kill_process_group(proc) -> None:
+    """杀死子进程的整个进程组（含 shell 派生的孙进程），避免残留孤儿进程。"""
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+    try:
+        proc.wait(timeout=5)
+    except Exception:
+        pass
+
+
+def _run_subprocess(command, *, shell: bool = False, cwd=None, timeout: int = DEFAULT_TIMEOUT):
+    """运行命令并确保超时时杀死整个进程组。
+
+    subprocess.run(timeout=) 超时时只 kill 直接子进程（shell=True 时是 /bin/sh），
+    sh 派生的 npm/node 等孙进程会残留并继续占用 stdout/stderr 管道，
+    导致命令超时后仍无法返回 → 外层工具执行卡到更长的兜底超时才报"空消息"错误。
+    改用 start_new_session 让命令自成进程组，超时后 killpg 全组杀死。
+    """
+    if sys.platform == "win32":
+        # Windows 无 POSIX 进程组语义，保持默认超时行为
+        return subprocess.run(
+            command, shell=shell, capture_output=True, text=True,
+            timeout=timeout, cwd=cwd,
+        )
+    proc = subprocess.Popen(
+        command, shell=shell, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, cwd=cwd, start_new_session=True,
+    )
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _kill_process_group(proc)
+        raise
+    return _CommandResult(stdout or "", stderr or "", proc.returncode)
+
+
 @ToolRegistry.register(
     "exec_command",
     description=(
@@ -365,10 +417,7 @@ def exec_command(command: str, timeout: Optional[int] = None, workdir: Optional[
 
     try:
         start = time.time()
-        result = subprocess.run(
-            command, shell=True, capture_output=True, text=True,
-            timeout=timeout, cwd=workdir,
-        )
+        result = _run_subprocess(command, shell=True, cwd=workdir, timeout=timeout)
         elapsed = time.time() - start
         stdout = result.stdout or ""
         stderr = result.stderr or ""
@@ -500,10 +549,7 @@ def run_script(code: str, language: str = "python", timeout: Optional[int] = 30)
 
         start = time.time()
         cmd = interp + [script_path]
-        result = subprocess.run(
-            cmd, capture_output=True, text=True,
-            timeout=timeout + 2, cwd=script_dir,
-        )
+        result = _run_subprocess(cmd, shell=False, cwd=script_dir, timeout=timeout + 2)
         elapsed = time.time() - start
 
         return {

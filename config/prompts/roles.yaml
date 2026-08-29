@@ -73,6 +73,7 @@ roles:
     tier: "large"
     role: "orchestrator"
     model_id: "large_primary"
+    max_tokens: 4096
     personality: "用户与系统之间的唯一桥梁。理解需求、选择正确的主管、整合结果、自然回复"
     speaking_style: "友好、简洁、自信"
     expertise: ["需求理解", "任务路由", "结果整合"]

@@ -273,6 +273,65 @@ class TestCombinedToolExecutor:
         assert r.success is False
         assert "async boom" in r.error
 
+    def test_execute_local_timeout(self, executor, monkeypatch):
+        # 本地工具 future 超时（concurrent.futures.TimeoutError 的 str 为空串，
+        # 此前会打出 "本地工具执行失败 t: " 空消息错误）
+        import infra.mcp.combined_provider as cp
+
+        def _slow():
+            return 1
+
+        class _Fut:
+            def result(self, timeout=None):
+                raise concurrent.futures.TimeoutError()
+
+        class _Pool:
+            def submit(self, *a, **k):
+                return _Fut()
+
+        _patch_get_func(monkeypatch, lambda n: _slow)
+        monkeypatch.setattr(cp, "_get_async_pool", lambda: _Pool())
+        r = executor.execute(ToolCallRequest(tool_name="t"))
+        assert r.success is False
+        assert "工具执行超时" in r.error
+        assert r.error != ""
+
+    def test_execute_local_cancelled(self, executor, monkeypatch):
+        # 本地工具 future 被取消（上层思考循环 stop/新消息打断）→ 非空、明确的错误
+        import infra.mcp.combined_provider as cp
+
+        def _slow():
+            return 1
+
+        class _Fut:
+            def result(self, timeout=None):
+                raise concurrent.futures.CancelledError()
+
+        class _Pool:
+            def submit(self, *a, **k):
+                return _Fut()
+
+        _patch_get_func(monkeypatch, lambda n: _slow)
+        monkeypatch.setattr(cp, "_get_async_pool", lambda: _Pool())
+        r = executor.execute(ToolCallRequest(tool_name="t"))
+        assert r.success is False
+        assert "被取消" in r.error
+        assert r.error != ""
+
+    def test_execute_local_exception_empty_str(self, executor, monkeypatch):
+        # 异常 str 为空 → 回退到异常类型名，避免空错误信息
+        class _Empty(Exception):
+            def __str__(self):
+                return ""
+
+        def _boom():
+            raise _Empty()
+
+        _patch_get_func(monkeypatch, lambda n: _boom)
+        r = executor.execute(ToolCallRequest(tool_name="t"))
+        assert r.success is False
+        assert r.error == "_Empty"
+
     def test_execute_local_func_disappeared(self, executor, monkeypatch):
         # execute() 已确认存在，但 _execute_local 里二次取 func 为 None（防御分支）
         _patch_get_func(monkeypatch, lambda n: None)
