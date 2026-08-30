@@ -13,6 +13,21 @@ from utils.logger import setup_logger
 logger = setup_logger("model_client")
 
 
+def _normalize_api_key(key: str) -> str:
+    """规范化 API key — 去掉手工配置时多写的 "Bearer " 前缀。
+
+    客户端在构建请求头时统一补 `Bearer {api_key}`；若配置里已经写了
+    `Bearer nvapi-...`/`Bearer sk-...`，会得到 `Bearer Bearer ...` 导致 401。
+    这里在入口处做一次归一，防止此类配置错误（对 Anthropic 的 x-api-key 同样无害）。
+    """
+    if not key:
+        return key
+    k = (key or "").strip()
+    if k.lower().startswith("bearer "):
+        return k[len("bearer "):].strip()
+    return k
+
+
 # ---------------------------------------------------------------------------
 # 数据类 — 原生工具调用
 # ---------------------------------------------------------------------------
@@ -96,8 +111,8 @@ class BaseModelClient(ABC):
             raise ValueError("API key 不能为空")
         if not allow_empty and not api_url:
             raise ValueError("API URL 不能为空")
-        
-        self.api_key = api_key
+
+        self.api_key = _normalize_api_key(api_key)
         self.api_url = api_url
         self.timeout = timeout
         self._session: Optional[aiohttp.ClientSession] = None

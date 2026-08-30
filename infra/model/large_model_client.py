@@ -26,7 +26,7 @@ class LargeModelClient(BaseModelClient):
         self,
         api_key: str = None,
         api_url: str = None,
-        timeout: int = 120,
+        timeout: Optional[int] = None,
         api_format: str = "",
     ):
         tier_cfg = settings.resolve_model_tier("large") if settings.LARGE_MODEL_PROVIDER else None
@@ -369,7 +369,7 @@ class LargeModelClient(BaseModelClient):
                 self._log_payload(payload)
                 async with session.post(
                     self._chat_url, headers=headers, json=payload,
-                    timeout=aiohttp.ClientTimeout(total=self.timeout, sock_read=30)
+                    timeout=aiohttp.ClientTimeout(total=self.timeout, sock_read=self.timeout)
                 ) as response:
                     if response.status != 200:
                         error_data = await response.text()

@@ -833,7 +833,9 @@ class Settings(BaseSettings):
             )
 
     # 模型配置
-    MODEL_TIMEOUT: int = 180  # 模型 HTTP 请求超时（秒），可被各模型配置覆盖
+    MODEL_TIMEOUT: int = 600  # 模型 HTTP 请求超时（秒），可被各模型配置覆盖
+    # 推理型大模型（如 moonshotai/kimi-k3）首个 token 前有长达 1~3 分钟的静默思考期，
+    # 需给足总超时与静默读取超时，否则会报 "Timeout on reading data from socket"。
     MODEL_THINK_TIMEOUT: float = 300  # 单次思考轮次超时（秒），上一级大模型可自主设置
 
     # ── 搜索配置 ──────────────────────────────────────────

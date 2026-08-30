@@ -2996,10 +2996,9 @@ class ModelRunner:
             f"你是 {identity.name}（{identity.tier} 层 / {identity.role}）。"
         )
 
-        # 技能叠加
-        if self._active_skill and self.tier == "large":
-            skill = self._active_skill
-            parts.append(f"你是 {skill.name}。\n{skill.description}")
+        # 技能不在此重复注入：技能全文已由 PromptComposer.build_system(skill_id=...)
+        # 统一注入到 system prompt（见 _build_system_prompt_for_mode）。此处若再拼一份
+        # description，会导致同一条技能在 system + user 各出现一次重复注入。
 
         if dialog_context:
             parts.append(dialog_context)

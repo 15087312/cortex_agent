@@ -102,13 +102,14 @@ def test_build_prompt_contains_identity():
 
 
 def test_build_prompt_with_skill_large():
+    # 技能不再注入到 user 侧（已由 build_system(skill_id) 统一注入到 system prompt，避免重复）
     r = _make_runner(None, tier="large")
     skill = MagicMock()
     skill.name = "代码专家"
     skill.description = "负责写代码"
     r._active_skill = skill
     out = r._build_prompt(guidance="", dialog_context="", expert_context="")
-    assert "代码专家" in out
+    assert "代码专家" not in out
 
 
 def test_build_prompt_no_skill_for_expert():
