@@ -1,8 +1,14 @@
 <script setup>
-defineProps({
-  text: { type: String, default: '加载中...' },
+import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
+
+const props = defineProps({
+  text: { type: String, default: '' },
   skeleton: { type: Boolean, default: false },
 })
+
+const { t } = useI18n()
+const resolvedText = computed(() => props.text || t('app.loading'))
 </script>
 
 <template>
@@ -15,7 +21,7 @@ defineProps({
         <div class="skeleton-line" style="width:90%;height:12px;margin-bottom:8px" />
       </div>
       <div v-else class="loading-spinner"></div>
-      <div class="loading-text">{{ text }}</div>
+      <div class="loading-text">{{ resolvedText }}</div>
     </div>
   </div>
 </template>

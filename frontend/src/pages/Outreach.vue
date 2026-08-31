@@ -163,9 +163,9 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
             <div class="outreach-row outreach-row-wrap">
               <span class="outreach-lbl">{{ $t('outreach.timeWindow') }}</span>
               <label class="toggle-switch" @click.stop><input type="checkbox" v-model="s.windowsOn" /><span class="toggle-slider"></span></label>
-              <input class="input w-flex-200" v-model="s.timeWindowsText" placeholder="09:00-12:00@0.5,14:00-18:00@0.8" :disabled="!s.windowsOn" :title="$t('outreach.windowsTooltipPre') + '开始-结束@概率' + $t('outreach.windowsTooltipPost')" />
+              <input class="input w-flex-200" v-model="s.timeWindowsText" placeholder="09:00-12:00@0.5,14:00-18:00@0.8" :disabled="!s.windowsOn" :title="$t('outreach.windowsTooltipPre') + $t('outreach.windowsFormatCore') + $t('outreach.windowsTooltipPost')" />
             </div>
-            <div class="outreach-hint-mt">{{ $t('outreach.windowsFormatLabel') }}<code>开始-结束@概率</code>{{ $t('outreach.windowsFormatMid') }}<code>09:00-12:00@0.5,14:00-18:00@0.8</code>{{ $t('outreach.windowsFormatTail') }}</div>
+            <div class="outreach-hint-mt">{{ $t('outreach.windowsFormatLabel') }}<code>{{ $t('outreach.windowsFormatCore') }}</code>{{ $t('outreach.windowsFormatMid') }}<code>09:00-12:00@0.5,14:00-18:00@0.8</code>{{ $t('outreach.windowsFormatTail') }}</div>
             <div class="outreach-save">
               <button class="btn btn-sm btn-primary" @click="saveConfig(s)"><Icon name="check" :size="14" /> {{ $t('common.save') }}</button>
             </div>

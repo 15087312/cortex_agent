@@ -43,6 +43,7 @@ class Settings(BaseSettings):
         "EXECUTION_MODE",
         "CORTEX_MODE",   # 对话模式: agent(智能体) / chatonly(纯对话)
         "USER_NAME",     # 用户称呼（大模型如何称呼用户）
+        "USER_LANGUAGE", # 用户界面语言（AI 回复语言跟随此设置）
 
         # ── 主模型配置（大/中/小三层，持久化到 ~/.cortex/settings.json）──
         "LARGE_MODEL_API_KEY", "LARGE_MODEL_API_URL", "LARGE_MODEL_NAME", "LARGE_MODEL_API_FORMAT",
@@ -96,6 +97,7 @@ class Settings(BaseSettings):
 
     # 用户身份
     USER_NAME: str = "用户"  # 大模型知道谁在跟它说话
+    USER_LANGUAGE: str = "zh"  # 用户界面语言（"zh"/"en"，大模型答复语言跟随此设置）
     PERSONA_PROMPTS: str = "{}"  # 自定义人设提示词（JSON: {role: prompt}，覆盖各角色默认【人格】）
     SYSTEM_PROMPT_OVERRIDES: str = "{}"  # 完整系统提示词覆盖（JSON: {role: prompt}，高级设置，完全控制 system prompt）
 

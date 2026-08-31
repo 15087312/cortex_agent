@@ -8,6 +8,7 @@ import Icon from '@/components/Icon.vue'
 import OutreachView from '@/pages/Outreach.vue'
 import { useI18n } from 'vue-i18n'
 import { useLocaleStore } from '@/stores/locale.js'
+import { locales } from '@/i18n/index.js'
 
 const { t } = useI18n()
 const localeStore = useLocaleStore()
@@ -1012,9 +1013,7 @@ onMounted(async () => {
             <span class="settings-row-label">{{ $t('settings.general.language') }}</span>
             <span class="flex-1-muted">{{ $t('settings.general.languageDesc') }}</span>
             <select class="input settings-lang-select" :value="localeStore.locale" @change="localeStore.setLocale($event.target.value)">
-              <option v-for="(lang, code) in $i18n.availableLocales" :key="code" :value="code">
-                {{ code === 'zh' ? '简体中文' : 'English' }}
-              </option>
+              <option v-for="(l, code) in locales" :key="code" :value="code">{{ l.name }}</option>
             </select>
           </label>
           <label class="settings-row" @click.prevent="launchAtStartup = !launchAtStartup">

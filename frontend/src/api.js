@@ -82,7 +82,8 @@ export async function request(method, path, body, signal) {
     if (r.status === 401 || r.status === 403) {
       try {
         const { useToastStore } = await import('@/stores/toast.js')
-        useToastStore().show('需要 API Key，请在设置页配置', 'error')
+        const { useI18n } = await import('@/i18n/init.js')
+        useToastStore().show(useI18n().global.t('app.needApiKey'), 'error')
       } catch {}
     }
     throw e

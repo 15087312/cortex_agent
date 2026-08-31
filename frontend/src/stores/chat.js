@@ -3,12 +3,10 @@ import { computed, ref } from 'vue'
 import { useSessionStore } from './session.js'
 import { useWsStore } from '@/ws/store.js'
 import { endpoints } from '@/api.js'
+import { useI18n } from '@/i18n/init.js'
 
 let _uid = 0
 function uid() { return 'm' + (++_uid) }
-
-// ── 身份系统（对齐 js/pages/chat.js） ──
-const _nameForRole = { user: '我', supervisor: '主管', expert: '专家' }
 
 // 工具调用记录识别（借鉴 dsh 轨迹：工具/委托等中间步骤从对话流分离到轨迹面板）
 function _isToolTrace(text) {
@@ -32,13 +30,19 @@ function _avatarCls(role) {
   return 'avatar-large'
 }
 
-function _nameFor(role) {
-  return _nameForRole[String(role || '').toLowerCase()] || '总指挥'
-}
-
 export const useChatStore = defineStore('chat', () => {
+  const t = useI18n().global.t
   const session = useSessionStore()
   const ws = useWsStore()
+
+  // 角色显示名（随语言设置变化）
+  function roleName(role) {
+    const r = String(role || '').toLowerCase()
+    if (r === 'user') return t('chat.roleUser')
+    if (r === 'supervisor') return t('chat.roleSupervisor')
+    if (r === 'expert') return t('chat.roleExpert')
+    return t('chat.roleOrchestrator')
+  }
 
   const messages = ref([])
   const currentModel = ref('large')
@@ -132,7 +136,7 @@ export const useChatStore = defineStore('chat', () => {
     if (tier !== 'supervisor' && tier !== 'expert') return
     const ident = d.data?.identity_name || ''
     const key = _bubbleKey(tier, ident)
-    const name = ident || (tier === 'supervisor' ? '主管' : '专家')
+    const name = ident || roleName(tier)
     const content = d.content || ''
     // 每次输出创建新气泡，思考/工具从缓冲消费（不复用已有气泡）
     const msg = {
@@ -156,7 +160,7 @@ export const useChatStore = defineStore('chat', () => {
     // 新建会话：断开旧 WS、清空会话 id 与消息（懒创建，首条消息发送时才建新会话）
     try { ws.wsClient.disconnectAll() } catch {}
     session.sessionId = null
-    session.currentTitle = '新会话'
+    session.currentTitle = t('chat.newSession')
     messages.value = []
     hint.value = ''
     elapsed.value = 0
@@ -301,7 +305,7 @@ export const useChatStore = defineStore('chat', () => {
         _id: uid(),
         role: tier,
         kind: 'expert',
-        name: agg.name || _nameFor(tier),
+        name: agg.name || roleName(tier),
         avatarCls: _avatarCls(tier),
         content: agg.contents[agg.contents.length - 1] || '',
         _thinking: agg.lastThinking,

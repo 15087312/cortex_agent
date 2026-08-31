@@ -517,9 +517,9 @@ function handleAnswerIntent(requestId, answer) {
           <h2>{{ $t('chat.startNewChat') }}</h2>
           <p>{{ $t('chat.welcomeDesc') }}</p>
           <div class="quick-actions">
-            <div class="quick-action" @click="handleSend({ text: '你好，请介绍一下你自己', attachments: [] })">{{ $t('chat.quickGreeting') }}</div>
-            <div class="quick-action" @click="handleSend({ text: '帮我分析一下项目结构', attachments: [] })">{{ $t('chat.quickAnalyze') }}</div>
-            <div class="quick-action" @click="handleSend({ text: '给我写一段代码', attachments: [] })">{{ $t('chat.quickCode') }}</div>
+            <div class="quick-action" @click="handleSend({ text: $t('chat.quickGreetingText'), attachments: [] })">{{ $t('chat.quickGreeting') }}</div>
+            <div class="quick-action" @click="handleSend({ text: $t('chat.quickAnalyzeText'), attachments: [] })">{{ $t('chat.quickAnalyze') }}</div>
+            <div class="quick-action" @click="handleSend({ text: $t('chat.quickCodeText'), attachments: [] })">{{ $t('chat.quickCode') }}</div>
           </div>
         </div>
 

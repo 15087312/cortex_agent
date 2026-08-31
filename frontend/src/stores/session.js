@@ -1,11 +1,12 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { endpoints } from '@/api.js'
+import { useI18n } from '@/i18n/init.js'
 
 export const useSessionStore = defineStore('session', () => {
   const sessionId = ref(null)
   const sessions = ref([])
-  const currentTitle = ref('新会话')
+  const currentTitle = ref(useI18n().global.t('chat.newSession'))
 
   async function loadSessions() {
     try { const r = await endpoints.sessions(); sessions.value = r.data || [] } catch { sessions.value = [] }
@@ -18,7 +19,7 @@ export const useSessionStore = defineStore('session', () => {
     } catch {
       sessionId.value = 'session_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8)
     }
-    currentTitle.value = '新会话'
+    currentTitle.value = useI18n().global.t('chat.newSession')
     await loadSessions()
     return sessionId.value
   }

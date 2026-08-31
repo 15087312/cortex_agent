@@ -1999,6 +1999,14 @@ class ModelRunner:
         user_name = getattr(_cfg, "USER_NAME", "用户") or "用户"
         parts.append(f"【对话对象】{user_name}")
 
+        # 用户语言：大模型答复语言跟随用户界面语言设置
+        try:
+            _lang = str(getattr(_cfg, "USER_LANGUAGE", "zh") or "zh").strip().lower()
+            _lang_label = "中文" if _lang.startswith("zh") else "英文"
+            parts.append(f"【用户语言】请始终使用{_lang_label}回复用户（除非用户明确要求换语言）。")
+        except Exception as e:
+            logger.debug(f"[ModelRunner] 用户语言上下文构建失败 (非致命): {e}")
+
         # 距上次用户对话时长
         try:
             last_time = 0.0

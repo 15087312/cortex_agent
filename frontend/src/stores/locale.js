@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { useI18n } from '@/i18n/init.js'
+import { endpoints } from '@/api.js'
 
 const LOCALE_KEY = 'cortex_locale'
 
@@ -24,6 +25,8 @@ export const useLocaleStore = defineStore('locale', () => {
     locale.value = code
     _set(LOCALE_KEY, code)
     apply()
+    // 同步后端：让 AI 的回复语言跟随用户界面语言（后端据此注入【用户语言】指令）
+    try { endpoints.updateConfig('user_language', code).catch(() => {}) } catch {}
   }
 
   function toggle() {

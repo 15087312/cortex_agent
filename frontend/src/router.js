@@ -1,5 +1,6 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
 import { useToastStore } from '@/stores/toast.js'
+import { useI18n } from '@/i18n/init.js'
 
 // 依赖 Cortex 后端（localhost:8080）的页面，访问前需健康检查
 const CORTEX_DEPENDENT_PATHS = [
@@ -67,7 +68,7 @@ async function _waitForBackend() {
       hinted = true
       try {
         const toast = useToastStore()
-        toast.show('正在等待后端启动...', 'info')
+        toast.show(useI18n().global.t('app.waitingBackend'), 'info')
       } catch {}
     }
     await new Promise(r => setTimeout(r, HEALTH_POLL_INTERVAL))
@@ -94,7 +95,7 @@ router.beforeEach(async (to, from, next) => {
   // 长时间未就绪 → 提示并回到对话页
   try {
     const toast = useToastStore()
-    toast.show('后端服务长时间未响应，请确认已启动后端', 'error')
+    toast.show(useI18n().global.t('app.backendNotResponding'), 'error')
   } catch {
     // Pinia 可能尚未初始化，忽略 toast 失败
   }

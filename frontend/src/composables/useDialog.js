@@ -1,4 +1,5 @@
 import { reactive } from 'vue'
+import { useI18n } from '@/i18n/init.js'
 
 /**
  * 非阻塞 confirm / prompt（替代原生 confirm/prompt）
@@ -21,10 +22,10 @@ export function dialogState() {
 }
 
 export function useConfirm() {
-  return (message, title = '确认操作') => new Promise((resolve) => {
+  return (message, title = '') => new Promise((resolve) => {
     state.type = 'confirm'
     state.message = message
-    state.title = title
+    state.title = title || useI18n().global.t('common.confirmTitle')
     state._resolve = resolve
     state.visible = true
   })

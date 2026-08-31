@@ -46,6 +46,7 @@ import server
 _server_instance = None
 _server_thread = None
 _pet_proc = None
+_profile = None  # 持久化 WebEngine profile（命名 profile，非 off-the-record）
 
 
 # ── App Icon ──────────────────────────────────────────────
@@ -265,6 +266,10 @@ class MainWindow(QMainWindow):
 
     def _setup_browser(self):
         self.browser = QWebEngineView()
+        # 绑定持久化 profile（命名 profile + persistentStoragePath），否则默认
+        # off-the-record 页面不落盘 localStorage，语言/主题偏好无法持久化
+        if _profile is not None:
+            self.browser.setPage(QWebEnginePage(_profile, self.browser))
         self.browser.setUrl(QUrl("http://localhost:8765"))
         self.setCentralWidget(self.browser)
 
@@ -519,12 +524,19 @@ def main():
         print("[..] cortex 已在运行，本次启动退出", flush=True)
         sys.exit(0)
 
-    profile = QWebEngineProfile.defaultProfile()
-    profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.NoCache)
-    profile.setHttpCacheMaximumSize(0)
+    global _profile
+    # 命名 profile + 显式持久化路径，使 localStorage/cookies 真正落盘。
+    # defaultProfile() 是 off-the-record（无痕），localStorage 随进程退出丢失，
+    # 导致前端语言/主题等偏好无法持久化（"关闭应用再打开又变回默认"）。
+    from PyQt6.QtCore import QStandardPaths
+    _appdata = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppDataLocation)
+    _profile = QWebEngineProfile("cortex")
+    _profile.setPersistentStoragePath(os.path.join(_appdata, "webengine"))
+    _profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.NoCache)
+    _profile.setHttpCacheMaximumSize(0)
     # 允许网页访问剪贴板，否则前端「复制」按钮的 navigator.clipboard 不可用
-    # （必须在 QApplication 创建后调用 defaultProfile()，其 settings() 才是有效的全局设置）
-    profile.settings().setAttribute(
+    # （必须在 QApplication 创建后调用，其 settings() 才是有效的全局设置）
+    _profile.settings().setAttribute(
         QWebEngineSettings.WebAttribute.JavascriptCanAccessClipboard, True
     )
 
