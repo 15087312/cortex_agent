@@ -230,11 +230,10 @@ async def test_route_create_session_agent(monkeypatch):
 
 async def test_route_get_context_chatonly(monkeypatch):
     _set_chatonly(monkeypatch)
-    bb = MagicMock()
-    bb.get_messages = MagicMock(return_value=[{"role": "user", "content": "hi"}])
-    thinker = MagicMock()
-    thinker.get_blackboard = MagicMock(return_value=bb)
-    monkeypatch.setattr(cg, "_get_chat_thinker", lambda: thinker)
+    # get_context 走公共层 load_dialog_from_db，需 mock 模块级 get_session_repo
+    repo = MagicMock()
+    repo.get_messages = MagicMock(return_value=[{"role": "user", "content": "hi"}])
+    monkeypatch.setattr("modules.database.session_repo.get_session_repo", lambda: repo)
     out = await cg.get_context("s1")
     assert out["data"]["count"] == 1
 
@@ -250,9 +249,6 @@ async def test_route_close_session_chatonly(monkeypatch):
     _set_chatonly(monkeypatch)
     repo = MagicMock()
     monkeypatch.setattr(cg, "_get_chat_session_repo", lambda: repo)
-    thinker = MagicMock()
-    thinker.get_blackboard = MagicMock()
-    monkeypatch.setattr(cg, "_get_chat_thinker", lambda: thinker)
     out = await cg.close_session("s1")
     assert out["success"] is True
 

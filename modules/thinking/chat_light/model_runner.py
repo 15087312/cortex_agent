@@ -56,6 +56,8 @@ class ModelRunner:
         messages: List[dict],
         system_prompt: str,
         on_token: Optional[Callable[[str], None]] = None,
+        max_tokens: Optional[int] = None,
+        temperature: Optional[float] = None,
     ) -> ChatResponse:
         """Execute a single model call with optional streaming.
 
@@ -63,6 +65,8 @@ class ModelRunner:
             messages: Conversation messages [{"role": ..., "content": ...}]
             system_prompt: System prompt text
             on_token: Optional callback for streaming tokens
+            max_tokens: 覆盖全局 MODEL_MAX_TOKENS（调用方可传入激活角色的 model_params）
+            temperature: 覆盖全局 MODEL_TEMPERATURE（同上）
 
         Returns:
             ChatResponse with assistant message
@@ -82,6 +86,6 @@ class ModelRunner:
         return await self.client.chat_stream(
             messages=full_messages,
             on_token=on_token,
-            max_tokens=settings.MODEL_MAX_TOKENS,
-            temperature=settings.MODEL_TEMPERATURE,
+            max_tokens=max_tokens if max_tokens is not None else settings.MODEL_MAX_TOKENS,
+            temperature=temperature if temperature is not None else settings.MODEL_TEMPERATURE,
         )

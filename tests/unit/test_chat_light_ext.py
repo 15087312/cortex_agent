@@ -1,32 +1,17 @@
-"""chat_light 扩展测试：blackboard / model_runner / context_slicer / continuous_thinker"""
+"""chat_light 扩展测试：model_runner / context_slicer / continuous_thinker
+
+注意：Blackboard 已删除（DB 为唯一真源），相关测试随之移除；
+ContextSlicer 的 LLM 摘要能力已移除，改为公共层 token 预算截断。
+"""
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from modules.thinking.chat_light.blackboard import Blackboard, SessionState
 from modules.thinking.chat_light.model_runner import ModelRunner
 from modules.thinking.chat_light.context_slicer import ContextSlicer
 from modules.thinking.chat_light.continuous_thinker import ContinuousThinker
 from modules.thinking.chat_light.prompt_composer import PromptComposer
-
-
-# ── Blackboard ─────────────────────────────────────────────────────────
-
-def test_blackboard_crud():
-    b = Blackboard()
-    b.add_message("s1", "user", "你好")
-    b.add_message("s1", "assistant", "好的")
-    msgs = b.get_messages("s1")
-    assert [m["role"] for m in msgs] == ["user", "assistant"]
-    b.set_metadata("s1", "k", "v")
-    assert b.get_metadata("s1") == {"k": "v"}
-    assert isinstance(b.get_or_create("s2"), SessionState)
-    b.clear_session("s1")
-    assert b.get_messages("s1") == []
-    b.add_message("s3", "user", "x")
-    b.clear_all()
-    assert b._sessions == {}
 
 
 # ── ModelRunner ────────────────────────────────────────────────────────
@@ -64,70 +49,55 @@ def _msgs(n):
     return [{"role": "user" if i % 2 == 0 else "assistant", "content": f"内容{i}"} for i in range(n)]
 
 
-async def test_slicer_within_window():
-    s = ContextSlicer(window_size=15)
-    out = await s.slice(_msgs(5), memory_context="", max_chars=1000)
-    assert len(out) == 5
-
-
-async def test_slicer_with_history_and_overflow(monkeypatch):
-    s = ContextSlicer(window_size=3)
-    monkeypatch.setattr(s, "_summarize_overflow", AsyncMock(return_value="总结内容"))
-    out = await s.slice(_msgs(10), memory_context="记忆", max_chars=30)
-    roles = [m["role"] for m in out]
-    assert "system" in roles
-    assert any("总结" in m.get("content", "") for m in out if m["role"] == "system")
-    assert any("记忆" in m.get("content", "") for m in out if m["role"] == "system")
-
-
-async def test_slicer_summary_fallback(monkeypatch):
-    s = ContextSlicer(window_size=2)
-    monkeypatch.setattr(s, "_summarize_overflow", AsyncMock(return_value=""))
-    out = await s.slice(_msgs(6), memory_context="", max_chars=10)
-    sys_msgs = [m for m in out if m["role"] == "system"]
-    assert sys_msgs and "摘要" in sys_msgs[0]["content"]
-
-
-async def test_slicer_window_exceeds_max_chars(monkeypatch):
-    s = ContextSlicer(window_size=10)
-    monkeypatch.setattr(s, "_summarize_overflow", AsyncMock(return_value="摘要"))
-    out = await s.slice(_msgs(5), memory_context="", max_chars=2)
-    assert out  # 窗口超限会总结最旧消息
-
-
-async def test_slicer_split_text_into_chunks():
-    s = ContextSlicer(chunk_chars=10)
-    chunks = s._split_text_into_chunks("a" * 45)
-    assert len(chunks) >= 4
-    assert s._split_text_into_chunks("") == []
-
-
-async def test_slicer_summarize_overflow_empty():
+async def test_slicer_db_first(monkeypatch):
+    """slice 以 DB 为唯一真源：给出 session_id 时直读 DB，忽略传入 messages"""
     s = ContextSlicer()
-    assert await s._summarize_overflow([]) == ""
+    # mock 已导入到 slicer 模块的 load_dialog_from_db，返回 DB 会话
+    monkeypatch.setattr(
+        "modules.thinking.chat_light.context_slicer.load_dialog_from_db",
+        lambda sid, limit=100: [{"role": "user", "content": "DB历史"}],
+    )
+    out = await s.slice(_msgs(5), memory_context="", session_id="s1")
+    # DB 内容被采用，而非传入的 5 条
+    assert any(m.get("content") == "DB历史" for m in out)
 
 
-async def test_slicer_summarize_chunk_empty():
+async def test_slicer_session_id_missing_fallback_to_args():
+    """无 session_id 时回退到传入 messages（兼容无 repo 场景）"""
     s = ContextSlicer()
-    assert await s._summarize_chunk("   ") == ""
+    out = await s.slice(_msgs(3), memory_context="")
+    assert len(out) == 3
 
 
-async def test_slicer_summarize_chunk_error(monkeypatch):
+async def test_slicer_memory_prepends_system(monkeypatch):
+    """记忆上下文作为 system 消息前置"""
     s = ContextSlicer()
-    client = MagicMock()
-    client.generate = AsyncMock(side_effect=RuntimeError("down"))
-    monkeypatch.setattr(s, "_get_client", lambda: client)
-    out = await s._summarize_chunk("这段文本会被降级处理")
-    assert out.endswith("...")
+    monkeypatch.setattr(
+        "modules.thinking.context.dialog_memory.load_dialog_from_db",
+        lambda sid, limit=100: [],
+    )
+    out = await s.slice([], memory_context="回忆内容", session_id="s1")
+    assert out and out[0]["role"] == "system"
+    assert "回忆内容" in out[0]["content"]
 
 
-async def test_slicer_summarize_chunk_ok(monkeypatch):
+async def test_slicer_budget_trim_applied(monkeypatch):
+    """超 token 预算的旧消息被截断（不注入），仅保留最新"""
     s = ContextSlicer()
-    client = MagicMock()
-    client.generate = AsyncMock(return_value="摘要：这是一个摘要")
-    monkeypatch.setattr(s, "_get_client", lambda: client)
-    out = await s._summarize_chunk("对话内容")
-    assert out == "这是一个摘要"
+    monkeypatch.setattr(
+        "modules.thinking.chat_light.context_slicer.load_dialog_from_db",
+        lambda sid, limit=100: _msgs(20),
+    )
+    # 强制窗口极小 → 只留最新 1 条
+    monkeypatch.setattr(
+        "modules.thinking.chat_light.context_slicer.budget_trim",
+        lambda msgs, ratio=0.8, window_size=None: [msgs[-1]],
+    )
+    out = await s.slice([], memory_context="", session_id="s1")
+    # 除记忆 system 外只有最新 1 条
+    real = [m for m in out if m["role"] != "system"]
+    assert len(real) == 1
+    assert real[0]["content"] == "内容19"
 
 
 # ── PromptComposer ─────────────────────────────────────────────────────
@@ -196,7 +166,6 @@ async def test_thinker_think_error_path(monkeypatch):
     monkeypatch.setattr("modules.thinking.conscience.get_conscience", lambda: fake_cons)
     monkeypatch.setattr("infra.model.small_model_client.SmallModelClient", MagicMock())
     t = ContinuousThinker()
-    t._blackboard = Blackboard()
     t._runner = MagicMock()
     t._runner.run = AsyncMock(side_effect=RuntimeError("runner fail"))
     t._slicer = MagicMock()
@@ -212,7 +181,6 @@ async def test_thinker_think_error_path(monkeypatch):
 
 async def test_thinker_recall_no_prior(monkeypatch):
     t = ContinuousThinker()
-    t._blackboard = Blackboard()
     repo = MagicMock()
     repo.get_recent_messages = MagicMock(return_value=[])
     monkeypatch.setattr("modules.database.session_repo.get_session_repo", lambda: repo)
@@ -221,7 +189,6 @@ async def test_thinker_recall_no_prior(monkeypatch):
 
 async def test_thinker_recall_with_db_history(monkeypatch):
     t = ContinuousThinker()
-    t._blackboard = Blackboard()
     db = MagicMock()
     db.get_recent_messages = MagicMock(return_value=[{"role": "user", "content": "历史"}])
     monkeypatch.setattr("modules.database.session_repo.get_session_repo", lambda: db)
@@ -243,7 +210,6 @@ async def test_thinker_recall_with_db_history(monkeypatch):
 
 async def test_thinker_recall_exception(monkeypatch):
     t = ContinuousThinker()
-    t._blackboard = Blackboard()
     monkeypatch.setattr("modules.database.session_repo.get_session_repo", lambda: (_ for _ in ()).throw(RuntimeError("no db")))
     assert await t._recall_memories("q", "s") == ""
 
@@ -252,11 +218,15 @@ async def test_thinker_extract_memory_disabled(monkeypatch):
     from config.settings import settings
     monkeypatch.setattr(settings, "MEMORY_REDUCE_ENABLED", False)
     t = ContinuousThinker()
-    await t._extract_memory("s", [{"role": "user", "content": "hi"}])  # 直接返回
+    await t._extract_memory("s")  # 开关关闭 → 直接返回，不读 DB
 
 
 async def test_thinker_extract_memory_short(monkeypatch):
     from config.settings import settings
     monkeypatch.setattr(settings, "MEMORY_REDUCE_ENABLED", True)
     t = ContinuousThinker()
-    await t._extract_memory("s", [{"role": "user", "content": "短"}])  # 长度不足直接返回
+    # mock DB 返回过短对话，验证门控
+    repo = MagicMock()
+    repo.get_messages = MagicMock(return_value=[{"role": "user", "content": "短"}])
+    monkeypatch.setattr("modules.database.session_repo.get_session_repo", lambda: repo)
+    await t._extract_memory("s")  # 长度不足直接返回

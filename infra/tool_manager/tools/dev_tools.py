@@ -17,6 +17,16 @@ logger = setup_logger("dev_tools")
 DEV_TIMEOUT = 60
 MAX_OUTPUT = 30000
 
+# directory_tree 默认排除的噪音目录 —— 构建产物/依赖/运行时数据/各类缓存，
+# 避免一棵树把 dist/node_modules/data 等卷进几十万字符撑爆上下文。
+_DEFAULT_TREE_EXCLUDE = {
+    "node_modules", ".git", ".venv", "venv", "env",
+    "dist", "build", "__pycache__",
+    ".idea", ".vscode", ".mypy_cache", ".pytest_cache", ".ruff_cache",
+    ".mimocode", ".omc", ".hermes", ".claude", ".qwen",
+    "data", "logs",
+}
+
 
 def _py_run(args: list, timeout: int = DEV_TIMEOUT, cwd: Optional[str] = None) -> Dict:
     try:
@@ -331,7 +341,7 @@ def generate_documentation(path: str, function_name: Optional[str] = None) -> Di
     description="递归列出指定目录的树形结构，快速了解项目布局。返回格式为缩进树（├── │   └──）。",
     params={
         "path": "可选，起始目录（默认项目根目录）",
-        "max_depth": "可选，最大递归深度（默认 3，最大 6）",
+        "max_depth": "可选，最大递归深度（默认 1，最大 6）",
         "include_hidden": "可选，是否包含隐藏文件/目录（默认 False）",
         "exclude_patterns": "可选，排除的目录/文件名称列表，如 ['node_modules', '.git', '__pycache__']",
     },
@@ -339,11 +349,12 @@ def generate_documentation(path: str, function_name: Optional[str] = None) -> Di
     category="query",
     core=True,
 )
-def directory_tree(path: Optional[str] = None, max_depth: int = 3, include_hidden: bool = False,
+def directory_tree(path: Optional[str] = None, max_depth: int = 1, include_hidden: bool = False,
                    exclude_patterns: Optional[List[str]] = None, **kwargs) -> Dict[str, Any]:
     """递归列出目录的树形结构。未知参数自动忽略（兼容模型生成的灵活调用）。"""
-    max_depth = max(1, min(6, int(max_depth or 3)))
+    max_depth = max(1, min(6, int(max_depth or 1)))
     exclude = set(exclude_patterns or [])
+    exclude.update(_DEFAULT_TREE_EXCLUDE)
     if not include_hidden:
         exclude.add("__pycache__")
 

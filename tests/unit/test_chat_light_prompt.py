@@ -105,3 +105,81 @@ def test_build_system_orchestrator_persona_priority(monkeypatch):
     sp = PromptComposer().build_system("")
     assert "【总指挥人设】" in sp
     assert "【自定义】" not in sp
+
+
+# ── 激活的自定义 large agent 的 system_override（高级修改）注入 ──────────────
+
+def test_build_system_uses_active_custom_agent_system_override(monkeypatch):
+    """激活的自定义 large agent 设了 system_override（高级修改）时，纯对话应整体采用它。
+    修复：此前只查 get_persona，自定义总指挥的 system_override 永不进 system prompt。"""
+    from config.settings import settings
+    from modules.thinking.chat_light.prompt_composer import PromptComposer
+
+    def fake_get_custom_agents(self):
+        return [{"role": "cat", "name": "cat", "tier": "large"}]
+
+    def fake_get_system_override(self, role):
+        if role == "cat":
+            return "【cat 完整覆盖】青涩却放荡的欲望描写。"
+        return ""
+
+    def fake_get_persona(self, role):
+        return ""
+
+    monkeypatch.setattr(type(settings), "get_custom_agents", fake_get_custom_agents)
+    monkeypatch.setattr(type(settings), "get_system_override", fake_get_system_override)
+    monkeypatch.setattr(type(settings), "get_persona", fake_get_persona)
+    # orchestrator 未激活，cat 激活
+    monkeypatch.setattr(type(settings), "get_agent_active", lambda self, role: role == "cat")
+
+    sp = PromptComposer().build_system("")
+    assert "【cat 完整覆盖】" in sp
+    assert "青涩却放荡的欲望描写" in sp
+
+
+def test_build_system_inactive_custom_agent_override_ignored(monkeypatch):
+    """停用的自定义 large agent 的 system_override 不应被套用。"""
+    from config.settings import settings
+    from modules.thinking.chat_light.prompt_composer import PromptComposer
+
+    def fake_get_custom_agents(self):
+        return [{"role": "cat", "name": "cat", "tier": "large"}]
+
+    def fake_get_system_override(self, role):
+        return "【不应出现】" if role == "cat" else ""
+
+    monkeypatch.setattr(type(settings), "get_custom_agents", fake_get_custom_agents)
+    monkeypatch.setattr(type(settings), "get_system_override", fake_get_system_override)
+    monkeypatch.setattr(type(settings), "get_persona", lambda self, role: "")
+    # cat 停用，orchestrator 也停用 → 无 override，走默认 identity
+    monkeypatch.setattr(type(settings), "get_agent_active", lambda self, role: False)
+    monkeypatch.setattr(pc.settings, "ASSISTANT_NAME", "助手")
+
+    sp = PromptComposer().build_system("")
+    assert "【不应出现】" not in sp
+    assert sp.strip()  # 仍有默认身份内容
+
+
+def test_build_system_orchestrator_override_beats_custom_agent(monkeypatch):
+    """orchestrator 的 system_override 优先于激活的自定义 large agent 的 override。"""
+    from config.settings import settings
+    from modules.thinking.chat_light.prompt_composer import PromptComposer
+
+    def fake_get_custom_agents(self):
+        return [{"role": "cat", "name": "cat", "tier": "large"}]
+
+    def fake_get_system_override(self, role):
+        return {
+            "orchestrator": "【总指挥覆盖】",
+            "cat": "【cat 覆盖】",
+        }.get(role, "")
+
+    monkeypatch.setattr(type(settings), "get_custom_agents", fake_get_custom_agents)
+    monkeypatch.setattr(type(settings), "get_system_override", fake_get_system_override)
+    monkeypatch.setattr(type(settings), "get_persona", lambda self, role: "")
+    # 两者都激活：orchestrator 优先
+    monkeypatch.setattr(type(settings), "get_agent_active", lambda self, role: True)
+
+    sp = PromptComposer().build_system("")
+    assert "【总指挥覆盖】" in sp
+    assert "【cat 覆盖】" not in sp

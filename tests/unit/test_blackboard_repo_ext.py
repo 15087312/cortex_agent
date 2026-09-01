@@ -137,3 +137,42 @@ def test_query_failure_returns_empty(monkeypatch):
 
     monkeypatch.setattr(br, "get_db_manager", boom)
     assert br.query_observations() == []
+
+
+# ── save_blackboard / load_blackboard ──────────────────────────────────────
+
+def test_save_blackboard_upsert_and_load(db):
+    state = {"session_id": "s1", "blackboard_id": "bb1", "turn_id": "t1", "notes": "hello"}
+    assert br.save_blackboard(state) is True
+    loaded = br.load_blackboard("s1", "bb1")
+    assert loaded and loaded["notes"] == "hello"
+    # upsert 更新已有快照
+    state2 = dict(state, turn_id="t2", notes="updated")
+    assert br.save_blackboard(state2) is True
+    loaded2 = br.load_blackboard("s1", "bb1")
+    assert loaded2["notes"] == "updated"
+    assert loaded2["turn_id"] == "t2"
+
+
+def test_load_blackboard_missing(db):
+    assert br.load_blackboard("none", "x") is None
+
+
+def test_save_blackboard_missing_ids(db):
+    assert br.save_blackboard({"session_id": "", "blackboard_id": ""}) is False
+
+
+def test_save_blackboard_failure(monkeypatch):
+    def boom():
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(br, "get_db_manager", boom)
+    assert br.save_blackboard({"session_id": "s", "blackboard_id": "b"}) is False
+
+
+def test_load_blackboard_failure(monkeypatch):
+    def boom():
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(br, "get_db_manager", boom)
+    assert br.load_blackboard("s", "b") is None

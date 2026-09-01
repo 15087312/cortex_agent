@@ -277,9 +277,9 @@ const modelTiers = [
   { key: 'SMALL', labelKey: 'settings.modelTiers.small', hintKey: 'settings.modelTiers.smallHint' },
 ]
 const modelForm = ref({
-  LARGE: { API_KEY: '', API_URL: '', NAME: '', API_FORMAT: '' },
-  MEDIUM: { API_KEY: '', API_URL: '', NAME: '' },
-  SMALL: { API_KEY: '', API_URL: '', NAME: '' },
+  LARGE: { API_KEY: '', API_URL: '', NAME: '', API_FORMAT: '', SUPPLIER: '' },
+  MEDIUM: { API_KEY: '', API_URL: '', NAME: '', SUPPLIER: '' },
+  SMALL: { API_KEY: '', API_URL: '', NAME: '', SUPPLIER: '' },
 })
 const modelSaving = ref(false)
 
@@ -289,8 +289,17 @@ function loadModelForm() {
     modelForm.value[t.key].API_KEY = _str(c[t.key + '_MODEL_API_KEY'], '')
     modelForm.value[t.key].API_URL = _str(c[t.key + '_MODEL_API_URL'], '')
     modelForm.value[t.key].NAME = _str(c[t.key + '_MODEL_NAME'], '')
+    modelForm.value[t.key].SUPPLIER = _str(c[t.key + '_MODEL_OPENROUTER_SUPPLIER'], '')
     if (t.key === 'LARGE') modelForm.value[t.key].API_FORMAT = _str(c.LARGE_MODEL_API_FORMAT, '')
   }
+}
+
+/** 该层模型是否接入 OpenRouter（用于条件显示「供应商」设置项） */
+function tierIsOpenRouter(tier) {
+  const url = (modelForm.value[tier.key].API_URL || '').toLowerCase()
+  if (url.includes('openrouter')) return true
+  const prov = _str(configStore.config[tier.key + '_MODEL_PROVIDER'], '').toLowerCase()
+  return prov.includes('openrouter')
 }
 
 async function saveModelForm() {
@@ -299,12 +308,18 @@ async function saveModelForm() {
   try {
     const updates = []
     for (const t of modelTiers) {
-      const suffixes = ['API_KEY', 'API_URL', 'NAME']
-      if (t.key === 'LARGE') suffixes.push('API_FORMAT')
-      for (const suffix of suffixes) {
-        const key = t.key + '_MODEL_' + suffix
+      // [表单字段名, 配置 key 后缀]；SUPPLIER → OPENROUTER_SUPPLIER（仅 OpenRouter 生效）
+      const fields = [
+        ['API_KEY', 'API_KEY'],
+        ['API_URL', 'API_URL'],
+        ['NAME', 'NAME'],
+        ['SUPPLIER', 'OPENROUTER_SUPPLIER'],
+      ]
+      if (t.key === 'LARGE') fields.push(['API_FORMAT', 'API_FORMAT'])
+      for (const [suffix, cfgSuffix] of fields) {
+        const key = t.key + '_MODEL_' + cfgSuffix
         const val = (modelForm.value[t.key][suffix] || '').trim()
-        const old = _str(c[t.key + '_MODEL_' + suffix], '')
+        const old = _str(c[t.key + '_MODEL_' + cfgSuffix], '')
         if (val !== old) updates.push([key, val])
       }
     }
@@ -531,6 +546,10 @@ onMounted(async () => {
             <div class="setting-row">
               <div class="lbl"><div class="t">{{ $t('settings.model.name') }}</div></div>
               <div class="setting-ctl"><input class="input w-220" v-model="modelForm[tier.key].NAME" placeholder="deepseek-v4-flash" /></div>
+            </div>
+            <div v-if="tierIsOpenRouter(tier)" class="setting-row">
+              <div class="lbl"><div class="t">{{ $t('settings.model.openRouterSupplier') }}</div><div class="d">{{ $t('settings.model.openRouterSupplierDesc') }}</div></div>
+              <div class="setting-ctl"><input class="input w-280" v-model="modelForm[tier.key].SUPPLIER" placeholder="DeepInfra, Together, Groq" /></div>
             </div>
             <div v-if="tier.key === 'LARGE'" class="setting-row">
               <div class="lbl"><div class="t">{{ $t('settings.model.apiFormat') }}</div><div class="d">{{ $t('settings.model.apiFormatDesc') }}</div></div>

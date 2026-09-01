@@ -47,6 +47,8 @@ class LargeModelClient(BaseModelClient):
         # 响应/流式解析保留客户端特有能力，见 config/providers/registry.py）
         from config.providers.registry import get_provider
         self._provider = get_provider(self.model_name, key, url, self._api_format, settings.LARGE_MODEL_PROVIDER)
+        # 注入 OpenRouter 路由的上游供应商偏好（设置页「OpenRouter 供应商」，仅 openrouter 生效）
+        self._provider.openrouter_supplier = settings.LARGE_MODEL_OPENROUTER_SUPPLIER
         # chat_url() 做 /v1、/chat/completions、/messages 归一化，消除"配 /v1 直接 404"
         self._chat_url = self._provider.chat_url()
         logger.info(

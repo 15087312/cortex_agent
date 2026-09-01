@@ -69,14 +69,21 @@ class PromptComposer:
             # 优先级：orchestrator（总指挥）> 激活的自定义 large agent > 内置 base.yaml
             if main_settings.get_agent_active("orchestrator"):
                 custom_persona = main_settings.get_persona("orchestrator") or ""
-            if not custom_persona:
+            # 激活的自定义 large agent 若设置了完整 system_override（高级修改），
+            # 与 orchestrator 的 override 同等对待：未命中 orchestrator override 时采用它。
+            # 修复：此前只读 get_persona，导致自定义总指挥的 system_override 永远不进纯对话 system。
+            if not persona_override:
                 for ca in main_settings.get_custom_agents():
                     if (ca.get("tier") == "large" and ca.get("role")
                             and main_settings.get_agent_active(ca.get("role"))):
-                        p = main_settings.get_persona(ca["role"])
-                        if p:
-                            custom_persona = p
-                            break
+                        so = main_settings.get_system_override(ca["role"])
+                        if so:
+                            persona_override = so
+                        if not custom_persona:
+                            p = main_settings.get_persona(ca["role"])
+                            if p:
+                                custom_persona = p
+                        break
         except Exception:
             pass
         if persona_override:

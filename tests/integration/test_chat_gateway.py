@@ -42,7 +42,6 @@ class FakeThinker:
         self.error = error
         self.cancelled = False
         self.calls = []
-        self._blackboard = FakeBlackboard()
 
     async def think(self, session_id, content, queue):
         self.calls.append((session_id, content))
@@ -60,18 +59,8 @@ class FakeThinker:
             raise
 
     def get_blackboard(self):
-        return self._blackboard
-
-
-class FakeBlackboard:
-    def __init__(self):
-        self.messages = []
-
-    def get_messages(self, session_id):
-        return self.messages
-
-    def add_message(self, session_id, role, content):
-        self.messages.append({"role": role, "content": content})
+        # 黑板已删除（DB 为唯一真源），保留方法仅为兼容历史测试，直接报错
+        raise AttributeError("blackboard 已删除")
 
 
 class FakeRepo:
@@ -413,10 +402,11 @@ def test_rest_session_lifecycle(gw_app):
         resp = client.get(f"/stream/sessions/{sid}/messages")
         assert resp.json()["data"][0]["content"] == "测试消息"
 
-        # 上下文（来自 thinker blackboard）
-        thinker.get_blackboard().add_message(sid, "user", "黑板消息")
+        # 上下文（来自 DB，get_context 走公共层 load_dialog_from_db）
+        # 此时会话已有 2 条真实对话（测试消息 + DB消息），均计入上下文
+        repo.save_message(sid, "user", "DB消息")
         resp = client.get(f"/stream/context/{sid}")
-        assert resp.json()["data"]["count"] == 1
+        assert resp.json()["data"]["count"] == 2
 
         # 删除会话
         resp = client.delete(f"/stream/session/{sid}")

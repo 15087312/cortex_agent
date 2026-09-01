@@ -355,6 +355,16 @@ class TestDirectoryTree:
         assert "__pycache__" not in r["tree"]
         assert ".hidden" not in r["tree"]
 
+    def test_default_depth_is_one(self, tmp_path):
+        # 默认只列一层：顶层文件/目录可见，第二层不显示
+        self._make_tree(tmp_path)
+        r = dt.directory_tree(str(tmp_path))
+        assert r["success"] is True
+        assert r["max_depth"] == 1
+        assert "a.txt" in r["tree"]
+        assert "sub/" in r["tree"]
+        assert "b.txt" not in r["tree"]
+
     def test_include_hidden(self, tmp_path):
         self._make_tree(tmp_path)
         r = dt.directory_tree(str(tmp_path), include_hidden=True)
@@ -370,7 +380,7 @@ class TestDirectoryTree:
         r = dt.directory_tree(str(tmp_path), max_depth=99)
         assert r["max_depth"] == 6
         r2 = dt.directory_tree(str(tmp_path), max_depth=0)
-        assert r2["max_depth"] == 3
+        assert r2["max_depth"] == 1
 
     def test_relative_path(self):
         r = dt.directory_tree("tests")
@@ -385,6 +395,20 @@ class TestDirectoryTree:
         p.write_text("x", encoding="utf-8")
         r = dt.directory_tree(str(p))
         assert "不是目录" in r["error"]
+
+    def test_default_excludes_noise_dirs(self, tmp_path):
+        # 默认排除 node_modules/dist/build 等噪音目录，避免输出被撑爆
+        (tmp_path / "node_modules").mkdir()
+        (tmp_path / "node_modules" / "x.js").write_text("x", encoding="utf-8")
+        (tmp_path / "dist").mkdir()
+        (tmp_path / "build").mkdir()
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "main.py").write_text("x", encoding="utf-8")
+        r = dt.directory_tree(str(tmp_path), max_depth=3)
+        assert "node_modules" not in r["tree"]
+        assert "dist" not in r["tree"]
+        assert "build" not in r["tree"]
+        assert "main.py" in r["tree"]
 
     def test_permission_error(self, tmp_path, monkeypatch):
         self._make_tree(tmp_path)

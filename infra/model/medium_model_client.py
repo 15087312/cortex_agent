@@ -51,6 +51,8 @@ class MediumModelClient(BaseModelClient):
         # 接线 config.providers 格式层（headers/请求体/URL 归一化统一由 Provider 负责）
         from config.providers.registry import get_provider
         self._provider = get_provider(self.model_name, key, url, self._api_format, settings.MEDIUM_MODEL_PROVIDER)
+        # 注入 OpenRouter 路由的上游供应商偏好（设置页「OpenRouter 供应商」，仅 openrouter 生效）
+        self._provider.openrouter_supplier = settings.MEDIUM_MODEL_OPENROUTER_SUPPLIER
         self._chat_url = self._provider.chat_url()
 
     @classmethod

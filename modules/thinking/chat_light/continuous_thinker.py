@@ -14,7 +14,6 @@ from typing import Dict
 
 from modules.thinking.chat_light.model_runner import ModelRunner
 from modules.thinking.chat_light.context_slicer import ContextSlicer
-from modules.thinking.chat_light.blackboard import Blackboard
 from modules.thinking.chat_light.prompt_composer import PromptComposer
 from config.settings import settings
 from utils.logger import setup_logger
@@ -28,9 +27,8 @@ class ContinuousThinker:
     def __init__(self):
         self._runner = ModelRunner()
         self._slicer = ContextSlicer()
-        self._blackboard = Blackboard()
         self._composer = PromptComposer()
-        # 每会话串行锁：防止新消息打断时旧 think 异步收尾把 assistant 乱序写进黑板
+        # 每会话串行锁：防止新消息打断时旧 think 异步收尾乱序写回会话
         self._session_locks: Dict[str, asyncio.Lock] = {}
         self._session_locks_guard = threading.Lock()
 
@@ -41,6 +39,17 @@ class ContinuousThinker:
                 lock = asyncio.Lock()
                 self._session_locks[session_id] = lock
             return lock
+
+    def _model_params(self) -> dict:
+        """解析激活的编排大模型角色的 model_params，供请求覆盖全局默认温度/最大token。
+        与 agent 模式一致（resolve_active_large_role）；纯对话此前忽略这些参数。"""
+        try:
+            from modules.thinking.multi_model_orchestrator import resolve_active_large_role
+            from config.settings import settings as _cfg
+            role = resolve_active_large_role()
+            return _cfg.get_model_params(role) or {}
+        except Exception:
+            return {}
 
     async def think(
         self,
@@ -55,15 +64,15 @@ class ContinuousThinker:
             user_message: User's message text
             message_queue: Async queue for streaming tokens to client
         """
-        # 每会话串行：防止打断时旧 think 异步收尾与新一轮 think 并发写黑板导致乱序
+        # 每会话串行：防止打断时旧 think 异步收尾与新一轮 think 并发写回会话导致乱序
         async with self._session_lock(session_id):
             try:
                 # 1. Retrieve memories
                 memory_context = await self._recall_memories(user_message, session_id)
 
-                self._blackboard.add_message(session_id, "user", user_message)
-                history = self._blackboard.get_messages(session_id)
-                context_messages = await self._slicer.slice(history, memory_context)
+                # 2. Build context — DB 为唯一真源直读（用户消息已由调用方入库）
+                context_messages = await self._slicer.slice(
+                    [], memory_context, session_id=session_id)
 
                 # 3. Compose system prompt
                 system_prompt = self._composer.build_system(memory_context)
@@ -113,10 +122,15 @@ class ContinuousThinker:
                     except asyncio.QueueFull:
                         pass
 
+                # 尊重激活的编排角色 model_params（temperature/max_tokens），与 agent 模式一致：
+                # 纯对话此前硬编码用全局 MODEL_MAX_TOKENS，编排页改的每角色参数从不生效。
+                _mp = self._model_params()
                 response = await self._runner.run(
                     messages=context_messages,
                     system_prompt=system_prompt,
                     on_token=on_token,
+                    max_tokens=_mp.get("max_tokens"),
+                    temperature=_mp.get("temperature"),
                 )
                 # 推送 deepseek 思考过程（reasoning_content）到前端思考区（走消息队列与回复同通道）
                 try:
@@ -130,49 +144,39 @@ class ContinuousThinker:
                         })
                 except Exception:
                     pass
-                # 5. Store assistant response
+                # 5. Assistant 响应由调用方（_consume_turn）保存到 DB
+                #    此处不再写入，避免重复且无 id
                 assistant_content = response.message.content or "".join(full_response)
-                self._blackboard.add_message(session_id, "assistant", assistant_content)
 
                 # 6. Signal completion
                 await message_queue.put({"type": "done"})
 
                 # 7. Post-session memory extraction (background)
-                # 传完整对话历史（user + assistant），而非 slice 上下文（只含 user）
-                full_history = self._blackboard.get_messages(session_id)
-                asyncio.create_task(self._extract_memory(session_id, full_history))
+                #    从 DB 取完整对话历史（DB 为唯一真源，含全量消息）
+                asyncio.create_task(self._extract_memory(session_id))
 
             except Exception as e:
                 logger.error(f"Thinking failed: {e}")
                 await message_queue.put({"type": "error", "content": str(e)})
 
     async def _recall_memories(self, query: str, session_id: str) -> str:
-        """Retrieve global event memory（会话记忆即历史对话，由 context_messages 注入）。
+        """Retrieve global event memory.
 
         仅当本会话已有历史对话时才注入全局事件记忆，避免新会话被无关历史污染。
+        从 DB 取历史判断是否有对话（DB 含全量消息）。
         """
         try:
-            # 会话已有历史对话（当前消息尚未入黑板，取到的是此前消息）
+            # 从 DB 取历史，判断是否有过对话
             prior_msgs = []
             try:
-                if self._blackboard is not None:
-                    prior_msgs = [
-                        m for m in self._blackboard.get_messages(session_id)
-                        if m.get("role") in ("user", "assistant") and m.get("content")
-                    ]
+                from modules.database.session_repo import get_session_repo
+                db_msgs = get_session_repo().get_recent_messages(session_id, limit=5)
+                prior_msgs = [
+                    m for m in db_msgs
+                    if m.get("role") in ("user", "assistant") and m.get("content")
+                ]
             except Exception as e:
                 logger.debug(f"[历史对话检查] 失败: {e}")
-            # DB 兜底：Blackboard 是内存（断开清理/重启后为空），有持久历史也应视为有历史
-            if not prior_msgs:
-                try:
-                    from modules.database.session_repo import get_session_repo
-                    db_msgs = get_session_repo().get_recent_messages(session_id, limit=20)
-                    prior_msgs = [
-                        m for m in db_msgs
-                        if m.get("role") in ("user", "assistant") and m.get("content")
-                    ]
-                except Exception:
-                    pass
             if not prior_msgs:
                 return ""
 
@@ -221,19 +225,21 @@ class ContinuousThinker:
             logger.debug(f"Memory recall failed: {e}")
             return ""
 
-    async def _extract_memory(self, session_id: str, messages: list) -> None:
-        """Post-session memory extraction."""
-        if not settings.MEMORY_REDUCE_ENABLED:
+    async def _extract_memory(self, session_id: str) -> None:
+        """Post-session memory extraction（从 DB 取完整对话，不依赖黑板窗口）。"""
+        # 纯对话路径的门控与 agent 模式保持一致：UI「记忆总结」开关（MEMORY_SUMMARY_ENABLED）
+        # 同样生效；同时尊重此前的 MEMORY_REDUCE_ENABLED（隐藏配置，默认 True）。
+        if not settings.MEMORY_REDUCE_ENABLED or not settings.MEMORY_SUMMARY_ENABLED:
             return
 
         try:
-            # Build conversation text
-            conversation_parts = []
-            for msg in messages:
-                role = msg.get("role", "")
-                content = msg.get("content", "")
-                if role in ("user", "assistant") and content:
-                    conversation_parts.append(f"{role}: {content}")
+            from modules.database.session_repo import get_session_repo
+            msgs = get_session_repo().get_messages(session_id, limit=200)
+            conversation_parts = [
+                f"{m.get('role', '')}: {m.get('content', '')}"
+                for m in msgs
+                if m.get("role") in ("user", "assistant") and m.get("content")
+            ]
 
             conversation_text = "\n".join(conversation_parts)
 
@@ -269,6 +275,3 @@ class ContinuousThinker:
         if not a or not b:
             return False
         return len(a & b) / max(len(a), 1) < 0.3
-
-    def get_blackboard(self) -> Blackboard:
-        return self._blackboard

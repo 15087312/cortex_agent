@@ -109,6 +109,38 @@ def test_openai_build_request_with_top_p():
     assert body["tool_choice"] == "required"
 
 
+def test_openai_build_request_openrouter_supplier():
+    """OpenRouter URL + 供应商偏好 → build_request 注入 provider.order 路由（网关按优先级尝试）"""
+    p = OpenAIProvider("k", "https://openrouter.ai/api/v1", "openrouter/auto")
+    p.openrouter_supplier = "DeepInfra, Together"
+    body = p.build_request([{"role": "user", "content": "hi"}], max_tokens=10, temperature=0.5)
+    assert body["provider"] == {"order": ["DeepInfra", "Together"], "allow_fallbacks": True}
+
+
+def test_openai_build_request_openrouter_supplier_single():
+    """单个供应商 → order 只含一项，仍保留 allow_fallbacks"""
+    p = OpenAIProvider("k", "https://openrouter.ai/api/v1", "m")
+    p.openrouter_supplier = "Groq"
+    body = p.build_request([{"role": "user", "content": "hi"}], max_tokens=10, temperature=0.5)
+    assert body["provider"]["order"] == ["Groq"]
+
+
+def test_openai_build_request_openrouter_supplier_ignored_elsewhere():
+    """非 OpenRouter 端点即使配了供应商也不注入 provider（避免误伤其他 OpenAI 兼容端点）"""
+    p = OpenAIProvider("k", "https://api.deepseek.com/v1", "deepseek")
+    p.openrouter_supplier = "DeepInfra"
+    body = p.build_request([{"role": "user", "content": "hi"}], max_tokens=10, temperature=0.5)
+    assert "provider" not in body
+
+
+def test_openai_build_request_openrouter_empty_supplier():
+    """OpenRouter 但供应商留空 → 不注入 provider，由网关默认负载均衡"""
+    p = OpenAIProvider("k", "https://openrouter.ai/api/v1", "openrouter/auto")
+    p.openrouter_supplier = ""
+    body = p.build_request([{"role": "user", "content": "hi"}], max_tokens=10, temperature=0.5)
+    assert "provider" not in body
+
+
 def test_anthropic_build_request_extracts_system():
     p = AnthropicProvider("k", "u", "claude-x")
     body = p.build_request(

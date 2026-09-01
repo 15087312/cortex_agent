@@ -30,6 +30,29 @@ def _get_async_pool() -> concurrent.futures.ThreadPoolExecutor:
     return _ASYNC_TOOL_POOL
 
 
+# 单工具返回结果上限（字符）：防止工具返回超大文本（如 directory_tree 全目录树、
+# read_text_file 大文件、exec_command 长输出）把模型上下文撑爆。
+# 字段级截断：字符串直接截断；dict/list 递归截断其中的长文本，保留 exit_code 等短字段。
+MAX_TOOL_RESULT_CHARS = 4000
+
+
+def _truncate_text(text: str, limit: int = MAX_TOOL_RESULT_CHARS) -> str:
+    if len(text) <= limit:
+        return text
+    return text[:limit] + f"\n...[已截断 {len(text) - limit} 字符]"
+
+
+def _limit_tool_result(result: Any, limit: int = MAX_TOOL_RESULT_CHARS) -> Any:
+    """字段级限制单工具返回大小，避免超大文本进入上层上下文。"""
+    if isinstance(result, str):
+        return _truncate_text(result, limit)
+    if isinstance(result, dict):
+        return {k: _limit_tool_result(v, limit) for k, v in result.items()}
+    if isinstance(result, (list, tuple)):
+        return [_limit_tool_result(v, limit) for v in result]
+    return result
+
+
 def _run_async_in_thread(func, kwargs) -> Any:
     """在独立线程 + 专用事件循环中运行异步工具函数。
 
@@ -230,7 +253,7 @@ class CombinedToolExecutor(ToolExecutorPort):
             latency = (time.time() - start) * 1000
             return ToolCallResult(
                 success=True,
-                result=result,
+                result=_limit_tool_result(result),
                 tool_name=request.tool_name,
                 latency_ms=latency,
             )
@@ -339,7 +362,7 @@ class CombinedToolExecutor(ToolExecutorPort):
 
         return ToolCallResult(
             success=not is_error,
-            result=content_text,
+            result=_truncate_text(content_text),
             error=error_text,
             tool_name=request.tool_name,
             source="mcp",

@@ -741,6 +741,35 @@ async def test_generate_with_tools_supervisor_forced_end(monkeypatch):
     r._thinker.record_control_decision.assert_called_once()
 
 
+async def test_generate_with_tools_supervisor_no_tool_rejection_cap(monkeypatch):
+    # 主管连续无工具调用：注入"拒绝指令"重试上限 MAX_NO_TOOL_REJECTIONS 次，随后强制结束，
+    # 而不是依赖 MAX_CHAT_TOOL_TURNS=300 兜底空转。
+    r, _ = _tool_runner(monkeypatch, tier="supervisor")
+    r.MAX_NO_TOOL_REJECTIONS = 2
+    # 只提供 MAX+1 个无工具响应：若 cap 未生效会越界抛异常导致失败
+    client = _chat_client(
+        _resp(content=None, calls=None),
+        _resp(content=None, calls=None),
+        _resp(content=None, calls=None),
+    )
+    out = await r._generate_with_tools("system", "user", client)
+    assert "已处理" in out
+    # 重试 2 次 + 最终强制结束 1 次 = 3 次模型调用
+    assert client.chat.await_count == 3
+    r._thinker.record_control_decision.assert_called_once()
+
+
+async def test_generate_with_tools_supervisor_no_tool_rejection_default_cap(monkeypatch):
+    # 默认 MAX_NO_TOOL_REJECTIONS 应 ≥ 1，且连续无工具调用会被 cap 强制结束
+    r, _ = _tool_runner(monkeypatch, tier="supervisor")
+    n = r.MAX_NO_TOOL_REJECTIONS
+    assert isinstance(n, int) and n >= 1
+    client = _chat_client(*([_resp(content=None, calls=None)] * (n + 1)))
+    out = await r._generate_with_tools("system", "user", client)
+    assert "已处理" in out
+    assert client.chat.await_count == n + 1
+
+
 async def test_generate_with_tools_query_tool_details(monkeypatch):
     r, mcp = _tool_runner(monkeypatch, tier="large")
     info = MagicMock()

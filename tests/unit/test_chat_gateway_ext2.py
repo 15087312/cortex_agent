@@ -44,12 +44,9 @@ def _setup_repo(monkeypatch):
 
 
 def _setup_thinker(monkeypatch, blackboard=None):
+    # 黑板已删除（DB 为唯一真源），thinker 不再提供 get_blackboard
     thinker = MagicMock()
-    bb = blackboard
-    if bb is None:
-        bb = MagicMock()
-        bb.clear_session = MagicMock()
-    thinker.get_blackboard = MagicMock(return_value=bb)
+    thinker.get_blackboard = MagicMock(side_effect=AttributeError("blackboard 已删除"))
     monkeypatch.setattr(cg, "_get_chat_thinker", lambda: thinker)
     return thinker
 
@@ -935,26 +932,19 @@ async def test_route_sse_chatonly(monkeypatch):
 
 async def test_route_get_context_db_fallback(monkeypatch):
     _set_chatonly(monkeypatch)
-    bb = MagicMock()
-    bb.get_messages = MagicMock(return_value=[])
-    thinker = MagicMock()
-    thinker.get_blackboard = MagicMock(return_value=bb)
-    monkeypatch.setattr(cg, "_get_chat_thinker", lambda: thinker)
-    repo = _noop(monkeypatch)
-    repo.get_recent_messages = MagicMock(return_value=[{"role": "user", "content": "恢复"}])
+    # get_context 走公共层 load_dialog_from_db
+    repo = MagicMock()
+    repo.get_messages = MagicMock(return_value=[{"role": "user", "content": "恢复"}])
+    monkeypatch.setattr("modules.database.session_repo.get_session_repo", lambda: repo)
     out = await cg.get_context("s1")
     assert out["data"]["count"] == 1
 
 
 async def test_route_get_context_db_fallback_error(monkeypatch):
     _set_chatonly(monkeypatch)
-    bb = MagicMock()
-    bb.get_messages = MagicMock(return_value=[])
-    thinker = MagicMock()
-    thinker.get_blackboard = MagicMock(return_value=bb)
-    monkeypatch.setattr(cg, "_get_chat_thinker", lambda: thinker)
-    repo = _noop(monkeypatch)
-    repo.get_recent_messages = MagicMock(side_effect=RuntimeError("db down"))
+    repo = MagicMock()
+    repo.get_messages = MagicMock(side_effect=RuntimeError("db down"))
+    monkeypatch.setattr("modules.database.session_repo.get_session_repo", lambda: repo)
     out = await cg.get_context("s1")
     assert out["data"]["count"] == 0
 

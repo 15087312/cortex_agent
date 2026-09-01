@@ -1340,6 +1340,8 @@ class ModelRunner:
 
     MAX_CHAT_TOOL_TURNS = 300  # 工具循环防死循环兜底轮数（非 token 限制）；上下文超 90% 会自动总结后继续
 
+    MAX_NO_TOOL_REJECTIONS = 3  # 主管连续无工具调用时注入"拒绝指令"重试的上限，避免空转
+
     def _push_reasoning(self, reasoning: str) -> None:
         """推送模型思考过程（deepseek reasoning_content）到前端 thinking 区，带身份标注"""
         reasoning = (reasoning or "").strip()
@@ -1786,10 +1788,12 @@ class ModelRunner:
             logger.debug(f"[ModelRunner] 断点快照保存失败 (非致命): {e}")
 
     async def _maybe_summarize_context(self, messages: list, user_prompt: str) -> bool:
-        """上下文占用超模型输入上下文的 90% 时，调当前模型做一次总结并注入下轮
+        """上下文占用超阈值时，调当前模型做一次总结并注入下轮
 
-        所有 token 控制以模型配置的输入上下文长度为标准（context_window_size），
-        不硬裁剪（不 30/70 截断）；总结后 messages 替换为【摘要 + 原任务】，返回 True。
+        当累计估算 token 超过 CHAT_SUMMARY_TRIGGER_TOKENS（默认32000）时，
+        调用模型对当前上下文做自动总结，并将摘要与当前任务合并后继续。
+        所有 token 控制以模型配置的输入上下文长度为上限，不硬裁剪。
+        总结后 messages 替换为【摘要 + 原任务】，返回 True。
         """
         try:
             if not messages:
@@ -1800,7 +1804,9 @@ class ModelRunner:
             text = "\n".join(f"{m.role}: {(m.content or '')[:500]}" for m in messages)
             estimated = engine.estimate_tokens(text)
             window = int(self.context_window_size or 128000)
-            threshold = int(window * 0.9)
+            # 使用配置阈值；未配置时回退至模型上下文的 90%
+            trigger = int(settings.CHAT_SUMMARY_TRIGGER_TOKENS) if settings.CHAT_SUMMARY_TRIGGER_TOKENS else window * 9 // 10
+            threshold = min(window * 9 // 10, trigger)
             # 同步当前上下文占用到 thinker，供前端展示真实占用（含工具历史，非仅初始 prompt）
             try:
                 if self._thinker is not None:
@@ -1810,7 +1816,7 @@ class ModelRunner:
             if estimated <= threshold:
                 return False
             logger.info(
-                f"[ModelRunner] {self.model_id} 上下文占用 {estimated}/{window} token 超 90%，"
+                f"[ModelRunner] {self.model_id} 上下文占用 {estimated}/{window} token 超 {trigger}，"
                 f"调当前模型总结后继续"
             )
             summary = await self._summarize(messages)
@@ -1824,7 +1830,7 @@ class ModelRunner:
                 ChatMessage(
                     role="user",
                     content=(
-                        f"【历史上下文已自动总结（原上下文超 {window}×90% 限制）】\n{summary}\n\n"
+                        f"【历史上下文已自动总结】\n{summary}\n\n"
                         f"原任务：{user_prompt}\n请基于以上摘要继续完成当前任务，不要重复已完成的工作。"
                     ),
                 ),
@@ -2193,6 +2199,7 @@ class ModelRunner:
 
         last_error = None
         expert_errors: list = []  # 收集专家工具调用失败信息，最终附给主管
+        rejection_count = 0  # 主管连续无工具调用次数（超过 MAX_NO_TOOL_REJECTIONS 强制结束）
         for attempt in range(self.GENERATE_RETRIES):
             try:
                 logger.info(f"[TOOL-LOOP] {self.model_id} 进入工具循环 (max_turns={self.MAX_CHAT_TOOL_TURNS})")
@@ -2299,13 +2306,17 @@ class ModelRunner:
                             if self._thinker:
                                 self._thinker.record_control_decision({"continue": False, "result_summary": content})
                             return content
-                        # 主管：必须通过工具调用输出
-                        if turn < self.MAX_CHAT_TOOL_TURNS - 1:
-                            logger.info(f"[ModelRunner] {self.model_id} 第{turn}轮无工具调用，注入拒绝指令重试")
+                        # 主管：必须通过工具调用输出；连续无工具调用重试上限 MAX_NO_TOOL_REJECTIONS 次，避免空转
+                        if rejection_count < self.MAX_NO_TOOL_REJECTIONS and turn < self.MAX_CHAT_TOOL_TURNS - 1:
+                            rejection_count += 1
+                            logger.info(
+                                f"[ModelRunner] {self.model_id} 第{turn}轮无工具调用，"
+                                f"注入拒绝指令重试 ({rejection_count}/{self.MAX_NO_TOOL_REJECTIONS})"
+                            )
                             rejection_msg = ChatMessage(
                                 role="system",
                                 content=(
-                                    f"[系统拒绝 第{turn+1}次] 纯文本输出不被接受。\n"
+                                    f"[系统拒绝 第{rejection_count}次] 纯文本输出不被接受。\n"
                                     "你必须调用 delegate_task 或 continue_thinking 来继续。\n"
                                     "不要调用其他普通工具（如 web_search 等）。\n"
                                     "❌ 错误：输出纯文本或调用无关工具\n"
@@ -2314,7 +2325,10 @@ class ModelRunner:
                             )
                             messages.append(rejection_msg)
                             continue
-                        logger.info(f"[ModelRunner] {self.model_id} 多次拒绝仍无工具调用，强制结束思考循环")
+                        logger.info(
+                            f"[ModelRunner] {self.model_id} 连续 {rejection_count} 次无工具调用，"
+                            "强制结束思考循环"
+                        )
                         # 直接写入黑板作为最终回复
                         response_text = content or f"[{self.identity.role}] 已处理：{self._task_description}"
                         if self._thinker:

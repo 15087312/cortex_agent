@@ -195,19 +195,20 @@ async def test_persist_thought_error(monkeypatch):
     await s._persist_thought("s1", "x")  # 不抛异常
 
 
-async def test_proactive_context_trim_settings_fail(monkeypatch):
+async def test_budget_trim_settings_fail(monkeypatch):
     from types import SimpleNamespace
     s = _system()
-    s.sessions["s1"] = {"messages": [{"content": f"m{i}"} for i in range(8)]}
+    messages = [{"content": f"m{i}"} for i in range(8)]
     engine = MagicMock()
     engine.estimate_tokens = MagicMock(return_value=999999)
     monkeypatch.setattr("modules.thinking.context.compression.get_compression_engine", lambda: engine)
-    # 无 CONTEXT_WINDOW_SIZE 属性 → 走 except 默认 128000
+    # 无 CONTEXT_WINDOW_SIZE → 走 except → _resolve_context_window 也取不到 → 窗口未知
     import sys
     cfg_mod = sys.modules["config.settings"]
     monkeypatch.setattr(cfg_mod, "settings", SimpleNamespace())
-    await s._proactive_context_trim("s1")
-    assert len(s.sessions["s1"]["messages"]) == 4
+    kept = s._budget_trim(messages)
+    # 窗口未知时不截断（不破坏历史），而非旧实现的盲目裁一半
+    assert len(kept) == 8
 
 
 async def test_emit_send_error(monkeypatch):

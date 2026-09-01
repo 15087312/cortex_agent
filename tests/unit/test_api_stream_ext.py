@@ -107,34 +107,41 @@ async def test_persist_thought(monkeypatch):
     await s2._persist_thought("s1", "x")  # 无 repo 直接返回
 
 
-# ── 水位线裁剪 ─────────────────────────────────────────────────────────
+# ── token 预算截断（纯读取视图，不裁剪内存/DB） ─────────────────────────
 
-async def test_proactive_context_trim(monkeypatch):
+async def test_budget_trim_over_budget(monkeypatch):
     s = _system()
-    s.sessions["s1"] = {"messages": [{"content": f"m{i}"} for i in range(8)]}
+    messages = [{"content": f"m{i}"} for i in range(8)]
+    s.sessions["s1"] = {"messages": messages}
     engine = MagicMock()
     engine.estimate_tokens = MagicMock(return_value=999999)
     monkeypatch.setattr("modules.thinking.context.compression.get_compression_engine", lambda: engine)
     import sys, types
     cfg = sys.modules["config.settings"]
     monkeypatch.setattr(cfg, "settings", types.SimpleNamespace(CONTEXT_WINDOW_SIZE=1000))
-    await s._proactive_context_trim("s1")
-    assert len(s.sessions["s1"]["messages"]) == 4  # 保留一半
+    kept = s._budget_trim(messages)
+    assert len(kept) == 1          # 单条即超预算 → 至少保留最新 1 条
+    assert kept[-1]["content"] == "m7"  # 保留的是最新消息
+    # 关键：内存不被修改（旧实现破坏性裁剪，导致内存与 DB 分叉）
+    assert len(s.sessions["s1"]["messages"]) == 8
 
 
-async def test_proactive_context_trim_under_threshold(monkeypatch):
+async def test_budget_trim_under_threshold(monkeypatch):
     s = _system()
-    s.sessions["s1"] = {"messages": [{"content": "a"} for _ in range(5)]}
+    messages = [{"content": "a"} for _ in range(5)]
     engine = MagicMock()
     engine.estimate_tokens = MagicMock(return_value=10)
     monkeypatch.setattr("modules.thinking.context.compression.get_compression_engine", lambda: engine)
-    await s._proactive_context_trim("s1")
-    assert len(s.sessions["s1"]["messages"]) == 5
+    import sys, types
+    cfg = sys.modules["config.settings"]
+    monkeypatch.setattr(cfg, "settings", types.SimpleNamespace(CONTEXT_WINDOW_SIZE=1000))
+    kept = s._budget_trim(messages)
+    assert len(kept) == 5
 
 
-async def test_proactive_context_trim_no_session():
+async def test_budget_trim_empty():
     s = _system()
-    await s._proactive_context_trim("none")  # 无会话
+    assert s._budget_trim([]) == []
 
 
 # ── _emit / processing 状态 ────────────────────────────────────────────
@@ -231,12 +238,31 @@ def test_format_default():
 
 # ── get_context / get_status ───────────────────────────────────────────
 
-def test_get_context_filters_thought():
+def test_get_context_filters_thought(monkeypatch):
+    """DB 无记录时走内存兜底，并过滤非对话 role"""
     s = _system()
     s.sessions["s1"] = {"messages": [{"role": "user", "content": "a"}, {"role": "thought", "content": "b"}]}
+    monkeypatch.setattr(s, "_load_dialog_from_db", lambda sid: [])  # DB 无记录 → 内存兜底
     ctx = s.get_context("s1")
     assert [m["role"] for m in ctx] == ["user"]
     assert s.get_context("none") == []
+
+
+def test_load_dialog_from_db_filters_non_dialog_roles(monkeypatch):
+    """DB 为唯一真源：过滤 thought/process/mental，并把 created_at 转为 timestamp"""
+    from modules.thinking.context.dialog_memory import load_dialog_from_db
+    repo = MagicMock()
+    repo.get_messages = MagicMock(return_value=[
+        {"id": "m1", "role": "user", "content": "你好", "created_at": "2026-09-01T10:00:00"},
+        {"id": "m2", "role": "thought", "content": "思考中", "created_at": "2026-09-01T10:00:01"},
+        {"id": "m3", "role": "assistant", "content": "hi", "created_at": "2026-09-01T10:00:02"},
+        {"id": "m4", "role": "process", "content": "流程", "created_at": "2026-09-01T10:00:03"},
+    ])
+    monkeypatch.setattr("modules.database.session_repo.get_session_repo", lambda: repo)
+    dialog = load_dialog_from_db("s1")
+    assert [m["role"] for m in dialog] == ["user", "assistant"]
+    assert dialog[0]["id"] == "m1"
+    assert isinstance(dialog[0]["timestamp"], float) and dialog[0]["timestamp"] > 0
 
 
 def test_get_status():

@@ -13,7 +13,13 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from infra.mcp.combined_provider import CombinedToolExecutor, CombinedToolProvider
+from infra.mcp.combined_provider import (
+    CombinedToolExecutor,
+    CombinedToolProvider,
+    MAX_TOOL_RESULT_CHARS,
+    _limit_tool_result,
+    _truncate_text,
+)
 from infra.mcp.transport import MCPToolDef
 from infra.mcp.types import ToolCallRequest
 
@@ -53,6 +59,37 @@ def _patch_get_func(monkeypatch, fn):
 def _patch_list_tools(monkeypatch, data):
     from infra.tool_manager.tool_registry import ToolRegistry
     monkeypatch.setattr(ToolRegistry, "list_tools", staticmethod(lambda source=None: data))
+
+
+# ====================================================================
+# 单工具返回上限（_truncate_text / _limit_tool_result）
+# ====================================================================
+
+class TestToolResultLimit:
+    def test_truncate_text_short_unchanged(self):
+        assert _truncate_text("hi", 10) == "hi"
+
+    def test_truncate_text_long(self):
+        out = _truncate_text("x" * 100, 10)
+        assert len(out) < 100
+        assert "已截断" in out
+        assert out.startswith("xxxxx")
+
+    def test_limit_str(self):
+        assert _limit_tool_result("short") == "short"
+        assert "已截断" in _limit_tool_result("y" * (MAX_TOOL_RESULT_CHARS + 10))
+
+    def test_limit_dict_preserves_short_fields(self):
+        d = {"tree": "z" * (MAX_TOOL_RESULT_CHARS + 50), "exit_code": 0, "success": True}
+        r = _limit_tool_result(d)
+        assert r["exit_code"] == 0
+        assert r["success"] is True
+        assert len(r["tree"]) <= MAX_TOOL_RESULT_CHARS + 30
+
+    def test_limit_nested(self):
+        r = _limit_tool_result({"a": {"b": "m" * (MAX_TOOL_RESULT_CHARS + 5)}, "c": 1})
+        assert r["c"] == 1
+        assert "已截断" in r["a"]["b"]
 
 
 # ====================================================================
@@ -247,6 +284,16 @@ class TestCombinedToolExecutor:
         assert r.success is True
         assert r.result == 8
         assert r.latency_ms >= 0
+
+    def test_execute_local_result_truncated(self, executor, monkeypatch):
+        # 本地工具返回超大文本 → execute 出口统一截断到单工具上限
+        def _big():
+            return "x" * (MAX_TOOL_RESULT_CHARS + 100)
+        _patch_get_func(monkeypatch, lambda n: _big)
+        r = executor.execute(ToolCallRequest(tool_name="t"))
+        assert r.success is True
+        assert len(r.result) <= MAX_TOOL_RESULT_CHARS + 30
+        assert "已截断" in r.result
 
     def test_execute_local_sync_exception(self, executor, monkeypatch):
         def _bad():

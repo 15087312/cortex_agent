@@ -399,3 +399,10 @@ def test_get_status_mcp_error(manager, mcp_service, monkeypatch):
     s = manager.get_status()
     assert s["mcp_count"] == 0
     assert s["total_tools"] == 0
+
+
+def test_get_tool_manager_singleton():
+    from infra.tool_manager import get_tool_manager as gm1, get_tool_manager as gm2
+    inst = gm1()
+    assert inst is not None
+    assert gm2() is inst  # 单例复用

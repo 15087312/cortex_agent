@@ -21,6 +21,8 @@ from api.errors import AppError, ErrorCode
 from sse_starlette.sse import EventSourceResponse
 
 from modules.thinking.multi_model_orchestrator import MultiModelOrchestrator
+# 非对话 role 由公共层统一定义（agent / chatonly 共用），避免两份定义漂移
+from modules.thinking.context.dialog_memory import NON_DIALOG_ROLES as _NON_DIALOG_ROLES
 from utils.logger import setup_logger
 
 router = APIRouter(prefix="/stream", tags=["流式思考"])
@@ -269,13 +271,15 @@ class StreamThinkingSystem:
         self._session_repo = None  # 延迟初始化
 
     def _get_session_repo(self):
-        if self._session_repo is None:
+        # getattr 兜底：部分构造路径（如单测直接实例化）未初始化该属性，
+        # 直接访问 self._session_repo 会抛 AttributeError
+        if getattr(self, "_session_repo", None) is None:
             try:
                 from modules.database.session_repo import get_session_repo
                 self._session_repo = get_session_repo()
             except Exception as e:
                 logger.debug(f"[SessionRepo] 初始化失败 (非致命): {e}")
-        return self._session_repo
+        return getattr(self, "_session_repo", None)
 
     async def create_session(self) -> str:
         session_id = str(uuid.uuid4())
@@ -298,8 +302,8 @@ class StreamThinkingSystem:
                     try:
                         recent = repo.get_recent_messages(session_id, limit=50)
                         if recent:
-                            # 过滤思考步骤（thought）与心理活动（mental），只恢复真实对话，避免污染模型上下文
-                            recent = [m for m in recent if m["role"] not in ("thought", "mental")]
+                            # 过滤思考步骤（thought/process/mental），只恢复真实对话，避免污染模型上下文
+                            recent = [m for m in recent if m["role"] not in _NON_DIALOG_ROLES]
                             self.sessions[session_id]["messages"] = [
                                 {"role": m["role"], "content": m["content"], "timestamp": 0,
                                  "id": m.get("id", "")}
@@ -454,40 +458,15 @@ class StreamThinkingSystem:
             pass
         return snapshot
 
-    async def _proactive_context_trim(self, session_id: str):
-        """水位线渐进裁剪 — 消息超窗口 80% 时丢弃最旧的 50%"""
-        session = self.sessions.get(session_id)
-        if not session:
-            return
-        messages = session.get("messages", [])
-        if len(messages) < 4:
-            return
-        try:
-            from config.settings import settings
-            window_size = settings.CONTEXT_WINDOW_SIZE
-        except Exception:
-            window_size = _resolve_context_window("large")
-        threshold = int(window_size * 0.8)
+    def _budget_trim(self, messages: List[Dict[str, Any]], ratio: float = 0.8) -> List[Dict[str, Any]]:
+        """按 token 预算从最新往回保留消息（委托公共层，纯函数不修改存储）"""
+        from modules.thinking.context.dialog_memory import budget_trim
+        return budget_trim(messages, ratio=ratio)
 
-        total_content = "\n".join(
-            m.get("content", "") for m in messages
-        )
-        from modules.thinking.context.compression import get_compression_engine
-        engine = get_compression_engine()
-        estimated = engine.estimate_tokens(total_content)
-
-        if estimated <= threshold:
-            return
-
-        keep_count = max(len(messages) // 2, 2)
-        kept = messages[-keep_count:]
-        dropped = len(messages) - keep_count
-        async with self._lock:
-            session["messages"] = kept
-        logger.info(
-            f"[上下文] 消息水位 {estimated} tokens > {threshold} (80%)，"
-            f"丢弃最旧 {dropped} 条，保留最新 {keep_count} 条"
-        )
+    def _load_dialog_from_db(self, session_id: str, limit: int = 100) -> List[Dict[str, Any]]:
+        """从 DB 读取真实对话（委托公共层，DB 为唯一真源）"""
+        from modules.thinking.context.dialog_memory import load_dialog_from_db
+        return load_dialog_from_db(session_id, limit=limit)
 
     async def _emit(
             self,
@@ -696,12 +675,14 @@ class StreamThinkingSystem:
                 callback,
             )
 
-            await self._proactive_context_trim(session_id)
+            # DB 为唯一真源；注入模型的上下文按 token 预算截断（纯读取视图，
+            # 不裁剪内存/DB，超窗口的旧消息前端仍可见，只是不注入模型）
             context_messages = self.get_context(session_id)
-            short_term_memory = [m.get("content", "") for m in context_messages[-6:]]
+            model_context = self._budget_trim(context_messages)
+            short_term_memory = [m.get("content", "") for m in model_context[-6:]]
             scheduler_context = [
                 {"role": m.get("role", ""), "content": m.get("content", ""), "timestamp": m.get("timestamp", 0.0)}
-                for m in context_messages[-8:]
+                for m in model_context[-8:]
             ]
 
             loop = asyncio.get_running_loop()
@@ -1349,11 +1330,19 @@ class StreamThinkingSystem:
             logger.debug(f"[事件记忆] 后处理失败: {e}")
 
     def get_context(self, session_id: str) -> List[Dict[str, Any]]:
-        session = self.sessions.get(session_id)
-        if not session:
-            return []
-        # 过滤思考步骤（thought），确保模型上下文只含真实对话
-        return [m for m in session.get("messages", []) if m.get("role") != "thought"]
+        """获取会话真实对话（DB 为唯一真源，内存仅兜底）
+
+        与前端 get_session_messages 同源（都读 DB），保证：
+        - 前端展示的对话过程 与 注入模型的对话历史 数据来源一致；
+        - 重连/切会话不会因内存裁剪状态不同而产生上下文跳变。
+        过滤思考步骤（thought/process/mental）——只写 DB 供前端展示，不进模型上下文。
+        """
+        dialog = self._load_dialog_from_db(session_id)
+        if dialog:
+            return dialog
+        # 兜底：DB 无记录（保存失败的极端场景）时用内存消息，避免切回会话内容丢失
+        mem = self.sessions.get(session_id, {}).get("messages", [])
+        return [m for m in mem if m.get("role") not in _NON_DIALOG_ROLES]
 
     def get_status(self) -> Dict[str, Any]:
         running_sessions = sum(1 for s in self.sessions.values() if s.get("running"))
@@ -1721,6 +1710,14 @@ async def close_session(session_id: str):
             repo.delete_session(session_id)
         except Exception as e:
             logger.debug(f"[SessionRepo] 删除会话失败: {e}")
+    # 关键修复：清理跨模块的进程内存缓存，防止重新打开/请求时仍加载旧数据
+    try:
+        from modules.thinking.model_runner import _session_memory_context, _resume_context
+        _session_memory_context.pop(session_id, None)
+        if isinstance(_resume_context, dict):
+            _resume_context.pop(session_id, None)
+    except Exception:
+        pass
     return {"success": True, "data": {"message": "会话已删除"}}
 
 

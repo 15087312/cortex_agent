@@ -44,9 +44,9 @@ def test_estimate_tokens_empty():
 
 def test_estimate_tokens_chinese():
     m = _mgr()
-    # 4 个中文字 → (4+0)//3 = 1
-    assert m.estimate_tokens("你好世界") == 1
-    # 中文按 3 字符/token 估算
+    # 统一委托 ContextController（tiktoken 精确计数），中文按真实编码 token 数
+    assert m.estimate_tokens("你好世界") > 0
+    # 长中文文本 token 数随长度增长
     assert m.estimate_tokens("中华人民共和国" * 10) > 10
 
 

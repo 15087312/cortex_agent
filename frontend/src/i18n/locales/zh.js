@@ -386,6 +386,8 @@ export default {
       name: '模型名',
       apiFormat: 'API 格式',
       apiFormatDesc: 'openai / dashscope / anthropic，留空自动检测',
+      openRouterSupplier: 'OpenRouter 供应商',
+      openRouterSupplierDesc: 'OpenRouter 聚合路由的上游供应商（如 DeepInfra / Together / Groq），多个用英文逗号分隔，按优先级依次尝试；留空由 OpenRouter 自动负载均衡',
       saving: '保存中…',
       saveMain: '保存主模型配置',
       noChange: '主模型配置无变化',

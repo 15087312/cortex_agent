@@ -171,11 +171,13 @@ def test_start_restores_history(tmp_repo):
     assert msgs[0]["role"] == "user"
 
 
-def test_get_context_and_status():
+def test_get_context_and_status(monkeypatch):
     s = _inst()
     s.sessions = {"s1": {"messages": [{"role": "user", "content": "hi"}], "running": True}}
     s._running = True
     s._lock = asyncio.Lock()
+    # DB 为唯一真源；此处模拟 DB 无记录，验证内存兜底路径
+    monkeypatch.setattr(s, "_load_dialog_from_db", lambda sid: [])
     ctx = s.get_context("s1")
     assert ctx == [{"role": "user", "content": "hi"}]
     st = s.get_status()

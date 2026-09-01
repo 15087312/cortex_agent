@@ -389,6 +389,8 @@ export default {
       name: 'Model Name',
       apiFormat: 'API Format',
       apiFormatDesc: 'openai / dashscope / anthropic; leave empty to auto-detect',
+      openRouterSupplier: 'OpenRouter Supplier',
+      openRouterSupplierDesc: 'Preferred upstream suppliers for OpenRouter routing (e.g. DeepInfra / Together / Groq); comma-separated, tried in priority order. Leave empty for OpenRouter auto load balancing.',
       saving: 'Saving…',
       saveMain: 'Save Main Model Config',
       noChange: 'No changes to main model config',

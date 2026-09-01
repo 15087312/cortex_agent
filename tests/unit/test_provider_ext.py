@@ -82,6 +82,69 @@ class TestCohere:
         assert out["finish_reason"] == "stop"
         assert out["usage"] == {"prompt_tokens": 5, "completion_tokens": 3}
 
+    def test_build_request_full_options(self):
+        p = CohereProvider("k", "u", "command-r")
+        body = p.build_request(
+            [{"role": "user", "content": "hi"}], 100, 0.7,
+            tools=[{"function": {"name": "calc", "description": "算术", "parameters": {"type": "object"}}}],
+            stream=True, top_p=0.9,
+        )
+        assert body["temperature"] == 0.7
+        assert body["p"] == 0.9
+        assert body["stream"] is True
+        assert body["tools"] == [{"type": "function", "function": {
+            "name": "calc", "description": "算术", "parameters": {"type": "object"}}}]
+
+    def test_tools_to_cohere_input_schema_fallback(self):
+        p = CohereProvider("k", "u", "command-r")
+        out = p._tools_to_cohere([{"name": "f", "input_schema": {"type": "object"}}])
+        assert out[0]["function"]["parameters"] == {"type": "object"}
+        assert out[0]["function"]["description"] == ""
+
+    def test_chat_url_already_chat(self):
+        p = CohereProvider("k", "https://api.cohere.com/v2/chat", "command-r")
+        assert p.chat_url() == "https://api.cohere.com/v2/chat"
+
+    def test_parse_response_plain_string_block(self):
+        p = CohereProvider("k", "u", "command-r")
+        out = p.parse_response({"message": {"content": ["just", "text"]}, "finish_reason": "COMPLETE"})
+        assert out["content"] == "just\ntext"
+        assert out["usage"] is None
+
+    def test_parse_response_malformed_blocks(self):
+        p = CohereProvider("k", "u", "command-r")
+        # 非 str 非 dict 的块被跳过；tool_call 缺 function 用空名
+        out = p.parse_response({
+            "message": {"content": [{"type": "tool_calls", "tool_calls": [{"id": "t"}]},
+                                    {"type": "other"}]},
+            "finish_reason": "tool_calls",
+        })
+        assert out["content"] is None
+        assert out["tool_calls"] == [{"id": "t", "name": "", "arguments": "{}"}]
+
+    def test_map_finish_variants(self):
+        p = CohereProvider("k", "u", "command-r")
+        assert p._map_finish("TOOL_CALLS") == "tool_calls"
+        assert p._map_finish("MAX_TOKENS") == "length"
+        assert p._map_finish("") == "stop"
+
+    def test_parse_stream_line_branches(self):
+        p = CohereProvider("k", "u", "command-r")
+        assert p.parse_stream_line("event: ping") is None          # 非 data: 前缀
+        assert p.parse_stream_line("data: [DONE]") is None         # 结束标记
+        assert p.parse_stream_line("data: ") is None                # 空数据
+        assert p.parse_stream_line("data: {bad_json") is None       # 非法 JSON
+        assert p.parse_stream_line("data: {}") is None               # 空结果
+        assert p.parse_stream_line('data: {"text":"加"}') == {"content": "加"}
+        assert p.parse_stream_line('data: {"text":"好","is_finished":true}') == {
+            "content": "好", "finish_reason": "stop"}
+
+
+class TestOllamaAlreadyChatCompletions:
+    def test_chat_url_already_chat_completions(self):
+        url = "http://localhost:11434/v1/chat/completions"
+        assert OllamaProvider("", url, "m").chat_url() == url
+
 
 class TestBedrock:
     def test_request_has_anthropic_version(self):

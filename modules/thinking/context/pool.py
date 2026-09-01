@@ -135,7 +135,6 @@ class TurnContext:
             import logging
             logging.getLogger("turn_context").warning(
                 f"[TurnContext] 上下文估算 {estimated} token 超限 {max_tokens}，"
-                f"不做硬裁剪，由总结机制/来源侧裁剪控制"
             )
             return text
         except Exception:

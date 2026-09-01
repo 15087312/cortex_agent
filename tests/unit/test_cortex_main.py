@@ -215,3 +215,153 @@ def test_main_start_backend_no_tui(monkeypatch):
     monkeypatch.setattr(cm, "launch_tui", launch)
     cm.main()  # no_tui=True：不 launch_tui
     launch.assert_not_called()
+
+
+def test_get_project_root_fallback(monkeypatch):
+    monkeypatch.delenv("CORTEX_ROOT", raising=False)
+
+    class FakePath:
+        def __init__(self, p=None):
+            self._p = p
+
+        def resolve(self):
+            return self
+
+        @property
+        def parent(self):
+            return FakePath("parent")
+
+        def __truediv__(self, other):
+            return FakePath(self._p)
+
+        def exists(self):
+            return False
+
+    monkeypatch.setattr(cm, "Path", lambda *a, **k: FakePath())
+    root = cm._get_project_root()
+    assert isinstance(root, FakePath)
+
+
+def test_main_connect_no_tui_sleep_interrupt(monkeypatch):
+    args = MagicMock()
+    args.api_url = "http://x:8080"
+    args.api_key = "k"
+    args.port = 8080
+    args.host = "127.0.0.1"
+    args.model = None
+    args.no_tui = True
+    args.workers = 1
+    args.qt = False
+    monkeypatch.setattr(cm, "parse_args", lambda: args)
+
+    def fake_sleep(_):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cm.time, "sleep", fake_sleep)
+    cm.main()  # 不应抛异常
+
+
+def test_main_port_in_use_posix_kill(monkeypatch):
+    args = MagicMock()
+    args.api_url = None
+    args.api_key = None
+    args.port = 8080
+    args.host = "127.0.0.1"
+    args.model = None
+    args.no_tui = True
+    args.workers = 1
+    args.qt = False
+    monkeypatch.setattr(cm, "parse_args", lambda: args)
+    monkeypatch.setattr(cm, "_get_project_root", lambda: Path("/tmp"))
+    monkeypatch.setattr(cm.sys, "platform", "darwin")
+    monkeypatch.setattr(cm, "_port_in_use", lambda port: True)
+    monkeypatch.setattr("subprocess.check_output", lambda *a, **k: b"999\n")
+    proc = MagicMock()
+    proc.stderr = []
+    monkeypatch.setattr(cm, "start_backend", lambda a: proc)
+    monkeypatch.setattr(cm, "_wait_for_server", lambda *a, **k: True)
+    monkeypatch.setattr("utils.port_discovery.save_backend_port", lambda _: None)
+    killed = []
+    monkeypatch.setattr(cm.os, "kill", lambda pid, sig: killed.append((pid, sig)))
+    monkeypatch.setattr(cm.os, "getpid", lambda: 123)
+    monkeypatch.setattr(cm.time, "sleep", lambda *a: None)
+    cm.main()
+    assert killed and killed[0][0] == 999
+
+
+def test_main_wait_timeout_exit(monkeypatch):
+    args = MagicMock()
+    args.api_url = None
+    args.api_key = None
+    args.port = 8080
+    args.host = "127.0.0.1"
+    args.model = None
+    args.no_tui = True
+    args.workers = 1
+    args.qt = False
+    monkeypatch.setattr(cm, "parse_args", lambda: args)
+    monkeypatch.setattr(cm, "_port_in_use", lambda port: False)
+    monkeypatch.setattr(cm, "_wait_for_server", lambda *a, **k: False)
+    proc = MagicMock()
+    proc.stderr = None
+    monkeypatch.setattr(cm, "start_backend", lambda a: proc)
+    exited = []
+    monkeypatch.setattr(cm.sys, "exit", lambda code: exited.append(code) or (_ for _ in ()).throw(SystemExit(code)))
+    with pytest.raises(SystemExit):
+        cm.main()
+    assert exited and exited[0] == 1
+    proc.terminate.assert_called_once()
+
+
+def test_start_backend_save_port_exception(monkeypatch):
+    args = MagicMock()
+    args.api_url = None
+    args.api_key = None
+    args.port = 8080
+    args.host = "127.0.0.1"
+    args.model = None
+    args.no_tui = True
+    args.workers = 1
+    args.qt = False
+    monkeypatch.setattr(cm, "parse_args", lambda: args)
+    monkeypatch.setattr(cm, "_port_in_use", lambda port: False)
+    monkeypatch.setattr(cm, "_wait_for_server", lambda *a, **k: True)
+    proc = MagicMock()
+    proc.stderr = ["line\n".encode()]
+    proc.__enter__ = lambda: proc
+    monkeypatch.setattr(cm, "start_backend", lambda a: proc)
+    # 触发 save_backend_port 抛异常的 except 分支
+    monkeypatch.setattr(cm, "sys", sys)
+    monkeypatch.setattr("utils.port_discovery.save_backend_port", lambda _: (_ for _ in ()).throw(ValueError("no")))
+    launch = MagicMock()
+    monkeypatch.setattr(cm, "launch_tui", launch)
+    cm.main()
+    launch.assert_not_called()
+
+
+def test_cleanup_kill_on_timeout(monkeypatch):
+    args = MagicMock()
+    args.api_url = None
+    args.api_key = None
+    args.port = 8080
+    args.host = "127.0.0.1"
+    args.model = None
+    args.no_tui = True
+    args.workers = 1
+    args.qt = False
+    monkeypatch.setattr(cm, "parse_args", lambda: args)
+    monkeypatch.setattr(cm, "_port_in_use", lambda port: False)
+    monkeypatch.setattr(cm, "_wait_for_server", lambda *a, **k: True)
+    proc = MagicMock()
+    proc.stderr = None
+    proc.terminate = MagicMock()
+    # no_tui 分支的 backend_proc.wait() 抛 KeyboardInterrupt → cleanup()
+    # cleanup 内 proc.wait(timeout=5) 抛 TimeoutExpired → 走 kill() 分支
+    proc.wait = MagicMock(side_effect=[KeyboardInterrupt, subprocess.TimeoutExpired("uvicorn", 5)])
+    proc.kill = MagicMock()
+    monkeypatch.setattr(cm, "start_backend", lambda a: proc)
+    exited = []
+    monkeypatch.setattr(cm.sys, "exit", lambda code: exited.append(code) or (_ for _ in ()).throw(SystemExit(code)))
+    with pytest.raises(SystemExit):
+        cm.main()
+    proc.kill.assert_called_once()  # 超时后走 kill 分支

@@ -88,3 +88,64 @@ class TestParseStreamLine:
 
     def test_done(self, provider):
         assert provider.parse_stream_line("data: [DONE]") is None
+
+
+class TestGeminiBranches:
+    def test_role_to_gemini_system_returns_user(self, provider):
+        assert provider._role_to_gemini("system") == "user"
+        assert provider._role_to_gemini("assistant") == "model"
+        assert provider._role_to_gemini("tool") == "tool"
+
+    def test_system_non_str_content_ignored(self, provider):
+        contents, systems = provider._messages_to_contents(
+            [{"role": "system", "content": {"complex": True}}])
+        assert systems == []
+        assert contents == []
+
+    def test_tool_call_invalid_json_args(self, provider):
+        req = provider.build_request(
+            [{"role": "assistant", "tool_calls": [{"id": "c1", "function": {
+                "name": "calc", "arguments": "not-json"}}]}], 10, 0.5)
+        part = req["contents"][0]["parts"][0]
+        assert part["functionCall"]["name"] == "calc"
+        assert part["functionCall"]["args"] == {}
+
+    def test_tool_call_args_dict(self, provider):
+        msgs = [{"role": "assistant", "tool_calls": [{
+            "function": {"name": "f", "arguments": {"a": 1}}}]}]
+        req = provider.build_request(msgs, 10, 0.5)
+        assert req["contents"][0]["parts"][0]["functionCall"]["args"] == {"a": 1}
+
+    def test_top_p_and_tool_choice(self, provider):
+        req = provider.build_request([{"role": "user", "content": "x"}], 10, None, top_p=0.9, tool_choice="auto")
+        assert req["generationConfig"]["topP"] == 0.9
+        assert "temperature" not in req["generationConfig"]
+
+    def test_parse_finish_length(self, provider):
+        out = provider.parse_response({"candidates": [{
+            "content": {"parts": [{"text": "长"}]}, "finishReason": "MAX_TOKENS"}],
+            "usageMetadata": {"promptTokenCount": 2, "candidatesTokenCount": 5}})
+        assert out["finish_reason"] == "length"
+        assert out["usage"] == {"prompt_tokens": 2, "completion_tokens": 5}
+
+    def test_parse_finish_malformed(self, provider):
+        out = provider.parse_response({"candidates": [{
+            "content": {"parts": [{"functionCall": {"name": "f", "args": {}}}]},
+            "finishReason": "MALFORMED_FUNCTION_CALL"}]})
+        assert out["finish_reason"] == "tool_calls"
+        assert out["tool_calls"][0]["name"] == "f"
+
+    def test_extract_reasoning_thought(self, provider):
+        candidates = [{"content": {"parts": [{"text": "x"}, {"thought": "思考中"}]}}]
+        assert provider._extract_reasoning(candidates) == "思考中"
+
+    def test_stream_bad_json_and_no_candidates(self, provider):
+        assert provider.parse_stream_line("data: {bad") is None
+        assert provider.parse_stream_line('data: {"candidates":[]}') is None
+
+    def test_stream_function_call_and_finish(self, provider):
+        out = provider.parse_stream_line(
+            'data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"f","args":{}}}]},'
+            '"finishReason":"SAFETY"}]}')
+        assert out["tool_calls"][0]["name"] == "f"
+        assert out["finish_reason"] == "safety"

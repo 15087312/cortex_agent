@@ -61,7 +61,7 @@ class PerceptionPool:
         if not recent:
             return ContextFragment(
                 source="perception",
-                content="当前无感知数据（系统运行正常，但最近无屏幕/文件/语音变化）",
+                content="无感知数据",
                 target_roles=("orchestrator",),
                 section_title="环境感知",
                 priority=5,

@@ -173,6 +173,25 @@ describe('Settings.vue', () => {
     expect(puts.some((x) => x.url.includes('LARGE_MODEL_API_URL'))).toBe(true)
   })
 
+  it('OpenRouter：大模型 URL 为 openrouter 时显示「供应商」输入框并保存到 LARGE_MODEL_OPENROUTER_SUPPLIER', async () => {
+    mockApi()
+    const w = await mountSettings()
+    await new Promise((r) => setTimeout(r, 20))
+    // 未配置 openrouter → 不显示供应商输入框
+    expect(w.findAll('input[placeholder="DeepInfra, Together, Groq"]').length).toBe(0)
+    // 把大模型 URL 改成 openrouter → 供应商输入框出现
+    await w.findAll('input[placeholder^="https://api.deepseek"]')[0].setValue('https://openrouter.ai/api/v1')
+    expect(w.vm.tierIsOpenRouter(w.vm.modelTiers[0])).toBe(true)
+    expect(w.findAll('input[placeholder="DeepInfra, Together, Groq"]').length).toBe(1)
+    await w.findAll('input[placeholder="DeepInfra, Together, Groq"]')[0].setValue('DeepInfra, Together')
+    expect(w.vm.modelForm.LARGE.SUPPLIER).toBe('DeepInfra, Together')
+    // 保存 → PUT LARGE_MODEL_OPENROUTER_SUPPLIER
+    const saveModel = w.findAll('button').find((b) => b.text().includes('保存主模型配置'))
+    await saveModel.trigger('click')
+    await new Promise((r) => setTimeout(r, 30))
+    expect(writes.some((x) => x.url.includes('LARGE_MODEL_OPENROUTER_SUPPLIER') && x.body?.value === 'DeepInfra, Together')).toBe(true)
+  })
+
   it('openFolder 打开目录', async () => {
     mockApi()
     const w = await mountSettings()

@@ -48,13 +48,19 @@ class Settings(BaseSettings):
         # ── 主模型配置（大/中/小三层，持久化到 ~/.cortex/settings.json）──
         "LARGE_MODEL_API_KEY", "LARGE_MODEL_API_URL", "LARGE_MODEL_NAME", "LARGE_MODEL_API_FORMAT",
         "LARGE_MODEL_PROVIDER",
+        "LARGE_MODEL_OPENROUTER_SUPPLIER",
         "MEDIUM_MODEL_API_KEY", "MEDIUM_MODEL_API_URL", "MEDIUM_MODEL_NAME",
         "MEDIUM_MODEL_PROVIDER",
+        "MEDIUM_MODEL_OPENROUTER_SUPPLIER",
         "SMALL_MODEL_API_KEY", "SMALL_MODEL_API_URL", "SMALL_MODEL_NAME",
         "SMALL_MODEL_PROVIDER",
+        "SMALL_MODEL_OPENROUTER_SUPPLIER",
         "PERSONA_PROMPTS",# 自定义人设提示词（JSON: {role: prompt}）
         "SYSTEM_PROMPT_OVERRIDES",  # 完整系统提示词覆盖（JSON: {role: prompt}，高级设置）
         "OUTPUT_TTS_ENABLED",    # TTS 语音输出总开关
+        "CHAT_CONTEXT_MAX_MESSAGES", # 会话上下文最大消息条数
+        "CHAT_CONTEXT_MAX_TOKENS",   # 会话上下文最大 Token 数
+        "CHAT_SUMMARY_TRIGGER_TOKENS", # 触发自动总结的上下文 Token 阈值
 
         # ── 感知系统模块开关 ──
         "PERCEPTION_ENABLED", "PERCEPTION_SCREEN_ENABLED",
@@ -125,6 +131,14 @@ class Settings(BaseSettings):
     SMALL_MODEL_API_URL: str = ""
     SMALL_MODEL_NAME: str = ""
     SMALL_MODEL_PROVIDER: str = ""
+
+    # ── OpenRouter 聚合路由的上游供应商偏好 ──
+    # 仅当对应层 API 走 OpenRouter 网关时生效。逗号分隔，按优先级依次尝试，
+    # 以请求体 provider.order 发送给网关（如 "DeepInfra, Together"）；
+    # 留空表示不指定，由 OpenRouter 自行负载均衡。对应设置页「OpenRouter 供应商」。
+    LARGE_MODEL_OPENROUTER_SUPPLIER: str = ""
+    MEDIUM_MODEL_OPENROUTER_SUPPLIER: str = ""
+    SMALL_MODEL_OPENROUTER_SUPPLIER: str = ""
 
     # ── 各模型输入上下文长度（token 数）──
     # 以设置模型 API 时的「输入上下文长度」为标准（0 = 使用全局 CONTEXT_WINDOW_SIZE）
@@ -283,8 +297,9 @@ class Settings(BaseSettings):
     EMBEDDING_DEVICE: str = "cpu"
     MEMORY_REDUCE_ENABLED: bool = True
     CHAT_MAX_ROUNDS: int = 5
-    CHAT_CONTEXT_MAX_MESSAGES: int = 50
-    CHAT_CONTEXT_MAX_TOKENS: int = 8000
+    CHAT_CONTEXT_MAX_MESSAGES: int = 10
+    CHAT_CONTEXT_MAX_TOKENS: int = 32000
+    CHAT_SUMMARY_TRIGGER_TOKENS: int = 32000  # 触发自动总结的上下文Token阈值（超出时调模型总结）
     CHAT_CONTEXT_MAX_CHARS: int = 6000  # 会话记忆总上限字数（超出部分由 LLM 总结）
 
     # ── 因果记忆（backend 并入）──
@@ -959,6 +974,9 @@ class Settings(BaseSettings):
         "SMALL_MODEL_API_KEY": "",
         "SMALL_MODEL_API_URL": "",
         "SMALL_MODEL_NAME": "",
+        "LARGE_MODEL_OPENROUTER_SUPPLIER": "",
+        "MEDIUM_MODEL_OPENROUTER_SUPPLIER": "",
+        "SMALL_MODEL_OPENROUTER_SUPPLIER": "",
     }
 
     def _ensure_user_config(self) -> None:

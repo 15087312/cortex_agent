@@ -78,13 +78,13 @@ class ContextBudgetManager:
         self._token_cache: Dict[str, int] = {}  # {key: estimated_tokens}
 
     def estimate_tokens(self, text: str) -> int:
-        """粗略估计文本的 token 数（中文 ~1.3 字符/token，英文 ~4 字符/token）"""
-        if not text:
-            return 0
-        # 简单启发式: 中文 3 字符 = 1 token, 英文 4 字符 = 1 token
-        chinese_chars = sum(1 for c in text if ord(c) >= 0x4E00 and ord(c) <= 0x9FFF)
-        english_chars = len(text) - chinese_chars
-        return (chinese_chars + english_chars // 4) // 3
+        """精确 token 计数（统一委托 ContextController / tiktoken）。
+
+        与全局 token 计数口径一致，避免此前 (CN+EN//4)//3 的启发式
+        与 CompressionEngine 双套标准不一致的问题。
+        """
+        from modules.thinking.context.controller import get_context_controller
+        return get_context_controller().count_tokens(text)
 
     def estimate_tool_descriptions_tokens(self, tool_count: int) -> int:
         """估计工具描述占用的 token 数

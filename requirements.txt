@@ -63,6 +63,7 @@ python-dotenv>=1.0.0
 loguru>=0.7.2
 tenacity>=8.2.3
 cachetools>=5.3.2
+tiktoken>=0.7.0  # 精确 token 计数（缺失时自动回退字符粗估）
 
 # 序列化
 orjson>=3.9.10

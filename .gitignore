@@ -37,6 +37,7 @@ ENV/
 # Environment (secrets)
 .env
 .env.local
+.webui_secret_key
 
 # Logs
 logs/

@@ -15,6 +15,11 @@ class OpenAIProvider(ProviderBase):
 
     format_name = "openai"
 
+    # OpenRouter 聚合路由的上游供应商偏好（如 "DeepInfra, Together"）。
+    # 由模型客户端在构造 Provider 后按对应层 *_MODEL_OPENROUTER_SUPPLIER 注入；
+    # 仅对 OpenRouter base_url 生效，其他 OpenAI 兼容端点忽略。
+    openrouter_supplier: str = ""
+
     def build_headers(self) -> Dict[str, str]:
         return {
             "Authorization": f"Bearer {self.api_key}",
@@ -48,6 +53,16 @@ class OpenAIProvider(ProviderBase):
             payload["tool_choice"] = tool_choice
         if reasoning_effort and "deepseek" in self.model_name.lower():
             payload["reasoning_effort"] = reasoning_effort
+        # OpenRouter 聚合网关：用户可在设置页指定上游供应商（供应商提供模型算力/托管
+        # 的 party，如 DeepInfra / Together / Groq）。以 provider.order 路由偏好发送，
+        # 网关按优先级依次尝试；allow_fallbacks 保持默认 true，供应商不可用时回退。
+        if (
+            "openrouter" in (self.base_url or "").lower()
+            and self.openrouter_supplier
+        ):
+            order = [s.strip() for s in self.openrouter_supplier.split(",") if s.strip()]
+            if order:
+                payload["provider"] = {"order": order, "allow_fallbacks": True}
         # DeepSeek thinking 模式：模型名含 deepseek/DeepSeek 时显式启用推理。
         # DeepSeek API 自 V4(0731) 起，thinking 需为 ThinkingOptions 结构体
         #   {"type": "enabled"/"disabled"}

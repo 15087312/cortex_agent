@@ -38,10 +38,9 @@ def _noop(monkeypatch, repo=None):
     repo.create_session = MagicMock()
     repo.save_message = MagicMock(return_value="m1")
     monkeypatch.setattr(cg, "_get_chat_session_repo", lambda: repo)
+    # 黑板已删除（DB 为唯一真源），thinker 不再提供 get_blackboard
     thinker = MagicMock()
-    bb = MagicMock()
-    bb.clear_session = MagicMock()
-    thinker.get_blackboard = MagicMock(return_value=bb)
+    thinker.get_blackboard = MagicMock(side_effect=AttributeError("blackboard 已删除"))
     monkeypatch.setattr(cg, "_get_chat_thinker", lambda: thinker)
     return repo
 

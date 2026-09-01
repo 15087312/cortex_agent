@@ -221,7 +221,9 @@ async def _consume_turn(
             return
     except Exception as e:
         logger.debug(f"[chat_gateway] 对话握手失败 (非致命): {e}")
-    think_task = asyncio.create_task(thinker.think(session_id, content, queue))
+    think_task = asyncio.create_task(thinker.think(
+        session_id, content, queue,
+    ))
     full_text = []
     done = False
     errored = False
@@ -338,6 +340,7 @@ async def _consume_turn(
 
     if done and full_text:
         text = "".join(full_text)
+        # DB 为唯一真源：assistant 入库即可，读取时直连 DB，无需同步内存黑板
         repo.save_message(session_id, "assistant", text)
         if not await _safe_ws_send(websocket, _envelope(
             session_id, "message", "assistant_message", text, "main",
@@ -480,11 +483,7 @@ async def _chatonly_ws(websocket: WebSocket, session_id: str) -> None:
     finally:
         if active_task and not active_task.done():
             active_task.cancel()
-        # 断开清理会话记忆内存（消息已落 DB，重连由 /context DB 兜底恢复）
-        try:
-            _get_chat_thinker().get_blackboard().clear_session(session_id)
-        except Exception:
-            pass
+        # 断开清理：消息已落 DB，重连由 /context DB 兜底恢复，无需同步内存黑板
         # 注销统一投送注册
         if _ws_registered:
             try:
@@ -507,9 +506,10 @@ async def _chatonly_sse(session_id: str, question: str):
     ensure_shared_schema()
     repo = _get_chat_session_repo()
     repo.create_session(session_id)
-    repo.save_message(session_id, "user", question)
+    user_msg_id = repo.save_message(session_id, "user", question)
 
     thinker = _get_chat_thinker()
+
     queue: asyncio.Queue = asyncio.Queue()
     task = asyncio.create_task(thinker.think(session_id, question, queue))
     full_text = []
@@ -644,15 +644,11 @@ async def sse_session_get(session_id: str, question: str = ""):
 
 @router.get("/context/{session_id}")
 async def get_context(session_id: str):
+    # ── chatonly 模式：DB 为唯一真源直读（与 agent 模式共用公共层） ───────
     if _resolve_mode() == "chatonly":
-        thinker = _get_chat_thinker()
-        messages = thinker.get_blackboard().get_messages(session_id)
-        # 会话记忆 DB 兜底：Blackboard 是进程内存，重启/重连后为空时从 DB 恢复
-        if not messages:
-            try:
-                messages = _get_chat_session_repo().get_recent_messages(session_id, limit=20)
-            except Exception:
-                messages = []
+        from modules.thinking.context.dialog_memory import load_dialog_from_db
+        repo = _get_chat_session_repo()
+        messages = load_dialog_from_db(session_id, limit=100, repo=repo)
         return {
             "success": True,
             "data": {
@@ -661,8 +657,29 @@ async def get_context(session_id: str):
                 "count": len(messages),
             },
         }
-    from modules.thinking import api_stream
-    return await api_stream.get_context(session_id)
+
+    # ── agent 模式：优先从 api_stream 会话上下文，为空则从 DB 恢复 ───────
+    from modules.thinking import api_stream as _api
+    ctx_messages = await _api.get_context(session_id)
+    if not ctx_messages:
+        # 从 DB 恢复
+        repo = _get_chat_session_repo()
+        if repo:
+            try:
+                ctx_messages = repo.get_recent_messages(session_id, limit=20)
+            except Exception:
+                ctx_messages = []
+        # 同步到 api_stream 会话缓存
+        if session_id in _api.sessions:
+            _api.sessions[session_id]["messages"] = ctx_messages
+    return {
+        "success": True,
+        "data": {
+            "session_id": session_id,
+            "messages": ctx_messages,
+            "count": len(ctx_messages),
+        },
+    }
 
 
 @router.delete("/session/{session_id}")
@@ -672,13 +689,19 @@ async def close_session(session_id: str):
         return JSONResponse(status_code=400, content={"success": False,
                             "error": {"code": "PET_SESSION_PROTECTED",
                                       "message": "桌宠主会话永不删除"}})
+    # 1️⃣ 统一从 DB 删除会话及消息
+    _get_chat_session_repo().delete_session(session_id)
+    # 2️⃣ 关键修复：清理跨模块的进程内存缓存，防止重新打开/请求时仍加载旧数据
+    try:
+        from modules.thinking.model_runner import _session_memory_context, _resume_context
+        _session_memory_context.pop(session_id, None)
+        _resume_context = getattr(_resume_context, None, None)  # 清除引用（实际以 session 为键的 dict 在 model_runner 同名变量中）
+        # 若 _resume_context 是 dict，也按 session_id 删键
+        if isinstance(_resume_context, dict):
+            _resume_context.pop(session_id, None)
+    except Exception:
+        pass
     if _resolve_mode() == "chatonly":
-        _get_chat_session_repo().delete_session(session_id)
-        # 同步清理会话记忆内存（纯修复：已删会话的 Blackboard 数据成为孤儿）
-        try:
-            _get_chat_thinker().get_blackboard().clear_session(session_id)
-        except Exception:
-            pass
         return {"success": True, "data": {"message": "会话已关闭"}}
     from modules.thinking import api_stream
     return await api_stream.close_session(session_id)
@@ -701,10 +724,6 @@ async def batch_delete_sessions(body: dict = None):
             continue
         try:
             repo.delete_session(sid)
-        except Exception:
-            pass
-        try:
-            _get_chat_thinker().get_blackboard().clear_session(sid)
         except Exception:
             pass
         deleted.append(sid)
@@ -834,6 +853,16 @@ async def pet_chat_stream(body: PetChatRequest):
 async def clear_session_messages(session_id: str):
     """清空会话全部消息（保留会话本身），前端「清空对话」真实生效"""
     _get_chat_session_repo().clear_messages(session_id)
+    # chatonly：DB 为唯一真源，清空 DB 即生效，无需同步内存缓存
+    if _resolve_mode() != "chatonly":
+        try:
+            from modules.thinking import api_stream
+            system = api_stream.get_thinking_system()
+            async with system._lock:
+                if session_id in system.sessions:
+                    system.sessions[session_id]["messages"] = []
+        except Exception as e:
+            logger.debug(f"[Agent] 清空消息后同步 sessions 缓存失败: {e}")
     return {"success": True, "data": {"session_id": session_id}}
 
 
@@ -1048,6 +1077,7 @@ async def update_session_title(session_id: str, body: dict = None):
 async def delete_message(session_id: str, message_id: str):
     if _resolve_mode() == "chatonly":
         # AI 消息联动删除同轮思考过程（与 agent 模式一致）
+        # DB 为唯一真源：删除直接落库，读取时直连 DB，无需同步内存黑板
         _get_chat_session_repo().delete_message(session_id, message_id, include_thoughts=True)
         return {"success": True, "data": {"message": "消息已删除"}}
     from modules.thinking import api_stream
@@ -1061,6 +1091,7 @@ async def update_message(session_id: str, message_id: str, body: dict = None):
         from api.errors import AppError, ErrorCode
         raise AppError(ErrorCode.BAD_REQUEST, "内容不能为空")
     if _resolve_mode() == "chatonly":
+        # DB 为唯一真源：更新直接落库，读取时直连 DB，无需同步内存黑板
         _get_chat_session_repo().update_message(session_id, message_id, content)
         return {"success": True, "data": {"message": "消息已更新", "content": content}}
     from modules.thinking import api_stream

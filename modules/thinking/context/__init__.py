@@ -3,8 +3,8 @@ ThinkingContext — 思考模块上下文管理
 
 核心组件:
 - TurnContext: 单轮上下文池 + 生命周期状态机
-- ContextController: 上下文路由、去重
-- CompressionEngine: token 粗估（压缩已移交 LLM 总结机制）
+- ContextController: 上下文路由、去重、token 精确计数（tiktoken）
+- CompressionEngine: token 计数（委托 ContextController，压缩已移交 LLM 总结机制）
 - ContextManager: 运行时格式化（外部引导、委托状态）
 """
 from .pool import TurnContext, TurnState, ContextFragment

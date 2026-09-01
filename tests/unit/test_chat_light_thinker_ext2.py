@@ -3,12 +3,11 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from modules.thinking.chat_light.continuous_thinker import ContinuousThinker
-from modules.thinking.chat_light.blackboard import Blackboard
 
 
 def _thinker():
     t = ContinuousThinker.__new__(ContinuousThinker)
-    t._blackboard = Blackboard()
+    # 黑板已删除（DB 为唯一真源），不再需要 _blackboard 实例
     t._session_locks = {}
     t._session_locks_guard = MagicMock()
     t._runner = MagicMock()
@@ -62,7 +61,7 @@ async def test_think_on_token_queue_full_called(monkeypatch):
     response.message.reasoning_content = ""
     response.message.content = "回复"
 
-    def fake_run(messages, system_prompt, on_token=None):
+    def fake_run(messages, system_prompt, on_token=None, max_tokens=None, temperature=None):
         if on_token:
             on_token("助手")  # 触发 QueueFull → 104-105 捕获
         return response
@@ -100,15 +99,13 @@ async def test_think_reasoning_error(monkeypatch):
     assert any(i["type"] == "done" for i in items)
 
 
-# ── _recall_memories：黑板异常 / DB 兜底 / 外层异常 ───────────────────
+# ── _recall_memories：DB 历史判断 / DB 异常 / 外层异常 ───────────────────
 
-async def test_recall_blackboard_none_db_fallback(monkeypatch):
+async def test_recall_db_history_empty(monkeypatch):
+    """DB 无历史对话 → 跳过记忆召回（避免新会话被污染）"""
     t = _thinker()
-    t._blackboard = None
     db_repo = MagicMock()
-    db_repo.get_recent_messages = MagicMock(return_value=[
-        {"role": "user", "content": "历史消息内容"},
-    ])
+    db_repo.get_recent_messages = MagicMock(return_value=[])
     monkeypatch.setattr("modules.database.session_repo.get_session_repo", lambda: db_repo)
     monkeypatch.setattr("modules.memory.depth_recall.should_trigger_deep_recall", lambda q: (False, ""))
 
@@ -121,21 +118,20 @@ async def test_recall_blackboard_none_db_fallback(monkeypatch):
     assert out == ""  # 深度未触发 + 浅层为空 → 空串
 
 
-async def test_recall_blackboard_error(monkeypatch):
+async def test_recall_db_error(monkeypatch):
+    """DB 读取异常 → 当无历史处理，返回空"""
     t = _thinker()
-    bb = MagicMock()
-    bb.get_messages = MagicMock(side_effect=RuntimeError("bb down"))
-    t._blackboard = bb
-    db_repo = MagicMock()
-    db_repo.get_recent_messages = MagicMock(return_value=[])
-    monkeypatch.setattr("modules.database.session_repo.get_session_repo", lambda: db_repo)
+    monkeypatch.setattr("modules.database.session_repo.get_session_repo",
+                        lambda: (_ for _ in ()).throw(RuntimeError("db down")))
     out = await t._recall_memories("q", "s1")
-    assert out == ""  # 黑板异常 + DB 无历史 → 空
+    assert out == ""  # DB 异常 + 无历史 → 空
 
 
 async def test_recall_outer_exception(monkeypatch):
     t = _thinker()
-    t._blackboard.add_message("s1", "user", "历史对话内容")
+    db_repo = MagicMock()
+    db_repo.get_recent_messages = MagicMock(return_value=[{"role": "user", "content": "历史对话内容"}])
+    monkeypatch.setattr("modules.database.session_repo.get_session_repo", lambda: db_repo)
     import builtins
     real_import = builtins.__import__
 
@@ -159,8 +155,11 @@ async def test_extract_memory_skip_non_dialog(monkeypatch):
     reducer.reduce = AsyncMock(return_value=[])
     monkeypatch.setattr("modules.memory.event_reducer.EventReducer", lambda **kw: reducer)
     t._runner.client = MagicMock()
-    messages = [{"role": "system", "content": "x" * 60}]  # 非 user/assistant → 跳过
-    await t._extract_memory("s1", messages)
+    # 对话从 DB 取：非 user/assistant → 跳过提炼
+    repo = MagicMock()
+    repo.get_messages = MagicMock(return_value=[{"role": "system", "content": "x" * 60}])
+    monkeypatch.setattr("modules.database.session_repo.get_session_repo", lambda: repo)
+    await t._extract_memory("s1")
     reducer.reduce.assert_not_awaited()
 
 
@@ -172,8 +171,11 @@ async def test_extract_memory_events_empty(monkeypatch):
     reducer.reduce = AsyncMock(return_value=[])
     monkeypatch.setattr("modules.memory.event_reducer.EventReducer", lambda **kw: reducer)
     t._runner.client = MagicMock()
-    messages = [{"role": "user", "content": "a" * 60}, {"role": "assistant", "content": "b" * 60}]
-    await t._extract_memory("s1", messages)  # 无事件 → 不记日志
+    repo = MagicMock()
+    repo.get_messages = MagicMock(return_value=[
+        {"role": "user", "content": "a" * 60}, {"role": "assistant", "content": "b" * 60}])
+    monkeypatch.setattr("modules.database.session_repo.get_session_repo", lambda: repo)
+    await t._extract_memory("s1")  # 无事件 → 不记日志
     reducer.reduce.assert_awaited_once()
 
 
@@ -185,5 +187,8 @@ async def test_extract_memory_reduce_error(monkeypatch):
     reducer.reduce = AsyncMock(side_effect=RuntimeError("reduce boom"))
     monkeypatch.setattr("modules.memory.event_reducer.EventReducer", lambda **kw: reducer)
     t._runner.client = MagicMock()
-    messages = [{"role": "user", "content": "a" * 60}, {"role": "assistant", "content": "b" * 60}]
-    await t._extract_memory("s1", messages)  # 异常 → warning
+    repo = MagicMock()
+    repo.get_messages = MagicMock(return_value=[
+        {"role": "user", "content": "a" * 60}, {"role": "assistant", "content": "b" * 60}])
+    monkeypatch.setattr("modules.database.session_repo.get_session_repo", lambda: repo)
+    await t._extract_memory("s1")  # 异常 → warning

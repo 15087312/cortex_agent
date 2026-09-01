@@ -294,12 +294,17 @@ class SessionRepository:
             return True
 
     def get_messages(self, session_id: str, limit: int = 100) -> List[Dict[str, Any]]:
-        """获取会话消息（按时间正序）"""
+        """获取会话【最近】N 条消息（按时间正序返回）
+
+        注意：必须先按时间倒序取最近 limit 条再反转，否则拿到的是最旧的 N 条，
+        会话超过 limit 条后前端将看不到最新对话。
+        """
         import json as _json
         with self._session() as s:
             rows = s.query(ChatMessage).filter_by(
                 session_id=session_id
-            ).order_by(ChatMessage.created_at).limit(limit).all()
+            ).order_by(desc(ChatMessage.created_at)).limit(limit).all()
+            rows.reverse()  # 正序
             return [{
                 "id": r.id,
                 "role": r.role,

@@ -13,7 +13,7 @@ def _thinker():
     t = ContinuousThinker.__new__(ContinuousThinker)
     t._runner = MagicMock()
     t._slicer = MagicMock()
-    t._blackboard = MagicMock()
+    # 黑板已删除（DB 为唯一真源），不再需要 _blackboard
     t._composer = MagicMock()
     t._session_locks = {}
     t._session_locks_guard = threading.Lock()
@@ -80,11 +80,6 @@ def test_is_new_topic():
     assert ContinuousThinker._is_new_topic("abc", []) is False  # 无历史
 
 
-def test_get_blackboard():
-    t = _thinker()
-    assert t.get_blackboard() is t._blackboard
-
-
 def test_recall_memories_no_history(tmp_path, monkeypatch):
     """真实 DB 无历史：返回空"""
     import modules.database.connection as conn
@@ -96,7 +91,6 @@ def test_recall_memories_no_history(tmp_path, monkeypatch):
     import modules.database.session_repo as sr
     monkeypatch.setattr(sr, "get_session_repo", lambda: SessionRepository())
     t = _thinker()
-    t._blackboard.get_messages.return_value = []
     assert asyncio.run(t._recall_memories("q", "s1")) == ""
 
 
@@ -124,7 +118,7 @@ def test_recall_memories_with_history(mem_store, tmp_path, monkeypatch):
     monkeypatch.setattr(er_mod, "get_event_retrieval", lambda: ret)
     monkeypatch.setattr(dr_mod, "should_trigger_deep_recall", lambda q: (False, None))
     t = _thinker()
-    t._blackboard.get_messages.return_value = [{"role": "user", "content": "之前聊过"}]
+    # _recall_memories 从 DB 判断历史（黑板已删除）
     out = asyncio.run(t._recall_memories("事件", "s1"))
     assert "曾经发生的事" in out
 
@@ -136,13 +130,93 @@ def test_extract_memory_disabled(monkeypatch):
     settings.MEMORY_REDUCE_ENABLED = False
     try:
         t = _thinker()
-        asyncio.run(t._extract_memory("s1", []))
+        asyncio.run(t._extract_memory("s1"))  # 仅传 session_id，对话从 DB 取
     finally:
         settings.MEMORY_REDUCE_ENABLED = old
 
 
-def test_extract_memory_too_short():
+def test_extract_memory_too_short(monkeypatch):
     """真实 settings：内容过短不提炼"""
+    from config.settings import settings
+    monkeypatch.setattr(settings, "MEMORY_REDUCE_ENABLED", True)
+    # mock DB 返回过短对话，验证门控
+    repo = MagicMock()
+    repo.get_messages = MagicMock(return_value=[{"role": "user", "content": "短"}])
+    monkeypatch.setattr("modules.database.session_repo.get_session_repo", lambda: repo)
     t = _thinker()
-    asyncio.run(t._extract_memory("s1", [{"role": "user", "content": "短"}]))
-    # 不抛异常
+    asyncio.run(t._extract_memory("s1"))  # 不抛异常
+
+
+# ── model_params 尊重激活编排角色（temperature/max_tokens）──────────────
+
+def test_model_params_resolves_active_large_role(monkeypatch):
+    """_model_params() 读取激活大模型角色的 model_params（修复：纯对话此前忽略）"""
+    from config.settings import settings
+    monkeypatch.setattr(type(settings), "get_model_params",
+                        lambda self, role: {"max_tokens": 768, "temperature": 0.7})
+    t = _thinker()
+    mp = t._model_params()
+    assert mp.get("max_tokens") == 768
+    assert mp.get("temperature") == 0.7
+
+
+def test_model_params_empty_on_error(monkeypatch):
+    """_model_params() 内部异常时回退空 dict，不中断对话"""
+    from config.settings import settings
+    def boom(self, role):
+        raise RuntimeError("boom")
+    monkeypatch.setattr(type(settings), "get_model_params", boom)
+    t = _thinker()
+    assert t._model_params() == {}
+
+
+def test_runner_passes_model_params_to_chat_stream(monkeypatch):
+    """run() 传入的 max_tokens/temperature 应透传给 chat_stream"""
+    from modules.thinking.chat_light.model_runner import ModelRunner
+
+    r = ModelRunner.__new__(ModelRunner)
+    r._client = MagicMock()
+    r._client_cfg = ("cfg",)
+    # 固定 client property：run() 走 self.client（懒建/重建逻辑），必须 mock 到该属性
+    monkeypatch.setattr(ModelRunner, "client", property(lambda self: self._client))
+
+    class _Resp:
+        message = MagicMock()
+    r._client.chat_stream = AsyncMock(return_value=_Resp())
+
+    async def go():
+        return await r.run(
+            messages=[{"role": "user", "content": "hi"}],
+            system_prompt="sys",
+            max_tokens=768,
+            temperature=0.7,
+        )
+    asyncio.run(go())
+    _, kwargs = r._client.chat_stream.call_args
+    assert kwargs["max_tokens"] == 768
+    assert kwargs["temperature"] == 0.7
+
+
+def test_runner_defaults_to_global_when_no_params(monkeypatch):
+    """run() 未传 max_tokens/temperature 时回退全局 MODEL_* 配置"""
+    from modules.thinking.chat_light.model_runner import ModelRunner
+    from config.settings import settings
+
+    r = ModelRunner.__new__(ModelRunner)
+    r._client = MagicMock()
+    r._client_cfg = ("cfg",)
+    monkeypatch.setattr(ModelRunner, "client", property(lambda self: self._client))
+
+    class _Resp:
+        message = MagicMock()
+    r._client.chat_stream = AsyncMock(return_value=_Resp())
+
+    async def go():
+        return await r.run(
+            messages=[{"role": "user", "content": "hi"}],
+            system_prompt="sys",
+        )
+    asyncio.run(go())
+    _, kwargs = r._client.chat_stream.call_args
+    assert kwargs["max_tokens"] == settings.MODEL_MAX_TOKENS
+    assert kwargs["temperature"] == settings.MODEL_TEMPERATURE

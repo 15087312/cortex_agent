@@ -127,7 +127,7 @@ class CognitiveBlackboard:
     """
 
     # 观察列表容量上限：超过则清理最旧的（读取方只取最近几条，旧观察无推理价值）
-    MAX_OBSERVATIONS = 200
+    MAX_OBSERVATIONS = 100
     # 委托链节点上限：超过则清理最旧的「已完成/过期」委托，防长时间运行无界增长
     MAX_DELEGATIONS = 100
 
@@ -178,7 +178,7 @@ class CognitiveBlackboard:
     # ── 生命周期 ──
 
     def clear_turn_state(self) -> None:
-        """新一轮开始时清空状态（替代 SharedDialog.mark_final_drafts_superseded() + clear()）"""
+        """新一轮开始时清空状态"""
         with self._lock:
             self.goal = ""
             self.current_plan = []

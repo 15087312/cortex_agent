@@ -129,3 +129,36 @@ class TestRealPerceptionPipeline:
         content = asyncio.run(run())
         # 感知池按类型分组（最多 max_items 条），至少含窗口与屏幕
         assert content and "感知" in content or "窗口" in content
+
+
+class TestPerceptionToggle:
+    """环境感知总开关（PERCEPTION_ENABLED）：关闭时不应采集/注入感知块（修复）"""
+
+    def test_disabled_perception_returns_empty(self, monkeypatch):
+        """PERCEPTION_ENABLED=False 时 collect() 返回空 content，上层不注入感知块"""
+        from config.settings import settings as _cfg
+        from modules.thinking.context.sources.perception_source import PerceptionSource
+        monkeypatch.setattr(_cfg, "PERCEPTION_ENABLED", False)
+        frag = asyncio.run(PerceptionSource().collect())
+        assert frag.content == ""
+        assert not frag.content
+
+    def test_enabled_still_collects(self, monkeypatch):
+        """PERCEPTION_ENABLED=True 时 collect() 照常采集（不回归）"""
+        from config.settings import settings as _cfg
+        from modules.thinking.context.sources.perception_source import PerceptionSource
+        monkeypatch.setattr(_cfg, "PERCEPTION_ENABLED", True)
+        frag = asyncio.run(PerceptionSource().collect())
+        assert isinstance(frag.content, str)
+
+    def test_no_data_message_concise(self):
+        """感知开启但无数据时，snapshot 文案为简洁的「无感知数据」"""
+        import time
+        from modules.perception.pool import PerceptionPool
+        p = PerceptionPool.__new__(PerceptionPool)
+        p._items = []
+        p._ttl = 60
+        snap = p.snapshot()
+        assert snap.content == "无感知数据"
+        assert "系统运行正常" not in snap.content
+        assert "屏幕/文件/语音" not in snap.content
