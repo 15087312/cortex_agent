@@ -1,0 +1,8 @@
+# cortex 模块：主进程管理（一键启动/健康探测/端口释放）
+
+export BootProbe
+eq BootProbe = Loop(Retrieve)
+export BootStart
+eq BootStart = Guard
+export Boot
+eq Boot = Guard · Write · Loop(Guard)

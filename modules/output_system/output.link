@@ -1,0 +1,8 @@
+# 输出系统的结构骨架：校验守卫 → 分发发射；分发内含文件落盘分支
+export OutputPipe
+eq OutputPipe = Guard · Emit
+
+export Distrib
+input Distrib: [Emit]
+output Distrib: [Emit]
+eq Distrib = Guard · Write · Emit

@@ -1,0 +1,8 @@
+# 记忆模块的结构骨架：检索是"嵌入→搜索→过滤→排序"，保存是"守卫→落盘"
+export MemRetrieve
+input MemRetrieve: [Write]
+output MemRetrieve: [Retrieve]
+eq MemRetrieve = Retrieve · Guard · Retrieve
+
+export MemSaveInner
+eq MemSaveInner = Guard · Write · Retrieve

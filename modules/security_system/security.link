@@ -1,0 +1,3 @@
+# 安全系统的结构骨架：缓存守卫 → 实质审查 → 返回裁决；长守卫链整体即 Guard
+export GateCheck
+eq GateCheck = Guard · Think · Emit

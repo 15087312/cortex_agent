@@ -1,0 +1,8 @@
+# cli_tui 模块：CLI/TUI 界面（REPL 事件分发/输入处理/命令路由）
+
+export WsDispatch
+eq WsDispatch = Guard · Retrieve · Write
+export InputProcess
+eq InputProcess = Guard · Loop(Write) · Emit
+export CmdDispatch
+eq CmdDispatch = Guard · Emit

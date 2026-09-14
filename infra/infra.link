@@ -1,0 +1,20 @@
+# infra 模块：基础设施（MCP stdio/SSE 传输层）
+
+export StdioSubmit
+eq StdioSubmit = Guard
+export StdioConnect
+eq StdioConnect = Retrieve · Emit
+export StdioList
+eq StdioList = Guard · Retrieve
+export StdioCall
+eq StdioCall = Guard · Retrieve · Emit
+export StdioClose
+eq StdioClose = Guard
+export SseConnect
+eq SseConnect = Retrieve · Emit
+export SseList
+eq SseList = Guard · Retrieve
+export SseCall
+eq SseCall = Guard · Retrieve · Emit
+export SseClose
+eq SseClose = Guard

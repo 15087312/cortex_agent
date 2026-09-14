@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>logiclink 全流程逻辑链路</title>
+<style>
+:root { --text:#1A1B1C; --sub:#6B7280; --bg:#F4F3EE; --card:#FFFFFF;
+        --border:#E4E3DD; --accent:#A3D5E8; --ok:#2E9E5B; --bad:#D64550;
+        --warn:#C77B14; --node:#FFFFFF; }
+* { box-sizing: border-box; }
+body { margin:0; padding:16px; background:var(--bg); color:var(--text);
+       font: 13.5px/1.5 'PingFang SC','Roboto','Segoe UI',Arial,sans-serif; }
+h1 { font-size:18px; margin:0 0 4px; }
+.sub { color:var(--sub); font-size:12px; margin-bottom:12px; }
+.legend { display:flex; flex-wrap:wrap; gap:14px; padding:10px 12px;
+          background:var(--card); border:1px solid var(--border);
+          border-radius:12px; margin-bottom:12px; font-size:12px; }
+.legend span { display:inline-flex; align-items:center; gap:6px; }
+.legend i { display:inline-block; width:26px; height:0; border-top:2.5px solid #000; }
+.legend i.dashed { border-top-style: dashed; }
+.legend i.ok { border-color:var(--ok); }
+.legend i.bad { border-color:var(--bad); }
+.legend i.warn { border-color:var(--warn); border-top-style:dashed; }
+.wrap { position:relative; background:var(--card); border:1px solid var(--border);
+        border-radius:12px; padding:8px; }
+svg { display:block; width:100%; height:auto; touch-action:none; }
+.node rect { fill:var(--node); stroke:#9FB4C9; stroke-width:1.5; }
+.node.zoom rect { stroke-width:3; }
+.node text { font-family:inherit; }
+.n-title { font-size:15px; font-weight:600; fill:var(--text); }
+.n-sub   { font-size:11px; fill:var(--sub); }
+.n-port  { font-size:11px; fill:#3B4A5A; }
+.n-eq    { font-size:10.5px; fill:var(--sub); }
+.edge { stroke-width:2.5; fill:none; }
+.edge.ok   { stroke:var(--ok); }
+.edge.bad  { stroke:var(--bad); }
+.edge.warn { stroke:var(--warn); stroke-dasharray:6 4; }
+.edge.e302 { stroke:var(--bad); stroke-dasharray:6 4; }
+.edge.hot  { stroke-width:4.5; }
+.edge.dim  { opacity:0.12; }
+.node.dim { opacity:0.25; }
+.elabel { font-size:11px; fill:var(--sub); }
+.elabel.hot { fill:var(--text); font-weight:600; }
+#tip { position:absolute; display:none; max-width:300px; background:#1A1B1C;
+       color:#fff; font-size:12px; padding:8px 10px; border-radius:8px;
+       pointer-events:none; z-index:5; }
+#panel { position:absolute; top:8px; right:8px; width:300px; max-height:88%;
+         overflow:auto; background:#fff; border:1px solid var(--border);
+         border-radius:12px; padding:12px 14px; font-size:12.5px;
+         box-shadow:0 4px 14px rgba(0,0,0,0.08); display:none; z-index:4; }
+#panel h2 { font-size:14px; margin:0 0 6px; }
+#panel .row { margin:5px 0; }
+#panel .k { color:var(--sub); font-size:11px; }
+#panel code { background:#F1F3F5; border-radius:4px; padding:1px 5px;
+              font-size:11.5px; word-break:break-all; }
+#panel .close { float:right; cursor:pointer; color:var(--sub); font-size:14px; }
+.badge { display:inline-block; font-size:10.5px; border-radius:10px;
+         padding:1px 8px; margin-left:6px; }
+.badge.ok   { background:rgba(46,158,91,0.14); color:#1F7A45; }
+.badge.bad  { background:rgba(214,69,80,0.14); color:#B02A37; }
+.badge.warn { background:rgba(199,123,20,0.16); color:#8A5A0F; }
+.edge.bad  .elabel, .edge.e302 .elabel { fill:var(--bad); }
+.edge.warn .elabel { fill:var(--warn); }
+</style>
+</head>
+<body>
+<h1>logiclink 全流程逻辑链路</h1>
+<div class="sub">数据：5 个接线模块（use 声明） · 7 条边（声明 + 真实 import 比对） · 生成自根 app.link 与各模块 .link</div>
+<div class="legend">
+  <span><i class="ok"></i>声明且有真实调用（6）</span>
+  <span><i class="bad"></i>声明无真实调用 E301（0）</span>
+  <span><i class="warn"></i>方向相反 E303（0）</span>
+  <span><i class="dashed" style="border-color:#D64550"></i>真实未声明 E302（1）</span>
+  <span style="color:#6B7280">· 悬停节点高亮关联边 · 点击节点看详情</span>
+</div>
+<div class="wrap">
+  <div id="tip"></div>
+  <div id="panel"></div>
+  <svg id="g" viewBox="0 0 1268 620" xmlns="http://www.w3.org/2000/svg">
+    <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 1 L 10 5 L 0 9 z" fill="currentColor" opacity="0.85"/></marker></defs>
+    <g id="zoom">
+      <path class="edge ok" d="M 634.0 176 L 787.0 300" data-from="app" data-to="memory" data-kind="ok" marker-end="url(#arr)"/><text class="elabel" x="710.5" y="230.0" text-anchor="middle" data-edge="app→memory">ApiMemory</text><path class="edge ok" d="M 634.0 176 L 1093.0 300" data-from="app" data-to="output" data-kind="ok" marker-end="url(#arr)"/><text class="elabel" x="863.5" y="230.0" text-anchor="middle" data-edge="app→output">ApiOutput</text><path class="edge ok" d="M 634.0 176 L 175.0 300" data-from="app" data-to="perceive" data-kind="ok" marker-end="url(#arr)"/><text class="elabel" x="404.5" y="230.0" text-anchor="middle" data-edge="app→perceive">ApiPerceive</text><path class="edge ok" d="M 634.0 176 L 481.0 300" data-from="app" data-to="think" data-kind="ok" marker-end="url(#arr)"/><text class="elabel" x="557.5" y="230.0" text-anchor="middle" data-edge="app→think">ApiThink</text><path class="edge ok" d="M 290 417.8 C 330 417.8, 326 417.8, 366 417.8" data-from="perceive" data-to="think" data-kind="ok" marker-end="url(#arr)"/><text class="elabel" x="328.0" y="407.8" text-anchor="middle" data-edge="perceive→think">MainFlow</text><path class="edge ok" d="M 596 417.8 C 636 417.8, 632 417.8, 672 417.8" data-from="think" data-to="memory" data-kind="ok" marker-end="url(#arr)"/><text class="elabel" x="634.0" y="407.8" text-anchor="middle" data-edge="think→memory">MainFlow</text><path class="edge e302" d="M 290 300 C 330 254, 632 254, 672 300" data-from="perceive" data-to="memory" data-kind="e302" marker-end="url(#arr)"/><text class="elabel" x="481.0" y="244.0" text-anchor="middle" data-edge="perceive→memory">E302 trigger.py:691</text>
+      <rect x="519.0" y="56" width="230" height="190" rx="14"/><text class="n-title" x="634.0" y="86" text-anchor="middle">app</text><text class="n-sub" x="634.0" y="105" text-anchor="middle">api.App</text><text class="n-port" x="533.0" y="134">in : Guard · Retrieve</text><text class="n-port" x="533.0" y="152">out: Emit · Think · Write</text><text class="n-eq" x="533.0" y="178">eq: Guard · Retrieve · Think · Write …</text><rect x="60" y="300" width="230" height="190" rx="14"/><text class="n-title" x="175.0" y="330" text-anchor="middle">perceive</text><text class="n-sub" x="175.0" y="349" text-anchor="middle">perception.PerceiveLoop</text><text class="n-port" x="74" y="378">in : Think</text><text class="n-port" x="74" y="396">out: Think</text><text class="n-eq" x="74" y="422">eq: Loop(Think)</text><rect x="366" y="300" width="230" height="190" rx="14"/><text class="n-title" x="481.0" y="330" text-anchor="middle">think</text><text class="n-sub" x="481.0" y="349" text-anchor="middle">thinking.ThinkLoop</text><text class="n-port" x="380" y="378">in : Think</text><text class="n-port" x="380" y="396">out: Write</text><text class="n-eq" x="380" y="422">eq: Loop(Retrieve · Think · Guard · (…</text><rect x="672" y="300" width="230" height="190" rx="14"/><text class="n-title" x="787.0" y="330" text-anchor="middle">memory</text><text class="n-sub" x="787.0" y="349" text-anchor="middle">memory.MemRetrieve</text><text class="n-port" x="686" y="378">in : Write</text><text class="n-port" x="686" y="396">out: Retrieve</text><text class="n-eq" x="686" y="422">eq: Retrieve · Guard · Retrieve</text><rect x="978" y="300" width="230" height="190" rx="14"/><text class="n-title" x="1093.0" y="330" text-anchor="middle">output</text><text class="n-sub" x="1093.0" y="349" text-anchor="middle">output_system.Distrib</text><text class="n-port" x="992" y="378">in : Emit</text><text class="n-port" x="992" y="396">out: Emit</text><text class="n-eq" x="992" y="422">eq: Guard · Write · Emit</text>
+    </g>
+  </svg>
+</div>
+<script>
+(function() {
+  var svg = document.getElementById('g');
+  var tip = document.getElementById('tip');
+  var panel = document.getElementById('panel');
+  var nodes = [{"id": "app", "x": 519.0, "y": 56, "w": 230, "h": 190, "module": "api", "symbol": "App", "in": ["Guard", "Retrieve"], "out": ["Emit", "Think", "Write"], "eq": "Guard · Retrieve · Think · Write · Emit", "file": "api/api.link"}, {"id": "perceive", "x": 60, "y": 300, "w": 230, "h": 190, "module": "perception", "symbol": "PerceiveLoop", "in": ["Think"], "out": ["Think"], "eq": "Loop(Think)", "file": "modules/perception/perception.link"}, {"id": "think", "x": 366, "y": 300, "w": 230, "h": 190, "module": "thinking", "symbol": "ThinkLoop", "in": ["Think"], "out": ["Write"], "eq": "Loop(Retrieve · Think · Guard · (Write | Emit))", "file": "modules/thinking/core/thinking.link"}, {"id": "memory", "x": 672, "y": 300, "w": 230, "h": 190, "module": "memory", "symbol": "MemRetrieve", "in": ["Write"], "out": ["Retrieve"], "eq": "Retrieve · Guard · Retrieve", "file": "modules/memory/memory.link"}, {"id": "output", "x": 978, "y": 300, "w": 230, "h": 190, "module": "output_system", "symbol": "Distrib", "in": ["Emit"], "out": ["Emit"], "eq": "Guard · Write · Emit", "file": "modules/output_system/output.link"}];
+  var edges = [{"from": "app", "to": "memory", "kind": "ok", "label": "ApiMemory"}, {"from": "app", "to": "output", "kind": "ok", "label": "ApiOutput"}, {"from": "app", "to": "perceive", "kind": "ok", "label": "ApiPerceive"}, {"from": "app", "to": "think", "kind": "ok", "label": "ApiThink"}, {"from": "perceive", "to": "think", "kind": "ok", "label": "MainFlow"}, {"from": "think", "to": "memory", "kind": "ok", "label": "MainFlow"}, {"from": "perceive", "to": "memory", "kind": "e302", "label": "E302 trigger.py:691"}];
+  var byId = {}; nodes.forEach(function(n) { byId[n.id] = n; });
+  var hot = {};
+  function edgesOf(id) { return edges.filter(function(e) { return e.from === id || e.to === id; }); }
+  function svgEls(sel) { return Array.prototype.slice.call(svg.querySelectorAll(sel)); }
+  function setHot(id) {
+    var ns = edgesOf(id).map(function(e) { return [e.from, e.to]; }).reduce(function(a, b) { return a.concat(b); }, []);
+    svgEls('.edge').forEach(function(p) {
+      var hit = p.getAttribute('data-from') === id || p.getAttribute('data-to') === id;
+      p.classList.toggle('hot', hit); p.classList.toggle('dim', !hit);
+    });
+    svgEls('.elabel').forEach(function(t) {
+      var hit = t.getAttribute('data-edge').indexOf(id) === 0 || t.getAttribute('data-edge').endsWith('→' + id);
+      t.classList.toggle('hot', hit);
+    });
+    svgEls('.node').forEach(function(g) {
+      g.classList.toggle('dim', g.id !== 'node-' + id);
+    });
+  }
+  function clearHot() {
+    svgEls('.edge').forEach(function(p) { p.classList.remove('hot', 'dim'); });
+    svgEls('.elabel').forEach(function(t) { t.classList.remove('hot'); });
+    svgEls('.node').forEach(function(g) { g.classList.remove('dim'); });
+  }
+  nodes.forEach(function(n) {
+    var g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    g.setAttribute('class', 'node'); g.setAttribute('id', 'node-' + n.id);
+    g.setAttribute('transform', 'translate(0,0)');
+    g.addEventListener('mouseenter', function() { setHot(n.id); showTip(n, event); });
+    g.addEventListener('mousemove', function(ev) { showTip(n, ev); });
+    g.addEventListener('mouseleave', function() { tip.style.display = 'none'; clearHot(); });
+    g.addEventListener('click', function() { openPanel(n); });
+    var ns = '';
+    ns += '<rect x="' + n.x + '" y="' + n.y + '" width="' + n.w + '" height="' + n.h + '" rx="14"/>';
+    ns += '<text class="n-title" x="' + (n.x + n.w / 2) + '" y="' + (n.y + 30) + '" text-anchor="middle">' + n.id + '</text>';
+    ns += '<text class="n-sub" x="' + (n.x + n.w / 2) + '" y="' + (n.y + 49) + '" text-anchor="middle">' + n.module + '.' + n.symbol + '</text>';
+    ns += '<text class="n-port" x="' + (n.x + 14) + '" y="' + (n.y + 78) + '">in : ' + (n['in'].join(' · ') || '—') + '</text>';
+    ns += '<text class="n-port" x="' + (n.x + 14) + '" y="' + (n.y + 96) + '">out: ' + (n.out.join(' · ') || '—') + '</text>';
+    ns += '<text class="n-eq" x="' + (n.x + 14) + '" y="' + (n.y + 122) + '">eq: ' + (n.eq.length > 34 ? n.eq.slice(0, 33) + '…' : n.eq) + '</text>';
+    g.innerHTML = ns;
+    svg.querySelector('#zoom').appendChild(g);
+  });
+  function showTip(n, ev) {
+    tip.innerHTML = '<b>' + n.id + '</b> &nbsp;' + n.module + '.' + n.symbol +
+      '<br>in : ' + (n['in'].join(' · ') || '—') +
+      '<br>out: ' + (n.out.join(' · ') || '—') +
+      '<br><span style="opacity:.7">' + (n.eq || '') + '</span>';
+    tip.style.display = 'block';
+    var r = svg.getBoundingClientRect();
+    tip.style.left = (ev.clientX - r.left + 14) + 'px';
+    tip.style.top = (ev.clientY - r.top + 14) + 'px';
+  }
+  function openPanel(n) {
+    var inc = edgesOf(n.id).filter(function(e) { return e.to === n.id; });
+    var out = edgesOf(n.id).filter(function(e) { return e.from === n.id; });
+    function badge(e) {
+      var m = { ok: ['ok', '真实✓'], bad: ['bad', 'E301'], warn: ['warn', 'E303'], e302: ['bad', 'E302'] };
+      var b = m[e.kind] || ['', ''];
+      return '<span class="badge ' + b[0] + '">' + b[1] + '</span>';
+    }
+    var h = '<span class="close" id="closePanel">✕</span>';
+    h += '<h2>' + n.id + ' <span style="font-weight:400;font-size:12px;color:#6B7280">' + n.module + '.' + n.symbol + '</span></h2>';
+    h += '<div class="row"><span class="k">input</span> <code>' + (n['in'].join(' · ') || '—') + '</code></div>';
+    h += '<div class="row"><span class="k">output</span> <code>' + (n.out.join(' · ') || '—') + '</code></div>';
+    h += '<div class="row"><span class="k">eq</span> <code>' + (n.eq || '—') + '</code></div>';
+    h += '<div class="row"><span class="k">声明</span> <code>' + n.file + '</code></div>';
+    if (out.length) h += '<div class="row"><span class="k">出边</span><br>' + out.map(function(e) { return '&nbsp;↳ ' + e.from + ' → ' + e.to + badge(e); }).join('<br>') + '</div>';
+    if (inc.length) h += '<div class="row"><span class="k">入边</span><br>' + inc.map(function(e) { return '&nbsp;↳ ' + e.from + ' → ' + e.to + badge(e); }).join('<br>') + '</div>';
+    panel.innerHTML = h;
+    var cp = document.getElementById('closePanel');
+    if (cp) cp.addEventListener('click', function() { panel.style.display = 'none'; });
+    panel.style.display = 'block';
+  }
+  // pan & zoom
+  var z = 1, tx = 0, ty = 0, drag = null;
+  function apply() { var g = svg.querySelector('#zoom'); g.setAttribute('transform', 'translate(' + tx + ',' + ty + ') scale(' + z + ')'); }
+  svg.addEventListener('wheel', function(ev) {
+    ev.preventDefault();
+    var f = ev.deltaY < 0 ? 1.12 : 0.89;
+    z = Math.min(3, Math.max(0.4, z * f));
+    apply();
+  }, { passive: false });
+  svg.addEventListener('mousedown', function(ev) { drag = { x: ev.clientX, y: ev.clientY }; });
+  window.addEventListener('mousemove', function(ev) {
+    if (!drag) return;
+    tx += ev.clientX - drag.x; ty += ev.clientY - drag.y;
+    drag = { x: ev.clientX, y: ev.clientY }; apply();
+  });
+  window.addEventListener('mouseup', function() { drag = null; });
+})();
+</script>
+</body>
+</html>

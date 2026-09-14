@@ -1,0 +1,29 @@
+[scan]
+roots = ["."]
+exclude = []
+extensions = [".py", ".link"]
+
+[atoms.Think]
+calls = ["think", "llm.invoke", "complete", "chat", "invoke"]
+
+[atoms.Tool]
+calls = ["call_tool", "tools.invoke", "invoke_tool"]
+
+[atoms.Observe]
+calls = ["observe", "add_observation"]
+
+[atoms.Emit]
+returns = true
+
+[atoms.Guard]
+requires_branch = true
+
+[ops.Loop]
+needs = ["while", "for"]
+
+[lexicon]
+"思考" = "Think"
+"调用工具" = "Tool"
+"循环" = "Loop"
+"观察" = "Observe"
+"输出" = "Emit"

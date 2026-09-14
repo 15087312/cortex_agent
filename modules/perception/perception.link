@@ -1,0 +1,11 @@
+# 感知模块的结构骨架：定时扫描 → 规则守卫 → 触发搭话推送
+export PerceiveLoop
+input PerceiveLoop: [Think]
+output PerceiveLoop: [Think]
+eq PerceiveLoop = Loop(Think)
+
+export SenseScan
+eq SenseScan = Loop(Guard · Emit)
+
+export Outreach
+eq Outreach = Guard · Retrieve · Emit

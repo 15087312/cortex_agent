@@ -1,0 +1,11 @@
+# desktop_pet 模块：桌宠对话链（独立页面形态）
+#
+# PetChat：会话入口 = 委托独立 ReAct 循环（页面形态下不再做 WS 握手守卫）
+# PetLoop：桌宠专属循环（CustomLoop）= 思考节流 → 循环(思考 → 工具·观察 | 输出)（持续思考，直到停止/上下文满）
+# PetPersist：每轮产出落库（engine 层 on_message 通道，user 首次连同落库）
+export PetChat
+eq PetChat = Think
+export PetLoop
+eq PetLoop = Throttle · Loop(Think · (Tool · Observe | Emit))
+export PetPersist
+eq PetPersist = Write

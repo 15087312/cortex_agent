@@ -1,0 +1,36 @@
+# logiclink 宪法（全仓一份，仅根目录）——试点已扩到 modules/thinking
+[scan]
+roots = ["app.link", "modules/thinking", "modules/memory", "modules/perception", "modules/output_system", "modules/security_system", "modules/management", "modules/cortex", "modules/desktop_pet", "modules/database", "api", "cortex", "cli_tui", "infra", "tools", "utils"]
+exclude = [".venv", "**/node_modules/**", "**/__pycache__/**", "**/test_*.py", "**/*_test.py"]
+extensions = [".py", ".link"]
+
+[arch]
+forbid_eq_change = true
+
+[atoms.Think]
+calls = ["think_fn", "think_once", "think", "llm.invoke", "continuous_think", "_execute_multi_model_thinking", "_review_output", "_run_periodic_check", "_check_impl", "_client.chat", "initialize_system", "start_backend", "chat_stream", "run", "_think"]
+
+[atoms.Retrieve]
+calls = ["retrieve", "_build_prompt", "build_prompt", "get_event_retrieval", "recall", "_run_expert_pipeline", "_match_skill", "to_dict", "popleft", "receive", "embed", "_vector_search", "_causal_search", "_rank_and_filter", "_get_session_conversation", "fetchone", "fetchall", "get_recent_messages", "get_session_metadata", "_build_context", "get_instance", "_load_model", "s.query", "_collect_generic", "_get_caller_permissions", "is_tool_available", "urlopen", "parse_event", "list_tools", "call_tool", "initialize", "_port_in_use"]
+
+[atoms.Throttle]
+calls = ["sleep"]
+
+[atoms.Tool]
+calls = ["_run_tool"]
+
+[atoms.Observe]
+calls = ["_observe"]
+
+[atoms.Guard]
+requires_branch = true
+
+[atoms.Write]
+calls = ["set_working_memory", "record_step", "notebook.append", "write", "save", "_write_final_result", "_save_partial_result", "_dialog_entries.append", "commit", "_save_event_inner", "save_event", "_save_pair", "save_pair", "s.add", "setup_asyncio_handler", "create_engine", "_touch_edge", "add_history"]
+
+[atoms.Emit]
+calls = ["_notify_thinking_complete", "_notify_return_target", "notify", "_emit_event", "notify_subscribers", "_try_outreach", "generate_and_push", "stream_output", "distribute", "_push_to_ws", "set_exception_handler", "send_json_from_thread", "send_json", "push_screen", "install_screen"]
+returns = true
+
+[ops.Loop]
+needs = ["while", "for"]

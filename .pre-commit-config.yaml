@@ -1,0 +1,9 @@
+repos:
+  - repo: local
+    hooks:
+      - id: logiclink
+        name: logiclink
+        entry: logiclink .
+        language: system
+        pass_filenames: false
+        always_run: true

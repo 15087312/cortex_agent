@@ -1,0 +1,8 @@
+# utils 模块：通用工具（时间/异步并发）
+
+export TimeRange
+eq TimeRange = Loop(Emit)
+export DayStart
+eq DayStart = Guard
+export DayEnd
+eq DayEnd = Guard

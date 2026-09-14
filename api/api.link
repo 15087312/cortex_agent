@@ -1,0 +1,5 @@
+# api 模块：装配层 — FastAPI 应用组合各模块导出
+export App
+input App: [Guard, Retrieve]
+output App: [Think, Write, Emit]
+eq App = Guard · Retrieve · Think · Write · Emit

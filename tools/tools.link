@@ -1,0 +1,10 @@
+# tools 模块：工具集（mock 后端流量观测）
+
+export MockLog
+eq MockLog = Write
+export MockHttp
+eq MockHttp = Guard
+export MockWs
+eq MockWs = Loop(Guard · Emit)
+export MockReply
+eq MockReply = Guard · Loop(Emit)

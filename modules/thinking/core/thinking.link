@@ -1,0 +1,11 @@
+# 连续思考循环的结构骨架：上层只组合抽象积木，不展开实现细节
+export ThinkLoop
+input ThinkLoop: [Think]
+output ThinkLoop: [Write]
+eq ThinkLoop = Loop(Retrieve · Think · Guard · (Write | Emit))
+
+export ThinkStep
+eq ThinkStep = Guard · Loop(Think) · (Write | Emit)
+
+export RunnerLoop
+eq RunnerLoop = Loop(Think · Guard · (Write | Emit))
