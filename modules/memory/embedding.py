@@ -39,6 +39,7 @@ class EmbeddingEngine:
                     cls._instance = cls()
         return cls._instance
 
+    # @link:block Embedding_LoadModel = Guard
     def _load_model(self) -> bool:
         if self._attempted:
             return self._loaded
@@ -148,6 +149,7 @@ class EmbeddingEngine:
             except Exception as e:
                 logger.warning(f"[Embedding] FAISS 索引重建失败，向量搜索暂时不可用: {e}")
 
+    # @link:block Embedding_Embed = Retrieve
     def embed(self, text: str) -> Optional[List[float]]:
         if not self._loaded:
             self._load_model()  # 延迟加载：首次调用自动加载，避免向量检索静默失效
@@ -170,6 +172,7 @@ class EmbeddingEngine:
             logger.warning(f"[Embedding] 编码失败: {e}")
             return None
 
+    # @link:block Embedding_EmbedBatch = Retrieve
     def embed_batch(self, texts: List[str]) -> List[Optional[List[float]]]:
         if not texts:
             return []

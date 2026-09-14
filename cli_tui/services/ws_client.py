@@ -490,20 +490,6 @@ class WSClient:
                 "timestamp": time.time(),
             }
 
-        # ── 主动搭话: proactive_outreach ──
-        if msg_type == "proactive" and event_name == "proactive_outreach" and content:
-            return {
-                "kind": "dialog",
-                "tier": "system",
-                "icon": "🤖",
-                "label": "助手",
-                "model_id": "proactive",
-                "content": content,
-                "entry_type": "proactive",
-                "round_num": 0,
-                "timestamp": time.time(),
-            }
-
         return None
 
     async def send_security_response(self, request_id: str, approved: bool, reason: str = ""):

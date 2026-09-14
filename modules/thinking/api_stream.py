@@ -1,5 +1,5 @@
 """
-流式思考 API - WebSocket + SSE
+流式思考 API — WebSocket + SSE
 
 能力：
 - 统一事件 envelope（WS/SSE 同构）
@@ -17,7 +17,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from api.errors import AppError, ErrorCode
+from infra.errors import AppError, ErrorCode
 from sse_starlette.sse import EventSourceResponse
 
 from modules.thinking.multi_model_orchestrator import MultiModelOrchestrator

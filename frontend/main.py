@@ -1,8 +1,9 @@
+# @link:block
 """cortex — macOS 桌面客户端
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 在后台启动 server.py，然后打开 Qt 窗口加载 Web UI。
 关闭窗口时隐藏到 Dock，Cmd+Q 完全退出。
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
 
 import sys
@@ -12,9 +13,15 @@ import time
 import signal
 import atexit
 
-# 防残留: 若启动本客户端的 cortex 父进程被强杀，自动退出避免孤儿进程
+# 防残留（两层）:
+# 1) 父进程监控: cortex 拉起本客户端时注入 CORTEX_PARENT_PID，父进程被强杀则自动退出
+# 2) 后端锚定: 绑定后端进程（env > ~/.cortex/backend_pid.json），后端退出则自动退出
+#    （后端尚未启动时 bind_backend 会等 30s —— 本进程稍后会拉起后端）
+import sys as _sys
+import os as _os
+_sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
 try:
-    from cortex.watchdog import enable as _enable_orphan_watchdog
+    from cortex.watchdog import enable as _enable_orphan_watchdog, bind_backend as _bind_backend
     _enable_orphan_watchdog()
 except Exception:
     pass
@@ -336,12 +343,14 @@ class MainWindow(QMainWindow):
 
 # ── Server Lifecycle ──────────────────────────────────────
 
+# @link:block Server_Start = Emit
 def _start_server():
     global _server_instance
     _server_instance = server.create_server()
     _server_instance.serve_forever()
 
 
+# @link:block Server_Stop = Guard
 def _stop_server():
     global _server_instance
     if _server_instance is not None:
@@ -352,6 +361,7 @@ def _stop_server():
             pass
 
 
+# @link:block Pet_Stop = Guard
 def _stop_pet():
     """终止独立桌宠进程（Qt 退出时关闭宠物）"""
     global _pet_proc
@@ -463,6 +473,7 @@ def _setup_qtwebengine_paths():
         print(f"[..] QTWEBENGINE_LOCALES_PATH={loc}")
 
 
+# @link:block Main_Emit = Emit
 def main():
     global _server_thread
 
@@ -486,6 +497,14 @@ def main():
     # 确保后端 API (8080) 已运行（Qt 页面 /api 请求都代理到它）
     print("[..] 检查后端 API 服务 (8080)...")
     _ensure_backend()
+
+    # 后端就绪后再绑定其 PID（后端启动/由本进程拉起时 lifespan 会写入 PID 文件），
+    # 之后后端退出 → 本 Qt 进程及桌宠/代理等卫星进程全部自动退出。
+    try:
+        from cortex.watchdog import bind_backend as _bind_backend
+        _bind_backend(fail_after=120)
+    except Exception:
+        pass
 
     if _port_in_use():
         print("[OK] 前端服务已在运行 (端口 8765)")

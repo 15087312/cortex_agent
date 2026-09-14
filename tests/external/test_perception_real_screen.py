@@ -183,7 +183,7 @@ def test_real_perception_pipeline():
 
     # 启动感知系统
     system = get_perception_system()
-    system.setup(voice_enabled=False, proactive_enabled=False)
+    system.setup(voice_enabled=False)
     system.start()
     integrator = get_perception_integrator()
     integrator._subscribe_events()

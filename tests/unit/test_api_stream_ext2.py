@@ -710,7 +710,7 @@ async def test_stream_sse_error(monkeypatch):
 # ── 路由：错误 / 边界 ──────────────────────────────────────────────────
 
 async def test_route_sse_requires_question():
-    from api.errors import AppError
+    from infra.errors import AppError
     with pytest.raises(AppError):
         await stream.sse_session_get("s1", "")
 
@@ -728,7 +728,7 @@ async def test_route_close_session_repo_error(monkeypatch):
 
 
 async def test_route_update_title_empty():
-    from api.errors import AppError
+    from infra.errors import AppError
     with pytest.raises(AppError):
         await stream.update_session_title("s1", {"title": " "})
 
@@ -755,7 +755,7 @@ async def test_route_delete_message_repo_error(monkeypatch):
 
 
 async def test_route_update_message_empty():
-    from api.errors import AppError
+    from infra.errors import AppError
     with pytest.raises(AppError):
         await stream.update_message("s1", "m1", {"content": " "})
 

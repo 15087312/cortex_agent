@@ -506,7 +506,7 @@ class TestTimeDifferenceSource:
 def _get_alert_seconds():
     try:
         from config.settings import settings
-        return settings.PROACTIVE_OUTREACH_IDLE_MINUTES * 60
+        return getattr(settings, 'PERCEPTION_IDLE_ALERT_MINUTES', 15) * 60
     except Exception:
         return 15 * 60
 
@@ -517,7 +517,7 @@ def test_get_idle_alert_seconds_exception_fallback(monkeypatch):
 
     class Boom:
         @property
-        def PROACTIVE_OUTREACH_IDLE_MINUTES(self):
+        def PERCEPTION_IDLE_ALERT_MINUTES(self):
             raise RuntimeError("config 未加载")
 
     # config.settings 模块被 config/__init__ 重导出覆盖，从 sys.modules 取真实模块 patch

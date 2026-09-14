@@ -545,6 +545,7 @@ class CognitiveBlackboard:
         except Exception as e:
             logger.debug(f"[CognitiveBlackboard] 广播失败 (非致命): {e}")
 
+    # @link:block BB_WriteThought = Write
     def write_thought(
         self, model_id: str, tier: str, content: str,
         round_num: int = 0, metadata: Optional[Dict[str, Any]] = None,
@@ -564,6 +565,7 @@ class CognitiveBlackboard:
         self._broadcast(entry)
         return entry
 
+    # @link:block BB_WriteResponse = Write
     def write_response(
         self, model_id: str, tier: str, content: str,
         metadata: Optional[Dict[str, Any]] = None,
@@ -595,6 +597,7 @@ class CognitiveBlackboard:
 
     # ── 对话框读取（替代 SharedDialog）──
 
+    # @link:block BB_ReadDialog = Retrieve
     def read_dialog(
         self,
         limit: int = 200,

@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from api.errors import AppError, ErrorCode
+from infra.errors import AppError, ErrorCode
 import modules.perception.difference.api as api_mod
 
 

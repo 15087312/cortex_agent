@@ -2,33 +2,16 @@
 
 所有感知层产出的事件都使用 PerceptionEvent 格式。
 模块间通过 Event Bus 传递事件，不直接调用。
+
+PerceptionEventType 常量类已提升至 modules.shared.events（跨模块共享契约），
+此处 re-export 以保持感知层内部引用路径不变。
 """
 import time
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
-
-class PerceptionEventType:
-    """事件类型常量"""
-    # 感知层产出
-    SCREEN_DIFF = "screen.diff"             # 帧差检测结果
-    SCREEN_OCR = "screen.ocr"               # OCR 文本变化
-    SCREEN_UI = "screen.ui"                 # UI 元素变化
-    SCREEN_WINDOW = "screen.window"         # 窗口状态变化
-    FILE_CHANGE = "file.change"             # 文件变化
-    SPEECH_DETECTED = "speech.detected"     # 语音识别结果
-    MCP_RESOURCE_UPDATE = "mcp.resource.update"  # MCP 资源更新
-
-    # 检测层产出
-    DIFFERENCE_DETECTED = "difference.detected"  # 检测到差异
-
-    # 触发层产出
-    PROACTIVE_MESSAGE = "proactive.message"  # 主动搭话消息
-    WORLD_STATE_UPDATE = "world.state.update"  # 世界状态更新
-
-    # 通配
-    ALL = "*"                                # 订阅所有事件
+from modules.shared.events import PerceptionEventType  # noqa: F401  re-export 共享契约
 
 
 @dataclass
@@ -48,6 +31,7 @@ class PerceptionEvent:
     event_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
 
     def to_dict(self) -> Dict[str, Any]:
+        # @link:block PerceptionEvent_Emit = Emit
         """转换为字典（用于序列化/日志）"""
         return {
             "event_id": self.event_id,

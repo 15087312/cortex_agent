@@ -320,6 +320,7 @@ class CausalGraph:
 
     # ── Edge CRUD ──
 
+    # @link:block GraphSaveEdge = Guard · Write
     def save_edge(self, edge: CausalEdge) -> Optional[str]:
         """保存因果边（DAG 校验：形成环路则拒绝写入）"""
         with self._write_lock:
@@ -360,6 +361,7 @@ class CausalGraph:
 
     # ── 邻域扩散 ──
 
+    # @link:block GraphNeighbors = Loop(Guard · Retrieve)
     def get_neighbors(
         self, node_id: str, hops: int = 1,
         relation_filter: Optional[str] = None,

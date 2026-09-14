@@ -191,6 +191,7 @@ class ModelMessageBus:
     # 发送
     # ------------------------------------------------------------------
 
+    # @link:block BusSend = Emit
     async def send(self, message: Message) -> str:
         """发送消息到指定接收者
 
@@ -209,6 +210,7 @@ class ModelMessageBus:
         await self.notify_subscribers(message.recipient)
         return message.msg_id
 
+    # @link:block BusBroadcast = Emit
     async def broadcast(self, message: Message) -> str:
         """广播消息到所有已知接收者"""
         message.msg_type = MessageType.BROADCAST
@@ -235,6 +237,7 @@ class ModelMessageBus:
         self._emit_event("broadcast", message, {"recipient_count": len(known_recipients)})
         return message.msg_id
 
+    # @link:block BusRequest = Emit
     async def request(self, message: Message, timeout: float = 30) -> Optional[Message]:
         """发送请求并等待响应 (RPC 风格)
 
@@ -293,6 +296,7 @@ class ModelMessageBus:
     # 接收
     # ------------------------------------------------------------------
 
+    # @link:block BusReceive = Retrieve
     async def receive(self, recipient_id: str, limit: int = 10) -> List[Message]:
         """接收消息（推荐用于 async 上下文）"""
         async with self.lock:
@@ -307,6 +311,7 @@ class ModelMessageBus:
             self._stats["received"] += len(messages)
             return messages
 
+    # @link:block BusReceiveOne = Retrieve
     async def receive_one(self, recipient_id: str) -> Optional[Message]:
         """接收一条消息"""
         messages = await self.receive(recipient_id, limit=1)

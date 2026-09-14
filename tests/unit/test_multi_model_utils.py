@@ -193,7 +193,6 @@ def test_process_activity_notify_error(monkeypatch):
     o._review_output = AsyncMock(return_value="ok")
     import modules.perception.setup as ps_mod
     ps = MagicMock()
-    ps.proactive_trigger = None
     monkeypatch.setattr(ps_mod, "get_perception_system", lambda: ps)
     # 后续 _execute_multi_model_thinking 走 mock
     o._execute_multi_model_thinking = MagicMock()

@@ -1,3 +1,4 @@
+# @link:block
 """
 Provider 基类 — 定义模型 API 适配器接口
 """
@@ -46,10 +47,12 @@ class ProviderBase(ABC):
         self.base_url = base_url
         self.model_name = model_name
 
+    # @link:block ProviderBase_BuildHeaders = Think
     @abstractmethod
     def build_headers(self) -> Dict[str, str]:
         """构建请求头"""
 
+    # @link:block ProviderBase_BuildRequest = Emit
     @abstractmethod
     def build_request(
         self,
@@ -64,14 +67,17 @@ class ProviderBase(ABC):
     ) -> Dict[str, Any]:
         """构建请求体"""
 
+    # @link:block ProviderBase_ParseResponse = Emit
     @abstractmethod
     def parse_response(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """解析响应，返回标准化格式 {content, tool_calls, finish_reason, usage}"""
 
+    # @link:block ProviderBase_ChatUrl = Think
     @abstractmethod
     def chat_url(self) -> str:
         """返回 chat completions 端点 URL"""
 
+    # @link:block ProviderBase_ParseStreamLine = Emit
     @abstractmethod
     def parse_stream_line(self, line: str) -> Optional[Dict[str, Any]]:
         """解析 SSE 流的一行，返回增量 delta 或 None"""

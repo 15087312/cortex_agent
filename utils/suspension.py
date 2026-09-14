@@ -19,6 +19,7 @@ _suspended_at: Optional[float] = None   # 当前挂起开始时间（未挂起�
 _total_suspended: float = 0.0            # 累计挂起时长（秒）
 
 
+# @link:block Suspension_Class = Guard
 class Suspension:
     """线程安全的全局面板 — 记录挂起状态与累计挂起时长"""
 
@@ -64,6 +65,7 @@ def effective_elapsed_since(mono_start: float, susp_start: float) -> float:
     )
 
 
+# @link:block Suspension_PausableWait = Guard
 async def pausable_wait_for(awaitable: Awaitable, timeout: float) -> Any:
     """asyncio.wait_for 的挂起感知版本 — 挂起期间不计入超时。
 

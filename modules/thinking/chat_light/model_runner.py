@@ -51,6 +51,7 @@ class ModelRunner:
             close_client_session(old)
         return self._client
 
+    # @link:block LightRun_Think = Think
     async def run(
         self,
         messages: List[dict],

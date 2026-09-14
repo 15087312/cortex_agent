@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 logger = setup_logger("probe_permission")
 
 
+# @link:block ProbePerm_Guard = Guard
 class ProbePermissionManager:
     """三级模型层级权限管理器
 

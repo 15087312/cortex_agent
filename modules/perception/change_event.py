@@ -22,6 +22,7 @@ class ChangeEvent:
     timestamp: float = field(default_factory=time.time)
 
     def to_prompt(self) -> str:
+        # @link:block ChangeEvent_Emit = Emit
         """转换为提示文本"""
         if self.target_type == "file":
             icon_map = {

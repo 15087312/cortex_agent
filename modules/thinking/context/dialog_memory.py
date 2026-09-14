@@ -87,6 +87,7 @@ def load_dialog_from_db(
     return dialog
 
 
+# @link:block DialogBudget_Guard = Guard
 def budget_trim(
     messages: List[Dict[str, Any]],
     ratio: float = 0.8,

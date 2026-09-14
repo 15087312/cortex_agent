@@ -1,3 +1,4 @@
+# @link:block CoreValidator_Guard = Guard
 """
 核心校验器 - L0级，永远开启不可关闭
 """

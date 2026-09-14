@@ -15,6 +15,7 @@ class TouchpointDetector:
 
     @staticmethod
     def _find_app_path(app_name: str) -> Optional[str]:
+        # @link:block Touchpoint_Guard = Guard
         """查找 macOS 应用 .app 路径"""
         if not _IS_MAC:
             return None

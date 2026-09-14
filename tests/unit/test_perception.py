@@ -717,18 +717,4 @@ class TestPerceptionSystemSetup:
         """多次 setup() 不应无限线程泄漏 (当前 setup() 非幂等，每次创建1个线程)"""
         pytest.skip("setup() 当前非幂等，每个调用创建一个窗口检测线程")
 
-    def test_proactive_trigger_enabled(self):
-        from modules.perception.setup import get_perception_system
-        system = get_perception_system()
-        system.setup(proactive_enabled=True)
-        status = system.get_status()
-        assert status["proactive_trigger"] is not None
-        system.stop()
 
-    def test_proactive_trigger_disabled(self):
-        from modules.perception.setup import get_perception_system
-        system = get_perception_system()
-        system.setup(proactive_enabled=False)
-        status = system.get_status()
-        assert status["proactive_trigger"] is None
-        system.stop()

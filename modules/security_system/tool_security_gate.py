@@ -189,6 +189,7 @@ class ToolSecurityGate:
         except Exception:
             return "edit"
 
+    # @link:block GateCheck
     async def check(
         self,
         tool_name: str,
@@ -206,15 +207,19 @@ class ToolSecurityGate:
         # 相同调用缓存：完全相同的 tool_name + params + 执行模式 跳过重复审批
         cache_key = f"{self._execution_mode}|{tool_name}|{json.dumps(tool_params, sort_keys=True, ensure_ascii=False)}"
         cached = self._check_cache.get(cache_key)
+        # @link:block Gate_Guard = Guard
         if cached is not None:
             return cached
 
+        # @link:block Gate_Think = Think
         result = await self._check_impl(
             tool_name, tool_params, caller_tier, caller_model_id, dialog_context, caller_role, session_id,
         )
         self._check_cache[cache_key] = result
+        # @link:block Gate_Emit = Emit
         return result
 
+    # @link:block GateChain = Guard
     async def _check_impl(
         self,
         tool_name: str,

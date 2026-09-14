@@ -15,7 +15,6 @@ function mockApi(cfg = {}) {
     USER_NAME: '测试用户',
     CORTEX_MODE: 'agent',
     EXECUTION_MODE: 'edit',
-    PROACTIVE_OUTREACH_ENABLED: false,
     DESKTOP_PET_ENABLED: true,
     LARGE_MODEL_API_URL: 'https://x/v1',
   }
@@ -30,7 +29,6 @@ function mockApi(cfg = {}) {
       return { success: true, data: { libs, current: currentLib } }
     } },
     // ── 配置读写 ──
-    { match: '/api/config/PROACTIVE_OUTREACH_DEFAULT', data: (u, init) => { writes.push({ url: String(u), method: init?.method, body: JSON.parse(init.body) }); return { success: true } } },
     { match: '/api/config/', data: (u, init) => {
       writes.push({ url: String(u), method: init?.method, body: JSON.parse(init.body) })
       // 模拟后端持久化：PUT 后 GET 返回新值
@@ -76,7 +74,6 @@ describe('Settings.vue', () => {
     const w = await mountSettings()
     expect(w.text()).toContain('用户')
     expect(w.text()).toContain('对话')
-    expect(w.text()).toContain('主动搭话')
     expect(w.text()).toContain('高级')
     expect(w.text()).toContain('通用设置')
     await w.findAll('.settings-tab').find((t) => t.text() === '感知').trigger('click')
@@ -142,25 +139,6 @@ describe('Settings.vue', () => {
     expect(put.body).toEqual({ value: true })
   })
 
-  it('保存全局默认主动搭话规则（序列化规则结构）', async () => {
-    mockApi()
-    const w = await mountSettings()
-    w.vm.globalDefault.enabled = true
-    w.vm.globalDefault.scheduleOn = true
-    w.vm.globalDefault.scheduleTime = '14:00'
-    w.vm.globalDefault.screenOn = true
-    w.vm.globalDefault.screenRatio = 0.7
-    await w.vm.saveGlobalDefault()
-    await new Promise((r) => setTimeout(r, 30))
-    const put = writes.find((x) => x.url.includes('/PROACTIVE_OUTREACH_DEFAULT'))
-    expect(put).toBeTruthy()
-    const cfg = JSON.parse(put.body.value)
-    expect(cfg.enabled).toBe(true)
-    expect(cfg.schedule).toEqual({ enabled: true, time: '14:00', jitter_minutes: 10 })
-    expect(cfg.screen.enabled).toBe(true)
-    expect(cfg.screen.change_ratio).toBe(0.7)
-  })
-
   it('saveModelForm 串行保存主模型配置（只保存变更字段）', async () => {
     mockApi()
     const w = await mountSettings()
@@ -169,7 +147,7 @@ describe('Settings.vue', () => {
     w.vm.modelForm.LARGE.API_URL = 'https://new-url/v1'
     await w.vm.saveModelForm()
     await new Promise((r) => setTimeout(r, 30))
-    const puts = writes.filter((x) => x.url.includes('/api/config/') && x.method === 'PUT' && !x.url.includes('PROACTIVE') && !x.url.includes('memory-libs'))
+    const puts = writes.filter((x) => x.url.includes('/api/config/') && x.method === 'PUT' && !x.url.includes('memory-libs'))
     expect(puts.some((x) => x.url.includes('LARGE_MODEL_API_URL'))).toBe(true)
   })
 
@@ -403,53 +381,6 @@ describe('Settings.vue', () => {
     expect(writes.some((x) => x.url.includes('memory-libs') && x.method === 'POST')).toBe(false)
   })
 
-  it('loadGlobalDefault 解析嵌套规则结构', async () => {
-    mockApi({ config: {
-      PROACTIVE_OUTREACH_DEFAULT: JSON.stringify({
-        enabled: true,
-        schedule: { enabled: true, time: '12:00', jitter_minutes: 15 },
-        screen: { enabled: true, change_ratio: 0.8, probability: 0.9, check_interval_seconds: 45, cooldown_minutes: 20 },
-        idle: { enabled: false, idle_minutes: 10, probability: 0.1, check_interval_seconds: 30 },
-        time_windows_enabled: true,
-        time_windows: [{ start: '10:00', end: '11:00', probability: 0.7 }],
-      }),
-    } })
-    const w = await mountSettings()
-    await new Promise((r) => setTimeout(r, 40))
-    await w.vm.loadGlobalDefault()
-    const g = w.vm.globalDefault
-    expect(g.enabled).toBe(true)
-    expect(g.scheduleTime).toBe('12:00')
-    expect(g.scheduleJitter).toBe(15)
-    expect(g.screenRatio).toBe(0.8)
-    expect(g.screenInterval).toBe(45)
-    expect(g.idleOn).toBe(false)
-    expect(g.windowsOn).toBe(true)
-    expect(g.timeWindowsText).toBe('10:00-11:00@0.7')
-  })
-
-  it('saveGlobalDefault 校验钳制边界值', async () => {
-    mockApi()
-    const w = await mountSettings()
-    await new Promise((r) => setTimeout(r, 30))
-    const g = w.vm.globalDefault
-    g.enabled = true
-    g.screenOn = true
-    g.screenRatio = 5  // >1 → 钳到 1
-    g.screenProb = -3  // <0 → 钳到 0
-    g.screenInterval = -5 // <1 且 truthy → 钳到 1（注意 0 是 falsy 会回退默认 30）
-    g.idleOn = true
-    g.idleProb = 2 // >1 → 钳到 1
-    await w.vm.saveGlobalDefault()
-    await new Promise((r) => setTimeout(r, 30))
-    const put = writes.find((x) => x.url.includes('/PROACTIVE_OUTREACH_DEFAULT'))
-    const cfg = JSON.parse(put.body.value)
-    expect(cfg.screen.change_ratio).toBe(1)
-    expect(cfg.screen.probability).toBe(0)
-    expect(cfg.screen.check_interval_seconds).toBe(1)
-    expect(cfg.idle.probability).toBe(1)
-  })
-
   it('startEditShortcut/saveShortcut 编辑快捷键状态', async () => {
     mockApi()
     const w = await mountSettings()
@@ -591,75 +522,6 @@ describe('Settings.vue', () => {
     const puts2 = writes.filter((x) => x.url.includes('/api/config/USER_NAME'))
     expect(puts2.length).toBe(puts.length + 1)
     expect(puts2[puts2.length - 1].body).toEqual({ value: '' })
-  })
-
-  it('saveGlobalDefault 无 @ 概率时段解析（默认省略）', async () => {
-    mockApi()
-    const w = await mountSettings()
-    await new Promise((r) => setTimeout(r, 30))
-    const g = w.vm.globalDefault
-    g.enabled = true
-    g.windowsOn = true
-    g.timeWindowsText = '09:00-12:00,14:00-18:00@0.5,坏数据'
-    await w.vm.saveGlobalDefault()
-    await new Promise((r) => setTimeout(r, 30))
-    const put = writes.find((x) => x.url.includes('/PROACTIVE_OUTREACH_DEFAULT'))
-    const cfg = JSON.parse(put.body.value)
-    expect(cfg.time_windows).toEqual([
-      { start: '09:00', end: '12:00' },
-      { start: '14:00', end: '18:00', probability: 0.5 },
-    ])
-    expect(cfg.enabled).toBe(true)
-  })
-})
-
-  it('对话 tab：模式 seg 切换 + 主模型配置编辑保存（computed setter + 内联 handler）', async () => {
-    mockApi()
-    const w = await mountSettings()
-    // 处理方式 seg
-    await w.findAll('button').find((b) => b.text().includes('纯对话模式')).trigger('click')
-    expect(w.vm.cortexMode).toBe('chatonly')
-    // 执行模式 seg（宽松）
-    await w.findAll('button').find((b) => b.text().includes('宽松')).trigger('click')
-    expect(w.vm.execMode).toBe('yolo')
-    expect(writes.some((x) => x.url.includes('EXECUTION_MODE') && x.body?.value === 'yolo')).toBe(true)
-    // 主模型配置输入（本地表单 ref，保存时才 PUT）
-    await w.findAll('input[placeholder="deepseek-v4-flash"]')[0].setValue('my-model')
-    expect(w.vm.modelForm.LARGE.NAME).toBe('my-model')
-    await w.findAll('input[placeholder^="https://api.deepseek"]')[0].setValue('https://example.com/v1')
-    expect(w.vm.modelForm.LARGE.API_URL).toBe('https://example.com/v1')
-    // 保存主模型配置按钮（saveModelForm 内联 → PUT）
-    const saveModel = w.findAll('button').find((b) => b.text().includes('保存主模型配置'))
-    await saveModel.trigger('click')
-    await new Promise((r) => setTimeout(r, 30))
-    expect(w.vm.modelSaving).toBe(false)
-    expect(writes.some((x) => x.url.includes('LARGE_MODEL_NAME') && x.body?.value === 'my-model')).toBe(true)
-    expect(writes.some((x) => x.url.includes('LARGE_MODEL_API_URL') && x.body?.value === 'https://example.com/v1')).toBe(true)
-  })
-
-  it('主动搭话 tab：全局总开关 + 全局默认规则字段编辑保存', async () => {
-    mockApi()
-    const w = await mountSettings()
-    await w.findAll('.settings-tab').find((t) => t.text() === '主动搭话').trigger('click')
-    // 全局总开关 toggle（@change 反向）
-    const enabledCb = w.findAll('.setting-row')[0].find('input[type=checkbox]')
-    await enabledCb.trigger('change')
-    expect(writes.some((x) => x.url.includes('PROACTIVE_OUTREACH_ENABLED'))).toBe(true)
-    // 全局默认规则：开启定点 → 编辑时间 → 保存
-    w.vm.globalDefault.scheduleOn = true
-    w.vm.globalDefault.windowsOn = true
-    await w.vm.$nextTick()
-    await w.find('input[placeholder="14:00"]').setValue('16:30')
-    expect(w.vm.globalDefault.scheduleTime).toBe('16:30')
-    await w.find('input[placeholder^="09:00-12:00"]').setValue('09:00-12:00@0.5')
-    expect(w.vm.globalDefault.timeWindowsText).toBe('09:00-12:00@0.5')
-    const saveGlobal = w.findAll('button').find((b) => b.text().includes('保存全局默认规则'))
-    await saveGlobal.trigger('click')
-    await new Promise((r) => setTimeout(r, 30))
-    const g = writes.filter((x) => x.url.includes('PROACTIVE_OUTREACH_DEFAULT') && x.method === 'PUT').pop()
-    expect(g).toBeTruthy()
-    expect(JSON.parse(g.body.value).schedule.time).toBe('16:30')
-    expect(JSON.parse(g.body.value).time_windows[0].start).toBe('09:00')
   })
 
   it('感知 tab：开关/阈值/语音后端/打开文件夹 + 系统 tab 调试开关', async () => {
@@ -808,11 +670,6 @@ describe('Settings.vue', () => {
     // 切回本地（视觉后端，title 定位避免与语音本地按钮重名）→ 加载本地模型列表
     await w.findAll('button').find((b) => b.attributes('title') === '本地模型（自动检测）').trigger('click')
     expect(w.vm.visionBackend).toBe('local')
-    // 桌宠：主会话 ID 输入
-    const petRow = w.findAll('.setting-row').find((r) => r.text().includes('主会话 ID'))
-    await petRow.find('input').setValue('pet_custom')
-    expect(w.vm.petSessionId).toBe('pet_custom')
-    expect(writes.some((x) => x.url.includes('DESKTOP_PET_SESSION_ID'))).toBe(true)
     // 重置状态按钮
     await w.findAll('button').find((b) => b.text().includes('重置状态')).trigger('click')
     await new Promise((r) => setTimeout(r, 30))
@@ -888,3 +745,4 @@ describe('Settings.vue', () => {
     expect(w.find('.settings-row-label').text()).toContain('Interface Language')
     w.unmount()
   })
+})

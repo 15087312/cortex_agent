@@ -5,7 +5,6 @@ import { useConfigStore } from '@/stores/config.js'
 import { useToastStore } from '@/stores/toast.js'
 import { useConfirm, usePrompt } from '@/composables/useDialog.js'
 import Icon from '@/components/Icon.vue'
-import OutreachView from '@/pages/Outreach.vue'
 import { useI18n } from 'vue-i18n'
 import { useLocaleStore } from '@/stores/locale.js'
 import { locales } from '@/i18n/index.js'
@@ -20,7 +19,7 @@ const appVersion = __APP_VERSION__
 
 /* ── Tabs ── */
 const tabGroups = [
-  { labelKey: 'settings.group.user', tabs: ['chat', 'perception', 'memory', 'proactive'] },
+  { labelKey: 'settings.group.user', tabs: ['chat', 'perception', 'memory'] },
   { labelKey: 'settings.group.advanced', tabs: ['system', 'advanced', 'general', 'auth', 'about'] },
 ]
 const activeTab = ref('chat')
@@ -127,49 +126,10 @@ const execMode = segCfg('EXECUTION_MODE', 'edit')
 const userName = txtCfg('USER_NAME', '用户')
 const searchEnginePriority = txtCfg('SEARCH_ENGINE_PRIORITY', '')
 const searxngUrl = txtCfg('SEARXNG_URL', '')
-const proactiveEnabled = boolCfg('PROACTIVE_OUTREACH_ENABLED', false)
-// 全局默认主动搭话规则（会话未单独配置时生效）
-const globalDefault = ref({ enabled: false, scheduleOn: false, scheduleTime: '', scheduleJitter: 10, screenOn: false, screenRatio: 0.5, screenProb: 0.5, screenInterval: 30, screenCooldown: 30, idleOn: false, idleMinutes: 30, idleProb: 0.5, idleInterval: 60, windowsOn: false, timeWindowsText: '' })
-async function loadGlobalDefault() {
-  try {
-    const raw = configStore.config?.PROACTIVE_OUTREACH_DEFAULT || '{}'
-    const cfg = (typeof raw === 'string' ? (JSON.parse(raw || '{}')) : (raw || {}))
-    const scr = cfg.screen || {}; const idle = cfg.idle || {}; const sched = cfg.schedule || {}
-    globalDefault.value = {
-      enabled: !!cfg.enabled,
-      scheduleOn: !!sched.enabled, scheduleTime: sched.time || '', scheduleJitter: sched.jitter_minutes ?? 10,
-      screenOn: !!scr.enabled, screenRatio: scr.change_ratio ?? 0.5, screenProb: scr.probability ?? 0.5,
-      screenInterval: scr.check_interval_seconds ?? 30, screenCooldown: scr.cooldown_minutes ?? 30,
-      idleOn: !!idle.enabled, idleMinutes: idle.idle_minutes ?? 30, idleProb: idle.probability ?? 0.5,
-      idleInterval: idle.check_interval_seconds ?? 60, windowsOn: !!cfg.time_windows_enabled,
-      timeWindowsText: (cfg.time_windows || []).map((w) => `${w.start}-${w.end}` + (w.probability != null ? `@${w.probability}` : '')).join(','),
-    }
-  } catch {}
-}
-async function saveGlobalDefault() {
-  const g = globalDefault.value
-  const timeWindows = g.timeWindowsText.split(',').map((x) => x.trim()).filter(Boolean)
-    .map((x) => { const m = x.split('@'); const [s, e] = m[0].split('-'); const w = { start: (s || '').trim(), end: (e || '').trim() }; if (m[1] != null) w.probability = parseFloat(m[1]); return w })
-    .filter((w) => w.start && w.end)
-  const cfg = {
-    enabled: !!g.enabled,
-    schedule: g.scheduleOn ? { enabled: true, time: g.scheduleTime, jitter_minutes: Math.max(0, g.scheduleJitter || 0) } : {},
-    screen: { enabled: !!g.screenOn, change_ratio: Math.max(0, Math.min(1, g.screenRatio ?? 0.5)), probability: Math.max(0, Math.min(1, g.screenProb ?? 0.5)), check_interval_seconds: Math.max(1, g.screenInterval || 30), cooldown_minutes: Math.max(0, g.screenCooldown || 30) },
-    idle: { enabled: !!g.idleOn, idle_minutes: Math.max(0, g.idleMinutes || 30), probability: Math.max(0, Math.min(1, g.idleProb ?? 0.5)), check_interval_seconds: Math.max(1, g.idleInterval || 60) },
-    time_windows_enabled: !!g.windowsOn, time_windows: timeWindows,
-  }
-  try {
-    const r = await fetch('/api/config/PROACTIVE_OUTREACH_DEFAULT', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ value: JSON.stringify(cfg) }) })
-    const d = await r.json()
-    if (d.success) toast.show(t('settings.proactive.savedGlobal'), 'success')
-    else toast.show(t('settings.saveFailed'), 'error')
-  } catch { toast.show(t('settings.saveFailed'), 'error') }
-}
 const ttsEnabled = boolCfg('OUTPUT_TTS_ENABLED', false)
 const mentalEnabled = boolCfg('MENTAL_ACTIVITY_ENABLED', true)
 const memorySummaryEnabled = boolCfg('MEMORY_SUMMARY_ENABLED', true)
 const petEnabled = boolCfg('DESKTOP_PET_ENABLED', true)
-const petSessionId = txtCfg('DESKTOP_PET_SESSION_ID', 'pet_main')
 
 // ── 桌宠状态（实时显示 + 重置）──
 const petState = ref({})
@@ -194,7 +154,6 @@ let petPollTimer = null
 onMounted(() => {
   loadPetState()
   petPollTimer = setInterval(loadPetState, 5000)
-  loadGlobalDefault()
 })
 onUnmounted(() => { if (petPollTimer) { clearInterval(petPollTimer); petPollTimer = null } })
 const debugEnabled = boolCfg('DEBUG', false)
@@ -562,96 +521,6 @@ onMounted(async () => {
         </div>
       </div>
 
-      <!-- ═══════════════ 主动搭话 ═══════════════ -->
-      <div v-if="activeTab === 'proactive'" class="settings-section">
-        <div class="settings-group">
-          <div class="settings-group-title">{{ $t('settings.proactive.title') }}</div>
-          <p class="settings-hint">{{ $t('settings.proactive.hint') }}</p>
-          <!-- 触发逻辑说明 -->
-          <div class="info-box">
-            <div class="info-box-title">{{ $t('settings.proactive.logicTitle') }}</div>
-            <div>· <b>{{ $t('settings.proactive.scheduleRule') }}</b>：{{ $t('settings.proactive.scheduleRuleDesc') }}</div>
-            <div>· <b>{{ $t('settings.proactive.screenRule') }}</b>：{{ $t('settings.proactive.screenRuleDesc') }}</div>
-            <div>· <b>{{ $t('settings.proactive.idleRule') }}</b>：{{ $t('settings.proactive.idleRuleDesc') }}</div>
-            <div>· <b>{{ $t('settings.proactive.windowRule') }}</b>：{{ $t('settings.proactive.windowRuleDesc') }}</div>
-            <div class="info-box-sub">{{ $t('settings.proactive.prereqTitle') }}</div>
-            <div>· {{ $t('settings.proactive.prereqOnline') }}</div>
-            <div>· {{ $t('settings.proactive.prereqCooldown') }}</div>
-            <div class="info-box-sub">{{ $t('settings.proactive.priorityTitle') }}</div>
-            <div>· <b>{{ $t('settings.proactive.globalSwitch') }}</b>（{{ $t('settings.proactive.priorityDesc1') }}）→ <b>{{ $t('settings.proactive.sessionRule') }}</b>（{{ $t('settings.proactive.priorityDesc2') }}）→ {{ $t('settings.proactive.globalDefaultRule') }}（{{ $t('settings.proactive.priorityDesc3') }}）</div>
-          </div>
-          <div class="setting-row mt-3">
-            <div class="lbl"><div class="t">{{ $t('settings.proactive.globalSwitch') }}</div><div class="d">{{ $t('settings.proactive.globalSwitchDesc') }}</div></div>
-            <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="proactiveEnabled" @change="proactiveEnabled = !proactiveEnabled" /><span class="toggle-slider"></span></label></div>
-          </div>
-        </div>
-
-        <div class="settings-divider"></div>
-        <!-- 会话规则（核心：按会话单独设置） -->
-        <div class="settings-group">
-          <div class="settings-group-title">{{ $t('settings.proactive.sessionRule') }}<span class="setting-group-title-hint"> —— {{ $t('settings.proactive.sessionRuleHint') }}</span></div>
-          <OutreachView :compact="true" />
-        </div>
-
-        <div class="settings-divider"></div>
-        <!-- 全局默认规则（仅当会话未配置时生效，兜底） -->
-        <div class="settings-group">
-          <div class="settings-group-title">{{ $t('settings.proactive.globalDefaultRule') }}<span class="setting-group-title-hint"> —— {{ $t('settings.proactive.globalDefaultHint') }}</span></div>
-          <div class="flex-col">
-            <div class="setting-row">
-              <div class="lbl"><div class="t">{{ $t('settings.proactive.enableGlobalDefault') }}</div><div class="d">{{ $t('settings.proactive.enableGlobalDefaultDesc') }}</div></div>
-              <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" v-model="globalDefault.enabled" /><span class="toggle-slider"></span></label></div>
-            </div>
-            <div class="setting-row">
-              <div class="lbl"><div class="t">{{ $t('settings.proactive.scheduleTrigger') }}</div><div class="d">{{ $t('settings.proactive.scheduleTriggerDesc') }}</div></div>
-              <div class="setting-ctl ctl-flex">
-                <label class="toggle-switch"><input type="checkbox" v-model="globalDefault.scheduleOn" /><span class="toggle-slider"></span></label>
-                <span class="text-muted">{{ $t('common.time') }}</span>
-                <input class="input w-80" v-model="globalDefault.scheduleTime" placeholder="14:00" :disabled="!globalDefault.scheduleOn" :title="$t('settings.proactive.scheduleTimeTitle')" />
-                <span class="text-muted">{{ $t('settings.proactive.jitter') }}</span>
-                <input class="input w-60" type="number" v-model.number="globalDefault.scheduleJitter" :disabled="!globalDefault.scheduleOn" :title="$t('settings.proactive.scheduleJitterTitle')" />
-                <span class="text-muted">min</span>
-              </div>
-            </div>
-            <div class="setting-row">
-              <div class="lbl"><div class="t">{{ $t('settings.proactive.screenTrigger') }}</div><div class="d">{{ $t('settings.proactive.screenTriggerDesc') }}</div></div>
-              <div class="setting-ctl ctl-flex">
-                <label class="toggle-switch"><input type="checkbox" v-model="globalDefault.screenOn" /><span class="toggle-slider"></span></label>
-                <input class="input w-50" type="number" v-model.number="globalDefault.screenRatio" :disabled="!globalDefault.screenOn" :title="$t('settings.proactive.screenRatioTitle')" />
-                <span class="text-muted">{{ $t('settings.proactive.threshold') }}</span>
-                <input class="input w-50" type="number" v-model.number="globalDefault.screenProb" :disabled="!globalDefault.screenOn" :title="$t('settings.proactive.screenProbTitle')" />
-                <span class="text-muted">{{ $t('settings.proactive.probability') }}</span>
-                <input class="input w-50" type="number" v-model.number="globalDefault.screenInterval" :disabled="!globalDefault.screenOn" :title="$t('settings.proactive.screenIntervalTitle')" />
-                <span class="text-muted">{{ $t('settings.proactive.interval') }}</span>
-                <input class="input w-50" type="number" v-model.number="globalDefault.screenCooldown" :disabled="!globalDefault.screenOn" :title="$t('settings.proactive.screenCooldownTitle')" />
-                <span class="text-muted">{{ $t('settings.proactive.cooldown') }}</span>
-              </div>
-            </div>
-            <div class="setting-row">
-              <div class="lbl"><div class="t">{{ $t('settings.proactive.idleTrigger') }}</div><div class="d">{{ $t('settings.proactive.idleTriggerDesc') }}</div></div>
-              <div class="setting-ctl ctl-flex">
-                <label class="toggle-switch"><input type="checkbox" v-model="globalDefault.idleOn" /><span class="toggle-slider"></span></label>
-                <input class="input w-50" type="number" v-model.number="globalDefault.idleMinutes" :disabled="!globalDefault.idleOn" :title="$t('settings.proactive.idleMinutesTitle')" />
-                <span class="text-muted">{{ $t('settings.proactive.idle') }}</span>
-                <input class="input w-50" type="number" v-model.number="globalDefault.idleProb" :disabled="!globalDefault.idleOn" :title="$t('settings.proactive.idleProbTitle')" />
-                <span class="text-muted">{{ $t('settings.proactive.probability') }}</span>
-                <input class="input w-50" type="number" v-model.number="globalDefault.idleInterval" :disabled="!globalDefault.idleOn" :title="$t('settings.proactive.idleIntervalTitle')" />
-                <span class="text-muted">{{ $t('settings.proactive.interval') }}</span>
-              </div>
-            </div>
-            <div class="setting-row">
-              <div class="lbl"><div class="t">{{ $t('settings.proactive.windowTrigger') }}</div><div class="d">{{ $t('settings.proactive.windowTriggerDesc') }}</div></div>
-              <div class="setting-ctl ctl-flex">
-                <label class="toggle-switch"><input type="checkbox" v-model="globalDefault.windowsOn" /><span class="toggle-slider"></span></label>
-                <input class="input w-flex-220" v-model="globalDefault.timeWindowsText" :placeholder="$t('settings.proactive.windowsPlaceholder')" :disabled="!globalDefault.windowsOn" :title="$t('settings.proactive.windowsTitle')" />
-              </div>
-            </div>
-            <div class="text-right">
-              <button class="btn btn-sm btn-primary" @click="saveGlobalDefault">{{ $t('settings.proactive.saveGlobalDefault') }}</button>
-            </div>
-          </div>
-        </div>
-      </div>
 
       <!-- ═══════════════ 感知 ═══════════════ -->
       <div v-if="activeTab === 'perception'" class="settings-section">
@@ -892,8 +761,8 @@ onMounted(async () => {
             <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="petEnabled" @change="petEnabled = !petEnabled" /><span class="toggle-slider"></span></label></div>
           </div>
           <div class="setting-row">
-            <div class="lbl"><div class="t">{{ $t('settings.pet.sessionId') }}</div><div class="d">{{ $t('settings.pet.sessionIdDesc') }}</div></div>
-            <div class="setting-ctl"><input class="input w-160" v-model="petSessionId" /></div>
+            <div class="lbl"><div class="t">{{ $t('settings.pet.pageHint') }}</div><div class="d">{{ $t('settings.pet.pageHintDesc') }}</div></div>
+            <div class="setting-ctl"><a class="btn btn-primary" href="#/pet">{{ $t('settings.pet.goPage') }}</a></div>
           </div>
           <div class="setting-row">
             <div class="lbl"><div class="t">{{ $t('settings.pet.currentState') }}</div><div class="d">{{ $t('settings.pet.currentStateDesc') }}</div></div>

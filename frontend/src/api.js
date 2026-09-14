@@ -180,9 +180,6 @@ export const endpoints = {
   deleteSession: (id, signal) => request('DELETE', '/stream/session/' + encodeURIComponent(id), undefined, signal),
   batchDeleteSessions: (ids, signal) => request('POST', '/stream/sessions/batch-delete', { session_ids: ids }, signal),
   updateSessionTitle: (id, title, signal) => request('PUT', '/stream/session/' + encodeURIComponent(id) + '/title', { title }, signal),
-  getOutreachConfig: (id, signal) => request('GET', '/stream/session/' + encodeURIComponent(id) + '/outreach-config', undefined, signal),
-  setOutreachConfig: (id, cfg, signal) => request('PUT', '/stream/session/' + encodeURIComponent(id) + '/outreach-config', { outreach: cfg }, signal),
-  proactiveLogs: (limit, signal) => request('GET', '/stream/proactive-log?limit=' + (limit || 50), undefined, signal),
   deleteMessage: (sid, mid, signal) => request('DELETE', '/stream/sessions/' + encodeURIComponent(sid) + '/messages/' + encodeURIComponent(mid), undefined, signal),
   updateMessage: (sid, mid, content, signal) => request('PUT', '/stream/sessions/' + encodeURIComponent(sid) + '/messages/' + encodeURIComponent(mid), { content }, signal),
   sessionMessages: (id, limit, signal) => request('GET', '/stream/sessions/' + encodeURIComponent(id) + '/messages?limit=' + (limit || 100), undefined, signal),
@@ -195,4 +192,15 @@ export const endpoints = {
   infoProcess: (signal) => request('GET', '/management/info-process', undefined, signal),
   models: (signal) => request('GET', '/management/models', undefined, signal),
   createSession: (signal) => request('POST', '/stream/session', undefined, signal),
+
+  // ── 桌宠页（独立页面形态：人设/API/记忆/历史独立）──
+  petConfig: (signal) => request('GET', '/stream/pet/config', undefined, signal),
+  updatePetConfig: (patch, signal) => request('PUT', '/stream/pet/config', patch, signal),
+  petHistory: (limit, signal) => request('GET', '/stream/pet/history?limit=' + (limit || 50), undefined, signal),
+  deletePetHistoryMessage: (mid, signal) => request('DELETE', '/stream/pet/history/' + encodeURIComponent(mid), undefined, signal),
+  clearPetHistory: (signal) => request('DELETE', '/stream/pet/history', undefined, signal),
+  petMemory: (limit, signal) => request('GET', '/stream/pet/memory?limit=' + (limit || 50), undefined, signal),
+  addPetMemory: (kind, text, signal) => request('POST', '/stream/pet/memory', { kind, text }, signal),
+  deletePetMemory: (mid, signal) => request('DELETE', '/stream/pet/memory/' + encodeURIComponent(mid), undefined, signal),
+  petState: (signal) => request('GET', '/stream/pet/state', undefined, signal),
 }

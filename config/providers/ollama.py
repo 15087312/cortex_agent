@@ -1,3 +1,4 @@
+# @link:block
 """
 Ollama 本地适配器
 
@@ -12,10 +13,12 @@ class OllamaProvider(OpenAIProvider):
 
     format_name = "ollama"
 
+    # @link:block Ollama_BuildHeaders = Think
     def build_headers(self) -> dict:
         # Ollama 本地端点无需认证
         return {"Content-Type": "application/json"}
 
+    # @link:block Ollama_ChatUrl = Think
     def chat_url(self) -> str:
         base = self.base_url.rstrip("/")
         if base.endswith("/chat/completions"):

@@ -15,7 +15,7 @@ import hmac
 import asyncio
 from typing import Optional
 
-from api.errors import (
+from infra.errors import (
     ErrorCode, error_response, AppError,
 )
 from cortex.version import __version__ as _CORTEX_VERSION
@@ -29,9 +29,10 @@ except Exception:
 from infra.data_process.api import router as data_process_router
 from infra.tool_manager.api import router as tool_router
 from modules.thinking.chat_gateway import router as stream_router
+from modules.desktop_pet.api import router as desktop_pet_router
 from modules.management.api import router as management_router
 from modules.output_system.api import router as output_router
-from modules.output_system.tts import DEFAULT_TTS_OUTPUT_DIR as _tts_dir
+from modules.output_system.tts import get_tts_output_dir as _get_tts_dir
 from modules.security_system.api import router as security_router
 from config.settings import settings
 
@@ -48,11 +49,21 @@ logger = setup_logger("api_main")
 
 
 @asynccontextmanager
+# @link:block App
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
     logger.info("Starting Humanoid AGI...")
 
+    # 进程锚定: 把自身 PID 写入发现文件，所有卫星进程（前端代理/Qt/桌宠/
+    # 截图 daemon/MCP server）通过它绑定后端；后端退出时全体随之退出。
+    try:
+        from cortex.watchdog import write_backend_pid_file
+        write_backend_pid_file(os.getpid())
+    except Exception:
+        pass
+
     # SEC-2: 生产环境必须配置 API Key
+    # @link:block App_Guard = Guard
     if settings.APP_ENV == "production" and not _SIMPLE_API_KEY:
         logger.error("FATAL: API Key not configured in production mode. Set SIMPLE_API_KEY environment variable.")
         raise RuntimeError("API Key must be configured in production mode")
@@ -85,6 +96,7 @@ async def lifespan(app: FastAPI):
         logger.debug(f"应用当前记忆库失败: {e}")
 
     # 预加载 Embedding 模型（阻塞启动，加载失败则启动失败）
+    # @link:block App_Retrieve = Retrieve
     from modules.memory.embedding import EmbeddingEngine
     eng = EmbeddingEngine.get_instance()
     print("[DEBUG] 开始加载 Embedding 模型...", flush=True)
@@ -118,6 +130,7 @@ async def lifespan(app: FastAPI):
         logger.error(f"✗ 模型调度管理器初始化失败: {e}")
 
     # 初始化流式思考系统
+    # @link:block App_Think = Think
     try:
         from modules.thinking.api_stream import initialize_system
         print("[DEBUG] 开始初始化流式思考系统...", flush=True)
@@ -128,8 +141,9 @@ async def lifespan(app: FastAPI):
         logger.error(f"✗ 流式思考系统初始化失败: {e}")
 
     # 初始化全局错误总线的asyncio处理器
+    # @link:block App_Write = Write
     try:
-        from modules.management.core.error_bus import error_bus
+        from infra.error_bus import error_bus
         loop = asyncio.get_running_loop()
         error_bus.setup_asyncio_handler(loop)
         logger.info("✓ 全局错误总线已初始化")
@@ -137,8 +151,9 @@ async def lifespan(app: FastAPI):
         logger.error(f"✗ 全局错误总线初始化失败: {e}")
 
     # 注册错误总线 WebSocket 回调 — 错误推送到前端 TUI
+    # @link:block App_Emit = Emit
     try:
-        from modules.management.core.error_bus import error_bus
+        from infra.error_bus import error_bus
         from modules.thinking.api_stream import connection_manager
 
         def _on_error(error_type: str, error_msg: str, ctx: dict):
@@ -177,6 +192,16 @@ async def lifespan(app: FastAPI):
             # 启动感知集成器（订阅事件并注入模型上下文）
             from modules.perception.integration import get_perception_integrator
             get_perception_integrator().start()
+
+            # 桌面宠物（语音触发 + 主会话对话；由装配层拉起，
+            # 不挂在感知系统内部以保持 perception 不反向依赖 desktop_pet）
+            if settings.DESKTOP_PET_ENABLED:
+                try:
+                    from modules.desktop_pet.pet_engine import PetEngine
+                    PetEngine.get_instance(ps.event_bus).start()
+                    logger.info("✓ 桌宠已启动")
+                except Exception as e:
+                    logger.warning(f"桌面宠物启动失败: {e}")
         except Exception as e:
             logger.error(f"✗ 感知系统启动失败: {e}")
 
@@ -209,14 +234,6 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"差异检测器心跳启动失败: {e}")
 
-    # 差异检测器心跳注册后，接入"感知触发思考"（高强度变化 → AI 主动思考）
-    try:
-        from modules.perception.trigger_think import register as _register_trigger_think
-        if getattr(settings, "PERCEPTION_TRIGGER_THINK", True) and getattr(settings, "PERCEPTION_ENABLED", True):
-            _register_trigger_think()
-    except Exception as e:
-        logger.warning(f"感知触发思考注册失败: {e}")
-
     # 启动时应用系统级设置（真实生效，非摆设）：
     # 防休眠（caffeinate 保系统不睡）+ 开机启动（LaunchAgent）
     try:
@@ -233,6 +250,19 @@ async def lifespan(app: FastAPI):
 
     yield
     logger.info("Shutting down Humanoid AGI...")
+
+    # 进程锚定收尾: 正常退出时清 PID 文件（kill -9 时文件残留，
+    # 卫星进程靠「PID 不存在」探测自动退出），并收编自己拉起的子进程。
+    try:
+        from cortex.watchdog import clear_backend_pid_file
+        clear_backend_pid_file(os.getpid())
+    except Exception:
+        pass
+    try:
+        from cortex.process_registry import shutdown_all_children
+        shutdown_all_children()
+    except Exception:
+        pass
 
     # 关闭模型调度管理器
     try:
@@ -306,6 +336,7 @@ app = FastAPI(
 
 # ── TTS 音频输出静态挂载（/speech 生成的 mp3 通过 /audio/ 对外提供） ──
 # check_dir=False：目录不存在时不崩溃启动，由 TTSEngine 首次合成时创建
+_tts_dir = _get_tts_dir()
 _tts_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/audio", StaticFiles(directory=str(_tts_dir), check_dir=False), name="audio")
 
@@ -378,7 +409,6 @@ _AUTH_WHITELIST = {
 }
 _AUTH_WHITELIST_PREFIXES = ("/management/causal-graph", "/management/memory",
                              "/stream/session/", "/stream/sessions/",
-                             "/stream/proactive-log",
                               "/stream/pet/",
                                "/management/sessions/", "/config/",
                                "/management/api-requests",
@@ -620,6 +650,7 @@ def register_module_routers(app: FastAPI) -> None:
     app.include_router(tool_router)
     # 记忆 API 已迁移，不再挂载旧路由
     app.include_router(stream_router)
+    app.include_router(desktop_pet_router)
     app.include_router(management_router)
     app.include_router(output_router)
     app.include_router(security_router)
@@ -685,7 +716,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 async def general_exception_handler(request: Request, exc: Exception):
     """未预期异常 → 500 通用响应，过滤敏感信息"""
     logger.error(f"[未处理异常] {request.method} {request.url.path}: {type(exc).__name__}: {exc}")
-    from modules.management.core.error_bus import error_bus, ErrorContext
+    from infra.error_bus import error_bus, ErrorContext
     error_bus.report_error(
         exc,
         ErrorContext(

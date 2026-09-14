@@ -26,7 +26,7 @@ from modules.thinking.core.process_collector import (
     ThinkingProcessSnapshot,
     create_thinking_process_collector,
 )
-from modules.management.core.error_bus import error_bus, ErrorContext
+from infra.error_bus import error_bus, ErrorContext
 
 # 单次思考超时（秒）
 SINGLE_THINK_TIMEOUT = 120.0
@@ -840,6 +840,7 @@ class ContinuousThinker:
             "duration_ms": 0,
         }
 
+    # @link:block ThinkStep
     async def think_once(self, context: str, initial_question: str = "") -> Dict[str, Any]:
         """
         单次思考
@@ -851,6 +852,7 @@ class ContinuousThinker:
         Returns:
             思考结果
         """
+        # @link:block ThinkStep_Guard = Guard
         if not self.think_fn:
             self.logger.warning("未设置思考函数")
             return {
@@ -863,6 +865,7 @@ class ContinuousThinker:
         duration_ms = 0.0
         # 单次思考超时：优先用 runner 的 THINK_TIMEOUT（上级委托时指定），否则默认
         _timeout = getattr(getattr(self, "_runner_ref", None), "THINK_TIMEOUT", None) or SINGLE_THINK_TIMEOUT
+        # @link:block ThinkStep_Think = Think
         for attempt in range(1, MAX_THINK_RETRIES + 1):  # pragma: no cover  # 循环必然以 break(成功)/return(超时或异常) 退出，无自然落出路径
             try:
                 start_time = time.time()
@@ -958,6 +961,7 @@ class ContinuousThinker:
             "duration_ms": duration_ms,
         }
 
+        # @link:block ThinkStep_Write = Write
         if self.memory is not None:
             self.memory.set_working_memory(f"last_thought_{int(time.time())}", record, ttl=300)
         self.history_thoughts.append(thought)
@@ -978,6 +982,7 @@ class ContinuousThinker:
             "思考完成，耗时: %.0fms, 长度: %d字符",
             duration_ms, len(thought)
         )
+        # @link:block ThinkStep_Emit = Emit
         return record
 
     def _request_resume(self) -> None:
@@ -1045,6 +1050,7 @@ class ContinuousThinker:
                     self.continuous_think(question, max_rounds, min_rounds)
                 ).result()
     
+    # @link:block ThinkLoop
     async def continuous_think(
         self,
         question: str,
@@ -1107,14 +1113,17 @@ class ContinuousThinker:
                     self.logger.info("思考被中断")
                     break
 
+                        # @link:block ThinkLoop_Retrieve = Retrieve
                         # 构建提示词（包含历史记忆和外部提示）
                 prompt = await self._build_prompt(question, round_num=i + 1)
 
+                # @link:block ThinkLoop_Think = Think
                 # 执行思考
                 result = self._normalize_think_result(await self.think_once(prompt, question))
                 results.append(result)
 
                 current_thought = str(result.get("thought", "") or "").strip()
+                # @link:block ThinkLoop_Guard = Guard
                 # ── 从 _last_control_data 构建 control_decision（ModelRunner 直通）──
                 control_decision = None
                 if self._last_control_data is not None:
@@ -1139,6 +1148,7 @@ class ContinuousThinker:
                     self._last_control_data = None
                     break
 
+                # @link:block ThinkLoop_Write = Write
                 # 记录本轮思考步骤
                 cleaned_for_notebook = self._strip_control_markers(current_thought)
                 self._process_collector.record_step(
@@ -1240,6 +1250,7 @@ class ContinuousThinker:
                 sum(float(r.get("duration_ms", 0) or 0) for r in results) / 1000
             )
 
+            # @link:block ThinkLoop_Emit = Emit
             await self._finalize_thinking_results(question, results)
             if task_context is not None:
                 self._task_context = previous_task_context

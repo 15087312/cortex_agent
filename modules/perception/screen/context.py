@@ -45,6 +45,7 @@ class ScreenContext:
     visual_description: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
+        # @link:block ScreenContext_Emit = Emit
         return {
             "app_name": self.app_name,
             "window_title": self.window_title,

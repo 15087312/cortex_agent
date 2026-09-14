@@ -192,13 +192,16 @@ class EventStore:
     # CRUD
     # ------------------------------------------------------------------
 
+    # @link:block MemSave = Write
     def save_event(self, event: MemoryEvent) -> str:
         """保存事件到 SQLite，并自动向量化写入 FAISS"""
         with self._write_lock:
             return self._save_event_inner(event)
 
+    # @link:block MemSaveInner
     def _save_event_inner(self, event: MemoryEvent) -> str:
         """内部保存逻辑（无锁，调用方需持有锁）"""
+        # @link:block MemSaveInner_Guard = Guard
         if not event.id:
             event.id = uuid.uuid4().hex[:12]
         if not event.time:
@@ -207,6 +210,7 @@ class EventStore:
         if not event.last_accessed:
             event.last_accessed = event.time
 
+        # @link:block MemSaveInner_Write = Write
         conn = self._get_conn()
         conn.execute(
             """INSERT OR REPLACE INTO events
@@ -232,6 +236,7 @@ class EventStore:
         )
         conn.commit()
 
+        # @link:block MemSaveInner_Embed = Retrieve
         # 自动向量化 — 确保每个事件都有 FAISS 向量
         if event.embedding is None:
             try:

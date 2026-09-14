@@ -1,3 +1,4 @@
+# @link:block
 """
 供应商目录 — 以「供应商名」为中心的声明式配置（opencode 风格）
 
@@ -342,6 +343,7 @@ for _name, _spec in CATALOG.items():
         _ALIAS_MAP[str(_alias).strip().lower().replace(" ", "").replace("-", "_")] = _name
 
 
+# @link:block Catalog_GetSpec = Think
 def get_spec(name: str) -> "ProviderSpec | None":
     """按供应商名/别名查目录，找不到返回 None"""
     if not name:
@@ -353,6 +355,7 @@ def get_spec(name: str) -> "ProviderSpec | None":
     return None
 
 
+# @link:block Catalog_ListProviders = Emit
 def list_providers() -> list[str]:
     """返回目录中所有供应商名（按名排序）"""
     return sorted(k for k, v in CATALOG.items() if v is not None)

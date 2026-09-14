@@ -226,6 +226,7 @@ class REPL(Screen):
         else:
             self.notify("无法连接到后端服务", severity="error", timeout=5)
 
+    # @link:block WsDispatch
     async def _persistent_ws_callback(self, event):
         """持久 WebSocket 事件回调 — 只注册一次，所有请求共享"""
         # 更新最后事件时间
@@ -741,6 +742,7 @@ class REPL(Screen):
         self.state.add_input_history(text)
         self._process_user_input(text)
 
+    # @link:block InputProcess
     @work(exclusive=True)
     async def _process_user_input(self, text: str):
         self.state.processing = True
@@ -821,6 +823,7 @@ class REPL(Screen):
 
     # ── 命令处理 ──
 
+    # @link:block CmdDispatch
     def _handle_command(self, text: str):
         cmd = find_command(text)
         if not cmd or cmd.action == "exit":

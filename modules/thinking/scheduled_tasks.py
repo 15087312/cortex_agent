@@ -3,7 +3,7 @@
 借鉴 DeterminFlow cron：
 - 调度类型：HH:MM(每天) / interval(每N分钟) / once(单次) / cron(简化"分 时")
 - 配置存会话 metadata_json.scheduled_tasks: {"tasks": [{"id","schedule","enabled","action","prompt"}]}
-- 触发时调用 action 处理器（默认 chat：复用主动搭话 call_outreach_llm 生成消息 → 注入会话 → 推送）
+- 触发时调用 action 处理器（默认 chat：直接调模型生成定时提醒 → 注入会话 → 推送）
 - 执行状态记录到任务配置（last_run / last_status）
 """
 import asyncio
@@ -200,14 +200,10 @@ class ScheduledTaskManager:
         except Exception:
             pass
 
-    # ── 默认 action: chat —— 复用主动搭话 LLM 逻辑 → 注入会话 → 推送 ──
+    # ── 默认 action: chat —— 直接调用模型生成定时提醒 → 注入会话 → 推送 ──
 
     async def _handle_chat(self, session_id: str, task: dict) -> Optional[str]:  # type: ignore[return]
-        # 主动消息统一闸门：全局主动搭话总开关关闭时不发送（与 ProactiveTrigger 一致）
-        from config.settings import settings as _cfg
-        if not getattr(_cfg, "PROACTIVE_OUTREACH_ENABLED", True):
-            logger.debug(f"[定时任务] 全局主动搭话已关闭，跳过 chat 发送 (session={session_id[:8]})")
-            return "skipped"
+        """定时提醒：独立调模型生成简短消息（原主动搭话链路已移除）"""
         prompt = task.get("prompt") or "现在是定时任务时间，请自然地向用户说一句话（简短自然，1-2 句）。"
         agent_type = task.get("agent_type") or ""
         tier = "large"
@@ -218,12 +214,24 @@ class ScheduledTaskManager:
                 tier = (roles.get(agent_type) or {}).get("tier", "large")
             except Exception:
                 pass
-        from modules.perception.trigger import call_outreach_llm
+        from modules.thinking.model_factory import get_model_factory
+        from infra.model.base_model import ChatMessage
         from modules.thinking.frontend_channel import generate_and_push
+
+        async def _gen() -> str:
+            factory = get_model_factory()
+            factory.ensure_ready()
+            client = factory.get_client(tier)
+            resp = await client.chat([
+                ChatMessage(role="system", content="你是助手，正在执行用户设定的定时提醒任务，回复应简短自然（1-2 句）。"),
+                ChatMessage(role="user", content=prompt),
+            ])
+            return (resp.message.content or "").strip() if resp and resp.message else ""
+
         # 统一出口：握手（前端不可达则跳过 LLM）→ 生成 → 持久化 → 推送
         await generate_and_push(
             session_id,
-            lambda: call_outreach_llm(prompt, session_id, role=agent_type or None, tier=tier),
+            _gen,
             msg_type="proactive",
             event="scheduled_task",
             role="assistant",

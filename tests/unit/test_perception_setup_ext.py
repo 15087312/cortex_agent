@@ -12,15 +12,13 @@ from modules.perception.setup import PerceptionSystem
 
 
 def _patch_common(monkeypatch):
-    """patch 事件总线 / 世界状态 / 桌宠，隔离真实子系统"""
+    """patch 事件总线 / 世界状态，隔离真实子系统（桌宠已迁出感知装配层）"""
     import modules.perception.events.bus as bus_mod
     import modules.perception.state.world_state as ws_mod
-    import modules.desktop_pet.pet_engine as pe_mod
     bus = MagicMock()
     monkeypatch.setattr(bus_mod, "get_event_bus", lambda: bus)
     ws = MagicMock()
     monkeypatch.setattr(ws_mod, "WorldStateManager", lambda: ws)
-    monkeypatch.setattr(pe_mod.PetEngine, "get_instance", classmethod(lambda cls, eb: MagicMock()))
     return bus, ws
 
 
@@ -40,34 +38,28 @@ def test_setup_restarts_when_started(monkeypatch):
     ps = _new_system()
     ps._started = True
     with patch.object(ps, "stop") as mock_stop:
-        ps.setup(voice_enabled=False, proactive_enabled=False)
+        ps.setup(voice_enabled=False)
     mock_stop.assert_called_once()
 
 
 def test_setup_event_bus_none(monkeypatch):
     import modules.perception.events.bus as bus_mod
     import modules.perception.state.world_state as ws_mod
-    import modules.desktop_pet.pet_engine as pe_mod
     monkeypatch.setattr(bus_mod, "get_event_bus", lambda: None)
     ws = MagicMock()
     monkeypatch.setattr(ws_mod, "WorldStateManager", lambda: ws)
-    monkeypatch.setattr(pe_mod.PetEngine, "get_instance", classmethod(lambda cls, eb: MagicMock()))
     ps = _new_system()
-    ps.setup(voice_enabled=False, proactive_enabled=False)
+    ps.setup(voice_enabled=False)
     assert ps.event_bus is None
     ws.start.assert_not_called()
 
 
-def test_setup_pet_engine_failure(monkeypatch):
-    import modules.desktop_pet.pet_engine as pe_mod
+def test_setup_no_pet_engine(monkeypatch):
+    """桌宠引擎已迁出感知装配层：setup 不初始化 pet_engine"""
     _patch_common(monkeypatch)
-    monkeypatch.setattr(
-        pe_mod.PetEngine, "get_instance",
-        classmethod(lambda cls, eb: (_ for _ in ()).throw(RuntimeError("pet down"))),
-    )
     ps = _new_system()
-    ps.setup(voice_enabled=False, proactive_enabled=False)
-    assert ps.pet_engine is None
+    ps.setup(voice_enabled=False)
+    assert not hasattr(ps, "pet_engine")
 
 
 def test_setup_screen_disabled(monkeypatch):
@@ -75,7 +67,7 @@ def test_setup_screen_disabled(monkeypatch):
     monkeypatch.setattr(settings, "PERCEPTION_SCREEN_ENABLED", False)
     _patch_common(monkeypatch)
     ps = _new_system()
-    ps.setup(voice_enabled=False, proactive_enabled=False)
+    ps.setup(voice_enabled=False)
     ps._setup_window_detector.assert_not_called()
     ps._setup_ocr_detector.assert_not_called()
 
@@ -87,7 +79,7 @@ def test_setup_voice_wakeword_mode(monkeypatch):
     vd.is_available.return_value = True
     monkeypatch.setattr(vd_mod, "VoiceDetector", lambda **k: vd)
     ps = _new_system()
-    ps.setup(voice_enabled=True, proactive_enabled=False, voice_mode="wakeword")
+    ps.setup(voice_enabled=True, voice_mode="wakeword")
     assert ps.voice_detector is vd
     vd.start.assert_called_once()
 
@@ -99,7 +91,7 @@ def test_setup_voice_unavailable(monkeypatch):
     vd.is_available.return_value = False
     monkeypatch.setattr(vd_mod, "VoiceDetector", lambda **k: vd)
     ps = _new_system()
-    ps.setup(voice_enabled=True, proactive_enabled=False, voice_mode="wakeword")
+    ps.setup(voice_enabled=True, voice_mode="wakeword")
     assert ps.voice_detector is None
     vd.start.assert_not_called()
 
@@ -220,8 +212,6 @@ def test_stop_with_all_components():
     ps._started = True
     ocr = MagicMock()
     ps.ocr_detector = ocr
-    trg = MagicMock()
-    ps.proactive_trigger = trg
     t = MagicMock()
     ps._window_detector_thread = t
     ps._window_stop_event = threading.Event()
@@ -231,7 +221,6 @@ def test_stop_with_all_components():
     with patch.object(bus_mod, "get_event_bus", return_value=bus):
         ps.stop()
     ocr.stop.assert_called_once()
-    trg.stop.assert_called_once()
     t.join.assert_called_once_with(timeout=3)
     assert ps._window_detector_thread is None
     ps.world_state.stop.assert_called_once_with(bus)
@@ -250,9 +239,6 @@ def test_get_status_populated():
     od = MagicMock()
     od.is_available.return_value = True
     ps.ocr_detector = od
-    trg = MagicMock()
-    trg.get_stats.return_value = {"sent": 1}
-    ps.proactive_trigger = trg
     ws = MagicMock()
     ws.get_state.return_value.to_dict.return_value = {"active_app": "x"}
     ps.world_state = ws
@@ -266,7 +252,6 @@ def test_get_status_populated():
     assert status["voice_detector_type"] == "voice"
     assert status["window_detector_available"] is True
     assert status["ocr_detector_available"] is True
-    assert status["proactive_trigger"] == {"sent": 1}
     assert status["world_state"] == {"active_app": "x"}
     assert status["event_bus"] == {"total_events": 3}
 

@@ -15,6 +15,7 @@ const navSections = [
     items: [
       { route: '/dashboard', labelKey: 'nav.dashboard', icon: 'dashboard' },
       { route: '/chat', labelKey: 'nav.chat', icon: 'message' },
+      { route: '/pet', labelKey: 'nav.pet', icon: 'bot' },
       { route: '/memory', labelKey: 'nav.memory', icon: 'file' },
       { route: '/tasks', labelKey: 'nav.tasks', icon: 'circle' },
       { route: '/settings', labelKey: 'nav.settings', icon: 'settings' },

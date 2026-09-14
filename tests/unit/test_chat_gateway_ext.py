@@ -238,11 +238,13 @@ async def test_route_get_context_chatonly(monkeypatch):
     assert out["data"]["count"] == 1
 
 
-async def test_route_close_session_pet_protected(monkeypatch):
-    from config.settings import settings
-    monkeypatch.setattr(settings, "DESKTOP_PET_SESSION_ID", "pet_main")
-    resp = await cg.close_session("pet_main")
-    assert resp.status_code == 400
+async def test_route_close_session_not_protected(monkeypatch):
+    """pet_main 不再是保留会话，走正常关闭"""
+    _set_chatonly(monkeypatch)
+    repo = MagicMock()
+    monkeypatch.setattr(cg, "_get_chat_session_repo", lambda: repo)
+    out = await cg.close_session("pet_main")
+    assert out["success"] is True
 
 
 async def test_route_close_session_chatonly(monkeypatch):
@@ -257,35 +259,10 @@ async def test_route_batch_delete(monkeypatch):
     repo = MagicMock()
     repo.delete_session = MagicMock()
     monkeypatch.setattr(cg, "_get_chat_session_repo", lambda: repo)
-    from config.settings import settings
-    monkeypatch.setattr(settings, "DESKTOP_PET_SESSION_ID", "pet_main")
     out = await cg.batch_delete_sessions({"session_ids": ["a", "pet_main", "b"]})
-    assert out["data"]["deleted"] == ["a", "b"]
+    assert out["data"]["deleted"] == ["a", "pet_main", "b"]
     resp = await cg.batch_delete_sessions({})
     assert resp.status_code == 422
-
-
-async def test_route_pet_move(monkeypatch):
-    cg._pet_move_queues.clear()
-    q = asyncio.Queue()
-    cg._pet_move_queues.add(q)
-    out = await cg.pet_move(cg.PetMoveRequest(dx=1.0, dy=2.0, active=True))
-    assert out["success"] is True
-    m = q.get_nowait()
-    assert m["dx"] == 1.0 and m["active"] is True
-
-
-async def test_route_pet_last_reply(monkeypatch):
-    engine = MagicMock()
-    engine.get_instance = MagicMock(return_value=MagicMock(last_reply="你好"))
-    monkeypatch.setattr("modules.desktop_pet.pet_engine.PetEngine", engine)
-    out = await cg.pet_last_reply()
-    assert out["data"] == "你好"
-
-
-async def test_route_pet_actions():
-    out = await cg.pet_actions()
-    assert out["success"] is True
 
 
 async def test_route_clear_session_messages(monkeypatch):
@@ -309,25 +286,6 @@ async def test_route_get_tasks_set_tasks(monkeypatch):
     assert resp.status_code == 422
 
 
-async def test_route_outreach_config(monkeypatch):
-    repo = MagicMock()
-    repo.get_outreach_config = MagicMock(return_value={})
-    repo.set_outreach_config = MagicMock(return_value=True)
-    repo.get_all_sessions = MagicMock(return_value=[])
-    monkeypatch.setattr(cg, "_get_chat_session_repo", lambda: repo)
-    out = await cg.get_outreach_config("s1")
-    assert out["success"] is True
-    out2 = await cg.set_outreach_config("s1", {"outreach": {"enabled": True, "cooldown_minutes": 5, "schedule": {"time": "10:00"}, "screen": {"probability": 0.5}, "idle": {"idle_minutes": 10}, "time_windows": [{"start": "09:00", "end": "18:00"}]}})
-    assert out2["success"] is True
-    resp = await cg.set_outreach_config("s1", {"outreach": "bad"})
-    assert resp.status_code == 422
-
-
-async def test_route_proactive_logs(monkeypatch):
-    monkeypatch.setattr("modules.database.proactive_repo.query_proactive_logs", lambda limit=50, session_id="": [])
-    monkeypatch.setattr("modules.database.proactive_repo.count_proactive_logs", lambda: 0)
-    out = await cg.get_proactive_logs()
-    assert out["success"] is True
 
 
 async def test_route_update_title_delete_update_message(monkeypatch):
@@ -365,7 +323,7 @@ async def test_route_stop_thinking(monkeypatch):
 
 async def test_route_sse_requires_question(monkeypatch):
     _set_chatonly(monkeypatch)
-    from api.errors import AppError
+    from infra.errors import AppError
     with pytest.raises(AppError):
         await cg.sse_session_get("s1", "")
 

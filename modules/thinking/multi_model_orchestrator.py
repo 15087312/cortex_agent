@@ -215,6 +215,7 @@ class MultiModelOrchestrator:
     # 公共 API
     # ------------------------------------------------------------------
 
+    # @link:block Orchestrate
     async def process(
         self,
         user_input: str,
@@ -258,15 +259,7 @@ class MultiModelOrchestrator:
         except Exception as e:
             logger.debug(f"[活动通知] 非致命错误: {e}")
 
-        # 重置主动搭话冷却（用户正在说话，不需要搭话）
-        try:
-            from modules.perception.setup import get_perception_system
-            ps = get_perception_system()
-            if ps.proactive_trigger:
-                ps.proactive_trigger.reset_cooldown()
-        except Exception as e:
-            logger.debug(f"[主动搭话] 重置冷却失败 (非致命): {e}")
-
+        # @link:block Orch_Guard = Guard
         # ---- 1. 安全验证 ----
         security_passed, security_error = await self._validate_security(user_input)
         if not security_passed:
@@ -281,6 +274,7 @@ class MultiModelOrchestrator:
         except Exception as e:
             logger.warning(f"Orchestrator 设置执行模式失败: {e}")
 
+        # @link:block Orch_Retrieve = Retrieve
         # ---- 3. 专家引导 (情绪 + 价值观) ----
         # 由激活的 Skill 决定是否运行，目前默认始终运行
         expert_guidance = await self._run_expert_pipeline(
@@ -292,6 +286,7 @@ class MultiModelOrchestrator:
         if skill_id:
             logger.info(f"[编排器] 自动匹配技能: {skill_id}")
 
+        # @link:block Orch_Think = Think
         # ---- 4. 多模型思考 (核心) ----
         thinking_result = await self._execute_multi_model_thinking(
             user_input=user_input,
@@ -309,6 +304,7 @@ class MultiModelOrchestrator:
         probe_signals = thinking_result.get("probe_signals", [])
         blackboard = thinking_result.get("blackboard")
 
+        # @link:block Orch_Review = Think
         # ---- 5. 输出审查 (专家系统) ----
         final_response = await self._review_output(raw_response, user_input, expert_guidance, blackboard)
 
@@ -321,6 +317,7 @@ class MultiModelOrchestrator:
 
         elapsed_ms = (time.time() - start_time) * 1000
 
+        # @link:block Orch_Emit = Emit
         # ---- 组装返回 ----
         return {
             "response": final_response,

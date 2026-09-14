@@ -5,6 +5,7 @@ import { useI18n } from '@/i18n/init.js'
 // 依赖 Cortex 后端（localhost:8080）的页面，访问前需健康检查
 const CORTEX_DEPENDENT_PATHS = [
   '/dashboard',
+  '/pet',
   '/modules',
   '/memory',
   '/causal',
@@ -18,10 +19,10 @@ const CORTEX_DEPENDENT_PATHS = [
 const routes = [
   { path: '/', redirect: '/chat' },
   { path: '/chat', name: 'Chat', component: () => import('@/pages/Chat.vue') },
+  { path: '/pet', name: 'Pet', component: () => import('@/pages/Pet.vue') },
   { path: '/dashboard', name: 'Dashboard', component: () => import('@/pages/Dashboard.vue') },
   { path: '/modules', name: 'Modules', component: () => import('@/pages/Modules.vue') },
   { path: '/memory', name: 'Memory', component: () => import('@/pages/Memory.vue') },
-  { path: '/outreach', name: 'Outreach', component: () => import('@/pages/Outreach.vue') },
   { path: '/tasks', name: 'ScheduledTasks', component: () => import('@/pages/ScheduledTasks.vue') },
   { path: '/skills', name: 'Skills', component: () => import('@/pages/Skills.vue') },
   { path: '/causal', name: 'Causal', component: () => import('@/pages/Causal.vue') },

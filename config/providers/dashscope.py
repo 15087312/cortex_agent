@@ -1,3 +1,4 @@
+# @link:block
 """
 DashScope API 适配器 (阿里云百炼)
 """
@@ -11,12 +12,14 @@ class DashScopeProvider(ProviderBase):
 
     format_name = "dashscope"
 
+    # @link:block DashScope_BuildHeaders = Think
     def build_headers(self) -> Dict[str, str]:
         return {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
 
+    # @link:block DashScope_BuildRequest = Emit
     def build_request(
         self,
         messages: List[Dict[str, Any]],
@@ -52,6 +55,7 @@ class DashScopeProvider(ProviderBase):
                 payload["parameters"]["tool_choice"] = tool_choice
         return payload
 
+    # @link:block DashScope_ParseResponse = Emit
     def parse_response(self, data: Dict[str, Any]) -> Dict[str, Any]:
         output = data.get("output", {})
         choices = output.get("choices", [])
@@ -88,6 +92,7 @@ class DashScopeProvider(ProviderBase):
             "usage": None,
         }
 
+    # @link:block DashScope_ChatUrl = Think
     def chat_url(self) -> str:
         return self.base_url
 

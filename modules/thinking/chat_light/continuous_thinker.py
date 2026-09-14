@@ -51,6 +51,7 @@ class ContinuousThinker:
         except Exception:
             return {}
 
+    # @link:block LightThink_Think = Think
     async def think(
         self,
         session_id: str,
@@ -159,6 +160,7 @@ class ContinuousThinker:
                 logger.error(f"Thinking failed: {e}")
                 await message_queue.put({"type": "error", "content": str(e)})
 
+    # @link:block LightThink_Retrieve = Retrieve
     async def _recall_memories(self, query: str, session_id: str) -> str:
         """Retrieve global event memory.
 

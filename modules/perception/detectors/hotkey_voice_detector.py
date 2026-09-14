@@ -116,6 +116,7 @@ class HotkeyVoiceDetector(PerceptionDetector):
     # ── 生命周期 ────────────────────────────────────────────
 
     def start(self) -> None:
+        # @link:block HotkeyVoice_Guard = Guard
         if not self._available or self._running:
             return
         try:
@@ -289,6 +290,7 @@ class HotkeyVoiceDetector(PerceptionDetector):
             return ""
 
     def _process_frames(self) -> None:
+        # @link:block HotkeyVoice_Emit = Emit
         with self._frames_lock:
             frames = list(self._frames)
         if not frames:

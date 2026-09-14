@@ -87,6 +87,7 @@ class PerceptionEventBus:
         *,
         async_handler: Optional[AsyncHandler] = None,
     ) -> str:
+        # @link:block EventBus_Guard = Guard
         """订阅事件类型，返回 subscription_id"""
         if handler is None and async_handler is None:
             raise ValueError("必须提供 handler 或 async_handler")
@@ -115,6 +116,7 @@ class PerceptionEventBus:
         return False
 
     def publish(self, event: PerceptionEvent) -> None:
+        # @link:block EventBus_Emit = Emit
         """发布事件到总线
 
         同步 handler 在调用线程直接执行，异步 handler 投递到后台事件循环。

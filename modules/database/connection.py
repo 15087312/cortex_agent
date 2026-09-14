@@ -47,6 +47,7 @@ class DatabaseManager:
         self._session_factory: Any = None
         self._tables_created = False
 
+    # @link:block DbInit
     def initialize(self):
         """初始化数据库"""
         if self._engine is not None:
@@ -122,6 +123,7 @@ class DatabaseManager:
             except Exception as e:
                 logger.debug(f"索引创建跳过 (可能已存在): {e}")
     
+    # @link:block DbConn
     @contextmanager
     def get_session(self) -> Session:
         """获取数据库会话"""

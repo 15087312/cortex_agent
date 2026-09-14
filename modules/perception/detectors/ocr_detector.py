@@ -54,6 +54,7 @@ class OCRDetector(PerceptionDetector):
             return False
 
     def start(self, event_bus=None) -> None:
+        # @link:block OCR_Guard = Guard
         """启动 OCR 检测器，订阅 SCREEN_DIFF 事件"""
         if not self.is_available() or self._running:
             return

@@ -92,6 +92,7 @@ class ApiLogStore:
 
     # ── 写入（内存积累）──
 
+    # @link:block ApiLogAdd
     def add(self, method: str, path: str, status: int, duration_ms: float = 0.0,
             request_body: str = "", response_body: str = "") -> None:
         with self._qlock:
@@ -135,6 +136,7 @@ class ApiLogStore:
 
     # ── 查询 ──
 
+    # @link:block ApiLogQuery
     def query(self, method: str = "", path: str = "", status: int = 0,
               limit: int = 50, offset: int = 0, since_hours: float = 0.0,
               include_body: bool = True) -> list:

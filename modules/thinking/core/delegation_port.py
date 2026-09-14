@@ -45,6 +45,7 @@ class DelegationPort(Protocol):
         ...
 
 
+# @link:block Delegate_Emit = Emit
 class ProbeDelegationAdapter:
     """基于 MessageBus 的委托适配器 — 通过探针消息激活目标模型"""
 

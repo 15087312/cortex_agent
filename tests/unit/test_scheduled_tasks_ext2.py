@@ -103,8 +103,6 @@ async def test_scan_enabled_not_due(monkeypatch):
 
 async def test_handle_chat_no_agent_type(monkeypatch):
     m = _mgr()
-    cfg = sys.modules["config.settings"]
-    monkeypatch.setattr(cfg, "settings", types.SimpleNamespace(PROACTIVE_OUTREACH_ENABLED=True))
     generate_and_push = AsyncMock()
     monkeypatch.setattr("modules.thinking.frontend_channel.generate_and_push", generate_and_push)
     await m._handle_chat("s", {"prompt": "问候"})  # 跳过角色加载分支

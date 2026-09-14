@@ -1,3 +1,4 @@
+# @link:block
 """
 Cohere 原生 API 适配器（非 OpenAI 兼容）
 
@@ -22,12 +23,14 @@ class CohereProvider(ProviderBase):
 
     format_name = "cohere"
 
+    # @link:block Cohere_BuildHeaders = Think
     def build_headers(self) -> Dict[str, str]:
         return {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
 
+    # @link:block Cohere_BuildRequest = Emit
     def build_request(
         self,
         messages: List[Dict[str, Any]],
@@ -73,12 +76,14 @@ class CohereProvider(ProviderBase):
             })
         return result
 
+    # @link:block Cohere_ChatUrl = Think
     def chat_url(self) -> str:
         base = self.base_url.rstrip("/")
         if base.endswith("/chat"):
             return base
         return f"{base}/chat"
 
+    # @link:block Cohere_ParseResponse = Emit
     def parse_response(self, data: Dict[str, Any]) -> Dict[str, Any]:
         message = data.get("message", {})
         content_parts = message.get("content", [])

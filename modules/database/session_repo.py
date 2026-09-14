@@ -103,16 +103,6 @@ class SessionRepository:
             row.metadata_json = _json.dumps(current, ensure_ascii=False)
             return True
 
-    def get_outreach_config(self, session_id: str) -> dict:
-        """读取会话的主动搭话配置（未配置返回空 dict）"""
-        meta = self.get_session_metadata(session_id)
-        cfg = meta.get("outreach") or {}
-        return cfg if isinstance(cfg, dict) else {}
-
-    def set_outreach_config(self, session_id: str, config: dict) -> bool:
-        """写入会话的主动搭话配置 {enabled, cooldown_range:[min,max], time_windows:[{start,end}]}"""
-        return self.set_session_metadata(session_id, {"outreach": config or {}})
-
     def get_scheduled_tasks(self, session_id: str) -> dict:
         """读取会话的定时任务配置（未配置返回 {"tasks": []}）"""
         meta = self.get_session_metadata(session_id)

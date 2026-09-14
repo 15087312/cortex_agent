@@ -26,6 +26,7 @@ class PerceptionPool:
         self._hashes: set = set()
 
     def add(self, event_type: str, source: str, description: str, payload: dict = None) -> None:
+        # @link:block PerceptionPool_Guard = Guard
         if not description:
             return
         # 去重
@@ -51,6 +52,7 @@ class PerceptionPool:
         self._items = [i for i in self._items if i["timestamp"] >= cutoff]
 
     def snapshot(self, max_items: int = 5) -> "ContextFragment":  # noqa: F821 - 字符串注解，函数内 import
+        # @link:block PerceptionPool_Emit = Emit
         """取最近 N 条语义事件，输出 ContextFragment"""
         from modules.thinking.context.pool import ContextFragment
 

@@ -21,7 +21,6 @@ class PerceptionStatusAdapter:
             "platform": platform.system(),
             "started": ps._started,
             "voice_detector": ps.voice_detector is not None,
-            "proactive_trigger": ps.proactive_trigger is not None,
             "world_state": ps.world_state is not None,
         }
 

@@ -26,6 +26,7 @@ class TouchpointBackend:
         return self._available
 
     def detect(self, app: str = "", depth: int = 3, named_only: bool = True) -> ScreenContext:
+        # @link:block TouchpointBackend_Guard = Guard
         """检测当前窗口的 UI 元素"""
         import touchpoint as tp
 

@@ -403,17 +403,13 @@ async def test_close_session_chatonly_clear_fail(monkeypatch):
 
 async def test_batch_delete_non_string_ids(monkeypatch):
     repo = _noop(monkeypatch)
-    from config.settings import settings
-    monkeypatch.setattr(settings, "DESKTOP_PET_SESSION_ID", "pet_main")
     out = await cg.batch_delete_sessions({"session_ids": [123, "pet_main", None, "ok"]})
-    assert out["data"]["deleted"] == ["ok"]
+    assert out["data"]["deleted"] == ["pet_main", "ok"]
 
 
 async def test_batch_delete_repo_error(monkeypatch):
     repo = _noop(monkeypatch)
     repo.delete_session = MagicMock(side_effect=RuntimeError("db down"))
-    from config.settings import settings
-    monkeypatch.setattr(settings, "DESKTOP_PET_SESSION_ID", "pet_main")
     out = await cg.batch_delete_sessions({"session_ids": ["a"]})
     assert out["data"]["deleted"] == ["a"]
 
@@ -425,56 +421,6 @@ async def test_batch_delete_thinker_error(monkeypatch):
     _setup_thinker(monkeypatch, blackboard=bb)
     out = await cg.batch_delete_sessions({"session_ids": ["a"]})
     assert out["data"]["deleted"] == ["a"]
-
-
-# ── pet 路由 ──────────────────────────────────────────────────────────
-
-async def test_pet_move_queue_error(monkeypatch):
-    class BadQueue:
-        def put_nowait(self, m):
-            raise RuntimeError("full")
-
-    cg._pet_move_queues.clear()
-    cg._pet_move_queues.add(BadQueue())
-    out = await cg.pet_move(cg.PetMoveRequest(dx=1.0, dy=0.0))
-    assert out["success"] is True
-    cg._pet_move_queues.clear()
-    cg._pet_move["dx"] = 0.0
-    cg._pet_move["dy"] = 0.0
-
-
-async def test_pet_move_active_only():
-    cg._pet_move["dx"] = 0.0
-    cg._pet_move["dy"] = 0.0
-    cg._pet_move_queues.clear()
-    q = asyncio.Queue()
-    cg._pet_move_queues.add(q)
-    out = await cg.pet_move(cg.PetMoveRequest(active=True))
-    assert out["success"] is True
-    assert q.empty()  # dx/dy 为 0 不推送
-    cg._pet_move_queues.clear()
-
-
-async def test_pet_move_stream_yields(monkeypatch):
-    cg._pet_move_queues.clear()
-    resp = await cg.pet_move_stream()
-    q = next(iter(cg._pet_move_queues))
-    q.put_nowait({"dx": 1.0, "dy": 2.0, "active": True})
-    async for chunk in resp.body_iterator:
-        assert chunk["event"] == "move"
-        break
-    cg._pet_move_queues.clear()
-
-
-async def test_pet_chat_exception(monkeypatch):
-    st = MagicMock()
-    st.get_instance = MagicMock(side_effect=RuntimeError("no pet state"))
-    monkeypatch.setattr("modules.desktop_pet.pet_state.PetState", st)
-    resp = await cg.pet_chat_stream(cg.PetChatRequest(action_id="", text="你好"))
-    events = []
-    async for chunk in resp.body_iterator:
-        events.append(chunk)
-    assert any(b"error" in c for c in events if isinstance(c, bytes)) or len(events) >= 1
 
 
 # ── 会话图谱 / 主动搭话 ───────────────────────────────────────────────
@@ -491,72 +437,13 @@ async def test_get_session_graph_restore(monkeypatch):
     store.restore.assert_called_once()
 
 
-async def test_set_outreach_enabled_limit(monkeypatch):
-    repo = _noop(monkeypatch)
-    repo.get_outreach_config = MagicMock(side_effect=lambda sid: {"enabled": False} if sid == "s1" else {})
-    repo.get_all_sessions = MagicMock(return_value=[{"metadata": {"outreach": {"enabled": True}}} for _ in range(5)])
-    resp = await cg.set_outreach_config("s1", {"outreach": {"enabled": True}})
-    assert resp.status_code == 422
-
-
-async def test_set_outreach_full_parse(monkeypatch):
-    repo = _noop(monkeypatch)
-    repo.get_outreach_config = MagicMock(return_value={"enabled": False})
-    repo.get_all_sessions = MagicMock(return_value=[])
-    repo.set_outreach_config = MagicMock(return_value=True)
-    cfg = {
-        "enabled": True,
-        "cooldown_minutes": -5,
-        "schedule": {"enabled": True, "time": " 10:00 ", "jitter_minutes": -1},
-        "screen": {"enabled": True, "change_ratio": 2.0, "probability": -0.5,
-                   "check_interval_seconds": 0, "cooldown_minutes": -3},
-        "idle": {"enabled": True, "idle_minutes": 5, "probability": 1.5,
-                 "check_interval_seconds": 2},
-        "time_windows_enabled": True,
-        "time_windows": [
-            {"start": "09:00", "end": "18:00", "probability": 2.0, "check_interval_seconds": -1},
-            {"start": "", "end": ""},  # 无 start/end 被跳过
-            "not a dict",
-        ],
-    }
-    out = await cg.set_outreach_config("s1", {"outreach": cfg})
-    assert out["success"] is True
-    clean = out["data"]["outreach"]
-    assert clean["cooldown_minutes"] == 0
-    assert clean["screen"]["change_ratio"] == 1.0
-    assert clean["screen"]["probability"] == 0.0
-    assert clean["screen"]["check_interval_seconds"] == 1
-    assert clean["idle"]["probability"] == 1.0
-    assert clean["time_windows"][0]["probability"] == 1.0
-    assert clean["time_windows"][0]["check_interval_seconds"] == 1
-    assert len(clean["time_windows"]) == 1
-
-
-async def test_set_outreach_not_found(monkeypatch):
-    repo = _noop(monkeypatch)
-    repo.set_outreach_config = MagicMock(return_value=False)
-    resp = await cg.set_outreach_config("s1", {"outreach": {"enabled": True}})
-    assert resp.status_code == 404
-
-
-async def test_set_outreach_bad_values_ignored(monkeypatch):
-    repo = _noop(monkeypatch)
-    repo.set_outreach_config = MagicMock(return_value=True)
-    out = await cg.set_outreach_config("s1", {"outreach": {
-        "cooldown_minutes": "abc",
-        "schedule": {"jitter_minutes": "abc"},
-        "screen": {"probability": "abc"},
-    }})
-    assert out["success"] is True
-    clean = out["data"]["outreach"]
-    assert "cooldown_minutes" not in clean
 
 
 # ── 标题 / 消息 / 状态 / 会话 路由 ─────────────────────────────────────
 
 async def test_update_title_empty(monkeypatch):
     _noop(monkeypatch)
-    from api.errors import AppError
+    from infra.errors import AppError
     with pytest.raises(AppError):
         await cg.update_session_title("s1", {"title": "  "})
 
@@ -579,7 +466,7 @@ async def test_delete_message_agent(monkeypatch):
 
 async def test_update_message_empty(monkeypatch):
     _noop(monkeypatch)
-    from api.errors import AppError
+    from infra.errors import AppError
     with pytest.raises(AppError):
         await cg.update_message("s1", "m1", {"content": ""})
 
@@ -957,11 +844,12 @@ async def test_route_get_context_agent(monkeypatch):
     assert out["data"]["count"] == 2
 
 
-async def test_route_close_session_pet_protected(monkeypatch):
-    from config.settings import settings
-    monkeypatch.setattr(settings, "DESKTOP_PET_SESSION_ID", "pet_main")
+async def test_route_close_session_not_protected(monkeypatch):
+    repo = MagicMock()
+    monkeypatch.setattr(cg, "_get_chat_session_repo", lambda: repo)
+    monkeypatch.setattr(cg, "_resolve_mode", lambda: "chatonly")
     resp = await cg.close_session("pet_main")
-    assert resp.status_code == 400
+    assert resp.get("success") is True
 
 
 async def test_route_batch_delete_invalid_body():
@@ -969,95 +857,6 @@ async def test_route_batch_delete_invalid_body():
     assert resp.status_code == 422
     resp2 = await cg.batch_delete_sessions({"session_ids": "not-a-list"})
     assert resp2.status_code == 422
-
-
-async def test_route_pet_last_reply(monkeypatch):
-    engine = MagicMock()
-    engine.get_instance = MagicMock(return_value=MagicMock(last_reply="你好"))
-    monkeypatch.setattr("modules.desktop_pet.pet_engine.PetEngine", engine)
-    out = await cg.pet_last_reply()
-    assert out["data"] == "你好"
-
-
-async def test_route_pet_last_reply_error(monkeypatch):
-    def boom():
-        raise RuntimeError("no engine")
-    monkeypatch.setattr("modules.desktop_pet.pet_engine.PetEngine",
-                        type("P", (), {"get_instance": staticmethod(boom)}))
-    out = await cg.pet_last_reply()
-    assert out["data"] is None
-
-
-async def test_route_pet_state(monkeypatch):
-    st = MagicMock()
-    st.get_instance = MagicMock(return_value=st)
-    st.read = MagicMock(return_value={"mood": "ok"})
-    st.describe = MagicMock(return_value="状态")
-    monkeypatch.setattr("modules.desktop_pet.pet_state.PetState", st)
-    out = await cg.pet_state()
-    assert out["data"]["values"] == {"mood": "ok"}
-
-
-async def test_route_pet_state_error(monkeypatch):
-    def boom():
-        raise RuntimeError("no state")
-    monkeypatch.setattr("modules.desktop_pet.pet_state.PetState",
-                        type("P", (), {"get_instance": staticmethod(boom)}))
-    out = await cg.pet_state()
-    assert out["data"] is None
-
-
-async def test_route_pet_state_reset(monkeypatch):
-    st = MagicMock()
-    st.get_instance = MagicMock(return_value=st)
-    st.read = MagicMock(return_value={"x": 1})
-    st._save = MagicMock()
-    monkeypatch.setattr("modules.desktop_pet.pet_state.PetState", st)
-    monkeypatch.setattr("modules.desktop_pet.pet_state.DEFAULTS", {"x": 0})
-    out = await cg.pet_state_reset()
-    assert out["success"] is True
-
-
-async def test_route_pet_actions():
-    out = await cg.pet_actions()
-    assert out["success"] is True
-
-
-async def test_route_pet_chat_text_stream(monkeypatch):
-    st = MagicMock()
-    st.get_instance = MagicMock(return_value=st)
-    st.read = MagicMock(return_value={"mood": "happy"})
-    st.describe = MagicMock(return_value="状态描述")
-    monkeypatch.setattr("modules.desktop_pet.pet_state.PetState", st)
-    monkeypatch.setattr("modules.desktop_pet.actions.get_action", lambda aid: None)
-    engine = MagicMock()
-    engine.get_instance = MagicMock(return_value=engine)
-
-    async def fake_stream(text, extra_system=""):
-        yield "t1"
-        yield "t2"
-
-    engine.stream_chat = fake_stream
-    monkeypatch.setattr("modules.desktop_pet.pet_engine.PetEngine", engine)
-    resp = await cg.pet_chat_stream(cg.PetChatRequest(action_id="", text="你好"))
-    chunks = []
-    async for c in resp.body_iterator:
-        chunks.append(c)
-    assert any(chunk.get("event") == "done" for chunk in chunks if isinstance(chunk, dict))
-
-
-async def test_route_pet_chat_empty_text(monkeypatch):
-    st = MagicMock()
-    st.get_instance = MagicMock(return_value=st)
-    st.read = MagicMock(return_value={})
-    st.describe = MagicMock(return_value="")
-    monkeypatch.setattr("modules.desktop_pet.pet_state.PetState", st)
-    monkeypatch.setattr("modules.desktop_pet.actions.get_action", lambda aid: None)
-    resp = await cg.pet_chat_stream(cg.PetChatRequest(action_id="", text=""))
-    chunks = []
-    async for c in resp.body_iterator:
-        chunks.append(c)
-    assert len(chunks) >= 1
 
 
 async def test_route_clear_session_messages(monkeypatch):
@@ -1079,60 +878,6 @@ async def test_route_get_tasks_and_set_tasks(monkeypatch):
     resp = await cg.set_tasks("s1", {"tasks": "bad"})
     assert resp.status_code == 422
 
-
-async def test_route_get_outreach_config(monkeypatch):
-    repo = _noop(monkeypatch)
-    repo.get_outreach_config = MagicMock(return_value={"enabled": True})
-    out = await cg.get_outreach_config("s1")
-    assert out["success"] is True
-    assert out["data"]["outreach"]["enabled"] is True
-
-
-async def test_route_set_outreach_invalid(monkeypatch):
-    repo = _noop(monkeypatch)
-    resp = await cg.set_outreach_config("s1", {"outreach": "bad"})
-    assert resp.status_code == 422
-
-
-async def test_route_set_outreach_full(monkeypatch):
-    repo = _noop(monkeypatch)
-    repo.get_outreach_config = MagicMock(return_value={"enabled": False})
-    repo.get_all_sessions = MagicMock(return_value=[])
-    repo.set_outreach_config = MagicMock(return_value=True)
-    out = await cg.set_outreach_config("s1", {"outreach": {
-        "enabled": True,
-        "cooldown_minutes": 5,
-        "schedule": {"enabled": True, "time": "10:00", "jitter_minutes": 3},
-        "screen": {"enabled": True, "change_ratio": 0.5, "probability": 0.3,
-                   "check_interval_seconds": 60, "cooldown_minutes": 10},
-        "idle": {"enabled": True, "idle_minutes": 5, "probability": 0.5,
-                 "check_interval_seconds": 30},
-        "time_windows_enabled": True,
-        "time_windows": [{"start": "09:00", "end": "18:00", "probability": 0.5,
-                          "check_interval_seconds": 120}],
-    }})
-    assert out["success"] is True
-    clean = out["data"]["outreach"]
-    assert clean["screen"]["change_ratio"] == 0.5
-    assert clean["time_windows"][0]["start"] == "09:00"
-
-
-async def test_route_set_outreach_enabled_limit(monkeypatch):
-    repo = _noop(monkeypatch)
-    repo.get_outreach_config = MagicMock(return_value={"enabled": False})
-    repo.get_all_sessions = MagicMock(return_value=[
-        {"metadata": {"outreach": {"enabled": True}}} for _ in range(6)
-    ])
-    resp = await cg.set_outreach_config("s1", {"outreach": {"enabled": True}})
-    assert resp.status_code == 422
-
-
-async def test_route_proactive_logs(monkeypatch):
-    monkeypatch.setattr("modules.database.proactive_repo.query_proactive_logs",
-                        lambda limit=50, session_id="": [{"x": 1}])
-    monkeypatch.setattr("modules.database.proactive_repo.count_proactive_logs", lambda: 1)
-    out = await cg.get_proactive_logs()
-    assert out["data"]["total"] == 1
 
 
 async def test_route_update_title_chatonly(monkeypatch):

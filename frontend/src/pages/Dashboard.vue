@@ -13,8 +13,6 @@ const dash = ref(null)
 const libs = ref([])
 const sessions = ref([])
 const perception = ref(null)
-const proactiveLogs = ref([])
-const enabledOutreach = ref(0)
 
 const modules = computed(() =>
   Object.entries(dash.value?.modules || {}).map(([n, s]) => ({ name: n, status: s }))
@@ -45,21 +43,18 @@ function statusBadge(s) { return s === 'healthy' ? 'badge-green' : s === 'degrad
 
 async function loadData() {
   try {
-    const [d, health, libsR, sess, perc, plog] = await Promise.all([
+    const [d, health, libsR, sess, perc] = await Promise.all([
       endpoints.dashboard().catch(() => null),
       endpoints.health().catch(() => null),
       endpoints.memoryLibs().catch(() => null),
       endpoints.sessions().catch(() => null),
       endpoints.perceptionStatus().catch(() => null),
-      endpoints.proactiveLogs(5).catch(() => null),
     ])
     dash.value = d?.data || null
     apiStatus.value = health?.data?.status === 'healthy' ? t('dashboard.healthy') : health?.data?.status || '-'
     libs.value = libsR?.data?.libs || []
     sessions.value = sess?.data || []
     perception.value = perc?.data || null
-    proactiveLogs.value = plog?.data?.logs || []
-    enabledOutreach.value = (sess?.data || []).filter((s) => (s.metadata || {}).outreach?.enabled).length
   } catch {} finally { loading.value = false }
   loadApiRequests(); loadApiStats()
 }
@@ -169,13 +164,6 @@ function copyApiBody(s) {
           </div>
           <div class="health-name">{{ $t('dashboard.apiRequests') }}</div>
         </div>
-        <div class="health-card" :title="$t('dashboard.enabledOutreachTitle')">
-          <div class="health-ring">
-            <svg viewBox="0 0 72 72"><circle class="ring-bg" cx="36" cy="36" r="30"/><circle class="ring-fill" cx="36" cy="36" r="30" :style="{ strokeDasharray: 188.5, strokeDashoffset: enabledOutreach ? 0 : 188.5, stroke: '#22C55E' }"/></svg>
-            <div class="ring-label">{{ enabledOutreach }}</div>
-          </div>
-          <div class="health-name">{{ $t('dashboard.outreach') }}</div>
-        </div>
       </div>
 
       <!-- 当前环境 + 记忆库 -->
@@ -234,7 +222,7 @@ function copyApiBody(s) {
             <tbody>
               <tr v-for="s in recentSessions" :key="s.session_id" @click="router.push('/chat?session=' + s.session_id)" class="dash-session-row">
                 <td class="dash-session-id">{{ s.session_id.slice(0, 18) }}</td>
-                <td><span class="badge" :class="s.session_id === 'pet_main' ? 'badge-blue' : 'badge-gray'">{{ s.session_id === 'pet_main' ? 'PET' : s.session_id === 'chat' ? 'MAIN' : 'SUB' }}</span></td>
+                <td><span class="badge" :class="s.session_id === 'chat' ? 'badge-blue' : 'badge-gray'">{{ s.session_id === 'chat' ? 'MAIN' : 'SUB' }}</span></td>
                 <td class="dash-session-title">{{ s.title || s.session_id.slice(0, 12) }}</td>
                 <td class="text-right dash-session-meta">{{ s.message_count ?? 0 }}</td>
                 <td class="text-right dash-session-time">{{ (s.last_active || '').slice(5, 16) }}</td>
@@ -245,43 +233,21 @@ function copyApiBody(s) {
         <div v-else class="dash-empty">{{ $t('dashboard.noSessions') }}</div>
       </div>
 
-      <!-- 调用频率 + 主动搭话时间线（借鉴 DeterminFlow 双栏） -->
-      <div class="dash-grid-2">
-        <div class="card">
-          <div class="card-header">{{ $t('dashboard.apiFreq') }}</div>
-          <div v-if="topPaths.arr.length">
-            <div v-for="t in topPaths.arr" :key="t.path" class="dash-freq-item">
-              <div class="dash-freq-header">
-                <span class="dash-freq-path">{{ t.path }}</span>
-                <span>{{ t.n }}</span>
-              </div>
-              <div class="dash-freq-bar">
-                <div class="dash-freq-fill" :style="{ width: (t.n / topPaths.max) * 100 + '%' }"></div>
-              </div>
+      <!-- API 调用频率 -->
+      <div class="card dash-mt">
+        <div class="card-header">{{ $t('dashboard.apiFreq') }}</div>
+        <div v-if="topPaths.arr.length">
+          <div v-for="t in topPaths.arr" :key="t.path" class="dash-freq-item">
+            <div class="dash-freq-header">
+              <span class="dash-freq-path">{{ t.path }}</span>
+              <span>{{ t.n }}</span>
+            </div>
+            <div class="dash-freq-bar">
+              <div class="dash-freq-fill" :style="{ width: (t.n / topPaths.max) * 100 + '%' }"></div>
             </div>
           </div>
-          <div v-else class="dash-empty">{{ $t('dashboard.noCallRecords') }}</div>
         </div>
-        <div class="card">
-          <div class="card-header dash-card-header">
-            <span>{{ $t('dashboard.outreachTimeline') }}</span>
-            <button class="btn btn-sm" @click="router.push('/outreach')">{{ $t('dashboard.manageRules') }}</button>
-          </div>
-          <div v-if="proactiveLogs.length">
-            <div v-for="(l, i) in proactiveLogs.slice(0, 8)" :key="l.created_at" class="dash-timeline-item">
-              <span class="dash-timeline-dot"></span>
-              <span v-if="i < proactiveLogs.slice(0, 8).length - 1" class="dash-timeline-line"></span>
-              <div class="dash-timeline-content">
-                <div class="dash-timeline-header">
-                  <span class="badge badge-blue dash-timeline-badge">{{ ({schedule: $t('dashboard.reasonSchedule'), screen: $t('dashboard.reasonScreen'), idle: $t('dashboard.reasonIdle'), time_window: $t('dashboard.reasonTimeWindow')})[l.reason] || l.reason }}</span>
-                  <span class="dash-timeline-time">{{ (l.created_at||'').slice(5, 16) }}</span>
-                </div>
-                <div class="dash-timeline-text">{{ l.content }}</div>
-              </div>
-            </div>
-          </div>
-          <div v-else class="dash-empty">{{ $t('dashboard.noTriggerRecords') }}</div>
-        </div>
+        <div v-else class="dash-empty">{{ $t('dashboard.noCallRecords') }}</div>
       </div>
 
       <!-- API 请求日志（持久化 + 筛选 + 分页 + 统计） -->

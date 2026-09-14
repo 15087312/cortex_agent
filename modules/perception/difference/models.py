@@ -30,6 +30,7 @@ class Difference:
     status: str = "active"
 
     def to_dict(self) -> Dict[str, Any]:
+        # @link:block Difference_Emit = Emit
         """转换为字典（用于序列化/API 输出）"""
 
         return {

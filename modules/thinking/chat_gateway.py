@@ -24,20 +24,6 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 
-class PetChatRequest(BaseModel):
-    action_id: str = ""
-    text: str = ""
-
-
-class PetMoveRequest(BaseModel):
-    dx: float = 0
-    dy: float = 0
-    active: Optional[bool] = None
-
-
-_pet_move = {"dx": 0.0, "dy": 0.0, "active": False}
-_pet_move_queues: set = set()  # SSE 推送连接（Qt 长连接收位移，替代轮询）
-
 from config.settings import settings
 from utils.logger import setup_logger
 
@@ -191,6 +177,7 @@ async def _safe_ws_send(websocket: WebSocket, data: dict) -> bool:
 # chatonly WebSocket — 简单路线
 # ---------------------------------------------------------------------------
 
+# @link:block ChatOnly_Turn = Think
 async def _consume_turn(
     websocket: WebSocket,
     session_id: str,
@@ -352,6 +339,7 @@ async def _consume_turn(
         ): pass
 
 
+# @link:block ChatOnly_WS = Emit
 async def _chatonly_ws(websocket: WebSocket, session_id: str) -> None:
     ensure_shared_schema()
     await websocket.accept()
@@ -634,7 +622,7 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
 async def sse_session_get(session_id: str, question: str = ""):
     if _resolve_mode() == "chatonly":
         if not question:
-            from api.errors import AppError, ErrorCode
+            from infra.errors import AppError, ErrorCode
             raise AppError(ErrorCode.BAD_REQUEST, "question 不能为空")
         from sse_starlette.sse import EventSourceResponse
         return EventSourceResponse(_chatonly_sse(session_id, question))
@@ -684,11 +672,6 @@ async def get_context(session_id: str):
 
 @router.delete("/session/{session_id}")
 async def close_session(session_id: str):
-    pet_session = getattr(settings, "DESKTOP_PET_SESSION_ID", "pet_main") or "pet_main"
-    if session_id == pet_session:
-        return JSONResponse(status_code=400, content={"success": False,
-                            "error": {"code": "PET_SESSION_PROTECTED",
-                                      "message": "桌宠主会话永不删除"}})
     # 1️⃣ 统一从 DB 删除会话及消息
     _get_chat_session_repo().delete_session(session_id)
     # 2️⃣ 关键修复：清理跨模块的进程内存缓存，防止重新打开/请求时仍加载旧数据
@@ -715,12 +698,9 @@ async def batch_delete_sessions(body: dict = None):
         return JSONResponse(status_code=422, content={"success": False,
                             "error": {"code": "VALIDATION_ERROR", "message": "session_ids 需为非空数组"}})
     repo = _get_chat_session_repo()
-    pet_session = getattr(settings, "DESKTOP_PET_SESSION_ID", "pet_main") or "pet_main"
     deleted = []
     for sid in ids:
         if not isinstance(sid, str) or not sid:
-            continue
-        if sid == pet_session:
             continue
         try:
             repo.delete_session(sid)
@@ -728,125 +708,6 @@ async def batch_delete_sessions(body: dict = None):
             pass
         deleted.append(sid)
     return {"success": True, "data": {"deleted": deleted, "count": len(deleted)}}
-
-
-@router.get("/pet/last-reply")
-async def pet_last_reply():
-    """桌宠最近一条回复（桌宠窗口轮询）"""
-    try:
-        from modules.desktop_pet.pet_engine import PetEngine
-        return {"success": True, "data": PetEngine.get_instance().last_reply or None}
-    except Exception:
-        return {"success": True, "data": None}
-
-
-@router.get("/pet/state")
-async def pet_state():
-    """桌宠当前状态（状态栏轮询）"""
-    try:
-        from modules.desktop_pet.pet_state import PetState
-        st = PetState.get_instance()
-        values = st.read()
-        return {"success": True, "data": {"values": values, "text": st.describe(values)}}
-    except Exception as e:
-        return {"success": True, "data": None}
-
-
-@router.get("/pet/actions")
-async def pet_actions():
-    """桌宠互动动作模板（圆环菜单 + Chat 图标检测统一数据源）"""
-    from modules.desktop_pet.actions import CATEGORIES, public_actions
-    return {"success": True, "data": {"categories": CATEGORIES, "actions": public_actions()}}
-
-
-@router.post("/pet/move")
-async def pet_move(body: PetMoveRequest):
-    """桌宠拖动位移累积，并实时推送 SSE 给 Qt（规避 QWebChannel 段错误，无需轮询）"""
-    _pet_move["dx"] += float(body.dx or 0)
-    _pet_move["dy"] += float(body.dy or 0)
-    if body.active is not None:
-        _pet_move["active"] = bool(body.active)
-    if _pet_move["dx"] or _pet_move["dy"]:
-        m = {"dx": _pet_move["dx"], "dy": _pet_move["dy"], "active": _pet_move["active"]}
-        _pet_move["dx"] = 0.0
-        _pet_move["dy"] = 0.0
-        for q in list(_pet_move_queues):
-            try:
-                q.put_nowait(m)
-            except Exception:
-                pass
-    return {"success": True}
-
-
-@router.get("/pet/move/stream")
-async def pet_move_stream():
-    """SSE 长连接：Qt 收桌宠拖动位移推送（替代 GET /pet/move 轮询）"""
-    from sse_starlette.sse import EventSourceResponse
-    queue: "asyncio.Queue" = asyncio.Queue()
-    _pet_move_queues.add(queue)
-
-    async def gen():
-        try:
-            while True:
-                m = await queue.get()
-                yield {"event": "move", "data": json.dumps(m, ensure_ascii=False)}
-        except asyncio.CancelledError:
-            pass
-        finally:
-            _pet_move_queues.discard(queue)
-
-    return EventSourceResponse(gen())
-
-
-@router.post("/pet/state/reset")
-async def pet_state_reset():
-    """重置桌宠状态为默认（设置页用）"""
-    from modules.desktop_pet.pet_state import PetState, DEFAULTS
-    st = PetState.get_instance()
-    st._values = dict(DEFAULTS)
-    st._updated_at = time.time()
-    st._save()
-    return {"success": True, "data": {"values": st.read()}}
-
-
-@router.post("/pet/chat")
-async def pet_chat_stream(body: PetChatRequest):
-    """互动对话（SSE 流式）：应用状态效果 → 状态注入提示词 → 流式 LLM → 保存会话"""
-    from sse_starlette.sse import EventSourceResponse
-
-    async def gen():
-        try:
-            from modules.desktop_pet.pet_state import PetState
-            from modules.desktop_pet.actions import get_action
-            from modules.desktop_pet.pet_engine import PetEngine
-
-            state = PetState.get_instance()
-            action_id = (body.action_id or "").strip()
-            if action_id and get_action(action_id):
-                before = state.read()
-                state.apply(action_id)
-                prompt = get_action(action_id)["prompt"]
-                text = prompt
-                extra_system = state.describe(before)
-            else:
-                text = (body.text or "").strip()
-                extra_system = state.describe(state.read())
-            if not text:
-                yield {"event": "error", "data": json.dumps({"error": "empty text"}, ensure_ascii=False)}
-                return
-
-            engine = PetEngine.get_instance()
-            async for token in engine.stream_chat(text, extra_system=extra_system):
-                yield {"event": "token", "data": json.dumps({"token": token}, ensure_ascii=False)}
-            new_state = state.read()
-            yield {"event": "done", "data": json.dumps(
-                {"state": new_state, "state_text": state.describe(new_state)},
-                ensure_ascii=False,
-            )}
-        except Exception as e:
-            yield {"event": "error", "data": json.dumps({"error": str(e)}, ensure_ascii=False)}
-
-    return EventSourceResponse(gen())
 
 
 @router.delete("/session/{session_id}/messages")
@@ -912,159 +773,11 @@ async def set_tasks(session_id: str, body: dict = None):
     return {"success": True, "data": {"session_id": session_id, "tasks": cfg}}
 
 
-@router.get("/session/{session_id}/outreach-config")
-async def get_outreach_config(session_id: str):
-    """读取会话的主动搭话配置（agent/chatonly 同一套，存 chat_sessions.metadata_json）"""
-    cfg = _get_chat_session_repo().get_outreach_config(session_id)
-    return {"success": True, "data": {"session_id": session_id, "outreach": cfg}}
-
-
-@router.get("/proactive-log")
-async def get_proactive_logs(limit: int = 50, session_id: str = ""):
-    """主动搭话触发记录（时间/会话/触发原因/内容）"""
-    from modules.database.proactive_repo import query_proactive_logs, count_proactive_logs
-    logs = query_proactive_logs(limit=limit, session_id=session_id)
-    total = count_proactive_logs()
-    return {"success": True, "data": {"logs": logs, "total": total}}
-
-
-@router.put("/session/{session_id}/outreach-config")
-async def set_outreach_config(session_id: str, body: dict = None):
-    """写入会话的主动搭话配置（会话级独立规则）
-
-    {
-      enabled: bool,
-      cooldown_minutes: int,                    # 综合冷却（距上次任意主动搭话）
-      schedule: {time: "HH:MM", jitter_minutes: int},          # 定点发送（误差随机）
-      screen: {change_ratio, probability, check_interval_seconds, cooldown_minutes},  # 屏幕触发
-      idle: {idle_minutes, probability, check_interval_seconds},                      # 空闲触发
-      time_windows: [{start, end, probability, check_interval_seconds}, ...]          # 时段触发
-    }
-    """
-    cfg = (body or {}).get("outreach")
-    if not isinstance(cfg, dict):
-        return JSONResponse(status_code=422, content={"success": False,
-                            "error": {"code": "VALIDATION_ERROR", "message": "outreach 需为对象"}})
-
-    repo = _get_chat_session_repo()
-
-    # 最多 5 个 enabled 会话
-    if cfg.get("enabled"):
-        current = repo.get_outreach_config(session_id)
-        if not current.get("enabled"):
-            enabled_count = sum(
-                1 for s in repo.get_all_sessions(limit=100)
-                if (s.get("metadata") or {}).get("outreach", {}).get("enabled")
-            )
-            if enabled_count >= 5:
-                return JSONResponse(status_code=422, content={"success": False,
-                                    "error": {"code": "LIMIT_EXCEEDED",
-                                              "message": "最多 5 个会话可开启主动搭话，请先关闭其他会话"}})
-
-    clean: Dict[str, Any] = {}
-    if "enabled" in cfg:
-        clean["enabled"] = bool(cfg["enabled"])
-    if "cooldown_minutes" in cfg:
-        try:
-            clean["cooldown_minutes"] = max(0, int(cfg["cooldown_minutes"]))
-        except Exception:
-            pass
-    # schedule
-    sched = cfg.get("schedule")
-    if isinstance(sched, dict):
-        cs: dict = {}
-        if "enabled" in sched:
-            cs["enabled"] = bool(sched["enabled"])
-        if sched.get("time"):
-            cs["time"] = str(sched["time"]).strip()
-        if "jitter_minutes" in sched:
-            try:
-                cs["jitter_minutes"] = max(0, int(sched["jitter_minutes"]))
-            except Exception:
-                pass
-        clean["schedule"] = cs
-    # screen
-    scr = cfg.get("screen")
-    if isinstance(scr, dict):
-        cs = {}
-        if "enabled" in scr:
-            cs["enabled"] = bool(scr["enabled"])
-        if "change_ratio" in scr:
-            try:
-                cs["change_ratio"] = max(0.0, min(1.0, float(scr["change_ratio"])))
-            except Exception:
-                pass
-        if "probability" in scr:
-            try:
-                cs["probability"] = max(0.0, min(1.0, float(scr["probability"])))
-            except Exception:
-                pass
-        if "check_interval_seconds" in scr:
-            try:
-                cs["check_interval_seconds"] = max(1, int(scr["check_interval_seconds"]))
-            except Exception:
-                pass
-        if "cooldown_minutes" in scr:
-            try:
-                cs["cooldown_minutes"] = max(0, int(scr["cooldown_minutes"]))
-            except Exception:
-                pass
-        clean["screen"] = cs
-    # idle
-    idle = cfg.get("idle")
-    if isinstance(idle, dict):
-        cs = {}
-        if "enabled" in idle:
-            cs["enabled"] = bool(idle["enabled"])
-        if "idle_minutes" in idle:
-            try:
-                cs["idle_minutes"] = max(0, int(idle["idle_minutes"]))
-            except Exception:
-                pass
-        if "probability" in idle:
-            try:
-                cs["probability"] = max(0.0, min(1.0, float(idle["probability"])))
-            except Exception:
-                pass
-        if "check_interval_seconds" in idle:
-            try:
-                cs["check_interval_seconds"] = max(1, int(idle["check_interval_seconds"]))
-            except Exception:
-                pass
-        clean["idle"] = cs
-    if "time_windows_enabled" in cfg:
-        clean["time_windows_enabled"] = bool(cfg["time_windows_enabled"])
-    # time_windows
-    if isinstance(cfg.get("time_windows"), list):
-        windows = []
-        for w in cfg["time_windows"]:
-            if isinstance(w, dict) and w.get("start") and w.get("end"):
-                cw: dict = {"start": str(w["start"]).strip(), "end": str(w["end"]).strip()}
-                if "probability" in w:
-                    try:
-                        cw["probability"] = max(0.0, min(1.0, float(w["probability"])))
-                    except Exception:
-                        pass
-                if "check_interval_seconds" in w:
-                    try:
-                        cw["check_interval_seconds"] = max(1, int(w["check_interval_seconds"]))
-                    except Exception:
-                        pass
-                windows.append(cw)
-        clean["time_windows"] = windows
-
-    ok = repo.set_outreach_config(session_id, clean)
-    if not ok:
-        return JSONResponse(status_code=404, content={"success": False,
-                            "error": {"code": "NOT_FOUND", "message": "会话不存在"}})
-    return {"success": True, "data": {"session_id": session_id, "outreach": clean}}
-
-
 @router.put("/session/{session_id}/title")
 async def update_session_title(session_id: str, body: dict = None):
     title = ((body or {}).get("title") or "").strip()
     if not title:
-        from api.errors import AppError, ErrorCode
+        from infra.errors import AppError, ErrorCode
         raise AppError(ErrorCode.BAD_REQUEST, "标题不能为空")
     if _resolve_mode() == "chatonly":
         _get_chat_session_repo().set_session_title(session_id, title[:200])
@@ -1088,7 +801,7 @@ async def delete_message(session_id: str, message_id: str):
 async def update_message(session_id: str, message_id: str, body: dict = None):
     content = ((body or {}).get("content") or "").strip()
     if not content:
-        from api.errors import AppError, ErrorCode
+        from infra.errors import AppError, ErrorCode
         raise AppError(ErrorCode.BAD_REQUEST, "内容不能为空")
     if _resolve_mode() == "chatonly":
         # DB 为唯一真源：更新直接落库，读取时直连 DB，无需同步内存黑板

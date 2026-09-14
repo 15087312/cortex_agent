@@ -113,7 +113,7 @@ def api_mock(monkeypatch):
 def client(api_mock, monkeypatch):
     _SETTINGS_MODULE.settings.SIMPLE_API_KEY = "test-secret"
     app = FastAPI()
-    from api.errors import AppError, ErrorCode, error_response
+    from infra.errors import AppError, ErrorCode, error_response
     from fastapi import HTTPException
     from fastapi.exceptions import RequestValidationError
     from fastapi.responses import JSONResponse

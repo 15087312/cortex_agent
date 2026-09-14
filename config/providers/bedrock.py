@@ -1,3 +1,4 @@
+# @link:block
 """
 AWS Bedrock 适配器（模型调用 + SigV4 签名）
 
@@ -44,6 +45,7 @@ class BedrockProvider(AnthropicProvider):
     # 请求体：Anthropic 格式 + anthropic_version 头
     # ------------------------------------------------------------------
 
+    # @link:block Bedrock_BuildRequest = Emit
     def build_request(
         self,
         messages: List[Dict[str, Any]],
@@ -61,6 +63,7 @@ class BedrockProvider(AnthropicProvider):
         payload.setdefault("anthropic_version", self.anthropic_version)
         return payload
 
+    # @link:block Bedrock_ChatUrl = Think
     def chat_url(self) -> str:
         base = self.base_url.rstrip("/")
         model_id = quote(self.model_name, safe="")
@@ -81,6 +84,7 @@ class BedrockProvider(AnthropicProvider):
             "Accept": "application/json",
         }
 
+    # @link:block Bedrock_Sign = Guard
     def sign(self, payload: Dict[str, Any], host: str, uri_path: str, method: str = "POST") -> Dict[str, str]:
         """对给定 payload 计算 AWS SigV4 认证头"""
         now = datetime.now(timezone.utc)

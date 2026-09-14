@@ -23,6 +23,7 @@ class AICLIApp(App):
         self.ws_client = WSClient(api_url=api_url, api_key=api_key)
         self.api_client = APIClient(api_url=api_url, api_key=api_key)
 
+    # @link:block TUIApp_Emit = Emit
     def on_mount(self):
         """启动后安装 screen"""
         self.install_screen(HelpScreen(), name="help")

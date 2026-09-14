@@ -105,6 +105,7 @@ class ScreenDiffSource(DifferenceSource):
     # ── 生命周期 ──
 
     def start(self) -> None:
+        # @link:block ScreenDiff_Guard = Guard
         """启动后台检测线程"""
         if self._running:
             return
@@ -435,6 +436,7 @@ class ScreenDiffSource(DifferenceSource):
 
     def _publish_screen_diff_event(self, change_ratio: float,
                                     regions: list, data: dict) -> None:
+        # @link:block ScreenDiff_Emit = Emit
         """发布屏幕差异事件到事件总线（带限频，避免刷屏）"""
         now = time.time()
         if now - self._last_event_publish_time < _PERCEPTION_EVENT_IDLE_INTERVAL:

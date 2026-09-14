@@ -56,24 +56,6 @@ def test_model_runner_client_reuse_unchanged(monkeypatch):
     assert r.client is c1  # 连续复用
 
 
-# ── ContextSlicer._get_client 配置变更重建 ─────────────────────────────────
-
-def test_slicer_client_rebuild_on_config_change(monkeypatch):
-    from modules.thinking.chat_light.context_slicer import ContextSlicer
-
-    monkeypatch.setattr(
-        "infra.model.large_model_client.LargeModelClient",
-        lambda: MagicMock(),
-    )
-    s = ContextSlicer()
-    c1 = s._get_client()
-    assert s._get_client() is c1  # 复用
-
-    monkeypatch.setattr(settings, "LARGE_MODEL_API_KEY", "sk-new-key")
-    c2 = s._get_client()
-    assert c2 is not c1  # 配置变更 → 重建
-
-
 # ── PromptComposer base.yaml 热重载 ────────────────────────────────────────
 
 def _clear_persona(monkeypatch):

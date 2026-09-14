@@ -34,6 +34,7 @@ class ApprovalOption(Static):
         return f"[{style}]{pointer} {num} {self.label_text}[/{style}]"
 
 
+# @link:block ApprovalSelect_Guard = Guard
 class ApprovalSelect(Widget):
     """安全审批选择器
 

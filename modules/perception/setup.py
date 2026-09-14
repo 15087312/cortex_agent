@@ -38,7 +38,6 @@ class PerceptionSystem:
         self.world_state: Any = None
         self.event_bus: Any = None
         self.voice_detector: Optional[Union["HotkeyVoiceDetector", "VoiceDetector"]] = None
-        self.proactive_trigger: Any = None
         self.window_detector: Any = None
         self.ocr_detector: Any = None
         self._window_detector_thread: Optional[threading.Thread] = None
@@ -50,7 +49,6 @@ class PerceptionSystem:
             self.stop()
 
         self.voice_detector = None
-        self.proactive_trigger = None
         self.ocr_detector = None
 
         from config.settings import settings
@@ -66,7 +64,6 @@ class PerceptionSystem:
             "voice_end_stop": getattr(settings, "PERCEPTION_VOICE_END_STOP", True),
             "voice_max_duration": getattr(settings, "PERCEPTION_VOICE_MAX_DURATION", 60.0),
             "voice_end_check_interval": getattr(settings, "PERCEPTION_VOICE_END_CHECK_INTERVAL", 3.0),
-            "proactive_enabled": getattr(settings, "PROACTIVE_OUTREACH_ENABLED", False),
             "voice_device": getattr(settings, "PERCEPTION_VOICE_DEVICE", None),
             "voice_model": getattr(settings, "PERCEPTION_VOICE_MODEL", "tiny"),
             "voice_language": getattr(settings, "PERCEPTION_VOICE_LANGUAGE", "zh"),
@@ -89,23 +86,8 @@ class PerceptionSystem:
         if self.event_bus:
             self.world_state.start(self.event_bus)
 
-        # 5. 主动触发
-        if cfg["proactive_enabled"]:
-            from modules.perception.trigger import ProactiveTrigger
-            self.proactive_trigger = ProactiveTrigger()
-            self.proactive_trigger.start(self.event_bus)
-            logger.info("主动触发已启动")
-        else:
-            logger.info("主动触发已禁用")
-
-        # 5b. 桌面宠物（语音触发 + 主会话对话）
-        try:
-            from modules.desktop_pet.pet_engine import PetEngine
-            self.pet_engine = PetEngine.get_instance(self.event_bus)
-            self.pet_engine.start()
-        except Exception as e:
-            logger.warning(f"桌面宠物启动失败: {e}")
-            self.pet_engine = None
+        # 5b. 桌面宠物已迁出：由应用装配层（api/main.py lifespan）在感知系统
+        #     启动后拉起，感知系统不再反向依赖 desktop_pet
 
         # 6. 窗口检测器（定时 publish SCREEN_WINDOW 到事件总线）
         if getattr(settings, "PERCEPTION_SCREEN_ENABLED", True):
@@ -209,6 +191,7 @@ class PerceptionSystem:
             logger.debug(f"OCR 检测器初始化失败 (非致命): {e}")
 
     def start(self) -> None:
+        # @link:block PerceptionSetup_Emit = Emit
         if self._started:
             return
         self._started = True
@@ -225,8 +208,6 @@ class PerceptionSystem:
             return
         if self.ocr_detector:
             self.ocr_detector.stop()
-        if self.proactive_trigger:
-            self.proactive_trigger.stop()
         if self._window_detector_thread:
             self._window_stop_event.set()
             self._window_detector_thread.join(timeout=3)
@@ -245,7 +226,6 @@ class PerceptionSystem:
             "voice_detector_type": self.voice_detector.detector_type if self.voice_detector else None,
             "window_detector_available": self.window_detector is not None and self.window_detector.is_available(),
             "ocr_detector_available": self.ocr_detector is not None and self.ocr_detector.is_available(),
-            "proactive_trigger": self.proactive_trigger.get_stats() if self.proactive_trigger else None,
             "world_state": self.world_state.get_state().to_dict() if self.world_state else None,
             "event_bus": self.event_bus.get_stats() if self.event_bus else None,
         }

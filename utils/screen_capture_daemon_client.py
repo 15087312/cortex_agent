@@ -111,6 +111,7 @@ def ping(timeout: float = DEFAULT_TIMEOUT) -> bool:
     return bool(resp and "result" in resp and resp["result"].get("ok"))
 
 
+# @link:block Daemon_GetFrameBytes = Emit
 def get_frame_bytes(
     max_width: int = 1280,
     region: tuple = None,
@@ -129,6 +130,7 @@ def get_frame_bytes(
         return None
 
 
+# @link:block Daemon_GetFrameBase64 = Emit
 def get_frame_base64(
     max_width: int = 1280,
     region: tuple = None,

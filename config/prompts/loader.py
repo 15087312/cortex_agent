@@ -1,3 +1,4 @@
+# @link:block
 """YAML 配置加载器 — 缓存 + 热重载"""
 from pathlib import Path
 from typing import Dict, Any, Optional
@@ -12,6 +13,7 @@ class PromptLoader:
         self._cache: Dict[str, Any] = {}
         self._lock = threading.Lock()
 
+    # @link:block Loader_Load = Emit
     def load(self, name: str) -> Optional[Dict[str, Any]]:
         """加载指定 YAML 文件（缓存）"""
         if name in self._cache:
@@ -24,6 +26,7 @@ class PromptLoader:
                 self._cache[name] = data
             return data
 
+    # @link:block Loader_Reload = Guard
     def reload(self, name: str = None):
         """热重载：清除缓存，下次 load 重新读取"""
         with self._lock:
@@ -50,6 +53,7 @@ _loader = None
 _loader_lock = threading.Lock()
 
 
+# @link:block Loader_GetLoader = Emit
 def get_loader() -> PromptLoader:
     global _loader
     if _loader is None:

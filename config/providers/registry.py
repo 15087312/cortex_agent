@@ -1,3 +1,4 @@
+# @link:block
 """
 Provider 注册表 — 按优先级解析适配器
 
@@ -56,10 +57,12 @@ def _spec_format(spec: ProviderSpec) -> Type[ProviderBase]:
 class ProviderRegistry:
     """根据供应商名 / 格式名 / URL 推断 API 格式，返回对应的 Provider"""
 
+    # @link:block Registry_ResolveSpec = Think
     def resolve_spec(self, provider_name: str = "") -> Optional[ProviderSpec]:
         """按供应商名解析目录条目（未命中返回 None）"""
         return get_spec(provider_name)
 
+    # @link:block Registry_GetProviderClass = Think
     def get_provider_class(self, base_url: str = "") -> Type[ProviderBase]:
         for check, provider_cls in _URL_CHECKS:
             if check(base_url):
@@ -77,6 +80,7 @@ class ProviderRegistry:
             return None
         return _FORMAT_MAP.get((spec.api_format or "").lower().strip()) or _DEFAULT
 
+    # @link:block Registry_Create = Emit
     def create(
         self,
         model_id: str,
@@ -108,6 +112,7 @@ class ProviderRegistry:
 registry = ProviderRegistry()
 
 
+# @link:block Registry_GetProvider = Emit
 def get_provider(
     model_id: str,
     api_key: str,

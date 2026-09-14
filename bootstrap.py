@@ -94,6 +94,21 @@ def register_business_capabilities() -> None:
         from modules.thinking.turn_images import get_turn_images, clear_turn_images
         return lambda: (get_turn_images, clear_turn_images)
 
+    # ── 上下文控制器（统一 token 计数口径）──
+    def _context_controller():
+        from modules.thinking.context.controller import get_context_controller
+        return get_context_controller
+
+    # ── 事件存储（记忆持久层）──
+    def _event_store():
+        from modules.memory.event_store import EventStore
+        return EventStore.get_instance
+
+    # ── 因果图（记忆因果模型）──
+    def _causal_graph():
+        from modules.memory.causal_graph import CausalGraph
+        return CausalGraph.get_instance
+
     _safe_register("blackboard_query", _blackboard_query)
     _safe_register("skill_manager", _skill_manager)
     _safe_register("event_retrieval", _event_retrieval)
@@ -103,9 +118,20 @@ def register_business_capabilities() -> None:
     _safe_register("value_formatter", _value_formatter)
     _safe_register("tool_security_gate", _tool_security_gate)
     _safe_register("turn_images", _turn_images)
+    _safe_register("context_controller", _context_controller)
+    _safe_register("event_store", _event_store)
+    _safe_register("causal_graph", _causal_graph)
 
     _report_capability_status([
         "blackboard_query", "skill_manager", "event_retrieval", "file_history",
         "touchpoint_detector", "detector_router", "value_formatter",
         "tool_security_gate", "turn_images",
+        "context_controller", "event_store", "causal_graph",
     ])
+
+    # 触发探针工具注册（原在 infra/tool_manager/tools/__init__.py 随工具集加载；
+    # 移至装配层使 infra 不再依赖 modules.thinking.probes）
+    try:
+        import modules.thinking.probes.probe_tools  # noqa: F401  触发 @ToolRegistry.register
+    except Exception as e:
+        logger.warning(f"[bootstrap] 探针工具注册失败: {e}")

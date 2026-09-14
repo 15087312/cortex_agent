@@ -1,3 +1,4 @@
+# @link:block
 """Prompt 组装器 — 所有 prompt 的唯一出口"""
 from dataclasses import dataclass, field
 from typing import Optional, List
@@ -59,6 +60,7 @@ class PromptComposer:
     def _roles(self):
         return self._loader.load("roles") or {}
 
+    # @link:block Composer_Emit = Emit
     def build(self, pool, role: str, tier: str, question: str = "", context_length: int = 0) -> str:
         """从 TurnContext 池构建轮次上下文（不含系统提示词）
 
@@ -77,6 +79,7 @@ class PromptComposer:
         parts = [round_ctx, task_block]
         return "\n\n".join(p for p in parts if p)
 
+    # @link:block Composer_BuildSystem = Emit
     def build_system(self, req: PromptRequest) -> str:
         """构建 system prompt"""
         # 高级覆盖：完全控制系统提示词（优先于所有组装逻辑）
@@ -107,6 +110,7 @@ class PromptComposer:
 
         return "\n\n".join(p for p in parts if p)
 
+    # @link:block Composer_GetRole = Think
     def _get_role(self, role_key: str) -> RoleInfo:
         roles = self._roles.get("roles", {})
         data = roles.get(role_key, roles.get("orchestrator", {}))
@@ -135,6 +139,7 @@ class PromptComposer:
             tool_whitelist=data.get("tool_whitelist", []) or [],
         )
 
+    # @link:block Composer_BuildIdentity = Think
     def _build_identity(self, role: RoleInfo) -> str:
         tier = self._base.get("tiers", {}).get(role.tier, {})
         identity_text = tier.get("identity", "")
@@ -159,6 +164,7 @@ class PromptComposer:
         )
         return "\n".join(lines)
 
+    # @link:block Composer_BuildRules = Think
     def _build_rules(self, req: PromptRequest) -> List[str]:
         result = []
         base = self._base
@@ -215,6 +221,7 @@ class PromptComposer:
             logger.warning(f"Skill '{skill_id}' 指令加载失败: {e}")
         return ""
 
+    # @link:block Composer_BuildCapability = Think
     def _build_capability_table(self, role: RoleInfo, tier: str) -> str:
         if tier == "supervisor":
             return self._build_expert_table()
@@ -292,6 +299,7 @@ class PromptComposer:
             lines.append(f"- {r}")
         return "\n".join(lines)
 
+    # @link:block Composer_BuildValues = Think
     def _build_values_section(self) -> str:
         base = self._base
         values = base.get("values", {})
@@ -311,5 +319,6 @@ class PromptComposer:
             parts.append("\n".join(lines))
         return "\n\n".join(parts)
 
+    # @link:block Composer_Reload = Guard
     def reload(self):
         self._loader.reload()

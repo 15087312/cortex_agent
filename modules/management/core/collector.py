@@ -38,6 +38,7 @@ class ModuleRegistry:
         self.modules: Dict[str, ModuleInfo] = {}
         self._discover_modules()
     
+    # @link:block ModuleScan
     def _discover_modules(self) -> None:
         """自动发现所有模块"""
         modules_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
@@ -111,6 +112,7 @@ class StatusCollector:
         self._collectors["database"] = self._collect_database
         self._collectors["tool_manager"] = self._collect_tool_manager
     
+    # @link:block StatusCollect
     def collect_all(self) -> Dict[str, Any]:
         """收集所有模块状态"""
         results = {}

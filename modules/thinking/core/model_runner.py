@@ -393,6 +393,7 @@ class ModelRunner:
     # 注意：此方法被 _think_loop 以 await 调用（line 563），
     # 若改为 sync 函数必须同步修改调用处的 await，否则抛出
     # "object NoneType can't be used in 'await' expression"
+    # @link:block RunnerLoop
     async def _think_loop(self) -> None:
         """通用思考循环（含等待唤醒）— large/supervisor 委托后等待结果再重启
 
@@ -466,11 +467,13 @@ class ModelRunner:
                 else:
                     task_desc = self._task_description
 
+                # @link:block RunnerLoop_Think = Think
                 results = await self._thinker.continuous_think(task_desc)
                 logger.info(
                     f"[ModelRunner] {self.model_id} 思考循环结束 "
                     f"(共 {len(results)} 轮)"
                 )
+            # @link:block RunnerLoop_Write = Write
             except asyncio.CancelledError:
                 if self._thinker:
                     self._thinker._running = False
@@ -487,6 +490,7 @@ class ModelRunner:
             # 写入最终结果
             await self._write_final_result()
 
+            # @link:block RunnerLoop_Guard = Guard
             # 专家：单次执行后立即退出
             if self.tier == "expert":
                 break
@@ -531,6 +535,7 @@ class ModelRunner:
             self._thinker.add_external_prompt(awakening_prompt)
             self._task_description = awakening_prompt
 
+        # @link:block RunnerLoop_Emit = Emit
         # 取消 MessageBus 订阅
         try:
             from modules.thinking.communication.interface import get_message_bus_port

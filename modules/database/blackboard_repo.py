@@ -14,6 +14,7 @@ from utils.logger import setup_logger
 logger = setup_logger("blackboard_repo")
 
 
+# @link:block DbSave
 def save_blackboard(state: Dict[str, Any]) -> bool:
     """按 (session_id, blackboard_id) 持久化整块黑板状态（upsert，失败不阻塞）"""
     try:
@@ -46,6 +47,7 @@ def save_blackboard(state: Dict[str, Any]) -> bool:
         return False
 
 
+# @link:block DbQuery
 def load_blackboard(session_id: str, blackboard_id: str) -> Optional[Dict[str, Any]]:
     """按 (session_id, blackboard_id) 读取黑板快照"""
     try:
@@ -87,6 +89,7 @@ def save_observation(session_id: str, obs) -> bool:
         return False
 
 
+# @link:block DbQueryObs = Guard · Retrieve
 def query_observations(
     session_id: str = "",
     query: str = "",

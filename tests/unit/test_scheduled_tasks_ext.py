@@ -162,19 +162,8 @@ def test_mark_run_error(monkeypatch):
 
 # ── chat handler ───────────────────────────────────────────────────────
 
-async def test_handle_chat_disabled(monkeypatch):
-    m = _mgr()
-    import sys, types
-    cfg = sys.modules["config.settings"]
-    monkeypatch.setattr(cfg, "settings", types.SimpleNamespace(PROACTIVE_OUTREACH_ENABLED=False))
-    assert await m._handle_chat("s", {}) == "skipped"
-
-
 async def test_handle_chat_sends(monkeypatch):
     m = _mgr()
-    import sys, types
-    cfg = sys.modules["config.settings"]
-    monkeypatch.setattr(cfg, "settings", types.SimpleNamespace(PROACTIVE_OUTREACH_ENABLED=True))
     load_result = {"roles": {"my_agent": {"tier": "expert"}}}
     loader = MagicMock()
     loader.load = MagicMock(return_value=load_result)
@@ -188,9 +177,6 @@ async def test_handle_chat_sends(monkeypatch):
 
 async def test_handle_chat_agent_roles_error(monkeypatch):
     m = _mgr()
-    import sys, types
-    cfg = sys.modules["config.settings"]
-    monkeypatch.setattr(cfg, "settings", types.SimpleNamespace(PROACTIVE_OUTREACH_ENABLED=True))
     def boom(*a, **k):
         raise RuntimeError("loader")
     monkeypatch.setattr("config.prompts.loader.get_loader", boom)

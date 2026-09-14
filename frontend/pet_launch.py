@@ -1,3 +1,4 @@
+# @link:block
 """独立桌宠进程 — 由 Qt 前端（main.py）启动，随 Qt 退出而关闭
 
 与主窗口解耦：桌宠崩溃不影响 Qt 前端；Qt 先启动，再拉起桌宠。
@@ -10,6 +11,14 @@ import threading
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# 防残留: 除父进程（Qt）监控外，再绑定后端进程（env > ~/.cortex/backend_pid.json）——
+# 后端退出时桌宠随之退出，避免任何启动路径下的残留。
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+try:
+    from cortex.watchdog import bind_backend as _bind_backend
+    _bind_backend(fail_after=120)  # 冷启动时后端就绪需 1~2 分钟，等足再判定
+except Exception:
+    pass
 
 # macOS 透明 QWebEngineView 需要共享 OpenGL 上下文 + Chromium 透明视觉 flag
 # （could not create image from display 的修复）。必须在 QApplication 实例创建前设置。
@@ -41,6 +50,7 @@ def _start_watchdog():
     t.start()
 
 
+# @link:block Pet_Launch = Emit
 def main():
     import faulthandler
     faulthandler.enable()  # 段错误时输出 Python 调用栈（定位崩溃点）

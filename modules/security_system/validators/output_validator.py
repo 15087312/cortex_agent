@@ -1,3 +1,4 @@
+# @link:block OutputValidator_Guard = Guard
 """
 输出格式校验器 - L4级
 """

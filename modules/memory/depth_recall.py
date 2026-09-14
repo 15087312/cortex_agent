@@ -1,3 +1,4 @@
+# @link:block DepthRecall_Retrieve = Retrieve
 """
 DepthRecall — 深度回忆调度模块
 
@@ -348,6 +349,7 @@ class DepthRecallScheduler:
         "default":          {"semantic": 0.30, "causal": 0.35, "importance": 0.20, "time": 0.15},
     }
 
+    # @link:block DepthRecall_RecallEvents = Retrieve
     async def _recall_events(
         self,
         query: str,
@@ -547,6 +549,7 @@ class DepthRecallScheduler:
 
     # ── 增量更新闭环 ──
 
+    # @link:block DepthRecall_IncrementalUpdate = Write
     def _incremental_update(self, result: DeepRecallResult, node_ids: set):
         """每次深度回忆成功后执行增量更新
 

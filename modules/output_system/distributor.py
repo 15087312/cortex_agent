@@ -56,8 +56,10 @@ class OutputDistributor:
         else:
             yield content
 
+    # @link:block Distrib
     def distribute(self, content: str, channel: str = "console", target: Optional[str] = None) -> bool:
         try:
+            # @link:block Distrib_Guard = Guard
             if channel == "console":
                 logger.info(f"输出内容: {content[:100]}")
                 for cb in self.callbacks:
@@ -68,9 +70,11 @@ class OutputDistributor:
                 target_path = Path(target)
                 # Ensure parent directory exists
                 target_path.parent.mkdir(parents=True, exist_ok=True)
+                # @link:block Distrib_Write = Write
                 with open(target, "w", encoding="utf-8") as f:
                     f.write(content)
                 logger.info(f"已写入文件: {target}")
+            # @link:block Distrib_Emit = Emit
             elif channel == "api":
                 logger.info(f"API分发: {content[:50]}...")
             elif channel == "voice":

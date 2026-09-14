@@ -1,3 +1,4 @@
+# @link:block
 """桌宠窗口 — 透明置顶小窗 + Live2D 角色（稳定方案）
 
 窗口只占角色区域（不挡桌面，无需鼠标穿透）。
@@ -172,6 +173,7 @@ class PetWidget(QWidget):
             self.move(geo.center().x() - PET_W // 2, geo.bottom() - PET_H - 8)
 
 
+# @link:block Pet_Widget_Create = Emit
 def create_pet_widget(backend_url: str = BACKEND_URL) -> PetWidget:
     w = PetWidget(backend_url)
     w.show()

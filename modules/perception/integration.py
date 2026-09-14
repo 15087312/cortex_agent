@@ -24,6 +24,7 @@ class PerceptionIntegrator:
         logger.info("感知集成器初始化完成")
 
     def start(self) -> None:
+        # @link:block Integrator_Guard = Guard
         if self._auto_monitoring:
             from modules.perception import get_perception_system
             ps = get_perception_system()

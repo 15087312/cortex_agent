@@ -18,6 +18,7 @@ def async_wrap(func: Callable) -> Callable:
     return async_wrapper
 
 
+# @link:block Async_Gather = Emit
 async def gather_with_concurrency(n: int, *coros) -> List[Any]:
     """带并发限制的 gather"""
     semaphore = asyncio.Semaphore(n)

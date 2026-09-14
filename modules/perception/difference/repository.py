@@ -21,6 +21,7 @@ class DifferenceRepository:
         self._differences: List[Difference] = []
 
     def save(self, diff: Difference) -> str:
+        # @link:block Repository_Guard = Guard
         """保存差异（存在则更新，否则新增）
 
         id 相同视为同一差异，更新强度/状态/TTL/载荷。

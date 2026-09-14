@@ -133,7 +133,7 @@ def gw_app(fake_thinker, tmp_repo, monkeypatch):
 
     # 与 api/main.py 一致：注册 AppError 异常处理器（SSE 400 校验依赖它）
     from fastapi.responses import JSONResponse
-    from api.errors import AppError
+    from infra.errors import AppError
 
     @app.exception_handler(AppError)
     async def _app_error_handler(request, exc):

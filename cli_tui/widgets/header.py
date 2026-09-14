@@ -7,6 +7,7 @@ from textual.widgets import Static
 from ..state import AppState
 
 
+# @link:block Header_Emit = Emit
 def _get_version() -> str:
     """获取版本信息"""
     try:

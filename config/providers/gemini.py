@@ -1,3 +1,4 @@
+# @link:block
 """
 Google Gemini 原生 API 适配器（generativelanguage.googleapis.com）
 
@@ -15,6 +16,7 @@ class GeminiProvider(ProviderBase):
 
     format_name = "gemini"
 
+    # @link:block Gemini_BuildHeaders = Think
     def build_headers(self) -> Dict[str, str]:
         return {
             "x-goog-api-key": self.api_key,
@@ -81,6 +83,7 @@ class GeminiProvider(ProviderBase):
     # 请求构建 / URL
     # ------------------------------------------------------------------
 
+    # @link:block Gemini_BuildRequest = Emit
     def build_request(
         self,
         messages: List[Dict[str, Any]],
@@ -112,10 +115,12 @@ class GeminiProvider(ProviderBase):
             pass
         return payload
 
+    # @link:block Gemini_ChatUrl = Think
     def chat_url(self) -> str:
         base = self.base_url.rstrip("/")
         return f"{base}/models/{self.model_name}:generateContent"
 
+    # @link:block Gemini_StreamUrl = Think
     def stream_url(self) -> str:
         base = self.base_url.rstrip("/")
         return f"{base}/models/{self.model_name}:streamGenerateContent?alt=sse"
@@ -124,6 +129,7 @@ class GeminiProvider(ProviderBase):
     # 响应解析
     # ------------------------------------------------------------------
 
+    # @link:block Gemini_ParseResponse = Emit
     def parse_response(self, data: Dict[str, Any]) -> Dict[str, Any]:
         candidates = data.get("candidates") or []
         text_parts: List[str] = []

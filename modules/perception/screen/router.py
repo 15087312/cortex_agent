@@ -46,6 +46,7 @@ class DetectorRouter:
             pass
 
     def detect(self, app: str = "", depth: int = 3) -> ScreenContext:
+        # @link:block DetectorRouter_Guard = Guard
         """
         自动检测 UI 元素
 

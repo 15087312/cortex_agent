@@ -99,6 +99,7 @@ class OutputSystem:
 
         return True, content
 
+    # @link:block OutputPipe
     def process(
         self,
         raw_content: str,
@@ -110,6 +111,7 @@ class OutputSystem:
         self.reset_interrupt()
 
         raw_content = self.clean_response(raw_content)
+        # @link:block OutPipe_Guard = Guard
         passed, validated = self.validate(raw_content, output_type)
         if not passed:
             logger.warning(f"[安全拦截] {validated}")
@@ -119,6 +121,7 @@ class OutputSystem:
             logger.info("[输出中断]")
             return None
 
+        # @link:block OutPipe_Emit = Emit
         if stream:
             return self.distributor.stream_output(validated, channel)
         else:

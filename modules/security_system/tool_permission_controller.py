@@ -36,6 +36,7 @@ class ToolPermissionController:
 
     # ── 可见性 ──────────────────────────────────────────────────────────
 
+    # @link:block PermVisible = Guard · Retrieve
     def get_visible_tools(self, tier: str, mode: str, role: str = "",
                           skill_tool_rules: Any = None) -> List[str]:
         """返回模型可见的工具列表
@@ -193,6 +194,7 @@ class ToolPermissionController:
 
     # ── 执行权限检查（角色类别权限）────────────────────────────────────
 
+    # @link:block PermCheck = Guard · Retrieve · Emit
     def check_execution_permission(self, tool_name: str, caller_tier: str,
                                     caller_model_id: str = "",
                                     caller_role: str = "") -> Tuple[bool, str]:

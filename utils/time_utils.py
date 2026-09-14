@@ -30,6 +30,7 @@ def parse_datetime(date_str: str, fmt: str = "%Y-%m-%d %H:%M:%S") -> datetime:
     return datetime.strptime(date_str, fmt)
 
 
+# @link:block TimeRange
 def time_range(
     start: datetime,
     end: datetime,
@@ -44,6 +45,7 @@ def time_range(
     return result
 
 
+# @link:block DayStart
 def get_start_of_day(dt: Optional[datetime] = None) -> datetime:
     """获取一天的开始"""
     if dt is None:
@@ -51,6 +53,7 @@ def get_start_of_day(dt: Optional[datetime] = None) -> datetime:
     return dt.replace(hour=0, minute=0, second=0, microsecond=0)
 
 
+# @link:block DayEnd
 def get_end_of_day(dt: Optional[datetime] = None) -> datetime:
     """获取一天的结束"""
     if dt is None:

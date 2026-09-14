@@ -117,21 +117,6 @@ def test_set_session_metadata_bad_existing(repo):
     assert repo.get_session_metadata("s1") == {"a": 1}
 
 
-# ── outreach / scheduled_tasks ────────────────────────────────────────────
-
-def test_outreach_config(repo):
-    repo.create_session("s1")
-    assert repo.get_outreach_config("s1") == {}
-    repo.set_outreach_config("s1", {"enabled": True, "cooldown_range": [5, 10]})
-    assert repo.get_outreach_config("s1")["enabled"] is True
-
-
-def test_outreach_config_non_dict(repo):
-    repo.create_session("s1")
-    repo.set_session_metadata("s1", {"outreach": "not-a-dict"})
-    assert repo.get_outreach_config("s1") == {}
-
-
 def test_scheduled_tasks(repo):
     repo.create_session("s1")
     # 未配置时返回 {}（实现实际行为，docstring 中的 {"tasks": []} 仅在 meta 值非 dict 时出现）

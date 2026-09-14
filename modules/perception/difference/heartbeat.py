@@ -28,6 +28,7 @@ class ExistentialHeartbeat:
         self._started_at: float = 0.0
 
     def start(self, detector=None) -> None:
+        # @link:block Heartbeat_Guard = Guard
         """启动心跳线程
 
         如果不传 detector，使用全局单例。

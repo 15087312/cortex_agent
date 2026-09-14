@@ -58,6 +58,13 @@ jobs:
           python -m pip install mypy types-PyYAML types-requests
           python -m mypy modules/ infra/ config/ utils/ api/
 
+      # 逻辑链接检查门禁：logiclink --strict 全绿
+      - name: Logic link check (logiclink)
+        shell: bash
+        run: |
+          python -m pip install -e logiclink
+          logiclink . --strict --allow-arch
+
       - name: Run integration tests
         shell: bash
         run: |

@@ -40,6 +40,7 @@ def _build_plist() -> dict:
     }
 
 
+# @link:block Autostart_Apply = Guard
 def apply(enabled: bool) -> bool:
     """应用开机启动设置。返回是否成功。"""
     if sys.platform != "darwin":

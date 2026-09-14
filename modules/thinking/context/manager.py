@@ -28,6 +28,7 @@ class ContextManager:
             external_parts.append(transient_text)
         return "\n\n".join(external_parts)
 
+    # @link:block CtxBuild = Guard · Write
     @staticmethod
     def build_delegation_status(
         pending_delegations: Dict[str, dict],

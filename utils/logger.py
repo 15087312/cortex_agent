@@ -73,6 +73,7 @@ def _configure_third_party_loggers():
         logging.getLogger(logger_name).setLevel(logging.WARNING)
 
 
+# @link:block Logger_Setup = Emit
 def setup_logger(
     name: str,
     log_level: str = None,

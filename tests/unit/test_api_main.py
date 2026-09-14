@@ -334,7 +334,7 @@ def test_rate_limit_cleanup_triggered(client, no_auth, reset_rate_limit, monkeyp
 
 def test_app_error_handler(client, no_auth, reset_rate_limit):
     from api.main import app
-    from api.errors import AppError, ErrorCode
+    from infra.errors import AppError, ErrorCode
 
     @app.get("/__apperr__")
     async def _boom():
@@ -1078,7 +1078,7 @@ def _patch_lifespan(monkeypatch, tmp_path):
     mocks["cm"] = cm
 
     bus = MagicMock()
-    monkeypatch.setattr("modules.management.core.error_bus.error_bus", bus)
+    monkeypatch.setattr("infra.error_bus.error_bus", bus)
     mocks["bus"] = bus
 
     ps = MagicMock()
@@ -1100,7 +1100,6 @@ def _patch_lifespan(monkeypatch, tmp_path):
     mocks["hb"] = hb
 
     mocks["tt"] = MagicMock()
-    monkeypatch.setattr("modules.perception.trigger_think.register", mocks["tt"])
 
     mocks["pwr"] = MagicMock()
     monkeypatch.setattr("utils.power.apply", mocks["pwr"])
@@ -1131,7 +1130,6 @@ def test_lifespan_startup_success(life):
     assert life["src"].start.called and life["src"].stop.called
     assert life["sms"].start.called
     assert life["hb"].start.called and life["hb"].stop.called
-    assert life["tt"].called
     assert life["pwr"].called
     assert life["autostart"].called
     assert life["db"].close.called
@@ -1273,12 +1271,6 @@ def test_lifespan_heartbeat_failure(life):
     with TestClient(app):
         pass
 
-
-def test_lifespan_trigger_think_failure(life):
-    from api.main import app
-    life["tt"].side_effect = RuntimeError("trigger fail")
-    with TestClient(app):
-        pass
 
 
 def test_lifespan_power_failure(life):

@@ -1,3 +1,4 @@
+# @link:block
 """
 OpenAI 兼容 API 适配器 (DeepSeek / Groq / OpenRouter 等)
 """
@@ -20,12 +21,14 @@ class OpenAIProvider(ProviderBase):
     # 仅对 OpenRouter base_url 生效，其他 OpenAI 兼容端点忽略。
     openrouter_supplier: str = ""
 
+    # @link:block OpenAI_BuildHeaders = Think
     def build_headers(self) -> Dict[str, str]:
         return {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
 
+    # @link:block OpenAI_BuildRequest = Emit
     def build_request(
         self,
         messages: List[Dict[str, Any]],
@@ -36,6 +39,7 @@ class OpenAIProvider(ProviderBase):
         stream: bool = False,
         top_p: Optional[float] = None,
         reasoning_effort: str = "",
+        enable_thinking: bool = True,  # 桌宠等短对话场景可关闭 DeepSeek thinking，避免首 token 延迟
     ) -> Dict[str, Any]:
         payload: Dict[str, Any] = {
             "model": self.model_name,
@@ -63,14 +67,18 @@ class OpenAIProvider(ProviderBase):
             order = [s.strip() for s in self.openrouter_supplier.split(",") if s.strip()]
             if order:
                 payload["provider"] = {"order": order, "allow_fallbacks": True}
-        # DeepSeek thinking 模式：模型名含 deepseek/DeepSeek 时显式启用推理。
+        # DeepSeek thinking 模式：模型名含 deepseek/DeepSeek 且未显式关闭时启用推理。
         # DeepSeek API 自 V4(0731) 起，thinking 需为 ThinkingOptions 结构体
         #   {"type": "enabled"/"disabled"}
         # 而非旧版裸布尔值 boolean true（否则 400: expected struct ThinkingOptions）。
-        if "deepseek" in self.model_name.lower():
+        # 桌宠/短对话场景 enable_thinking=False 关闭，避免本地模型思考导致的数秒级首 token 延迟。
+        if "deepseek" in self.model_name.lower() and enable_thinking:
             payload["thinking"] = {"type": "enabled"}
+        elif "deepseek" in self.model_name.lower():
+            payload["thinking"] = {"type": "disabled"}
         return payload
 
+    # @link:block OpenAI_ParseResponse = Emit
     def parse_response(self, data: Dict[str, Any]) -> Dict[str, Any]:
         choices = data.get("choices", [])
         if not choices:
@@ -105,6 +113,7 @@ class OpenAIProvider(ProviderBase):
             "reasoning_content": reasoning_content,
         }
 
+    # @link:block OpenAI_ChatUrl = Think
     def chat_url(self) -> str:
         base = self.base_url.rstrip("/")
         if base.endswith("/chat/completions"):
@@ -113,6 +122,7 @@ class OpenAIProvider(ProviderBase):
             return f"{base.rstrip('/')}/chat/completions"
         return f"{base}/v1/chat/completions"
 
+    # @link:block OpenAI_ParseStreamLine = Emit
     def parse_stream_line(self, line: str) -> Optional[Dict[str, Any]]:
         if not line.startswith("data:"):
             return None

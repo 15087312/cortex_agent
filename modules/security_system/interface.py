@@ -1,3 +1,4 @@
+# @link:block SecurityInterface_Guard = Guard
 """安全系统接口门面。"""
 from __future__ import annotations
 

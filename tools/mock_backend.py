@@ -31,6 +31,7 @@ _logf = open(LOG_PATH, "a", encoding="utf-8")
 MOCK_BUSY = os.environ.get("MOCK_BUSY", "") != ""
 
 
+# @link:block MockLog
 def log(*parts):
     line = f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] " + " ".join(str(p) for p in parts)
     print(line, flush=True)
@@ -50,6 +51,7 @@ def _new_session():
     return f"mock_{_seq}_{uuid.uuid4().hex[:6]}"
 
 
+# @link:block MockHttp
 @app.middleware("http")
 async def trace_http(request: Request, call_next):
     body = b""
@@ -133,6 +135,7 @@ async def catch_all(full_path: str, request: Request):
 # ── WebSocket：记录前端每条消息并按脚本回复 ──────────────────────────────────
 
 
+# @link:block MockWs
 @app.websocket("/stream/ws/{session_id}")
 async def chat_ws(websocket: WebSocket, session_id: str):
     await websocket.accept()
@@ -198,6 +201,7 @@ def _env(msg_type: str, event: str, content: str, role: str, data=None):
     }
 
 
+# @link:block MockReply
 async def _respond(ws: WebSocket, session_id: str, content: str, trace: str):
     """按真实 chat_gateway(agent) 的事件顺序回复，便于观察前端渲染与重复触发。"""
     if MOCK_BUSY:

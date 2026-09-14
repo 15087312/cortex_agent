@@ -1,8 +1,8 @@
 """差异检测 REST API — 通过 FastAPI 路由暴露差异查询/启停控制"""
 from fastapi import Depends, APIRouter, Query, Path
-from api.auth import require_api_key
+from infra.auth import require_api_key
 
-from api.errors import AppError, ErrorCode
+from infra.errors import AppError, ErrorCode
 from modules.perception.difference import get_detector, get_heartbeat, get_screen_diff_source
 
 router = APIRouter(prefix="/differences", tags=["差异检测"],

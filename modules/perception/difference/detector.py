@@ -200,6 +200,7 @@ class DifferenceDetector:
         logger.debug(f"已注册高强度差异回调 (共 {len(self._high_intensity_callbacks)} 个)")
 
     def _fire_high_intensity_callbacks(self, differences: List[Difference]) -> None:
+        # @link:block DifferenceDetector_Emit = Emit
         high_intensity = [d for d in differences if d.intensity >= HIGH_INTENSITY_THRESHOLD]
         if not high_intensity:
             return

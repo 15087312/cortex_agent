@@ -1,3 +1,4 @@
+# @link:block ContentValidator_Guard = Guard
 """
 内容合规校验器 - L1级
 """

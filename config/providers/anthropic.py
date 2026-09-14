@@ -1,3 +1,4 @@
+# @link:block
 """
 Anthropic API 适配器
 """
@@ -11,6 +12,7 @@ class AnthropicProvider(ProviderBase):
 
     format_name = "anthropic"
 
+    # @link:block Anthropic_BuildHeaders = Think
     def build_headers(self) -> Dict[str, str]:
         return {
             "x-api-key": self.api_key,
@@ -18,6 +20,7 @@ class AnthropicProvider(ProviderBase):
             "content-type": "application/json",
         }
 
+    # @link:block Anthropic_BuildRequest = Emit
     def build_request(
         self,
         messages: List[Dict[str, Any]],
@@ -72,6 +75,7 @@ class AnthropicProvider(ProviderBase):
             return {"type": "auto"}
         return {"type": "auto"}
 
+    # @link:block Anthropic_ParseResponse = Emit
     def parse_response(self, data: Dict[str, Any]) -> Dict[str, Any]:
         content_blocks = data.get("content", [])
         text_parts = []
@@ -107,12 +111,14 @@ class AnthropicProvider(ProviderBase):
             } if usage else None,
         }
 
+    # @link:block Anthropic_ChatUrl = Think
     def chat_url(self) -> str:
         base = self.base_url.rstrip("/")
         if base.endswith("/messages"):
             return base
         return f"{base}/messages"
 
+    # @link:block Anthropic_ParseStreamLine = Emit
     def parse_stream_line(self, line: str) -> Optional[Dict[str, Any]]:
         # Anthropic SSE: event: content_block_delta / data: {...}
         if not line.startswith("data:"):

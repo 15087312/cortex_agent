@@ -1,3 +1,4 @@
+# @link:block
 import http.server
 import urllib.request
 import urllib.error
@@ -6,10 +7,16 @@ import json
 import sys
 import socketserver
 
-# 防残留: 若启动本服务的 cortex 父进程被强杀，自动退出避免孤儿进程
+# 防残留（两层）:
+# 1) 父进程监控: cortex 拉起本服务时注入 CORTEX_PARENT_PID，父进程被强杀则自动退出
+# 2) 后端锚定: 绑定后端进程（env > ~/.cortex/backend_pid.json），后端退出则自动退出
+import sys as _sys
+import os as _os
+_sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
 try:
-    from cortex.watchdog import enable as _enable_orphan_watchdog
+    from cortex.watchdog import enable as _enable_orphan_watchdog, bind_backend as _bind_backend
     _enable_orphan_watchdog()
+    _bind_backend()
 except Exception:
     pass
 
@@ -59,9 +66,82 @@ class ProxyHandler(http.server.SimpleHTTPRequestHandler):
         # 用 127.0.0.1 而非 localhost：macOS 上 localhost 可能解析 ::1(IPv6)，
         # 而后端只绑 IPv4 → 代理 502
         from utils.port_discovery import read_backend_port
-        url = f"http://127.0.0.1:{read_backend_port()}{path}"
+        port = read_backend_port()
         content_length = int(self.headers.get('Content-Length', 0))
         body = self.rfile.read(content_length) if content_length else None
+        # SSE 流式请求（桌宠对话等）必须逐 chunk 转发，不能 urlopen(timeout=3)+read() 缓冲
+        is_sse = ('text/event-stream' in self.headers.get('Accept', '').lower()
+                  or '/stream/' in path)
+        if is_sse:
+            self._proxy_sse(method, port, path, body)
+        else:
+            self._proxy_normal(method, port, path, body)
+
+    def _proxy_sse(self, method, port, path, body):
+        """SSE 长连接流式代理：逐 chunk 立即写出，不设读超时。
+
+        链路健康保护：若上游 N 秒无任何字节（后端挂掉/僵死，如思考循环异常
+        结束且未发 done），主动断开，避免浏览器请求永久挂起、页面状态卡死。
+
+        注意：/stream/ 路径下也有普通 JSON 接口（如 GET /stream/pet/history）。
+        若按 SSE 方式转发（不发 Content-Length 且连接不关），浏览器无法判定
+        响应结束 → 请求永久挂起 → 前端拿不到历史/配置。因此按上游响应的
+        Content-Type 分流：JSON 一次性读全转发，event-stream 才走流式。
+        """
+        import requests
+        url = f"http://127.0.0.1:{port}{path}"
+        headers = {}
+        for key, value in self.headers.items():
+            if key.lower() not in ('host', 'content-length', 'connection'):
+                headers[key] = value
+        SSE_IDLE_TIMEOUT = 300  # 上游空闲（无字节）超时；正常思考间隔远小于此值
+        try:
+            resp = requests.request(method, url, data=body, headers=headers,
+                                    stream=True, timeout=(5, SSE_IDLE_TIMEOUT))
+            ctype = (resp.headers.get('Content-Type') or '').lower()
+            if 'text/event-stream' not in ctype:
+                # 普通 JSON 响应：完整读出后带 Content-Length 转发（浏览器可正常结束请求）
+                data = resp.content
+                self.send_response(resp.status_code)
+                self.send_header('Content-Type', resp.headers.get('Content-Type', 'application/json'))
+                self.send_header('Content-Length', str(len(data)))
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(data)
+                return
+            self.send_response(resp.status_code)
+            self.send_header('Content-Type', 'text/event-stream')
+            self.send_header('Cache-Control', 'no-cache')
+            self.send_header('Connection', 'keep-alive')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.close_connection = True  # 流结束即关连接，客户端不必等 keep-alive 超时
+            for chunk in resp.iter_content(chunk_size=4096):
+                if chunk:
+                    self.wfile.write(chunk)
+                    self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError):
+            pass  # 前端断开，正常结束
+        except requests.exceptions.ConnectionError:
+            # 上游连接失败/重置（后端未启动或启动中）：给前端一个可解析的终止帧
+            try:
+                self.send_response(502)
+                self.send_header('Content-Type', 'text/event-stream')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(b'event: error\ndata: {"error":"backend unreachable (proxy)"}\n\n')
+                self.wfile.flush()
+            except Exception:
+                pass
+        except Exception as e:
+            try:
+                self.wfile.write(f'event: error\ndata: {{"error":"proxy: {e}"}}\n\n'.encode())
+                self.wfile.flush()
+            except Exception:
+                pass
+
+    def _proxy_normal(self, method, port, path, body):
+        url = f"http://127.0.0.1:{port}{path}"
         req = urllib.request.Request(url, data=body, method=method)
         for key, value in self.headers.items():
             if key.lower() not in ('host', 'content-length', 'connection'):
@@ -83,23 +163,16 @@ class ProxyHandler(http.server.SimpleHTTPRequestHandler):
                     self.send_header(key, value)
             self.end_headers()
             self.wfile.write(e.read())
-        except urllib.error.URLError as e:
+        except Exception as e:
+            # 后端不可达/超时：统一 JSON 502，并附带终止性（Content-Length 明确），
+            # 让前端 catch 到错误而不是挂起
             self.send_response(502)
             self.send_header('Access-Control-Allow-Origin', '*')
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
             self.wfile.write(json.dumps({
                 "success": False,
-                "error": {"code": "BACKEND_UNREACHABLE", "message": f"后端不可用: {e.reason}"}
-            }).encode())
-        except Exception as e:
-            self.send_response(500)
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.send_header('Content-Type', 'application/json')
-            self.end_headers()
-            self.wfile.write(json.dumps({
-                "success": False,
-                "error": {"code": "PROXY_ERROR", "message": f"代理错误: {str(e)}"}
+                "error": {"code": "BACKEND_UNREACHABLE", "message": f"后端不可用: {e}"}
             }).encode())
 
     def do_GET(self):
@@ -218,6 +291,7 @@ def _ensure_dist():
         print(f"[ERR] npm run build 失败: {e}")
 
 
+# @link:block Server_Create = Emit
 def create_server(port=8765):
     _ensure_dist()
     return socketserver.ThreadingTCPServer(("", port), ProxyHandler)

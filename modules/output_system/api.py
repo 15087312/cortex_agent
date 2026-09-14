@@ -1,3 +1,4 @@
+# @link:block OutputAPI_Emit = Emit
 """
 输出 API - 文字、语音、键鼠控制、UI交互
 
@@ -9,11 +10,11 @@
 """
 import asyncio
 from fastapi import Depends,  APIRouter, Body, Query
-from api.auth import require_api_key
+from infra.auth import require_api_key
 from typing import List, Optional
 from pydantic import BaseModel
 
-from api.errors import AppError, ErrorCode
+from infra.errors import AppError, ErrorCode
 from modules.output_system import OutputSystem
 from modules.output_system.input_controller import input_controller
 from modules.output_system.ui_interactor import ui_interactor

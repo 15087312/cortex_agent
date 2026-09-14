@@ -18,14 +18,6 @@ class DifferenceDetectorActivityNotifier:
         except Exception as e:
             logger.debug(f"[活动通知] 差异检测器通知失败 (非致命): {e}")
 
-        try:
-            from modules.perception.setup import get_perception_system
-            ps = get_perception_system()
-            if ps.proactive_trigger:
-                ps.proactive_trigger.notify_activity()
-        except Exception as e:
-            logger.debug(f"[活动通知] 主动触发通知失败 (非致命): {e}")
-
 
 class SecurityApiAdapter:
     """由 SecurityAPI 支持的安全端口。"""
@@ -41,6 +33,7 @@ class SecurityApiAdapter:
             return False, f"[安全系统异常] 输入验证失败: {e}"
 
 
+# @link:block Adapter_GuidanceThink = Think
 class PreGenExpertGuidanceAdapter:
     """由良知系统支持的指导端口。"""
 

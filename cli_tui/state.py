@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 
+# @link:block AppState_Guard = Guard
 @dataclass
 class AppState:
     """应用全局状态，由 Textual App 持有"""

@@ -76,7 +76,6 @@ async def test_process_full_flow(monkeypatch):
     orch._maybe_evolve_values = AsyncMock()
     # 主动搭话重置
     ps = MagicMock()
-    ps.proactive_trigger = MagicMock()
     monkeypatch.setattr("modules.perception.setup.get_perception_system", lambda: ps)
     # 执行模式
     cfg = MagicMock()
@@ -92,7 +91,6 @@ async def test_process_full_flow(monkeypatch):
     assert result["security_passed"] is True
     assert result["focus"] == "multi_model"
     notifier.notify_activity.assert_called_once()
-    ps.proactive_trigger.reset_cooldown.assert_called_once()
 
 
 async def test_process_security_blocked(monkeypatch):

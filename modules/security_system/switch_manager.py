@@ -1,3 +1,4 @@
+# @link:block SwitchManager_Guard = Guard
 """
 分级开关管理器 - 仅用户可操作
 """

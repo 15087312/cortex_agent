@@ -23,10 +23,11 @@ def _get_idle_alert_seconds() -> float:
     """从配置读取空闲提醒阈值（秒）
 
     如果配置不可用（测试环境 / 配置未加载），使用 15 分钟默认值。
+    （原 PROACTIVE_OUTREACH_IDLE_MINUTES 随主动搭话功能移除）
     """
     try:
         from config.settings import settings
-        return settings.PROACTIVE_OUTREACH_IDLE_MINUTES * 60
+        return getattr(settings, "PERCEPTION_IDLE_ALERT_MINUTES", 15) * 60
     except Exception as e:
         logger.warning(f"读取空闲alert阈值失败，使用默认值: {e}")
         return 15 * 60
@@ -63,6 +64,7 @@ class TimeDifferenceSource(DifferenceSource):
         self._last_reported_category = None
 
     def detect(self) -> List[Difference]:
+        # @link:block TimeSource_Guard = Guard
         """检测空闲状态变化，只在级别变化时才产生差异
 
         使用 _last_reported_category 跟踪上一轮报告的级别，

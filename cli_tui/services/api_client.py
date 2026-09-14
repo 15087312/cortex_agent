@@ -87,6 +87,7 @@ class APIClient:
 
     # ── 思考控制 ──
 
+    # @link:block APIClient_Emit = Emit
     async def stop_thinking(self, session_id: str = "") -> bool:
         """停止当前思考处理"""
         try:

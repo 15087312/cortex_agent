@@ -1,10 +1,11 @@
+# @link:block SecurityAPI_Guard = Guard
 """
 安全系统统一API - 全局唯一入口 + HTTP路由
 """
 from typing import Tuple, Dict
 from fastapi import Depends,  APIRouter, Body
-from api.auth import require_api_key
-from api.errors import AppError, ErrorCode
+from infra.auth import require_api_key
+from infra.errors import AppError, ErrorCode
 from .security_level import SecurityLevel
 from .switch_manager import SecuritySwitchManager
 from .audit_logger import SecurityAuditLogger

@@ -108,6 +108,7 @@ class VoiceDetector(PerceptionDetector):
         return "voice"
 
     def start(self) -> None:
+        # @link:block Voice_Guard = Guard
         if not self._available or self._running:
             return
 

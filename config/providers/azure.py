@@ -1,3 +1,4 @@
+# @link:block
 """
 Azure OpenAI 适配器
 
@@ -14,12 +15,14 @@ class AzureProvider(OpenAIProvider):
     #: Azure 默认 api-version（可经 base_url 或子类覆盖）
     api_version: str = "2024-06-01"
 
+    # @link:block Azure_BuildHeaders = Think
     def build_headers(self) -> dict:
         return {
             "api-key": self.api_key,
             "Content-Type": "application/json",
         }
 
+    # @link:block Azure_ChatUrl = Think
     def chat_url(self) -> str:
         base = self.base_url.rstrip("/")
         # 已在 /chat/completions 结尾 → 直接补 api-version

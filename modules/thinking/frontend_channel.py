@@ -135,6 +135,7 @@ async def _persist_message(session_id: Optional[str], role: str, content: str) -
     return msg_id
 
 
+# @link:block Frontend_Push = Emit
 async def push_content(
     session_id: Optional[str],
     *,

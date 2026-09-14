@@ -26,6 +26,7 @@ class SessionGraphStore:
 
     # ── 记录 ──────────────────────────────────────────────────────────
 
+    # @link:block GraphRecord = Guard · Write
     def record(self, session_id: str, model_id: str, identity_name: str,
                tier: str, return_to_model_id: str, entry_type: str,
                content: str = "", ts: float = 0.0) -> None:

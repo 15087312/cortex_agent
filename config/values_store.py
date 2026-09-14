@@ -1,3 +1,4 @@
+# @link:block
 """
 价值观存储 — 纯数据存储层
 
@@ -62,6 +63,7 @@ class ValueSystem:
         self.save(default)
         logger.info(f"初始化价值观文件: {self.values_file}")
 
+    # @link:block ValueSystem_Load = Emit
     def load(self) -> str:
         try:
             with open(self.values_file, "r", encoding="utf-8") as f:
@@ -70,6 +72,7 @@ class ValueSystem:
             logger.error(f"加载价值观失败: {e}")
             return ""
 
+    # @link:block ValueSystem_Save = Guard
     def save(self, content: str):
         import tempfile
         fd, tmp_path = tempfile.mkstemp(
@@ -86,6 +89,7 @@ class ValueSystem:
             os.unlink(tmp_path)
             raise
 
+    # @link:block ValueSystem_GetValuesDict = Emit
     def get_values_dict(self) -> Dict[str, List[str]]:
         content = self.load()
         sections: Dict[str, List[str]] = {}
@@ -110,6 +114,7 @@ class ValueSystem:
 
         return sections
 
+    # @link:block ValueSystem_AddRule = Guard
     def add_rule(self, section: str, rule: str):
         rule = rule.strip()
         if not self._is_valid_rule(rule):
@@ -145,6 +150,7 @@ class ValueSystem:
             self.save("\n".join(lines))
             logger.info(f"添加规则: [{section}] {rule}")
 
+    # @link:block ValueSystem_RemoveRule = Guard
     def remove_rule(self, section: str, rule: str):
         content = self.load()
         lines = content.split("\n")
@@ -175,6 +181,7 @@ class ValueSystem:
             self.save(new_content)
             logger.info(f"更新规则: {old_rule} → {new_rule}")
 
+    # @link:block ValueSystem_Cleanup = Guard
     def cleanup(self):
         sections = self.get_values_dict()
         clean_lines = [
@@ -196,6 +203,7 @@ class ValueSystem:
         self.save("\n".join(clean_lines))
         logger.info(f"价值观清理完成: {sum(1 for s in sections.values() for r in s if self._is_valid_rule(r))} 条有效规则")
 
+    # @link:block ValueSystem_ResetToDefault = Guard
     def reset_to_default(self):
         self._init_default_values()
         logger.info("价值观已重置为默认值")

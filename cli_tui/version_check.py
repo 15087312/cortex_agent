@@ -12,6 +12,7 @@ from utils.logger import setup_logger
 logger = setup_logger("version_check")
 
 
+# @link:block VersionCheck_Guard = Guard
 class VersionChecker:
     """版本检查器 — 检查更新并显示提示（支持 GitHub API）"""
 

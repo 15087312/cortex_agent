@@ -12,19 +12,9 @@ const emit = defineEmits(['close'])
 
 const { t } = useI18n()
 const toast = useToastStore()
-const tab = ref('outreach')
+const tab = ref('tasks')
 const loading = ref(true)
 const saving = ref(false)
-
-// ── 主动搭话配置 ──
-const oc = ref({
-  enabled: false,
-  cooldownMin: 30,
-  scheduleOn: false, scheduleTime: '', scheduleJitter: 10,
-  screenOn: false, screenRatio: 0.5, screenProb: 0.5, screenInterval: 30, screenCooldown: 30,
-  idleOn: false, idleMinutes: 30, idleProb: 0.5, idleInterval: 60,
-  windowsOn: false, timeWindowsText: '',
-})
 
 // ── 定时任务配置 ──
 const tasks = ref([])
@@ -68,87 +58,6 @@ function statusBadge(st) {
   return { color, label }
 }
 
-async function loadAll() {
-  loading.value = true
-  try {
-    const [o, t, a] = await Promise.all([
-      fetch('/api/stream/session/' + encodeURIComponent(props.sessionId) + '/outreach-config', { headers: { Accept: 'application/json' } }).then(r => r.json()).catch(() => null),
-      fetch('/api/stream/session/' + encodeURIComponent(props.sessionId) + '/tasks', { headers: { Accept: 'application/json' } }).then(r => r.json()).catch(() => null),
-      fetch('/api/management/orchestration', { headers: { Accept: 'application/json' } }).then(r => r.json()).catch(() => null),
-    ])
-    const cfg = o?.data?.outreach || {}
-    const scr = cfg.screen || {}
-    const idle = cfg.idle || {}
-    const sched = cfg.schedule || {}
-    oc.value = {
-      enabled: !!cfg.enabled,
-      cooldownMin: cfg.cooldown_minutes ?? 30,
-      scheduleOn: !!sched.enabled,
-      scheduleTime: sched.time || '',
-      scheduleJitter: sched.jitter_minutes ?? 10,
-      screenOn: !!scr.enabled,
-      screenRatio: scr.change_ratio ?? 0.5,
-      screenProb: scr.probability ?? 0.5,
-      screenInterval: scr.check_interval_seconds ?? 30,
-      screenCooldown: scr.cooldown_minutes ?? 30,
-      idleOn: !!idle.enabled,
-      idleMinutes: idle.idle_minutes ?? 30,
-      idleProb: idle.probability ?? 0.5,
-      idleInterval: idle.check_interval_seconds ?? 60,
-      windowsOn: !!cfg.time_windows_enabled,
-      timeWindowsText: (cfg.time_windows || []).map((w) => `${w.start}-${w.end}` + (w.probability != null ? `@${w.probability}` : '')).join(','),
-    }
-    tasks.value = (t?.data?.tasks?.tasks) || []
-    tasks.value.forEach((x) => { x.type = taskType(x) })
-    agents.value = a?.data?.agents || []
-  } catch {} finally { loading.value = false }
-}
-
-async function saveOutreach() {
-  saving.value = true
-  const timeWindows = oc.value.timeWindowsText.split(',').map((x) => x.trim()).filter(Boolean)
-    .map((x) => {
-      let prob
-      const m = x.split('@')
-      const [start, end] = m[0].split('-')
-      if (m[1] != null) prob = parseFloat(m[1])
-      const w = { start: (start || '').trim(), end: (end || '').trim() }
-      if (prob != null) w.probability = prob
-      return w
-    }).filter((w) => w.start && w.end)
-  const cfg = {
-    enabled: !!oc.value.enabled,
-    cooldown_minutes: Math.max(0, oc.value.cooldownMin || 30),
-    schedule: oc.value.scheduleOn ? { enabled: true, time: oc.value.scheduleTime, jitter_minutes: Math.max(0, oc.value.scheduleJitter || 0) } : {},
-    screen: {
-      enabled: !!oc.value.screenOn,
-      change_ratio: Math.max(0, Math.min(1, oc.value.screenRatio ?? 0.5)),
-      probability: Math.max(0, Math.min(1, oc.value.screenProb ?? 0.5)),
-      check_interval_seconds: Math.max(1, oc.value.screenInterval || 30),
-      cooldown_minutes: Math.max(0, oc.value.screenCooldown || 30),
-    },
-    idle: {
-      enabled: !!oc.value.idleOn,
-      idle_minutes: Math.max(0, oc.value.idleMinutes || 30),
-      probability: Math.max(0, Math.min(1, oc.value.idleProb ?? 0.5)),
-      check_interval_seconds: Math.max(1, oc.value.idleInterval || 60),
-    },
-    time_windows_enabled: !!oc.value.windowsOn,
-    time_windows: timeWindows,
-  }
-  try {
-    const r = await fetch('/api/stream/session/' + encodeURIComponent(props.sessionId) + '/outreach-config', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ outreach: cfg }),
-    })
-    const d = await r.json()
-    if (d.success) toast.show(t('sessionSettings.outreachSaved'), 'success')
-    else toast.show(t('sessionSettings.saveFailedWith', { err: (d.error?.message || '') }), 'error')
-  } catch (e) { toast.show(t('sessionSettings.saveFailed'), 'error') }
-  finally { saving.value = false }
-}
-
 async function saveTasks() {
   saving.value = true
   const normalized = tasks.value.map((t) => {
@@ -169,6 +78,19 @@ async function saveTasks() {
   finally { saving.value = false }
 }
 
+async function loadAll() {
+  loading.value = true
+  try {
+    const [t, a] = await Promise.all([
+      fetch('/api/stream/session/' + encodeURIComponent(props.sessionId) + '/tasks', { headers: { Accept: 'application/json' } }).then(r => r.json()).catch(() => null),
+      fetch('/api/management/orchestration', { headers: { Accept: 'application/json' } }).then(r => r.json()).catch(() => null),
+    ])
+    tasks.value = (t?.data?.tasks?.tasks) || []
+    tasks.value.forEach((x) => { x.type = taskType(x) })
+    agents.value = a?.data?.agents || []
+  } catch {} finally { loading.value = false }
+}
+
 onMounted(loadAll)
 </script>
 
@@ -184,53 +106,11 @@ onMounted(loadAll)
       </div>
 
       <div class="seg" style="margin:10px 0">
-        <button :class="{ on: tab === 'outreach' }" @click="tab = 'outreach'">{{ $t('sessionSettings.outreachTab') }}</button>
         <button :class="{ on: tab === 'tasks' }" @click="tab = 'tasks'">{{ $t('sessionSettings.tasksTab') }} ({{ tasks.length }})</button>
       </div>
 
       <div v-if="loading" style="text-align:center;padding:40px;color:var(--text-muted)">{{ $t('common.loading') }}</div>
 
-      <!-- 主动搭话 -->
-      <div v-else-if="tab === 'outreach'" style="max-height:calc(100vh - 220px);overflow-y:auto">
-        <div class="ss-row" style="justify-content:space-between">
-          <span class="ss-lbl">{{ $t('sessionSettings.enableOutreach') }}</span>
-          <label class="toggle-switch"><input type="checkbox" v-model="oc.enabled" /><span class="toggle-slider"></span></label>
-        </div>
-        <div class="ss-row">
-          <span class="ss-lbl">{{ $t('sessionSettings.cooldown') }}</span>
-          <input class="input" type="number" v-model.number="oc.cooldownMin" style="width:64px;text-align:right" /> <span class="ss-unit">min</span>
-        </div>
-        <div class="ss-row">
-          <span class="ss-lbl">{{ $t('sessionSettings.scheduleSend') }}</span>
-          <label class="toggle-switch"><input type="checkbox" v-model="oc.scheduleOn" /><span class="toggle-slider"></span></label>
-          <input class="input" v-model="oc.scheduleTime" style="width:70px" placeholder="14:00" :disabled="!oc.scheduleOn" />
-          <span class="ss-unit" :class="{ off: !oc.scheduleOn }">±</span>
-          <input class="input" type="number" v-model.number="oc.scheduleJitter" style="width:52px;text-align:right" :disabled="!oc.scheduleOn" /> <span class="ss-unit" :class="{ off: !oc.scheduleOn }">min</span>
-        </div>
-        <div class="ss-row">
-          <span class="ss-lbl">{{ $t('sessionSettings.screenTrigger') }}</span>
-          <label class="toggle-switch"><input type="checkbox" v-model="oc.screenOn" /><span class="toggle-slider"></span></label>
-          <input class="input" type="number" v-model.number="oc.screenRatio" style="width:44px;text-align:right" :title="$t('sessionSettings.screenRatio')" :disabled="!oc.screenOn" />
-          <input class="input" type="number" v-model.number="oc.screenProb" style="width:44px;text-align:right" :title="$t('sessionSettings.probability')" :disabled="!oc.screenOn" />
-          <input class="input" type="number" v-model.number="oc.screenInterval" style="width:44px;text-align:right" :title="$t('sessionSettings.intervalSec')" :disabled="!oc.screenOn" />
-          <input class="input" type="number" v-model.number="oc.screenCooldown" style="width:44px;text-align:right" :title="$t('sessionSettings.cooldownMin')" :disabled="!oc.screenOn" />
-        </div>
-        <div class="ss-row">
-          <span class="ss-lbl">{{ $t('sessionSettings.idleTrigger') }}</span>
-          <label class="toggle-switch"><input type="checkbox" v-model="oc.idleOn" /><span class="toggle-slider"></span></label>
-          <input class="input" type="number" v-model.number="oc.idleMinutes" style="width:44px;text-align:right" :title="$t('sessionSettings.idleMin')" :disabled="!oc.idleOn" />
-          <input class="input" type="number" v-model.number="oc.idleProb" style="width:44px;text-align:right" :title="$t('sessionSettings.probability')" :disabled="!oc.idleOn" />
-          <input class="input" type="number" v-model.number="oc.idleInterval" style="width:44px;text-align:right" :title="$t('sessionSettings.intervalSec')" :disabled="!oc.idleOn" />
-        </div>
-        <div class="ss-row">
-          <span class="ss-lbl">{{ $t('sessionSettings.timeWindowTrigger') }}</span>
-          <label class="toggle-switch"><input type="checkbox" v-model="oc.windowsOn" /><span class="toggle-slider"></span></label>
-          <input class="input" v-model="oc.timeWindowsText" style="flex:1;min-width:160px" placeholder="09:00-12:00@0.5,14:00-18:00@0.8" :disabled="!oc.windowsOn" />
-        </div>
-        <div style="text-align:right;margin-top:12px">
-          <button class="btn btn-sm btn-primary" :disabled="saving" @click="saveOutreach">{{ saving ? $t('sessionSettings.saving') : $t('sessionSettings.saveOutreach') }}</button>
-        </div>
-      </div>
 
       <!-- 定时任务 -->
       <div v-else style="max-height:calc(100vh - 220px);overflow-y:auto">

@@ -82,6 +82,7 @@ class EventRetrieval:
     # 主检索方法
     # ------------------------------------------------------------------
 
+    # @link:block MemRetrieve
     async def retrieve(
         self,
         query: str,
@@ -112,11 +113,13 @@ class EventRetrieval:
         2. 因果图扩散：候选事件同样过真实语义门槛
         3. 合并 + 打分 + 排序
         """
+        # @link:block Mem_Embed = Retrieve
         # 0. 向量化查询（一次，向量搜索与因果扩散共用）
         query_embedding = self._get_embedder().embed(query)
         if query_embedding is None:
             return []
 
+        # @link:block Mem_Search = Retrieve
         # 1. 向量语义搜索（唯一召回通路）
         vector_results = await self._vector_search(query_embedding, top_k=max_results * 3)
 
@@ -134,6 +137,7 @@ class EventRetrieval:
         now = datetime.now(timezone.utc)
         scored = self._calculate_all_scores(list(merged.values()), now)
 
+        # @link:block Mem_Filter = Guard
         # 5. type 过滤 + 重要性过滤
         if types:
             types_set = set(t.lower() for t in types)
@@ -150,6 +154,7 @@ class EventRetrieval:
         if owner_id and not owner_id.startswith("large"):
             scored = [(ev, s) for ev, s in scored if ev.owner_id == owner_id]
 
+        # @link:block Mem_Rank = Retrieve
         # 6. 归一化 + 阈值 + 排序 + 截断
         top_events = self._rank_and_filter(scored, threshold, max_results)
 

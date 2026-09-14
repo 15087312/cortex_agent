@@ -18,6 +18,7 @@ logger = setup_logger("screen_capture")
 SCREENSHOT_ENABLED: bool = True
 
 
+# @link:block Screen_InitPermission = Guard
 def init_screen_permission():
     """进程启动时调用一次，检测屏幕录制权限并设置 SCREENSHOT_ENABLED
 
@@ -143,6 +144,7 @@ def capture_screen_bytes(max_width: int = 1280, region: tuple = None) -> Optiona
     return buf.getvalue()
 
 
+# @link:block Screen_CaptureBase64 = Emit
 def capture_screen(max_width: int = 1280) -> Optional[str]:
     """截取屏幕，返回 base64 编码的 PNG
 

@@ -22,7 +22,7 @@ from pathlib import Path as FilePath
 PROJECT_ROOT = FilePath(__file__).resolve().parents[2]
 import time
 
-from api.errors import AppError, ErrorCode
+from infra.errors import AppError, ErrorCode
 from modules.management.core.collector import ModuleRegistry, StatusCollector
 from utils.logger import setup_logger
 

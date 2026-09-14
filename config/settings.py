@@ -1,3 +1,4 @@
+# @link:block
 """
 全局配置类 - 加载.env、管理所有模块的配置
 """
@@ -34,9 +35,7 @@ class Settings(BaseSettings):
     # 运行时可通过 API 修改的配置项（api/main.py 的 /config/{key} 端点使用）
     _MODIFIABLE_FIELDS: set = {
         "LOG_LEVEL", "DEBUG", "MAX_WORKERS", "LOGGING_ENABLED",
-        "PROACTIVE_OUTREACH_ENABLED", "PROACTIVE_OUTREACH_COOLDOWN_MINUTES",
-        "PROACTIVE_OUTREACH_IDLE_MINUTES", "PROACTIVE_OUTREACH_DEFAULT",
-        "CAUSAL_MAX_ANCHORS", "CAUSAL_MAX_NEIGHBORS_PER_HOP",
+                "CAUSAL_MAX_ANCHORS", "CAUSAL_MAX_NEIGHBORS_PER_HOP",
         "CAUSAL_MAX_TREE_DEPTH", "CAUSAL_MAX_EVENTS_RECALL", "CAUSAL_MIN_CONFIDENCE",
         "CAUSAL_MIN_COOCCUR", "CAUSAL_HOT_CACHE_TTL",
         "CAUSAL_CONFIDENCE_BOOST_DELTA", "CAUSAL_CONFIDENCE_MAX",
@@ -66,8 +65,6 @@ class Settings(BaseSettings):
         "PERCEPTION_ENABLED", "PERCEPTION_SCREEN_ENABLED",
         "PERCEPTION_MCP_ENABLED",
         "PERCEPTION_INTERNAL_ENABLED", "SCREEN_DIFF_ENABLED",
-        "PERCEPTION_TRIGGER_THINK",
-        "PERCEPTION_TRIGGER_COOLDOWN", "PERCEPTION_TRIGGER_MIN_INTENSITY",
         "SPATIAL_ENHANCEMENT_ENABLED",
         "MENTAL_ACTIVITY_ENABLED",   # 心理活动开关（良知内心独白）
         "MEMORY_SUMMARY_ENABLED",    # 记忆总结开关（EventReducer 自动提炼事件记忆）
@@ -94,7 +91,7 @@ class Settings(BaseSettings):
         "CHAT_IMAGE_MODE",
 
         # ── 桌面宠物 ──
-        "DESKTOP_PET_ENABLED", "DESKTOP_PET_SESSION_ID",
+        "DESKTOP_PET_ENABLED",
 
         # ── 通用/桌面端设置（持久化到 settings.json，供桌面端消费）──
         "LAUNCH_AT_STARTUP", "PREVENT_SLEEP", "SHOW_FILENAME_IN_GALLERY",
@@ -147,6 +144,7 @@ class Settings(BaseSettings):
     MEDIUM_MODEL_CONTEXT_LENGTH: int = 0
     SMALL_MODEL_CONTEXT_LENGTH: int = 0
 
+    # @link:block Settings_GetContextLength = Think
     def get_context_length(self, model_key: str = "") -> int:
         """按模型层级获取输入上下文长度（token 数）
 
@@ -161,6 +159,7 @@ class Settings(BaseSettings):
             return self.SMALL_MODEL_CONTEXT_LENGTH or self.CONTEXT_WINDOW_SIZE or 128000
         return self.CONTEXT_WINDOW_SIZE or 128000
 
+    # @link:block Settings_ResolveModelTier = Think
     def resolve_model_tier(self, tier: str = "large") -> dict:
         """解析某层模型的实际接入配置（最简配置：只填 *_MODEL_PROVIDER 即可）
 
@@ -319,8 +318,7 @@ class Settings(BaseSettings):
     ASSISTANT_NAME: str = "Cortex"
 
     # ── 桌面宠物（桌宠）──
-    DESKTOP_PET_ENABLED: bool = True            # 是否启用桌宠（语音触发与主会话对话）
-    DESKTOP_PET_SESSION_ID: str = "pet_main"     # 桌宠主会话（永不删除，对话记忆延续）
+    DESKTOP_PET_ENABLED: bool = True            # 是否启用桌宠（独立页面形态；人设/API/记忆见桌宠页配置）
 
     # ── 前端 UI 设置（原 backend ~/.cortex-mini/settings.json 持久化，并入主 settings）──
     launch_at_startup: bool = True
@@ -340,6 +338,7 @@ class Settings(BaseSettings):
         """委托是否可用（始终可用，由 Skill ToolRules 控制可见性）"""
         return True
 
+    # @link:block Settings_GetPersona = Think
     def get_persona(self, role: str) -> str:
         """获取指定角色的自定义人设（未设置返回空串）。
 
@@ -357,6 +356,7 @@ class Settings(BaseSettings):
         except Exception:
             return ""
 
+    # @link:block Settings_SetPersona = Guard
     def set_persona(self, role: str, prompt: str) -> str:
         """设置指定角色的自定义人设（prompt 为空则清除），写入 ~/.cortex/personas.yaml"""
         prompt = (prompt or "").strip()
@@ -387,6 +387,7 @@ class Settings(BaseSettings):
                 parts.append(f"【擅长】{'、'.join(ex)}")
         return "\n".join(x for x in parts if x and x.strip())
 
+    # @link:block Settings_GetRolePersona = Think
     def get_role_persona(self, role: str) -> str:
         """统一角色人设入口——对话与心理活动共用（一套人设，改一处生效）。
 
@@ -424,6 +425,7 @@ class Settings(BaseSettings):
         except Exception:
             return ""
 
+    # @link:block Settings_GetSystemOverride = Think
     def get_system_override(self, role: str) -> str:
         """获取指定角色的完整系统提示词覆盖（未设置返回空串）"""
         data = self._load_personas_yaml()
@@ -451,6 +453,7 @@ class Settings(BaseSettings):
             }
         return self._modify_personas_yaml(_m)
 
+    # @link:block Settings_SetSystemOverride = Guard
     def set_system_override(self, role: str, prompt: str) -> str:
         """设置指定角色的完整系统提示词覆盖（prompt 为空则清除），写入 yaml"""
         prompt = (prompt or "").strip()
@@ -542,6 +545,7 @@ class Settings(BaseSettings):
 
     # ── 自定义 Agent 管理（用户在前端新增的 agent，存 personas.yaml）──
 
+    # @link:block Settings_GetCustomAgents = Think
     def get_custom_agents(self) -> list:
         """获取所有自定义 agent 列表"""
         data = self._load_personas_yaml()
@@ -556,6 +560,7 @@ class Settings(BaseSettings):
         agent = data.get("custom_agents", {}).get(role)
         return agent if isinstance(agent, dict) else None
 
+    # @link:block Settings_SetCustomAgent = Guard
     def set_custom_agent(self, role: str, agent_data: dict) -> dict:
         """新增或更新自定义 agent"""
         agent_data["role"] = role
@@ -629,6 +634,7 @@ class Settings(BaseSettings):
         self._modify_personas_yaml(_m)
         self._invalidate_identity_cache()
 
+    # @link:block Settings_GetAgentActive = Think
     def get_agent_active(self, role: str) -> bool:
         """获取 agent 启用状态（默认 True）"""
         data = self._load_personas_yaml()
@@ -821,6 +827,7 @@ class Settings(BaseSettings):
             raise ValueError(f"EXECUTION_MODE must be one of plan/edit/yolo/control, got '{v}'")
         return v.lower()
 
+    # @link:block Settings_ValidateProduction = Guard
     def validate_production(self) -> None:
         """Q-9: Validate critical settings for production deployment"""
         if self.APP_ENV == "production":
@@ -862,6 +869,7 @@ class Settings(BaseSettings):
     # searXNG 实例地址（自部署元搜索引擎），配置后 SEARCH_ENGINE_PRIORITY 含 searxng 时优先用其 JSON API
     SEARXNG_URL: str = ""
 
+    # @link:block Settings_GetSearchEngines = Think
     def get_search_engines(self) -> "list[str]":
         """解析搜索引擎优先级配置为有序列表（去重、过滤非法项）"""
         allowed = {"searxng", "ddg_html", "ddg_lite", "ddg_api", "sogou", "bing_cn", "baidu"}
@@ -924,22 +932,10 @@ class Settings(BaseSettings):
     PERCEPTION_INTERNAL_ENABLED: bool = True           # 内部状态源（未完成任务、失败任务等）
     SPATIAL_ENHANCEMENT_ENABLED: bool = False          # 空间增强：心理活动输出当前空间位置/动作序列
 
-    # 差异 → 思考触发
-    PERCEPTION_TRIGGER_THINK: bool = True              # 差异是否触发单次思考
-    PERCEPTION_TRIGGER_MIN_INTENSITY: float = 50.0     # 触发思考的最小差异强度 (0-100)
-    PERCEPTION_TRIGGER_COOLDOWN: int = 60              # 触发冷却（秒）
-
     # MCP 屏幕差异检测（像素级帧差）
     SCREEN_DIFF_ENABLED: bool = True                   # 屏幕帧差检测
     SCREEN_DIFF_INTERVAL: float = 1.0                  # 检测间隔（秒）
     SCREEN_DIFF_CHANGE_THRESHOLD: float = 0.01         # 最小变化面积比例 (1%)
-
-    # 主动搭话（空闲时主动与用户交互）
-    PROACTIVE_OUTREACH_ENABLED: bool = True            # 是否启用自动搭话
-    PROACTIVE_OUTREACH_COOLDOWN_MINUTES: int = 15      # 搭话冷却时间（分钟）
-    PROACTIVE_OUTREACH_IDLE_MINUTES: int = 15          # 触发搭话的空闲阈值（分钟）
-    PROACTIVE_OUTREACH_WORK_PROMPT: str = ""           # 工作模式自定义提示词（为空则用默认）
-    PROACTIVE_OUTREACH_DEFAULT: str = "{}"             # 全局默认主动搭话规则（JSON：{enabled,schedule,screen,idle,time_windows}），会话未配置时生效
 
     # 记忆配置
     MEMORY_TTL_SHORT: int = 3600  # 1 小时
@@ -1057,6 +1053,7 @@ class Settings(BaseSettings):
             import sys
             print(f"[INFO] 已应用用户配置 ({self._USER_CONFIG_PATH}): {', '.join(overridden)}", file=sys.stderr)
 
+    # @link:block Settings_SaveUserConfig = Guard
     def save_user_config(self, keys: Optional[list] = None) -> bool:
         """将可持久化配置（含自定义人设/系统提示词覆盖）写回 ~/.cortex/settings.json。
 

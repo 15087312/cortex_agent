@@ -3,25 +3,10 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { createTestPinia } from '@/test/helpers.js'
 import SessionSettings from './SessionSettings.vue'
 
-const outreachData = {
-  data: {
-    outreach: {
-      enabled: true,
-      cooldown_minutes: 15,
-      schedule: { enabled: true, time: '14:00', jitter_minutes: 5 },
-      screen: { enabled: false, change_ratio: 0.5, probability: 0.5, check_interval_seconds: 30, cooldown_minutes: 30 },
-      idle: { enabled: true, idle_minutes: 45, probability: 0.3, check_interval_seconds: 60 },
-      time_windows_enabled: true,
-      time_windows: [{ start: '09:00', end: '12:00', probability: 0.5 }],
-    },
-  },
-}
-
 const ok = (data) => ({ ok: true, status: 200, json: async () => data, text: async () => '' })
 
 function defaultRoutes(overrides = {}) {
   return vi.fn(async (url, opts) => {
-    if (url.includes('/outreach-config')) return ok(overrides.outreach ?? outreachData)
     if (url.includes('/tasks')) return ok(overrides.tasks ?? { data: { tasks: { tasks: [] } } })
     if (url.includes('/orchestration')) return ok({ data: { agents: [] } })
     return ok({})
@@ -36,40 +21,11 @@ function mountSettings(fetchMock) {
   })
 }
 
+beforeEach(() => {
+  globalThis.fetch = defaultRoutes()
+})
+
 describe('SessionSettings', () => {
-  it('加载主动搭话配置并渲染', async () => {
-    const w = mountSettings()
-    await flushPromises()
-    expect(w.text()).toContain('会话设置：测试会话')
-    expect(w.text()).toContain('开启主动搭话')
-    const enabledCb = w.find('input[type=checkbox]')
-    expect(enabledCb.element.checked).toBe(true)
-  })
-
-  it('保存主动搭话配置', async () => {
-    const putCalls = []
-    const fetchMock = vi.fn(async (url, opts) => {
-      if (opts?.method === 'PUT' && url.includes('/outreach-config')) {
-        putCalls.push([url, opts])
-        return ok({ success: true })
-      }
-      if (url.includes('/outreach-config')) return ok(outreachData)
-      if (url.includes('/tasks')) return ok({ data: { tasks: { tasks: [] } } })
-      return ok({ data: { agents: [] } })
-    })
-    const w = mountSettings(fetchMock)
-    await flushPromises()
-    const saveBtn = w.findAll('button').find(b => b.text().includes('保存主动搭话'))
-    await saveBtn.trigger('click')
-    await flushPromises()
-    expect(putCalls.length).toBe(1)
-    const body = JSON.parse(putCalls[0][1].body)
-    expect(body.outreach.enabled).toBe(true)
-    expect(body.outreach.cooldown_minutes).toBe(15)
-    expect(body.outreach.schedule.time).toBe('14:00')
-    expect(body.outreach.time_windows[0].start).toBe('09:00')
-  })
-
   it('定时任务 tab：添加任务并保存', async () => {
     const putCalls = []
     const fetchMock = vi.fn(async (url, opts) => {
@@ -77,14 +33,11 @@ describe('SessionSettings', () => {
         putCalls.push([url, opts])
         return ok({ success: true })
       }
-      if (url.includes('/outreach-config')) return ok(outreachData)
       if (url.includes('/tasks')) return ok({ data: { tasks: { tasks: [] } } })
       return ok({ data: { agents: [] } })
     })
     const w = mountSettings(fetchMock)
     await flushPromises()
-    const tasksTab = w.findAll('.seg button').find(b => b.text().includes('定时任务'))
-    await tasksTab.trigger('click')
     const addBtn = w.findAll('button').find(b => b.text().includes('添加任务'))
     await addBtn.trigger('click')
     // 新任务渲染出类型选择与提示词输入（placeholder 不计入 text，检查 textarea 存在）
@@ -105,8 +58,6 @@ describe('SessionSettings', () => {
     })
     const w = mountSettings(fetchMock)
     await flushPromises()
-    const tasksTab = w.findAll('.seg button').find(b => b.text().includes('定时任务'))
-    await tasksTab.trigger('click')
     // 任务已渲染：显示时间输入与启用开关（id 不直接展示）
     const timeInput = w.find('input[placeholder="HH:MM"]')
     expect(timeInput.exists()).toBe(true)
@@ -119,8 +70,6 @@ describe('SessionSettings', () => {
     })
     const w = mountSettings(fetchMock)
     await flushPromises()
-    const tasksTab = w.findAll('.seg button').find(b => b.text().includes('定时任务'))
-    await tasksTab.trigger('click')
     // 切换类型为 interval
     const select = w.find('select')
     await select.setValue('interval')
@@ -149,7 +98,6 @@ describe('SessionSettings', () => {
         putCalls.push([url, opts])
         return ok({ success: true })
       }
-      if (url.includes('/outreach-config')) return ok(outreachData)
       if (url.includes('/tasks')) return ok({ data: { tasks: { tasks: [] } } })
       return ok({ data: { agents: [] } })
     })
@@ -177,8 +125,6 @@ describe('SessionSettings', () => {
     })
     const w = mountSettings(fetchMock)
     await flushPromises()
-    const tasksTab = w.findAll('.seg button').find(b => b.text().includes('定时任务'))
-    await tasksTab.trigger('click')
     expect(w.vm.tasks).toHaveLength(1)
     w.vm.removeTask(0)
     expect(w.vm.tasks).toHaveLength(0)
@@ -229,74 +175,15 @@ describe('SessionSettings', () => {
     expect(w.vm.statusBadge('unknown')).toEqual({ color: '#8b949e', label: 'unknown' })
   })
 
-  it('DOM：保存主动搭话按钮触发 PUT 且序列化正确', async () => {
-    const putCalls = []
-    const fetchMock = vi.fn(async (url, opts) => {
-      if (opts?.method === 'PUT' && url.includes('/outreach-config')) {
-        putCalls.push([url, opts])
-        return ok({ success: true })
-      }
-      if (url.includes('/outreach-config')) return ok(outreachData)
-      if (url.includes('/tasks')) return ok({ data: { tasks: { tasks: [] } } })
-      return ok({ data: { agents: [] } })
-    })
-    const w = mountSettings(fetchMock)
-    await flushPromises()
-    const saveBtn = w.findAll('button').find((b) => b.text().includes('保存主动搭话'))
-    expect(saveBtn.exists()).toBe(true)
-    await saveBtn.trigger('click')
-    await flushPromises()
-    expect(putCalls.length).toBe(1)
-    const body = JSON.parse(putCalls[0][1].body)
-    expect(body.outreach.enabled).toBe(true)
-    expect(body.outreach.cooldown_minutes).toBe(15)
-    expect(body.outreach.schedule.time).toBe('14:00')
-    expect(body.outreach.screen.enabled).toBe(false)
-    expect(body.outreach.time_windows).toEqual([{ start: '09:00', end: '12:00', probability: 0.5 }])
-  })
-
-  it('DOM：切换 tab 到定时任务并渲染成功状态徽章', async () => {
+  it('DOM：切换 tab 并渲染成功状态徽章', async () => {
     const fetchMock = defaultRoutes({
       tasks: { data: { tasks: { tasks: [{ id: 't1', time: '09:00', schedule: '09:00', enabled: true, action: 'chat', last_status: 'success', last_run: '2024-01-01 09:00' }] } } },
     })
     const w = mountSettings(fetchMock)
     await flushPromises()
-    const tasksTab = w.findAll('.seg button').find((b) => b.text().includes('定时任务'))
-    await tasksTab.trigger('click')
     // 成功徽章渲染（statusBadge 模板分支）
     expect(w.text()).toContain('成功')
     expect(w.text()).toContain('2024-01-01 09:00')
-  })
-})
-
-  it('saveOutreach success:false 显示错误 toast（else 分支）', async () => {
-    const fetchMock = vi.fn(async (url, opts) => {
-      if (opts?.method === 'PUT' && url.includes('/outreach-config')) return ok({ success: false, error: { message: 'boom' } })
-      if (url.includes('/outreach-config')) return ok(outreachData)
-      if (url.includes('/tasks')) return ok({ data: { tasks: { tasks: [] } } })
-      return ok({ data: { agents: [] } })
-    })
-    const w = mountSettings(fetchMock)
-    await flushPromises()
-    await w.vm.saveOutreach()
-    await flushPromises()
-    const { useToastStore } = await import('@/stores/toast.js')
-    expect(useToastStore().toasts.some((t) => t.msg.includes('保存失败: boom'))).toBe(true)
-  })
-
-  it('saveOutreach 请求抛错显示错误 toast（catch 分支）', async () => {
-    const fetchMock = vi.fn(async (url, opts) => {
-      if (opts?.method === 'PUT' && url.includes('/outreach-config')) throw new Error('net')
-      if (url.includes('/outreach-config')) return ok(outreachData)
-      if (url.includes('/tasks')) return ok({ data: { tasks: { tasks: [] } } })
-      return ok({ data: { agents: [] } })
-    })
-    const w = mountSettings(fetchMock)
-    await flushPromises()
-    await w.vm.saveOutreach()
-    await flushPromises()
-    const { useToastStore } = await import('@/stores/toast.js')
-    expect(useToastStore().toasts.some((t) => t.msg === '保存失败')).toBe(true)
   })
 
   it('saveTasks 失败分支（success:false 与抛错）', async () => {
@@ -307,7 +194,6 @@ describe('SessionSettings', () => {
         if (mode === 'throw') throw new Error('net')
         return ok({ success: true })
       }
-      if (url.includes('/outreach-config')) return ok(outreachData)
       if (url.includes('/tasks')) return ok({ data: { tasks: { tasks: [] } } })
       return ok({ data: { agents: [] } })
     })
@@ -332,51 +218,15 @@ describe('SessionSettings', () => {
     expect(w.emitted('close')).toHaveLength(1)
   })
 
-  it('DOM：oc 配置字段编辑并保存（setter 覆盖）', async () => {
-    const putCalls = []
-    const fetchMock = vi.fn(async (url, opts) => {
-      if (opts?.method === 'PUT' && url.includes('/outreach-config')) { putCalls.push(JSON.parse(opts.body)); return ok({ success: true }) }
-      if (url.includes('/outreach-config')) return ok(outreachData)
-      if (url.includes('/tasks')) return ok({ data: { tasks: { tasks: [] } } })
-      return ok({ data: { agents: [] } })
-    })
-    const w = mountSettings(fetchMock)
-    await flushPromises()
-    // enabled 开关
-    await w.find('input[type=checkbox]').setValue(false)
-    // 综合冷却
-    await w.findAll('input[type=number]')[0].setValue('25')
-    // 定点时间（scheduleOn 默认 true）
-    await w.find('input[placeholder="14:00"]').setValue('16:00')
-    // 开启屏幕触发 → 阈值
-    await w.findAll('input[type=checkbox]')[2].setValue(true)
-    await w.findAll('input[title="变化幅度"]')[0].setValue('0.7')
-    // 时段文本
-    await w.find('input[placeholder^="09:00-12:00"]').setValue('10:00-11:00@0.8')
-    const saveBtn = w.findAll('button').find((b) => b.text().includes('保存主动搭话'))
-    await saveBtn.trigger('click')
-    await flushPromises()
-    const body = putCalls[0].outreach
-    expect(body.enabled).toBe(false)
-    expect(body.cooldown_minutes).toBe(25)
-    expect(body.schedule.time).toBe('16:00')
-    expect(body.screen.enabled).toBe(true)
-    expect(body.screen.change_ratio).toBe(0.7)
-    expect(body.time_windows).toEqual([{ start: '10:00', end: '11:00', probability: 0.8 }])
-  })
-
   it('DOM：任务字段编辑（各类型/开关/人格/prompt）并保存', async () => {
     const putCalls = []
     const fetchMock = vi.fn(async (url, opts) => {
       if (opts?.method === 'PUT' && url.includes('/tasks')) { putCalls.push(JSON.parse(opts.body)); return ok({ success: true }) }
-      if (url.includes('/outreach-config')) return ok(outreachData)
       if (url.includes('/tasks')) return ok({ data: { tasks: { tasks: [] } } })
       return ok({ data: { agents: [{ role: 'assistant', name: '助手' }] } })
     })
     const w = mountSettings(fetchMock)
     await flushPromises()
-    const tasksTab = w.findAll('.seg button').find((b) => b.text().includes('定时任务'))
-    await tasksTab.trigger('click')
     await w.findAll('button').find((b) => b.text().includes('添加任务')).trigger('click')
     // daily 时间
     await w.find('input[placeholder="HH:MM"]').setValue('10:30')
@@ -397,3 +247,4 @@ describe('SessionSettings', () => {
     expect(t.agent_type).toBe('assistant')
     expect(t.prompt).toBe('请提醒喝水')
   })
+})

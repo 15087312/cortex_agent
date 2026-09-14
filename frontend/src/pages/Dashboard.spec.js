@@ -43,7 +43,6 @@ describe('Dashboard 页面', () => {
     expect(w.vm.moduleOk).toBe('1/2')
     expect(w.vm.totalEvents).toBe(5)
     expect(w.vm.totalSessions).toBe(1)
-    expect(w.vm.enabledOutreach).toBe(1)
     expect(w.vm.perceptionRunning).toBe(true)
   })
 
@@ -135,7 +134,7 @@ describe('Dashboard 页面', () => {
     expect(w.vm.sessions).toEqual([])
   })
 
-  it('DOM：路由卡片/会话行/管理规则按钮触发 router.push', async () => {
+  it('DOM：路由卡片/会话行触发 router.push', async () => {
     routeFetch([
       { match: '/management/dashboard', data: { data: {} } },
       { match: '/stream/sessions', data: { data: [{ session_id: 'abc123', title: '会话', last_active: '2024-01-01T00:00:00' }] } },
@@ -155,10 +154,6 @@ describe('Dashboard 页面', () => {
     // 最近会话行
     await w.find('.dash-session-row').trigger('click')
     expect(pushMock).toHaveBeenCalledWith('/chat?session=abc123')
-    // 管理规则按钮
-    const manageBtn = w.findAll('button').find((b) => b.text().includes('管理规则'))
-    await manageBtn.trigger('click')
-    expect(pushMock).toHaveBeenCalledWith('/outreach')
   })
 
   it('DOM：API 日志筛选下拉 + 详情按钮 + 复制/关闭', async () => {
