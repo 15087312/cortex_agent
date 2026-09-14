@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from config.settings import settings
-from api.errors import AppError, ErrorCode
+from infra.errors import AppError, ErrorCode
 
 AUTH = {"X-API-Key": "test-secret"}
 AUDIO_MIME = "audio/wav"

@@ -43,6 +43,7 @@ class InMemoryMCPToolExecutor(ToolExecutorPort):
     def register(self, tool_name: str, func: Callable) -> None:
         self._funcs[tool_name] = func
 
+    # @link:block InMemoryMCPToolExecutor_execute_Emit = Emit
     def execute(self, request: ToolCallRequest) -> ToolCallResult:
         start = time.time()
         func = self._funcs.get(request.tool_name)

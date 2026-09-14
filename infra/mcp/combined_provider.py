@@ -195,6 +195,7 @@ class CombinedToolExecutor(ToolExecutorPort):
     def __init__(self, server_manager: MCPServerManager):
         self._server_manager = server_manager
 
+    # @link:block CombinedToolExecutor_execute_Emit = Emit
     def execute(self, request: ToolCallRequest) -> ToolCallResult:
         """执行工具调用
 
@@ -222,6 +223,7 @@ class CombinedToolExecutor(ToolExecutorPort):
             latency_ms=(time.time() - start) * 1000,
         )
 
+    # @link:block CombinedToolExecutor_execute_local_Emit = Emit
     def _execute_local(self, request: ToolCallRequest, start: float) -> ToolCallResult:
         """执行本地工具（async 函数在当前事件循环执行，sync 函数走线程池）"""
         from infra.tool_manager.tool_registry import ToolRegistry
@@ -290,6 +292,7 @@ class CombinedToolExecutor(ToolExecutorPort):
                 latency_ms=latency,
             )
 
+    # @link:block CombinedToolExecutor_execute_mcp_Emit = Emit
     def _execute_mcp(self, mcp_tool, request: ToolCallRequest, start: float) -> ToolCallResult:
         """执行 MCP 远程工具"""
         async def _call():

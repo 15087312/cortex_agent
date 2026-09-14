@@ -1,3 +1,4 @@
+# @link:block Calculator_Emit = Emit
 """
 计算器工具 - 数学运算
 """

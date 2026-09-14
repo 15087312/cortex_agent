@@ -4,12 +4,12 @@
 提供语音识别和图像分析的完整流程支持。
 """
 from fastapi import APIRouter, UploadFile, File, Form, Depends
-from api.auth import require_api_key
+from infra.auth import require_api_key
 from fastapi.responses import JSONResponse
 import base64
 import json
 
-from api.errors import AppError, ErrorCode
+from infra.errors import AppError, ErrorCode
 from utils.logger import setup_logger
 from infra.data_process.core.speech_recognizer import get_default_recognizer
 from infra.data_process.core.image_analyzer import get_default_analyzer
@@ -33,6 +33,7 @@ ALLOWED_IMAGE_MIME = {
 }
 
 
+# @link:block Validate_Guard = Guard
 def _validate_upload(file: UploadFile, allowed_mime: set, max_size: int = MAX_UPLOAD_SIZE_BYTES) -> None:
     """验证上传文件的 MIME 类型与大小，不合法时抛出 AppError"""
     ct = file.content_type
@@ -54,6 +55,7 @@ router = APIRouter(prefix="/data-process", tags=["信息处理"],
 )
 
 
+# @link:block Speech_Recognize = Emit
 @router.post("/speech/recognize")
 async def recognize_speech(
     audio_file: UploadFile = File(...),
@@ -97,6 +99,7 @@ async def recognize_speech(
         raise AppError(ErrorCode.INTERNAL_ERROR, "服务暂时不可用，请稍后重试")
 
 
+# @link:block Speech_Recognize_Base64 = Emit
 @router.post("/speech/recognize-base64")
 async def recognize_speech_base64(
     audio: str = Form(...),
@@ -113,6 +116,7 @@ async def recognize_speech_base64(
         raise AppError(ErrorCode.INTERNAL_ERROR, "服务暂时不可用，请稍后重试")
 
 
+# @link:block Image_Analyze = Emit
 @router.post("/image/analyze")
 async def analyze_image(
     image_file: UploadFile = File(...),
@@ -153,6 +157,7 @@ async def analyze_image(
         )
 
 
+# @link:block Image_Analyze_Base64 = Emit
 @router.post("/image/analyze-base64")
 async def analyze_image_base64(
     image: str = Form(...),
@@ -273,6 +278,7 @@ async def analyze_with_query(
         raise AppError(ErrorCode.INTERNAL_ERROR, "服务暂时不可用，请稍后重试")
 
 
+# @link:block Draw_Elements_Emit = Emit
 @router.post("/image/draw-elements")
 async def draw_ui_elements(
     image_file: UploadFile = File(...),

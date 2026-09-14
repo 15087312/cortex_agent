@@ -768,6 +768,7 @@ def _fetch_results_content(results: List[Dict[str, str]], max_fetch: int = 3) ->
 
 # ── 主入口 ──
 
+# @link:block Web_Search_Emit = Emit
 @ToolRegistry.register(
     "web_search",
     description=(

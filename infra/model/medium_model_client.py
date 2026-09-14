@@ -12,6 +12,7 @@ from utils.logger import setup_logger
 logger = setup_logger("medium_model_client")
 
 
+# @link:block MEDIUM_Client_Guard = Guard
 class MediumModelClient(BaseModelClient):
     """中模型客户端 - API 调用（DeepSeek 32B 级）
 
@@ -64,6 +65,7 @@ class MediumModelClient(BaseModelClient):
     # 原生工具调用 chat()
     # ------------------------------------------------------------------
 
+    # @link:block MEDIUM_Chat_Emit = Emit
     async def chat(
         self,
         messages: List[ChatMessage],
@@ -155,6 +157,7 @@ class MediumModelClient(BaseModelClient):
             usage={"prompt_tokens": data.get("usage", {}).get("prompt_tokens", 0), "completion_tokens": data.get("usage", {}).get("completion_tokens", 0)},
         )
 
+    # @link:block MEDIUM_Generate_Emit = Emit
     async def generate(self, prompt: str, *, system_prompt: str,  # type: ignore[override]
                        fallback_to_reasoning: bool = False, **kwargs) -> str:
         """生成响应（支持 OpenAI / Anthropic）

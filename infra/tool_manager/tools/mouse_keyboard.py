@@ -1,3 +1,4 @@
+# @link:block Mouse_Keyboard_Emit = Emit
 """
 鼠标键盘工具 - 调用基础设施层的硬件控制器
 

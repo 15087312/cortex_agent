@@ -26,6 +26,7 @@ def _log_entry(log_file: str, entry: dict):
         logger.warning(f"审计日志写入失败: {e}")
 
 
+# @link:block Log_Tool_Call = Emit
 @ToolRegistry.register("log_tool_call", description="记录工具调用的详细信息（时间、角色、参数、结果）。用于审计追溯。", params={
     "tool_name": "调用的工具名",
     "caller_role": "调用者角色",

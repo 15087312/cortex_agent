@@ -14,6 +14,7 @@ import json
 logger = setup_logger("small_model_client")
 
 
+# @link:block SMALL_Client_Guard = Guard
 class SmallModelClient(BaseModelClient):
     """小模型客户端 - 云端 API（7B）
 
@@ -70,6 +71,7 @@ class SmallModelClient(BaseModelClient):
             api_url=settings.SMALL_MODEL_API_URL or settings.LARGE_MODEL_API_URL,
         )
 
+    # @link:block SMALL_Chat_Emit = Emit
     async def chat(
         self,
         messages: List[ChatMessage],
@@ -154,6 +156,7 @@ class SmallModelClient(BaseModelClient):
             usage={"prompt_tokens": data.get("usage", {}).get("prompt_tokens", 0), "completion_tokens": data.get("usage", {}).get("completion_tokens", 0)},
         )
 
+    # @link:block SMALL_Generate_Emit = Emit
     async def generate(self, prompt: str, *, system_prompt: str, max_retries: int = 3,  # type: ignore[override]
                        fallback_to_reasoning: bool = False, **kwargs) -> str:
         """生成响应 - 使用 OpenAI / Anthropic 兼容 API，带重试机制

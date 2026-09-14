@@ -1,3 +1,4 @@
+# @link:block Skill_Creator_Emit = Emit
 """create_skill 工具 — 创建 SKILL.md 格式的技能说明书
 
 委托 SkillManager.create_skill() 落盘（内部使用 yaml.safe_dump 序列化 front matter，

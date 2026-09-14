@@ -212,6 +212,7 @@ class CDPScanner:
 
         return elements
 
+# @link:block Scan_Active_Emit = Emit
     def scan_active_chromium(self, app_name: str = "", max_depth: int = 3) -> Dict[str, Any]:
         """扫描活跃的 Chromium 应用"""
         ports = self.find_chromium_ports()

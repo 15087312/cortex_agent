@@ -191,6 +191,7 @@ async def get_default_recognizer() -> SpeechRecognizer:
     return _default_recognizer
 
 
+# @link:block Cloud_STT_Emit = Emit
 def transcribe_with_api(audio_bytes: bytes, language: str = "zh",
                         sample_rate: int = 16000) -> str:
     """云端 STT（OpenAI 兼容 /audio/transcriptions）——PCM→WAV→POST

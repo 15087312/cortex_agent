@@ -20,6 +20,7 @@ _service_lock = threading.Lock()
 _manager_lock = threading.Lock()
 
 
+# @link:block get_server_manager_Emit = Emit
 def get_server_manager() -> MCPServerManager:
     """获取全局 MCPServerManager 单例"""
     global _manager
@@ -32,6 +33,7 @@ def get_server_manager() -> MCPServerManager:
     return _manager
 
 
+# @link:block get_mcp_tool_service_Emit = Emit
 def get_mcp_tool_service() -> MCPToolService:
     """获取全局 MCPToolService 单例（连接本地 ToolRegistry + 远程 MCP server）"""
     global _service

@@ -13,7 +13,6 @@ def test_perception_status_port(monkeypatch):
     ps = MagicMock()
     ps._started = True
     ps.voice_detector = MagicMock()
-    ps.proactive_trigger = None
     ps.world_state = None
     import modules.perception as perception_mod
     monkeypatch.setattr(perception_mod, "get_perception_system", lambda: ps)

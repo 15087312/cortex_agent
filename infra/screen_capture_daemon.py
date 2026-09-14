@@ -259,6 +259,17 @@ class ScreenCaptureDaemon:
 
 
 def main():
+    # 防残留: 绑定后端进程（env > ~/.cortex/backend_pid.json，等 30s 兼容先后端后卫星）。
+    # 本 daemon 历史上常成为孤儿（父进程退出但无人 terminate），绑定后端后自动退出。
+    # daemon 未注册屏幕录制权限时仍可绑定——权限归属由启动方继承。
+    try:
+        _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if _root not in sys.path:
+            sys.path.insert(0, _root)
+        from cortex.watchdog import bind_backend
+        bind_backend()
+    except Exception:
+        pass
     daemon = ScreenCaptureDaemon()
     daemon.run()
 

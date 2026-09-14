@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 from unittest.mock import AsyncMock, MagicMock
 
-from api.errors import AppError
+from infra.errors import AppError
 from infra.tool_manager import api as tools_api
 from infra.tool_manager import ToolRegistry
 from infra.tool_manager.service_registry import (
@@ -44,7 +44,7 @@ def client(app):
 
 @pytest.fixture
 def auth(monkeypatch):
-    from api import auth as auth_mod
+    from infra import auth as auth_mod
     monkeypatch.setattr(auth_mod.settings, "SIMPLE_API_KEY", AUTH_KEY)
     return AUTH_KEY
 

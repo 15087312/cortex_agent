@@ -1,3 +1,4 @@
+# @link:block External_API_Guard = Guard
 """
 外部 API 工具 — HTTP GET/POST 与通用外部 API 调用
 """
@@ -40,6 +41,7 @@ def _is_private_ip(url: str) -> bool:
         return False
 
 
+# @link:block HTTP_Get_Emit = Emit
 @ToolRegistry.register("http_get", description="发送 HTTP GET 请求到指定 URL。用于调用 REST API 和获取网页数据。", params={
     "url": "请求的 URL",
     "headers": "可选，请求头（JSON 格式字符串）",

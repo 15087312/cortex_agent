@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import modules.management.core.error_bus as eb
+import infra.error_bus as eb
 from modules.management.core.error_bus import (
     ErrorContext,
     ErrorReport,

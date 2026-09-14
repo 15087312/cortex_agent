@@ -410,6 +410,7 @@ def list_my_tools() -> str:
     return "\n".join(lines)
 
 
+# @link:block Delete_AI_Tool = Emit
 @ToolRegistry.register(
     "delete_tool",
     description="删除一个 AI 自创的自定义工具。只允许删除由 create_tool 创建的工具。",
@@ -449,6 +450,7 @@ def delete_tool(tool_name: str) -> str:
     return f"✅ 工具「{tool_name}」已成功删除，已从持久化存储中移除。"
 
 
+# @link:block Edit_AI_Tool = Emit
 @ToolRegistry.register(
     "edit_tool",
     description=(

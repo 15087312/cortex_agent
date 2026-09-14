@@ -42,6 +42,7 @@ DANGEROUS_PATTERNS = [
 ]
 
 
+# @link:block Scan_Secrets_Guard = Guard
 @ToolRegistry.register("scan_secrets", description="扫描代码文件中的硬编码密钥、密码、API Key 等敏感信息。", params={"path": "文件或目录路径"}, risk_level="LOW", category="query")
 def scan_secrets(path: str) -> Dict[str, Any]:
     p = Path(path).expanduser()

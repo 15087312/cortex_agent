@@ -1,3 +1,4 @@
+# @link:block Open_App_Emit = Emit
 """open_app 工具 — 打开/切换到指定应用"""
 import os
 import subprocess

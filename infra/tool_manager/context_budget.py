@@ -83,8 +83,12 @@ class ContextBudgetManager:
         与全局 token 计数口径一致，避免此前 (CN+EN//4)//3 的启发式
         与 CompressionEngine 双套标准不一致的问题。
         """
-        from modules.thinking.context.controller import get_context_controller
-        return get_context_controller().count_tokens(text)
+        from infra.tool_manager.service_registry import get_capability
+        factory = get_capability("context_controller")
+        if factory is None:
+            # 未注册时降级：按中英混合保守估算（不阻塞工具调用）
+            return (len(text) + len(text.encode("utf-8")) // 3) // 4 + 1
+        return factory().count_tokens(text)
 
     def estimate_tool_descriptions_tokens(self, tool_count: int) -> int:
         """估计工具描述占用的 token 数

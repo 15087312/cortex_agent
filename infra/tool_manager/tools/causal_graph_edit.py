@@ -24,8 +24,12 @@ def _resolve_nodes(graph, label: str):
 
 def _clean_events_of_nodes(removed_ids: set) -> int:
     """解除事件与被删除节点的因果关联，返回清理的事件数"""
-    from modules.memory.event_store import EventStore
-    store = EventStore.get_instance()
+    from infra.tool_manager.service_registry import get_capability
+    factory = get_capability("event_store")
+    if factory is None:
+        logger.warning("事件存储能力未注册，跳过事件因果关联清理")
+        return 0
+    store = factory()
     cleaned = 0
     for ev in store.list_events(limit=1000):
         ids = [x for x in (ev.causal_node_ids or []) if x not in removed_ids]
@@ -58,9 +62,11 @@ def causal_graph_edit(action: str = "", from_label: str = "", to_label: str = ""
                       node_label: str = "", **kwargs) -> str:
     """编辑因果图 — 返回 JSON 字符串"""
     try:
-        from modules.memory.causal_graph import CausalGraph
-
-        graph = CausalGraph.get_instance()
+        from infra.tool_manager.service_registry import get_capability
+        factory = get_capability("causal_graph")
+        if factory is None:
+            return json.dumps({"error": "因果图能力未注册"}, ensure_ascii=False)
+        graph = factory()
         action = (action or "").strip()
 
         if action == "delete_edge":

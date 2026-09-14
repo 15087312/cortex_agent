@@ -16,6 +16,7 @@ from infra.tool_manager.service_registry import get_capability
 logger = get_logger(__name__)
 
 
+# @link:block LARGE_Client_Guard = Guard
 class LargeModelClient(BaseModelClient):
     """大模型调用客户端 — 支持 DashScope / OpenAI 两种 API 格式"""
 
@@ -28,6 +29,9 @@ class LargeModelClient(BaseModelClient):
         api_url: str = None,
         timeout: Optional[int] = None,
         api_format: str = "",
+        model_name: str = None,
+        api_provider: str = "",
+        enable_thinking: bool = True,  # 桌宠等短对话场景传 False，避免 DeepSeek thinking 首 token 延迟
     ):
         tier_cfg = settings.resolve_model_tier("large") if settings.LARGE_MODEL_PROVIDER else None
         key = api_key or (tier_cfg or {}).get("api_key") or settings.LARGE_MODEL_API_KEY
@@ -36,7 +40,8 @@ class LargeModelClient(BaseModelClient):
         self.max_tokens = 4096
         self.temperature = 0.7
         self.reasoning_effort = ""
-        self.model_name = (tier_cfg or {}).get("model") or settings.LARGE_MODEL_NAME
+        self.enable_thinking = enable_thinking
+        self.model_name = model_name or (tier_cfg or {}).get("model") or settings.LARGE_MODEL_NAME
         self._api_format = api_format or (tier_cfg or {}).get("api_format") or settings.LARGE_MODEL_API_FORMAT
 
         # 自动检测 API 格式
@@ -45,8 +50,9 @@ class LargeModelClient(BaseModelClient):
         self.supports_native_tools = True
         # 接线 config.providers 格式层（headers/请求体/URL 归一化统一由 Provider 负责；
         # 响应/流式解析保留客户端特有能力，见 config/providers/registry.py）
+        provider = api_provider or settings.LARGE_MODEL_PROVIDER
         from config.providers.registry import get_provider
-        self._provider = get_provider(self.model_name, key, url, self._api_format, settings.LARGE_MODEL_PROVIDER)
+        self._provider = get_provider(self.model_name, key, url, self._api_format, provider)
         # 注入 OpenRouter 路由的上游供应商偏好（设置页「OpenRouter 供应商」，仅 openrouter 生效）
         self._provider.openrouter_supplier = settings.LARGE_MODEL_OPENROUTER_SUPPLIER
         # chat_url() 做 /v1、/chat/completions、/messages 归一化，消除"配 /v1 直接 404"
@@ -76,6 +82,7 @@ class LargeModelClient(BaseModelClient):
         # 默认 OpenAI 兼容（绝大多数兼容端点都是该格式；dashscope 已在上方精确识别）
         return "openai"
     
+    # @link:block LARGE_Generate_Emit = Emit
     async def generate(self, prompt: str, *, system_prompt: str, max_retries: int = 2,  # type: ignore[override]
                        fallback_to_reasoning: bool = False, **kwargs) -> str:
         """生成响应 - 支持 DashScope / OpenAI / Anthropic，带重试机制
@@ -91,6 +98,7 @@ class LargeModelClient(BaseModelClient):
 
         # 格式层统一由 Provider 构建（anthropic system 提取 / openai messages / dashscope input）
         headers = self._provider.build_headers()
+        provider_kwargs = {"enable_thinking": self.enable_thinking} if self._api_format == "openai" else {}
         payload = self._provider.build_request(
             [
                 {"role": "system", "content": system_prompt},
@@ -99,6 +107,7 @@ class LargeModelClient(BaseModelClient):
             max_tokens=kwargs.get("max_tokens", self.max_tokens),
             temperature=kwargs.get("temperature", self.temperature),
             reasoning_effort=kwargs.get("reasoning_effort", self.reasoning_effort),
+            **provider_kwargs,
         )
 
         last_error = None
@@ -225,6 +234,7 @@ class LargeModelClient(BaseModelClient):
     # 原生工具调用 chat()
     # ------------------------------------------------------------------
 
+    # @link:block LARGE_Chat_Emit = Emit
     async def chat(
         self,
         messages: List[ChatMessage],
@@ -259,6 +269,7 @@ class LargeModelClient(BaseModelClient):
             tools=tools,
             tool_choice=tool_choice,
             reasoning_effort=kwargs.get("reasoning_effort", self.reasoning_effort),
+            **({"enable_thinking": self.enable_thinking} if self._api_format == "openai" else {}),
         )
 
         max_retries = kwargs.get("max_retries", 2)
@@ -328,17 +339,20 @@ class LargeModelClient(BaseModelClient):
     # 流式对话生成
     # ------------------------------------------------------------------
 
+    # @link:block LARGE_ChatStream_Emit = Emit
     async def chat_stream(
         self,
         messages: List[ChatMessage],
         tools: Optional[List[Dict]] = None,
         on_token: Optional[Callable[[str], None]] = None,
+        on_reasoning: Optional[Callable[[str], None]] = None,
         **kwargs,
     ) -> ChatResponse:
         """流式对话生成 — 每收到一个文本 token 调用 on_token 回调
 
         支持 OpenAI / Anthropic / DashScope 三种流式格式。
         工具调用通过 SSE delta 累积，最终返回完整 ChatResponse。
+        on_reasoning：思考过程片段（reasoning_content / thinking delta）逐段回调。
         """
         # ── 格式层统一由 Provider 构建（headers/请求体，stream 由 build_request 处理）──
         api_messages = self._messages_to_api(messages)
@@ -358,6 +372,7 @@ class LargeModelClient(BaseModelClient):
             tool_choice=tool_choice,
             stream=True,
             reasoning_effort=kwargs.get("reasoning_effort", self.reasoning_effort),
+            **({"enable_thinking": self.enable_thinking} if self._api_format == "openai" else {}),
         )
 
         # ── 发起流式请求并解析 SSE ──
@@ -382,11 +397,11 @@ class LargeModelClient(BaseModelClient):
 
                     # 按 API 格式解析 SSE 流
                     if self._api_format == "anthropic":
-                        result = await self._parse_anthropic_stream(response, on_token)
+                        result = await self._parse_anthropic_stream(response, on_token, on_reasoning)
                     elif self._api_format == "dashscope":
-                        result = await self._parse_dashscope_stream(response, on_token)
+                        result = await self._parse_dashscope_stream(response, on_token, on_reasoning)
                     else:
-                        result = await self._parse_openai_stream(response, on_token)
+                        result = await self._parse_openai_stream(response, on_token, on_reasoning)
                     resp_text = ""
                     if result and hasattr(result, 'message'):
                         resp_text = getattr(result.message, 'content', '') or ""
@@ -409,6 +424,7 @@ class LargeModelClient(BaseModelClient):
 
     async def _parse_openai_stream(
         self, response: aiohttp.ClientResponse, on_token: Optional[Callable],
+        on_reasoning: Optional[Callable] = None,
     ) -> ChatResponse:
         """解析 OpenAI SSE 流"""
         text_parts: List[str] = []
@@ -445,10 +461,12 @@ class LargeModelClient(BaseModelClient):
                     if on_token:
                         on_token(content)
 
-                # 思考 token（deepseek reasoning_content）
+                # 思考 token（deepseek reasoning_content）— 逐段回调给上层
                 reasoning = delta.get("reasoning_content")
                 if reasoning:
                     reasoning_parts.append(reasoning)
+                    if on_reasoning:
+                        on_reasoning(reasoning)
 
                 # 工具调用 delta
                 # 注意：某些 provider（如 DeepSeek reasoning）的 delta.tool_calls 可为 null
@@ -491,9 +509,11 @@ class LargeModelClient(BaseModelClient):
 
     async def _parse_anthropic_stream(
         self, response: aiohttp.ClientResponse, on_token: Optional[Callable],
+        on_reasoning: Optional[Callable] = None,
     ) -> ChatResponse:
         """解析 Anthropic SSE 流"""
         text_parts: List[str] = []
+        reasoning_parts: List[str] = []
         tool_calls_list: List[ToolCall] = []
         current_tool: Optional[Dict] = None
         finish_reason = "stop"
@@ -526,6 +546,12 @@ class LargeModelClient(BaseModelClient):
                             text_parts.append(text)
                             if on_token:
                                 on_token(text)
+                    elif delta.get("type") == "thinking_delta":
+                        thinking = delta.get("thinking", "")
+                        if thinking:
+                            reasoning_parts.append(thinking)
+                            if on_reasoning:
+                                on_reasoning(thinking)
                     elif delta.get("type") == "input_json_delta":
                         if current_tool is not None:
                             current_tool["input_parts"].append(delta.get("partial_json", ""))
@@ -560,6 +586,7 @@ class LargeModelClient(BaseModelClient):
 
     async def _parse_dashscope_stream(
         self, response: aiohttp.ClientResponse, on_token: Optional[Callable],
+        on_reasoning: Optional[Callable] = None,
     ) -> ChatResponse:
         """解析 DashScope SSE 流"""
         text_parts: List[str] = []

@@ -10,6 +10,7 @@
 """
 
 
+# @link:block CONFIG_Fingerprint_Emit = Emit
 def model_config_fingerprint(tier: str) -> tuple:
     """返回指定层级（large/medium/small）模型配置的指纹元组。
 
@@ -25,6 +26,7 @@ def model_config_fingerprint(tier: str) -> tuple:
     )
 
 
+# @link:block CONFIG_CloseSession_Guard = Guard
 def close_client_session(client) -> None:
     """尽力关闭旧 model client 的 aiohttp session（配置变更重建时调用，非阻塞）"""
     if client is None:

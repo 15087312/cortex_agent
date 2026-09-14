@@ -230,9 +230,6 @@ def test_perception_screen_backends_importable():
     import modules.perception.screen.vision_backend  # noqa: F401
 
 
-def test_perception_trigger_importable():
-    import modules.perception.trigger  # noqa: F401
-    import modules.perception.trigger_think  # noqa: F401
 
 
 def test_tool_permission_controller():

@@ -213,6 +213,7 @@ class MCPServerManager:
         """返回工具对应的 server 名"""
         return self._tool_to_server.get(tool_name)
 
+    # @link:block MCPServerManager_call_tool_Emit = Emit
     async def call_tool(self, tool_name: str, arguments: Dict = None) -> Dict:
         """调用指定工具"""
         server_name = self._tool_to_server.get(tool_name)
@@ -235,6 +236,7 @@ class MCPServerManager:
             for name, t in self._transports.items()
         ]
 
+    # @link:block MCPServerManager_remove_server_Emit = Emit
     async def remove_server(self, name: str) -> bool:
         """移除单个 MCP server（独立热卸载）。
 
@@ -264,6 +266,7 @@ class MCPServerManager:
         logger.info(f"[MCP] 已移除 server: {name}")
         return True
 
+    # @link:block MCPServerManager_replace_server_Emit = Emit
     async def replace_server(self, name: str, command: str = None,
                              args: list = None, env: dict = None,
                              url: str = "") -> bool:

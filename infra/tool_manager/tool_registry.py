@@ -195,6 +195,7 @@ class ToolRegistry:
     _logger = setup_logger("tool_registry")
 
     # 运行时启停持久化（data/tool_settings.json）
+    # @link:block Tool_Enabled_Guard = Guard
     _disabled_tools: set = set()
     _disabled_loaded: bool = False
     _settings_lock = threading.RLock()

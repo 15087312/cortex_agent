@@ -45,6 +45,7 @@ class MCPStdioTransport:
         self._connected = False
         self._loop: Optional[asyncio.AbstractEventLoop] = None
 
+    # @link:block StdioSubmit
     def _submit_on_loop(self, coro_factory) -> Any:
         """把 session 调用提交回其绑定的常驻事件循环。
 
@@ -59,6 +60,7 @@ class MCPStdioTransport:
         fut = asyncio.run_coroutine_threadsafe(coro_factory(), self._loop)
         return fut.result(timeout=self._timeout)
 
+    # @link:block StdioConnect
     async def connect(self) -> bool:
         """启动子进程并建立 MCP 连接，保持 session 活跃直到 close()"""
         try:
@@ -102,6 +104,7 @@ class MCPStdioTransport:
             await self.close()
             return False
 
+    # @link:block StdioList
     async def list_tools(self) -> List[MCPToolDef]:
         """获取工具列表（优先从缓存返回）"""
         if self._tools_cache:
@@ -131,6 +134,7 @@ class MCPStdioTransport:
             logger.error(f"[MCP] list_tools 失败 {self.server_name}: {e}")
             return self._tools_cache
 
+    # @link:block StdioCall
     async def call_tool(self, tool_name: str, arguments: Dict[str, Any] = None) -> Dict[str, Any]:
         """调用 MCP server 上的工具"""
         if not self._session:
@@ -154,6 +158,7 @@ class MCPStdioTransport:
             logger.error(f"[MCP] call_tool 失败 {self.server_name}/{tool_name}: {e}")
             return {"isError": True, "content": [{"type": "text", "text": str(e)}]}
 
+    # @link:block StdioClose
     async def close(self):
         """关闭连接，清理子进程和 session 资源"""
         self._connected = False
@@ -212,6 +217,7 @@ class MCPSseTransport:
         fut = asyncio.run_coroutine_threadsafe(coro_factory(), self._loop)
         return fut.result(timeout=self._timeout)
 
+    # @link:block SseConnect
     async def connect(self) -> bool:
         """连接远程 SSE MCP server"""
         try:
@@ -248,6 +254,7 @@ class MCPSseTransport:
             await self.close()
             return False
 
+    # @link:block SseList
     async def list_tools(self) -> List[MCPToolDef]:
         if self._tools_cache:
             return self._tools_cache
@@ -275,6 +282,7 @@ class MCPSseTransport:
             logger.error(f"[MCP-SSE] list_tools 失败 {self.server_name}: {e}")
             return self._tools_cache
 
+    # @link:block SseCall
     async def call_tool(self, tool_name: str, arguments: Dict[str, Any] = None) -> Dict[str, Any]:
         if not self._session:
             return {"isError": True, "content": [{"type": "text", "text": f"MCP server {self.server_name} 未连接"}]}
@@ -297,6 +305,7 @@ class MCPSseTransport:
             logger.error(f"[MCP-SSE] call_tool 失败 {self.server_name}/{tool_name}: {e}")
             return {"isError": True, "content": [{"type": "text", "text": str(e)}]}
 
+    # @link:block SseClose
     async def close(self):
         self._connected = False
         self._session = None

@@ -73,6 +73,7 @@ class ImageAnalyzer:
         self._initialized = False
         self._init_done = True
 
+# @link:block Initialize_Guard = Guard
     async def initialize(self):
         """初始化模型"""
         if self._initialized:
@@ -95,6 +96,7 @@ class ImageAnalyzer:
         self._initialized = True
         logger.info(f"图像分析器初始化完成 (类型: {self.model_type})")
 
+# @link:block Detect_Model_Guard = Guard
     def _detect_available_model(self) -> str:
         """根据配置选择视觉后端（api / local）"""
         from config.settings import settings

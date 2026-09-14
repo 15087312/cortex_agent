@@ -50,6 +50,7 @@ class MCPToolService:
     def get_tools_for_api(self, tool_whitelist: Optional[List[str]] = None, core_only: bool = False) -> List[Dict]:
         return self.provider.get_tools_for_api(tool_whitelist=tool_whitelist, core_only=core_only)
 
+    # @link:block MCPToolService_execute_Emit = Emit
     def execute(self, request: ToolCallRequest) -> ToolCallResult:
         tool = self.provider.get_tool(request.tool_name)
         if not tool:

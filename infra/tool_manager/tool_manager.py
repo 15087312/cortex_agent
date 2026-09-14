@@ -89,6 +89,7 @@ class ToolManager:
         return self._mcp_service
 
     # 所有工具执行和查询均通过 MCPToolService 路由
+    # @link:block Call_Tool_Emit = Emit
     def _use_mcp_for_lookup(self) -> bool:
         return True
 

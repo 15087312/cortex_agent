@@ -263,6 +263,7 @@ def _detect_elements(img, detect_buttons=True, extract_text=True, confidence=0.3
     return elements
 
 
+# @link:block _handle_analyze_ui_elements_Emit = Emit
 def _handle_analyze_ui_elements(params: dict):
     img = _capture_screen()
     if img is None:
@@ -289,6 +290,7 @@ def _handle_analyze_ui_elements(params: dict):
     return {"content": [{"type": "text", "text": "\n".join(lines)}]}
 
 
+# @link:block _handle_capture_and_analyze_Emit = Emit
 def _handle_capture_and_analyze(params: dict):
     img = _capture_screen()
     if img is None:
@@ -321,6 +323,7 @@ def _handle_capture_and_analyze(params: dict):
     return {"content": [{"type": "text", "text": "\n".join(summary)}]}
 
 
+# @link:block _handle_extract_text_Emit = Emit
 def _handle_extract_text(params: dict):
     img = _capture_screen()
     if img is None:
@@ -394,6 +397,16 @@ def _handle_call_tool(req: dict):
 
 
 def main():
+    # 防残留: 绑定后端进程（env > ~/.cortex/backend_pid.json），后端退出则自动退出。
+    # 正常路径靠 stdin EOF 退出，此处兜底 stdin 被重定向/未关闭的场景。
+    try:
+        _root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+        if _root not in sys.path:
+            sys.path.insert(0, _root)
+        from cortex.watchdog import bind_backend
+        bind_backend(fail_after=0)
+    except Exception:
+        pass
     if not _available:
         error_msg = json.dumps({
             "jsonrpc": "2.0",

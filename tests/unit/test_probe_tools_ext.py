@@ -134,11 +134,9 @@ def test_difference_notifier_ok(monkeypatch):
     det = MagicMock()
     monkeypatch.setattr("modules.perception.difference.get_detector", lambda: det)
     ps = MagicMock()
-    ps.proactive_trigger = MagicMock()
     monkeypatch.setattr("modules.perception.setup.get_perception_system", lambda: ps)
     n.notify_activity()
     det.notify_activity.assert_called_once()
-    ps.proactive_trigger.notify_activity.assert_called_once()
 
 
 def test_difference_notifier_error(monkeypatch):

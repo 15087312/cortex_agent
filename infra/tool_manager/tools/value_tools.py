@@ -1,3 +1,4 @@
+# @link:block Value_Tools_Emit = Emit
 """
 价值观系统修改工具 — 仅大模型可调用
 
@@ -24,6 +25,7 @@ def _get_formatter():
     return factory() if factory is not None else None
 
 
+# @link:block Modify_Values_Emit = Emit
 @ToolRegistry.register(
     "modify_value_system",
     description="修改 AI 的行为规则（仅大模型可用）。用于自我修正行为偏差或添加新的行为准则。",

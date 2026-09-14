@@ -4,7 +4,7 @@ from unittest.mock import patch
 import pytest
 from fastapi import HTTPException
 
-import api.auth as auth_mod
+import infra.auth as auth_mod
 
 
 def test_require_api_key_header_valid():

@@ -6,14 +6,15 @@ from typing import Dict, Any, Optional
 
 from infra.tool_manager import tool_manager, ToolRegistry
 from infra.tool_manager.service_registry import get_capability
-from api.errors import AppError, ErrorCode
+from infra.errors import AppError, ErrorCode
 
 logger = __import__("utils.logger", fromlist=["setup_logger"]).setup_logger("tool_api")
 
 # 统一认证：使用 X-API-Key
-from api.auth import require_api_key
+from infra.auth import require_api_key
 
 
+# @link:block Security_Gate = Guard
 async def _security_gate_check(tool_name: str, params: Dict[str, Any], caller_role: str) -> None:
     """执行模式安全门检查，拦截则抛出 HTTPException"""
     factory = get_capability("tool_security_gate")
@@ -53,6 +54,7 @@ def require_tool_auth(x_api_key: str = Header(None), caller_role: str = Header(d
 router = APIRouter(prefix="/tools", tags=["工具"])
 
 
+# @link:block Tool_Emit = Emit
 @router.get("/")
 async def list_tools(source: str = Query(None, description="来源过滤: builtin/plugin/dynamic")):
     """列出所有可用工具"""
@@ -75,8 +77,6 @@ async def get_tool_status():
         "success": True,
         "data": tool_manager.get_status()
     }
-
-
 
 
 @router.post("/call", dependencies=[Depends(require_tool_auth)])
@@ -185,7 +185,7 @@ async def get_tool_source(tool_name: str):
     except (OSError, TypeError):
         src = "# 该工具源码不可用（可能是内置/插件闭包）"
     editable = tool.source == "dynamic" and "ai_tool" in tool.tags
-    return {"success": True, "data": {"name": tool_name, "source": src, "editable": editable}}
+    return {"success": True, "data": {"name": tool_name, "source": src, "editable": editable}    }
 
 
 @router.get("/ai")

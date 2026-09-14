@@ -249,6 +249,7 @@ def _handle_list_tools(req: dict):
     })
 
 
+# @link:block _handle_check_screen_changes_Emit = Emit
 def _handle_check_screen_changes(_params: dict) -> dict:
     global _prev_frame, _frame_count
 
@@ -366,6 +367,16 @@ def _handle_call_tool(req: dict):
 
 
 def main():
+    # 防残留: 绑定后端进程（env > ~/.cortex/backend_pid.json），后端退出则自动退出。
+    # 正常路径靠 stdin EOF 退出，此处兜底 stdin 被重定向/未关闭的场景。
+    try:
+        _root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+        if _root not in sys.path:
+            sys.path.insert(0, _root)
+        from cortex.watchdog import bind_backend
+        bind_backend(fail_after=0)
+    except Exception:
+        pass
     if not _available:
         error_msg = json.dumps({
             "jsonrpc": "2.0",

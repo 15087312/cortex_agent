@@ -1,3 +1,4 @@
+# @link:block Web_Fetch_Emit = Emit
 """
 网页获取工具 — 通过 HTTP 获取网页内容
 
