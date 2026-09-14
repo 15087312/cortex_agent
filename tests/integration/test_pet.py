@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
-from api.errors import AppError
+from infra.errors import AppError
 from config.settings import settings
 from modules.thinking import chat_gateway
 
@@ -38,30 +38,30 @@ def gw_app(monkeypatch):
             content={"success": False, "error": {"code": exc.code, "message": exc.message}},
         )
 
+    from modules.desktop_pet import api as pet_api
     app.include_router(chat_gateway.router)
+    app.include_router(pet_api.router)
     return app, fake_repo
 
 
-def test_pet_session_delete_protected(gw_app):
-    app, _ = gw_app
-    pet = getattr(settings, "DESKTOP_PET_SESSION_ID", "pet_main") or "pet_main"
-    with TestClient(app) as client:
-        resp = client.delete(f"/stream/session/{pet}")
-        assert resp.status_code == 400
-        body = resp.json()
-        assert body["success"] is False
-        assert body["error"]["code"] == "PET_SESSION_PROTECTED"
-
-
-def test_pet_session_excluded_from_batch_delete(gw_app):
+def test_pet_session_delete_not_protected(gw_app):
+    """桌宠已非会话形态：pet_main 不再受保护，删除走正常逻辑"""
     app, fake_repo = gw_app
-    pet = getattr(settings, "DESKTOP_PET_SESSION_ID", "pet_main") or "pet_main"
+    with TestClient(app) as client:
+        resp = client.delete("/stream/session/pet_main")
+        assert resp.status_code == 200
+        assert "pet_main" in fake_repo.deleted
+
+
+def test_pet_session_included_in_batch_delete(gw_app):
+    """pet_main 不再是保留会话，参与批量删除"""
+    app, fake_repo = gw_app
     temp = "pet_batch_temp_test"
     with TestClient(app) as client:
         resp = client.post("/stream/sessions/batch-delete",
-                           json={"session_ids": [pet, temp]})
+                           json={"session_ids": ["pet_main", temp]})
         assert resp.status_code == 200
-        assert pet not in fake_repo.deleted
+        assert "pet_main" in fake_repo.deleted
         assert temp in fake_repo.deleted
 
 
@@ -112,7 +112,7 @@ def test_pet_state_model(tmp_path):
 
 def test_pet_chat_stream(gw_app, monkeypatch):
     app, _ = gw_app
-    async def _fake_stream(self, text, extra_system=""):
+    async def _fake_stream(self, text, extra_system="", on_reasoning=None):
         assert extra_system
         yield "你好"
         yield "呀"

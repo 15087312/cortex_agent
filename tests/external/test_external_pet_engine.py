@@ -32,17 +32,12 @@ def _frontend_connected() -> bool:
 
 @pytest.fixture
 def pe(tmp_path, monkeypatch):
-    import modules.database.session_repo as sr_mod
-    from modules.database.session_repo import SessionRepository
+    import modules.desktop_pet.store as store_mod
     from modules.desktop_pet.pet_engine import PetEngine
-    monkeypatch.setattr(conn.config, "sqlite_path", str(tmp_path / "pet_ext.db"))
-    monkeypatch.setattr(conn, "_db_manager", None)
-    monkeypatch.setattr(conn, "_db_manager_lock", threading.RLock())
-    conn.get_db_manager().initialize()
-    repo = SessionRepository()
-    repo.create_session("pet_main")
-    monkeypatch.setattr(sr_mod, "get_session_repo", lambda: repo)
-    return PetEngine(event_bus=None)
+    store = store_mod.PetStore(str(tmp_path / "pet_ext.db"))
+    monkeypatch.setattr(store_mod.PetStore, "_instance", store)
+    yield PetEngine(event_bus=None)
+    store_mod.PetStore._instance = None
 
 
 @pytest.mark.skipif(not _has_api_key(), reason="无大模型 API key")

@@ -479,20 +479,49 @@
     postMove({ active: false });
   });
 
-  /* ═══════════ 回复轮询（语音/互动 done 后显示） ═══════════ */
+  /* ═══════════ 回复轮询（语音/排队中动作的回复显示；互动 SSE 直显 token） ═══════════ */
   var lastReplyTime = 0;
+  var lastPollText = '';
   setInterval(function () {
     fetch('/stream/pet/last-reply', { headers: { 'Accept': 'application/json' } })
       .then(function (r) { return r.json(); })
       .then(function (d) {
         var data = d && d.data;
-        if (data && data.time && data.time !== lastReplyTime) {
+        if (!data || !data.time) return;
+        // ① 时间变化且文本非空 → 直接显示（语音/按键触发回复，页面未开 SSE 时也可见）
+        if (data.time !== lastReplyTime && data.text) {
           lastReplyTime = data.time;
-          showBubble(data.text || '');
+          lastPollText = data.text;
+          showBubble(data.text);
+          return;
+        }
+        // ② 时间未变但气泡已被本地流式清空/覆盖 → 本地显示已完成，恢复轮询基线
+        if (data.time === lastReplyTime && bubbleEl.textContent === '' && lastPollText) {
+          lastPollText = '';
         }
       })
       .catch(function () {});
   }, 1500);
+
+  /* ═══════════ 打开时恢复最近对话（pet.db 历史，last-reply 是内存态重启即丢） ═══════════ */
+  function restoreHistory() {
+    fetch('/stream/pet/history?limit=2', { headers: { 'Accept': 'application/json' } })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        var items = (d && d.data && d.data.items) || [];
+        var lines = [];
+        for (var i = 0; i < items.length; i++) {
+          var m = items[i] || {};
+          var content = (m.content || '').trim();
+          if (!content) continue;
+          if (content.length > 120) content = content.slice(0, 120) + '…';
+          lines.push((m.role === 'user' ? '你：' : '') + content);
+        }
+        if (lines.length) showBubble(lines.join('\n'));
+      })
+      .catch(function () {});
+  }
+  restoreHistory();
 })();
 </script>
 </body>
