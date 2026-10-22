@@ -36,8 +36,8 @@ def get_ocr_engine() -> Tuple[Optional[Any], Optional[str]]:
             _ocr_type = "paddle"
             logger.info("共享 OCR 引擎: PaddleOCR")
             return _ocr_engine, _ocr_type
-        except ImportError:
-            pass
+        except ImportError as _swallowed_err:
+            logger.debug(f"[get_ocr_engine] ignored ImportError: {_swallowed_err}")
 
         try:
             from rapidocr_onnxruntime import RapidOCR
@@ -45,8 +45,8 @@ def get_ocr_engine() -> Tuple[Optional[Any], Optional[str]]:
             _ocr_type = "rapid"
             logger.info("共享 OCR 引擎: RapidOCR")
             return _ocr_engine, _ocr_type
-        except ImportError:
-            pass
+        except ImportError as _swallowed_err:
+            logger.debug(f"[get_ocr_engine] ignored ImportError: {_swallowed_err}")
 
         _ocr_engine = None
         _ocr_type = None

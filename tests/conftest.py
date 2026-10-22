@@ -91,9 +91,16 @@ def _reset_feature_flags(monkeypatch, tmp_path):
         "PERCEPTION_MCP_ENABLED",
         "PERCEPTION_INTERNAL_ENABLED",
     ]
-    # EXECUTION_MODE 不是 bool，单独处理
+    # EXECUTION_MODE 不是 bool：除写 os.environ 外，必须把内存中的单例也固定住——
+    # settings 在 import 时已从 ~/.cortex/settings.json 读入持久化值，
+    # 仅靠环境变量无法影响已有单例（toolgate/core_validator 等直接读单例）。
     saved_exec_mode = os.environ.get("EXECUTION_MODE")
+    saved_exec_mode_inmem = getattr(settings, "EXECUTION_MODE", "edit")
     os.environ["EXECUTION_MODE"] = "plan"
+    try:
+        setattr(settings, "EXECUTION_MODE", "plan")
+    except Exception:
+        object.__setattr__(settings, "EXECUTION_MODE", "plan")
     saved_app_env = os.environ.pop("APP_ENV", None)
     os.environ["APP_ENV"] = "development"
     saved = {f: getattr(settings, f, True) for f in flags}
@@ -124,6 +131,10 @@ def _reset_feature_flags(monkeypatch, tmp_path):
         else:
             os.environ.pop(f, None)
     # 还原 EXECUTION_MODE
+    try:
+        setattr(settings, "EXECUTION_MODE", saved_exec_mode_inmem)
+    except Exception:
+        object.__setattr__(settings, "EXECUTION_MODE", saved_exec_mode_inmem)
     if saved_exec_mode is not None:
         os.environ["EXECUTION_MODE"] = saved_exec_mode
     else:

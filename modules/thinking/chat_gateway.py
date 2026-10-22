@@ -177,7 +177,7 @@ async def _safe_ws_send(websocket: WebSocket, data: dict) -> bool:
 # chatonly WebSocket — 简单路线
 # ---------------------------------------------------------------------------
 
-# @link:block ChatOnly_Turn = Think
+# @link:block ChatOnly_Turn = Loop(Retrieve · Guard · Write · Emit)
 async def _consume_turn(
     websocket: WebSocket,
     session_id: str,
@@ -263,8 +263,8 @@ async def _consume_turn(
                 if _thought:
                     try:
                         repo.save_message(session_id, "thought", _thought)
-                    except Exception:
-                        pass
+                    except Exception as _swallowed_err:
+                        logger.debug(f"[_consume_turn] ignored Exception: {_swallowed_err}")
                 if not await _safe_ws_send(websocket, _envelope(
                     session_id, "thinking", "thinking_step",
                     _thought, "thinking",
@@ -279,8 +279,8 @@ async def _consume_turn(
                 if _mental:
                     try:
                         repo.save_message(session_id, "mental", _mental)
-                    except Exception:
-                        pass
+                    except Exception as _swallowed_err:
+                        logger.debug(f"[_consume_turn] ignored Exception: {_swallowed_err}")
                 if not await _safe_ws_send(websocket, _envelope(
                     session_id, "mental", "mental",
                     _mental, "system",
@@ -328,9 +328,10 @@ async def _consume_turn(
     if done and full_text:
         text = "".join(full_text)
         # DB 为唯一真源：assistant 入库即可，读取时直连 DB，无需同步内存黑板
-        repo.save_message(session_id, "assistant", text)
+        assistant_msg_id = repo.save_message(session_id, "assistant", text)
         if not await _safe_ws_send(websocket, _envelope(
             session_id, "message", "assistant_message", text, "main",
+            data={"message_id": assistant_msg_id},
         )): pass
     # 失败/取消路径：只发过 error，不再发「处理完成」，避免语义矛盾
     if not errored:
@@ -339,7 +340,7 @@ async def _consume_turn(
         ): pass
 
 
-# @link:block ChatOnly_WS = Emit
+# @link:block ChatOnly_WS = Loop(Retrieve · Guard · Emit)
 async def _chatonly_ws(websocket: WebSocket, session_id: str) -> None:
     ensure_shared_schema()
     await websocket.accept()
@@ -352,8 +353,8 @@ async def _chatonly_ws(websocket: WebSocket, session_id: str) -> None:
             connection_manager.active_connections[session_id] = websocket
             connection_manager._loop = asyncio.get_running_loop()
         _ws_registered = True
-    except Exception:
-        pass
+    except Exception as _swallowed_err:
+        logger.debug(f"[_chatonly_ws] ignored Exception: {_swallowed_err}")
 
     repo = _get_chat_session_repo()
     repo.create_session(session_id)
@@ -369,8 +370,8 @@ async def _chatonly_ws(websocket: WebSocket, session_id: str) -> None:
                 from modules.thinking.api_stream import connection_manager
                 async with connection_manager._lock:
                     connection_manager.active_connections.pop(session_id, None)
-            except Exception:
-                pass
+            except Exception as _swallowed_err:
+                logger.debug(f"[_chatonly_ws] ignored Exception: {_swallowed_err}")
         return
 
     active_task: Optional[asyncio.Task] = None
@@ -411,9 +412,16 @@ async def _chatonly_ws(websocket: WebSocket, session_id: str) -> None:
                         )
                         from config.settings import settings
                         # 直连模式：图片直接附给大模型（不调独立视觉模型）
-                        if str(getattr(settings, "CHAT_IMAGE_MODE", "describe") or "describe").lower() == "direct":
+                        # 同时检查模型层的 ENABLE_IMAGE 开关
+                        image_mode = str(getattr(settings, "CHAT_IMAGE_MODE", "describe") or "describe").lower()
+                        enable_image = getattr(settings, "LARGE_MODEL_ENABLE_IMAGE", True)
+                        if image_mode == "direct" and enable_image:
                             att_images = extract_images(attachments)
                             att_text = summarize_attachments(attachments)
+                        elif not enable_image:
+                            # 图片功能被关闭，跳过所有图片处理
+                            att_images = []
+                            att_text = summarize_attachments([a for a in attachments if not getattr(a, "is_image", False)]) if attachments else ""
                         else:
                             att_images = []
                             att_text = await parse_attachments(attachments)
@@ -431,8 +439,8 @@ async def _chatonly_ws(websocket: WebSocket, session_id: str) -> None:
                     active_task.cancel()
                     try:
                         await active_task
-                    except asyncio.CancelledError:
-                        pass
+                    except asyncio.CancelledError as _swallowed_err:
+                        logger.debug(f"[_chatonly_ws] ignored asyncio.CancelledError: {_swallowed_err}")
                 # 当前回合图片（直连多模态）：透传给本轮大模型请求
                 from modules.thinking.turn_images import set_turn_images
                 set_turn_images(att_images or None)
@@ -478,12 +486,12 @@ async def _chatonly_ws(websocket: WebSocket, session_id: str) -> None:
                 from modules.thinking.api_stream import connection_manager
                 async with connection_manager._lock:
                     connection_manager.active_connections.pop(session_id, None)
-            except Exception:
-                pass
+            except Exception as _swallowed_err:
+                logger.debug(f"[_chatonly_ws] ignored Exception: {_swallowed_err}")
         try:
             await websocket.close()
-        except Exception:
-            pass
+        except Exception as _swallowed_err:
+            logger.debug(f"[_chatonly_ws] ignored Exception: {_swallowed_err}")
 
 
 # ---------------------------------------------------------------------------
@@ -568,11 +576,12 @@ async def _chatonly_sse(session_id: str, question: str):
 
         text = "".join(full_text)
         if text:
-            repo.save_message(session_id, "assistant", text)
+            assistant_msg_id = repo.save_message(session_id, "assistant", text)
             yield {
                 "event": "assistant_message",
                 "data": json.dumps(
-                    _envelope(session_id, "message", "assistant_message", text, "main"),
+                    _envelope(session_id, "message", "assistant_message", text, "main",
+                              data={"message_id": assistant_msg_id}),
                     ensure_ascii=False,
                 ),
             }
@@ -682,8 +691,8 @@ async def close_session(session_id: str):
         # 若 _resume_context 是 dict，也按 session_id 删键
         if isinstance(_resume_context, dict):
             _resume_context.pop(session_id, None)
-    except Exception:
-        pass
+    except Exception as _swallowed_err:
+        logger.debug(f"[close_session] ignored Exception: {_swallowed_err}")
     if _resolve_mode() == "chatonly":
         return {"success": True, "data": {"message": "会话已关闭"}}
     from modules.thinking import api_stream
@@ -704,8 +713,8 @@ async def batch_delete_sessions(body: dict = None):
             continue
         try:
             repo.delete_session(sid)
-        except Exception:
-            pass
+        except Exception as _swallowed_err:
+            logger.debug(f"[batch_delete_sessions] ignored Exception: {_swallowed_err}")
         deleted.append(sid)
     return {"success": True, "data": {"deleted": deleted, "count": len(deleted)}}
 
@@ -740,8 +749,8 @@ async def get_session_graph(session_id: str):
             if snap.get("nodes"):
                 store.restore(session_id, snap)
                 g = store.get_graph(session_id)
-        except Exception:
-            pass
+        except Exception as _swallowed_err:
+            logger.debug(f"[get_session_graph] ignored Exception: {_swallowed_err}")
     # 返回前持久化：前端每次读图谱都确保 metadata 最新，
     # 切换会话/重启后端后能恢复一致（不只是思考结束 finally 才写）
     if g.get("nodes"):
@@ -749,8 +758,8 @@ async def get_session_graph(session_id: str):
             from modules.database.session_repo import get_session_repo
             get_session_repo().set_session_metadata(
                 session_id, {"session_graph": store.snapshot(session_id)})
-        except Exception:
-            pass
+        except Exception as _swallowed_err:
+            logger.debug(f"[get_session_graph] ignored Exception: {_swallowed_err}")
     return {"success": True, "data": {"session_id": session_id, "graph": g}}
 
 
@@ -830,8 +839,8 @@ async def get_sessions():
                 exclude_ids=list(connection_manager.active_connections.keys()),
                 min_idle_minutes=10,
             )
-        except Exception:
-            pass
+        except Exception as _swallowed_err:
+            logger.debug(f"[get_sessions] ignored Exception: {_swallowed_err}")
         sessions = _get_chat_session_repo().get_all_sessions(limit=50)
         return {"success": True, "data": sessions}
     from modules.thinking import api_stream

@@ -347,8 +347,8 @@ class ModelIdentity:
             mp = _cfg.get_model_params(template_key)
             if mp:
                 data.update({k: v for k, v in mp.items() if v is not None})
-        except Exception:
-            pass
+        except Exception as _swallowed_err:
+            logger.debug(f"[from_template] ignored Exception: {_swallowed_err}")
         return cls(**data)
 
     def _tier_label(self) -> str:

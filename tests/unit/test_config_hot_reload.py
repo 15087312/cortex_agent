@@ -32,7 +32,7 @@ def test_model_runner_client_rebuild_on_config_change(monkeypatch):
     created = []
     monkeypatch.setattr(
         "infra.model.large_model_client.LargeModelClient",
-        lambda: MagicMock(),
+        lambda **kwargs: MagicMock(),
     )
     r = ModelRunner()
     c1 = r.client
@@ -48,7 +48,7 @@ def test_model_runner_client_reuse_unchanged(monkeypatch):
 
     monkeypatch.setattr(
         "infra.model.large_model_client.LargeModelClient",
-        lambda: MagicMock(),
+        lambda **kwargs: MagicMock(),
     )
     r = ModelRunner()
     c1 = r.client
@@ -138,11 +138,11 @@ def test_prompt_composer_respects_inactive_agent(monkeypatch, tmp_path):
     _fake_settings(monkeypatch,
         custom_agents=[{"tier": "large", "role": "123"}],
         agent_active={"123": False, "orchestrator": True},
-        personas={"123": "停用的人设：芙宁娜", "orchestrator": ""})
+        personas={"123": "停用的人设：角色A", "orchestrator": ""})
     composer = _new_composer(monkeypatch, tmp_path, "内置总指挥身份")
     out = composer.build_system()
     assert "内置总指挥身份" in out
-    assert "芙宁娜" not in out  # 停用的 123 人设未生效
+    assert "角色A" not in out  # 停用的 123 人设未生效
 
 
 def test_prompt_composer_uses_active_agent(monkeypatch, tmp_path):

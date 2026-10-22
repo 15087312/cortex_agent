@@ -303,8 +303,8 @@ class SkillManager:
             parent = path.parent
             try:
                 parent.rmdir()
-            except OSError:
-                pass
+            except OSError as _swallowed_err:
+                logger.debug(f"[delete_skill] ignored OSError: {_swallowed_err}")
         except Exception as e:
             return False, f"删除失败: {e}"
         self.reload()

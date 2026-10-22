@@ -447,8 +447,8 @@ async def list_vision_models():
                     with open(cfg) as f:
                         c = json.load(f)
                     model_type = c.get("model_type", "")
-                except Exception:
-                    pass
+                except Exception as _swallowed_err:
+                    logger.debug(f"[list_vision_models] ignored Exception: {_swallowed_err}")
             models.append({
                 "name": item.name,
                 "path": str(item),
@@ -484,8 +484,8 @@ async def install_voice_deps():
             __import__(import_name)
             results.append({"package": pkg_name, "status": "already_installed"})
             continue
-        except ImportError:
-            pass
+        except ImportError as _swallowed_err:
+            logger.debug(f"[install_voice_deps] ignored ImportError: {_swallowed_err}")
 
         # 尝试安装
         try:
@@ -766,8 +766,8 @@ async def get_causal_graph(
     try:
         events = event_store.list_events(limit=500)
         linked_events = sum(1 for e in events if e.causal_node_ids)
-    except Exception:
-        pass
+    except Exception as _swallowed_err:
+        logger.debug(f"[get_causal_graph] ignored Exception: {_swallowed_err}")
 
     # 使用优化的统计查询
     edge_stats = graph.get_edge_stats()

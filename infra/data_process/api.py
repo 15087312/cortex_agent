@@ -13,6 +13,7 @@ from infra.errors import AppError, ErrorCode
 from utils.logger import setup_logger
 from infra.data_process.core.speech_recognizer import get_default_recognizer
 from infra.data_process.core.image_analyzer import get_default_analyzer
+from infra.data_process.core.speaker_classifier import get_default_classifier
 
 logger = setup_logger("data_process_api")
 
@@ -116,6 +117,151 @@ async def recognize_speech_base64(
         raise AppError(ErrorCode.INTERNAL_ERROR, "服务暂时不可用，请稍后重试")
 
 
+# ── 声纹识别 / 说话人分类 ──────────────────────────────────
+
+@router.post("/speaker/identify")
+async def identify_speaker(
+    audio_file: UploadFile = File(...),
+    threshold: float = Form(0.75),
+    register_unknown: str = Form(""),
+):
+    """
+    声纹识别：从音频识别说话人身份
+
+    参数:
+        audio_file: 音频文件
+        threshold: 相似度阈值 (0-1)，默认 0.75
+        register_unknown: 若非空且未识别到说话人，以此名称自动注册
+
+    返回:
+        {
+            "identified": true/false,
+            "speaker": "说话人名称",
+            "similarity": 0.85,
+            "embedding": [...]
+        }
+    """
+    try:
+        _validate_upload(audio_file, ALLOWED_AUDIO_MIME)
+        audio_data = await audio_file.read()
+
+        classifier = await get_default_classifier()
+        result = await classifier.identify_speaker(audio_data, threshold=threshold)
+
+        if not result["identified"] and register_unknown:
+            emb = result.get("embedding")
+            if emb:
+                await classifier.register_speaker_from_embedding(register_unknown, emb)
+                result["identified"] = True
+                result["speaker"] = register_unknown
+                result["auto_registered"] = True
+
+        return JSONResponse(content={"success": True, "data": result})
+    except Exception as e:
+        logger.error(f"[data_process] 声纹识别失败: {type(e).__name__}: {e}")
+        raise AppError(ErrorCode.INTERNAL_ERROR, "声纹识别失败，请稍后重试")
+
+
+@router.post("/speaker/register")
+async def register_speaker(
+    audio_file: UploadFile = File(...),
+    name: str = Form(...),
+):
+    """
+    注册说话人：从音频提取声纹并存储
+
+    参数:
+        audio_file: 音频文件（建议 ≥3 秒清晰语音）
+        name: 说话人名称
+    """
+    try:
+        _validate_upload(audio_file, ALLOWED_AUDIO_MIME)
+        audio_data = await audio_file.read()
+
+        classifier = await get_default_classifier()
+        result = await classifier.register_speaker(name, audio_data)
+
+        return JSONResponse(content=result)
+    except Exception as e:
+        logger.error(f"[data_process] 说话人注册失败: {type(e).__name__}: {e}")
+        raise AppError(ErrorCode.INTERNAL_ERROR, "说话人注册失败")
+
+
+@router.get("/speaker/list")
+async def list_speakers():
+    """列出所有已注册的说话人"""
+    classifier = await get_default_classifier()
+    speakers = await classifier.list_speakers()
+    return {"success": True, "data": {"speakers": speakers, "count": len(speakers)}}
+
+
+@router.delete("/speaker/{name}")
+async def delete_speaker(name: str):
+    """删除指定说话人"""
+    classifier = await get_default_classifier()
+    result = await classifier.delete_speaker(name)
+    return JSONResponse(content=result)
+
+
+@router.post("/speech/recognize-with-speaker")
+async def recognize_speech_with_speaker(
+    audio_file: UploadFile = File(...),
+    language: str = Form("auto"),
+    task: str = Form("transcribe"),
+    speaker_threshold: float = Form(0.75),
+    auto_register: str = Form(""),
+):
+    """
+    语音识别 + 声纹识别一体化接口
+
+    同时返回转写文本和说话人身份。
+
+    参数:
+        audio_file: 音频文件
+        language: 语言代码
+        task: transcribe / translate
+        speaker_threshold: 声纹匹配阈值
+        auto_register: 若非空且未识别，以此名称自动注册新说话人
+    """
+    try:
+        _validate_upload(audio_file, ALLOWED_AUDIO_MIME)
+        audio_data = await audio_file.read()
+
+        recognizer = await get_default_recognizer()
+        classifier = await get_default_classifier()
+
+        stt_result = await recognizer.recognize(
+            audio_data,
+            language=language if language != "auto" else None,
+            task=task,
+        )
+        speaker_result = await classifier.identify_speaker(
+            audio_data, threshold=speaker_threshold
+        )
+
+        if not speaker_result["identified"] and auto_register:
+            emb = speaker_result.get("embedding")
+            if emb:
+                await classifier.register_speaker_from_embedding(auto_register, emb)
+                speaker_result["identified"] = True
+                speaker_result["speaker"] = auto_register
+                speaker_result["auto_registered"] = True
+
+        return JSONResponse(content={
+            "success": True,
+            "data": {
+                "text": stt_result.get("text", ""),
+                "language": stt_result.get("language", ""),
+                "confidence": stt_result.get("confidence", 0),
+                "segments": stt_result.get("segments", []),
+                "speaker": speaker_result,
+            }
+        })
+    except Exception as e:
+        logger.error(f"[data_process] 语音+声纹识别失败: {type(e).__name__}: {e}")
+        raise AppError(ErrorCode.INTERNAL_ERROR, "服务暂时不可用，请稍后重试")
+
+
 # @link:block Image_Analyze = Emit
 @router.post("/image/analyze")
 async def analyze_image(
@@ -190,6 +336,12 @@ async def get_status():
                     "local": True,
                     "models": ["qwen_vl", "llava", "openai_gpt4v"],
                     "features": ["description", "object_detection", "scene_classification", "color_extraction"]
+                },
+                "speaker_identification": {
+                    "enabled": True,
+                    "model": "resemblyzer",
+                    "embedding_dim": 256,
+                    "features": ["identify", "register", "list", "delete"]
                 }
             }
         }

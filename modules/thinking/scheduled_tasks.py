@@ -160,8 +160,8 @@ class ScheduledTaskManager:
                     if min_ok and hour_ok and self._last_fired.get(key) != minute_mark:
                         self._last_fired[key] = minute_mark
                         return True
-        except Exception:
-            pass
+        except Exception as _swallowed_err:
+            logger.debug(f"[_due_cron] ignored Exception: {_swallowed_err}")
         return False
 
     # ── 执行 ──
@@ -197,8 +197,8 @@ class ScheduledTaskManager:
                     t["last_status"] = status
                     break
             repo.set_scheduled_tasks(session_id, cfg)
-        except Exception:
-            pass
+        except Exception as _swallowed_err:
+            logger.debug(f"[_mark_run] ignored Exception: {_swallowed_err}")
 
     # ── 默认 action: chat —— 直接调用模型生成定时提醒 → 注入会话 → 推送 ──
 
@@ -212,8 +212,8 @@ class ScheduledTaskManager:
                 from config.prompts.loader import get_loader
                 roles = (get_loader().load("roles") or {}).get("roles") or {}
                 tier = (roles.get(agent_type) or {}).get("tier", "large")
-            except Exception:
-                pass
+            except Exception as _swallowed_err:
+                logger.debug(f"[_handle_chat] ignored Exception: {_swallowed_err}")
         from modules.thinking.model_factory import get_model_factory
         from infra.model.base_model import ChatMessage
         from modules.thinking.frontend_channel import generate_and_push

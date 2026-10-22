@@ -26,6 +26,58 @@ import threading
 
 logger = setup_logger("tool_permission_controller")
 
+# AI 自限范围（按会话隔离）：key=模型编号::会话::任务；缺席=未收窄。
+# 由任务执行器写入，此处只做交集执行门控。任务结束必须清除，防止串台。
+_AI_NARROWED: Dict[str, set] = {}
+_AI_NARROWED_LOCK = threading.Lock()
+
+
+def _narrow_scope_key(model_id: str, session_id: str = "", task_id: str = "") -> str:
+    return f"{model_id}::{(session_id or '')[:8]}::{task_id or ''}"
+
+
+def set_ai_narrowed_tools(model_id: str, tools: set | None,
+                          session_id: str = "", task_id: str = "") -> None:
+    """登记/清除某任务的自限范围（None=恢复默认）"""
+    if not model_id:
+        return
+    with _AI_NARROWED_LOCK:
+        scoped = _narrow_scope_key(model_id, session_id, task_id)
+        if tools is None:
+            _AI_NARROWED.pop(scoped, None)
+            # 执行门控只认模型编号（调用方无会话上下文），同步清除
+            _AI_NARROWED.pop(model_id, None)
+        else:
+            _AI_NARROWED[scoped] = set(tools)
+            # 同步写模型级 key，供无会话上下文的执行门控使用；
+            # 会话隔离靠任务结束清除保证（见 clear_ai_narrowed_tools）。
+            _AI_NARROWED[model_id] = set(tools)
+
+
+def get_ai_narrowed_tools(model_id: str, session_id: str = "",
+                          task_id: str = "") -> set | None:
+    with _AI_NARROWED_LOCK:
+        scoped = _AI_NARROWED.get(_narrow_scope_key(model_id, session_id, task_id))
+        if scoped is not None:
+            return set(scoped)
+        # 兼容旧写入：纯模型编号 key（过渡期）
+        legacy = _AI_NARROWED.get(model_id)
+        return set(legacy) if legacy is not None else None
+
+
+def clear_ai_narrowed_tools(model_id: str, session_id: str = "",
+                            task_id: str = "") -> None:
+    """任务结束时清除自限（会话隔离，防止串台）。"""
+    if not model_id:
+        return
+    with _AI_NARROWED_LOCK:
+        _AI_NARROWED.pop(_narrow_scope_key(model_id, session_id, task_id), None)
+        _AI_NARROWED.pop(model_id, None)
+        # 同模型同会话的其他任务残留一并清除
+        prefix = f"{model_id}::{(session_id or '')[:8]}::"
+        for k in [k for k in _AI_NARROWED if k.startswith(prefix)]:
+            _AI_NARROWED.pop(k, None)
+
 
 class ToolPermissionController:
     """工具权限控制器 — 单例"""
@@ -36,7 +88,7 @@ class ToolPermissionController:
 
     # ── 可见性 ──────────────────────────────────────────────────────────
 
-    # @link:block PermVisible = Guard · Retrieve
+    # @link:block PermVisible = Retrieve · Guard
     def get_visible_tools(self, tier: str, mode: str, role: str = "",
                           skill_tool_rules: Any = None) -> List[str]:
         """返回模型可见的工具列表
@@ -96,8 +148,8 @@ class ToolPermissionController:
                 if bl and isinstance(bl, list):
                     base = [t for t in base if t not in bl]
                 return base
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[权限] 角色工具覆盖读取失败，回退默认白名单: {e}")
 
         return self._identity_whitelist(tier, role, DEFAULT_TOOL_WHITELISTS)
 
@@ -113,8 +165,8 @@ class ToolPermissionController:
                 if wt and isinstance(wt, list) and len(wt) > 0:
                     if idata.get("tier") == tier:
                         return list(wt)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[权限] 身份白名单读取失败，回退默认: {e}")
 
         if tier == "large":
             return list(default_whitelists.get("large", []))
@@ -194,7 +246,7 @@ class ToolPermissionController:
 
     # ── 执行权限检查（角色类别权限）────────────────────────────────────
 
-    # @link:block PermCheck = Guard · Retrieve · Emit
+    # @link:block PermCheck = Guard · Retrieve
     def check_execution_permission(self, tool_name: str, caller_tier: str,
                                     caller_model_id: str = "",
                                     caller_role: str = "") -> Tuple[bool, str]:
@@ -217,6 +269,23 @@ class ToolPermissionController:
         from infra.tool_manager.tool_registry import ToolRegistry
 
         tool_info = ToolRegistry.get_tool(tool_name)
+        # AI 自限（只能减不能加）：本轮已收窄则不在子集内的直接拒绝，
+        # 控制工具本身不受限，避免把自己锁死无法恢复。
+        # 执行门控调用方无会话上下文，认模型级 key（写入时已同步），加锁读取。
+        try:
+            if tool_info and tool_name not in (
+                "narrow_my_tools", "reset_my_tools", "continue_thinking",
+                "query_tool_details", "query_delegation", "resume_delegation",
+                "inspect_delegation", "read_context",
+            ):
+                _narrowed = get_ai_narrowed_tools(caller_model_id) if caller_model_id else None
+                if _narrowed is not None and tool_name not in set(_narrowed):
+                    return False, (
+                        f"该工具已被本轮自限收窄排除: {tool_name}。"
+                        f"如需恢复请调用 reset_my_tools。"
+                    )
+        except Exception as e:
+            logger.warning(f"[权限] 自限范围读取失败 tool={tool_name}: {e}")
         if not tool_info:
             return True, ""  # 控制工具（delegate_task 等）不在 registry 中，默认允许
 
@@ -327,9 +396,11 @@ class ToolPermissionController:
             REQUEST_MODE_CHANGE_TOOL, ASK_USER_INTENT_TOOL,
             QUERY_DELEGATION_TOOL, RESUME_DELEGATION_TOOL,
             INSPECT_DELEGATION_TOOL, READ_CONTEXT_TOOL,
+            NARROW_MY_TOOLS_TOOL, RESET_MY_TOOLS_TOOL,
         )
 
-        tools = [CONTINUE_THINKING_TOOL, QUERY_TOOL_DETAILS_TOOL]
+        tools = [CONTINUE_THINKING_TOOL, QUERY_TOOL_DETAILS_TOOL,
+                 NARROW_MY_TOOLS_TOOL, RESET_MY_TOOLS_TOOL]
 
         if delegation_available and tier in ("large", "supervisor"):
             tools.append(DELEGATE_TASK_TOOL)

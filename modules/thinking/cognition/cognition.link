@@ -1,0 +1,3 @@
+# cognition 模块：认知黑板（委托状态机）
+export Blackboard
+eq Blackboard = Guard · Write · Retrieve

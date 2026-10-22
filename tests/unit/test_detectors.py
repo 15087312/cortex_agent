@@ -16,6 +16,7 @@ def _window():
     w._last_window = None
     w._last_app = None
     w._backend = "appkit"
+    w._detect_count = 0
     return w
 
 
@@ -57,7 +58,7 @@ def test_window_detect_unavailable(monkeypatch):
 def test_window_get_active_window_error(monkeypatch):
     w = _window()
     monkeypatch.setattr(w, "_get_window_win32", lambda: (_ for _ in ()).throw(RuntimeError()))
-    monkeypatch.setattr(w, "_get_window_appkit", lambda: (_ for _ in ()).throw(RuntimeError()))
+    monkeypatch.setattr(w, "_get_window_quartz", lambda: (_ for _ in ()).throw(RuntimeError()))
     assert w._get_active_window() == (None, None)
 
 

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import Dict, List, Optional
-from .transport import MCPStdioTransport, MCPSseTransport, MCPToolDef
+from .transport import MCPStdioTransport, MCPSseTransport, MCPStreamableHttpTransport, MCPToolDef
 from .types import MCPServerConfig
 from utils.logger import setup_logger
 
@@ -29,8 +29,26 @@ class MCPServerManager:
             if not cfg.enabled:
                 continue
             self._configs[cfg.name] = cfg
-            transport: Optional[MCPStdioTransport | MCPSseTransport]
-            if cfg.command:
+            transport: Optional[MCPStdioTransport | MCPSseTransport | MCPStreamableHttpTransport]
+            # 传输路由（抄 Cherry：stdio | sse | streamableHttp）
+            t = (cfg.transport or "stdio").lower()
+            if t == "streamablehttp" or (t == "stdio" and cfg.url and not cfg.command):
+                # streamableHttp：远程 HTTP，失败自动降级 SSE
+                from .transport import MCPStreamableHttpTransport
+                transport = MCPStreamableHttpTransport(
+                    server_name=cfg.name,
+                    url=cfg.url or cfg.env.get("url", ""),
+                    headers=cfg.headers,
+                    timeout=cfg.timeout_seconds,
+                ) if (cfg.url or cfg.env.get("url")) else None
+            elif t == "sse" or cfg.env.get("url"):
+                url = cfg.url or cfg.env.get("url", "")
+                transport = MCPSseTransport(
+                    server_name=cfg.name,
+                    url=url,
+                    timeout=cfg.timeout_seconds,
+                ) if url else None
+            elif cfg.command:
                 transport = MCPStdioTransport(
                     server_name=cfg.name,
                     command=cfg.command,
@@ -39,13 +57,7 @@ class MCPServerManager:
                     timeout=cfg.timeout_seconds,
                 )
             else:
-                # 无 command 但有 url 时使用 SSE（由调用方通过 env 传入）
-                url = cfg.env.get("url", "")
-                transport = MCPSseTransport(
-                    server_name=cfg.name,
-                    url=url,
-                    timeout=cfg.timeout_seconds,
-                ) if url else None
+                transport = None
             if transport:
                 self._transports[cfg.name] = transport
 
@@ -56,11 +68,16 @@ class MCPServerManager:
             ok = await transport.connect()
             if ok:
                 tools = await transport.list_tools()
+                # 工具级开关（抄 Cherry disabledTools）：禁用的工具不注册
+                cfg = self._configs.get(name)
+                disabled = set(cfg.disabled_tools) if cfg else set()
                 for tool in tools:
+                    if tool.name in disabled:
+                        logger.info(f"[MCP] {name}/{tool.name} 已按配置禁用，跳过注册")
+                        continue
                     self._tools_index[tool.name] = tool
                     self._tool_to_server[tool.name] = name
                 count += 1
-                cfg = self._configs.get(name)
                 if cfg:
                     self._start_reconnect_watch(name, cfg)
         if count:
@@ -90,8 +107,8 @@ class MCPServerManager:
             try:
                 await asyncio.wait_for(stop.wait(), timeout=cfg.reconnect_interval)
                 break  # 收到停止信号
-            except asyncio.TimeoutError:
-                pass  # 轮询间隔到，检查连接
+            except asyncio.TimeoutError as _swallowed_err:
+                logger.debug(f"[_watch_connection] ignored asyncio.TimeoutError: {_swallowed_err}") # 轮询间隔到，检查连接
             t = self._transports.get(name)
             if t is None:
                 break
@@ -146,8 +163,8 @@ class MCPServerManager:
             task.cancel()
             try:
                 await task
-            except asyncio.CancelledError:
-                pass
+            except asyncio.CancelledError as _swallowed_err:
+                logger.debug(f"[_stop_reconnect_watch] ignored asyncio.CancelledError: {_swallowed_err}")
 
     async def _stop_all_reconnect_watches(self) -> None:
         for name in list(self._watch_tasks):
@@ -213,7 +230,7 @@ class MCPServerManager:
         """返回工具对应的 server 名"""
         return self._tool_to_server.get(tool_name)
 
-    # @link:block MCPServerManager_call_tool_Emit = Emit
+    # @link:block MCPServerManager_call_tool_Emit = Emit · Retrieve
     async def call_tool(self, tool_name: str, arguments: Dict = None) -> Dict:
         """调用指定工具"""
         server_name = self._tool_to_server.get(tool_name)

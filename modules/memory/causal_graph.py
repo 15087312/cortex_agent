@@ -193,8 +193,8 @@ class CausalGraph:
             self._metrics["node_count"] = row[0] if row else 0
             row = conn.execute("SELECT COUNT(*) FROM edges").fetchone()
             self._metrics["edge_count"] = row[0] if row else 0
-        except Exception:
-            pass
+        except Exception as _swallowed_err:
+            logger.debug(f"[_update_metrics] ignored Exception: {_swallowed_err}")
 
     def get_metrics(self) -> Dict[str, Any]:
         """获取 Prometheus 风格的监控指标
@@ -823,5 +823,5 @@ class CausalGraph:
             return
         try:
             self.close()
-        except Exception:
-            pass
+        except Exception as _swallowed_err:
+            logger.debug(f"[__del__] ignored Exception: {_swallowed_err}")

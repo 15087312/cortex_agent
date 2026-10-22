@@ -348,6 +348,51 @@ QUERY_TOOL_DETAILS_TOOL = {
 }
 
 
+NARROW_MY_TOOLS_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "narrow_my_tools",
+        "description": (
+            "收窄本轮自己可见的工具范围（自限，只能减不能加）。"
+            "以用户在编排页设置的工具权限为最高标准：你列出的工具超出用户范围的部分会被自动忽略，"
+            "最终生效 = 用户允许 ∩ 你申请的子集。你无法通过此工具获得原本没有的工具。"
+            "适用于进入敏感任务前主动降权（如只读调研时只留读文件/搜索）。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "keep_only": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "本轮只保留的工具名列表（必须非空，至少保留 1 个）。",
+                    "minItems": 1,
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "收窄原因（可选，如“只读调研，主动去掉写工具”）。",
+                },
+            },
+            "required": ["keep_only"],
+        },
+    },
+}
+
+
+RESET_MY_TOOLS_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "reset_my_tools",
+        "description": (
+            "恢复自己可见的工具范围到用户设置的默认值（取消 narrow_my_tools 的自限）。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+}
+
+
 REQUEST_MODE_CHANGE_TOOL = {
     "type": "function",
     "function": {

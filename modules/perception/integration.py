@@ -49,8 +49,8 @@ class PerceptionIntegrator:
             ]:
                 try:
                     event_bus.subscribe(event_type, self._on_perception_event)
-                except Exception:
-                    pass
+                except Exception as _swallowed_err:
+                    logger.debug(f"[_subscribe_events] ignored Exception: {_swallowed_err}")
             logger.info("已订阅感知事件")
         except Exception as e:
             logger.debug(f"订阅感知事件失败 (非致命): {e}")
@@ -124,8 +124,8 @@ class PerceptionIntegrator:
             try:
                 from modules.perception.events.bus import get_event_bus
                 get_event_bus().unsubscribe(self._sub_id)
-            except Exception:
-                pass
+            except Exception as _swallowed_err:
+                logger.debug(f"[stop] ignored Exception: {_swallowed_err}")
             self._sub_id = ""
         logger.info("感知监控已停止")
 

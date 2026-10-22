@@ -242,6 +242,8 @@ textarea.input { resize: vertical; min-height: 60px; font-family: var(--font-mon
 .chat-btn-icon { width: 30px; height: 30px; border-radius: var(--radius); border: none; background: transparent; color: var(--text-muted); cursor: pointer; font-size: 15px; display: flex; align-items: center; justify-content: center; transition: all var(--duration-fast) var(--ease-in-out); }
 .chat-btn-icon:hover { background: var(--bg-tertiary); color: var(--text-primary); transform: scale(1.1); }
 .chat-btn-icon:active { transform: scale(0.95); }
+.chat-btn-recording { background: var(--error-bg, rgba(239, 68, 68, 0.15)); color: var(--error, #ef4444); animation: pulse-recording 1.5s ease-in-out infinite; }
+@keyframes pulse-recording { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
 
 .chat-sessions-empty { text-align: center; padding: 20px; color: var(--text-muted); font-size: 12px; }
 

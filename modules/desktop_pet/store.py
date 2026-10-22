@@ -80,7 +80,9 @@ class PetStore:
                     max_history INTEGER NOT NULL DEFAULT 8,
                     max_output_tokens INTEGER NOT NULL DEFAULT 512,
                     max_loop_rounds INTEGER NOT NULL DEFAULT 0,
+                    idle_backoff_max REAL NOT NULL DEFAULT 8,
                     voice_enabled INTEGER NOT NULL DEFAULT 0,
+                    realtime_voice INTEGER NOT NULL DEFAULT 0,
                     updated_at REAL NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS pet_history (
@@ -111,7 +113,9 @@ class PetStore:
             ("max_history", "INTEGER NOT NULL DEFAULT 8"),
             ("max_output_tokens", "INTEGER NOT NULL DEFAULT 512"),
             ("max_loop_rounds", "INTEGER NOT NULL DEFAULT 0"),
+            ("idle_backoff_max", "REAL NOT NULL DEFAULT 8"),
             ("voice_enabled", "INTEGER NOT NULL DEFAULT 0"),
+            ("realtime_voice", "INTEGER NOT NULL DEFAULT 0"),
         ]
         for name, ddl in additions:
             if name not in cols:
@@ -120,13 +124,14 @@ class PetStore:
     # ── 配置（单行） ──
 
     _DEFAULT_ROW = (
-        DEFAULT_PERSONA, "", "", "", "", "", "direct", 1, 5.0, 1, 8, 512, 3, 0, 0.0,
+        DEFAULT_PERSONA, "", "", "", "", "", "direct", 1, 5.0, 1, 8, 512, 3, 8.0, 0, 0, 0.0,
     )
 
     _CONFIG_KEYS = [
         "persona", "api_url", "api_key", "api_model", "api_format", "api_provider",
         "loop_type", "memory_enabled", "min_think_interval", "tools_enabled",
-        "max_history", "max_output_tokens", "max_loop_rounds", "voice_enabled",
+        "max_history", "max_output_tokens", "max_loop_rounds", "idle_backoff_max",
+        "voice_enabled", "realtime_voice",
     ]
 
     def get_config(self) -> Dict[str, Any]:
@@ -145,7 +150,7 @@ class PetStore:
                 "loop_type": "direct", "memory_enabled": True,
                 "min_think_interval": 5.0, "tools_enabled": True,
                 "max_history": 8, "max_output_tokens": 512, "max_loop_rounds": 0,
-                "voice_enabled": False,
+                "idle_backoff_max": 8.0, "voice_enabled": False,
             }
         out = dict(row)
         # 布尔列统一为 bool（get_config 与 update_config 返回结构一致）
@@ -160,8 +165,9 @@ class PetStore:
             conn.execute(
                 "INSERT OR IGNORE INTO pet_config (id, persona, api_url, api_key, api_model,"
                 " api_format, api_provider, loop_type, memory_enabled, min_think_interval,"
-                " tools_enabled, max_history, max_output_tokens, max_loop_rounds, voice_enabled, updated_at)"
-                " VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " tools_enabled, max_history, max_output_tokens, max_loop_rounds,"
+                " idle_backoff_max, voice_enabled, realtime_voice, updated_at)"
+                " VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 self._DEFAULT_ROW,
             )
             conn.commit()
@@ -186,6 +192,12 @@ class PetStore:
                     cur[k] = max(0.0, float(v or 0))
                 except (TypeError, ValueError):
                     cur[k] = 5.0
+            elif k == "idle_backoff_max":
+                # 空拍退避倍率上限：≥1，1 = 关闭退避
+                try:
+                    cur[k] = max(1.0, float(v or 1))
+                except (TypeError, ValueError):
+                    cur[k] = 8.0
             elif k in ("max_history", "max_output_tokens"):
                 try:
                     cur[k] = max(1, int(v or 1))
@@ -206,14 +218,16 @@ class PetStore:
                 "UPDATE pet_config SET persona=?, api_url=?, api_key=?, api_model=?,"
                 " api_format=?, api_provider=?, loop_type=?, memory_enabled=?,"
                 " min_think_interval=?, tools_enabled=?, max_history=?,"
-                " max_output_tokens=?, max_loop_rounds=?, voice_enabled=?, updated_at=? WHERE id=1",
+                " max_output_tokens=?, max_loop_rounds=?, idle_backoff_max=?, voice_enabled=?,"
+                " realtime_voice=?, updated_at=? WHERE id=1",
                 (
                     cur["persona"], cur["api_url"], cur["api_key"], cur["api_model"],
                     cur["api_format"], cur["api_provider"], cur["loop_type"],
                     cur["memory_enabled"], cur["min_think_interval"],
                     cur["tools_enabled"], cur["max_history"],
                     cur["max_output_tokens"], cur["max_loop_rounds"],
-                    cur["voice_enabled"], time.time(),
+                    cur["idle_backoff_max"], cur["voice_enabled"], cur.get("realtime_voice", 0),
+                    time.time(),
                 ),
             )
             conn.commit()
@@ -223,7 +237,9 @@ class PetStore:
         out["memory_enabled"] = bool(out["memory_enabled"])
         out["tools_enabled"] = bool(out["tools_enabled"])
         out["voice_enabled"] = bool(out.get("voice_enabled", 0))
+        out["realtime_voice"] = bool(out.get("realtime_voice", 0))
         out["min_think_interval"] = float(out["min_think_interval"])
+        out["idle_backoff_max"] = float(out.get("idle_backoff_max", 8.0))
         out["max_history"] = int(out["max_history"])
         out["max_output_tokens"] = int(out["max_output_tokens"])
         out["max_loop_rounds"] = int(out["max_loop_rounds"])

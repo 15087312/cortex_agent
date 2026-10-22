@@ -1527,7 +1527,7 @@ All other clients either create fresh instances per call (psychological activity
 
 ## 47. Pure-chat persona ignores orchestration active status → disabled agent's persona force-applied (backend)
 
-**Symptom:** On the orchestration page the user disabled the custom agent `123` and activated `orchestrator`, but pure-chat mode still force-applied `123`'s custom persona (“芙宁娜”), and editing other prompts "had no effect" either.
+**Symptom:** On the orchestration page the user disabled the custom agent `123` and activated `orchestrator`, but pure-chat mode still force-applied `123`'s custom persona ("RoleA"), and editing other prompts "had no effect" either.
 
 **Root cause:** `chat_light/prompt_composer.build_system` hardcodes pure-chat persona selection:
 ```python

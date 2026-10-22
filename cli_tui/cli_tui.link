@@ -3,6 +3,6 @@
 export WsDispatch
 eq WsDispatch = Guard · Retrieve · Write
 export InputProcess
-eq InputProcess = Guard · Loop(Write) · Emit
+eq InputProcess = Guard · Retrieve · Loop(Write) · Emit
 export CmdDispatch
 eq CmdDispatch = Guard · Emit

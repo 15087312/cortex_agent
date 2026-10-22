@@ -203,4 +203,80 @@ export const endpoints = {
   addPetMemory: (kind, text, signal) => request('POST', '/stream/pet/memory', { kind, text }, signal),
   deletePetMemory: (mid, signal) => request('DELETE', '/stream/pet/memory/' + encodeURIComponent(mid), undefined, signal),
   petState: (signal) => request('GET', '/stream/pet/state', undefined, signal),
+  petWindowStatus: (signal) => request('GET', '/stream/pet/window', undefined, signal),
+  petWindowStart: (signal) => request('POST', '/stream/pet/window/start', {}, signal),
+  petWindowStop: (signal) => request('POST', '/stream/pet/window/stop', {}, signal),
+
+  // ── 语音识别 ──
+  recognizeSpeech: async (audioBlob) => {
+    const formData = new FormData()
+    formData.append('audio_file', audioBlob, 'recording.webm')
+    const r = await fetch(BASE + '/data-process/speech/recognize', {
+      method: 'POST',
+      headers: _memKey ? { 'X-API-Key': _memKey } : {},
+      body: formData,
+    })
+    if (!r.ok) throw new Error('HTTP ' + r.status)
+    return await r.json()
+  },
+
+  // ── 声纹识别 / 说话人分类 ──
+  identifySpeaker: async (audioBlob, threshold = 0.75, autoRegister = '') => {
+    const formData = new FormData()
+    formData.append('audio_file', audioBlob, 'recording.webm')
+    formData.append('threshold', String(threshold))
+    if (autoRegister) formData.append('register_unknown', autoRegister)
+    const r = await fetch(BASE + '/data-process/speaker/identify', {
+      method: 'POST',
+      headers: _memKey ? { 'X-API-Key': _memKey } : {},
+      body: formData,
+    })
+    if (!r.ok) throw new Error('HTTP ' + r.status)
+    return await r.json()
+  },
+
+  recognizeWithSpeaker: async (audioBlob, opts = {}) => {
+    const formData = new FormData()
+    formData.append('audio_file', audioBlob, 'recording.webm')
+    if (opts.language) formData.append('language', opts.language)
+    if (opts.threshold) formData.append('speaker_threshold', String(opts.threshold))
+    if (opts.autoRegister) formData.append('auto_register', opts.autoRegister)
+    const r = await fetch(BASE + '/data-process/speech/recognize-with-speaker', {
+      method: 'POST',
+      headers: _memKey ? { 'X-API-Key': _memKey } : {},
+      body: formData,
+    })
+    if (!r.ok) throw new Error('HTTP ' + r.status)
+    return await r.json()
+  },
+
+  registerSpeaker: async (audioBlob, name) => {
+    const formData = new FormData()
+    formData.append('audio_file', audioBlob, 'recording.webm')
+    formData.append('name', name)
+    const r = await fetch(BASE + '/data-process/speaker/register', {
+      method: 'POST',
+      headers: _memKey ? { 'X-API-Key': _memKey } : {},
+      body: formData,
+    })
+    if (!r.ok) throw new Error('HTTP ' + r.status)
+    return await r.json()
+  },
+
+  listSpeakers: async () => {
+    const r = await fetch(BASE + '/data-process/speaker/list', {
+      headers: _memKey ? { 'X-API-Key': _memKey } : {},
+    })
+    if (!r.ok) throw new Error('HTTP ' + r.status)
+    return await r.json()
+  },
+
+  deleteSpeaker: async (name) => {
+    const r = await fetch(BASE + '/data-process/speaker/' + encodeURIComponent(name), {
+      method: 'DELETE',
+      headers: _memKey ? { 'X-API-Key': _memKey } : {},
+    })
+    if (!r.ok) throw new Error('HTTP ' + r.status)
+    return await r.json()
+  },
 }

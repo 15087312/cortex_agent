@@ -24,13 +24,14 @@ class MediumModelClient(BaseModelClient):
         - temperature: 0.1
     """
 
-    def __init__(self, api_key: str = None, api_url: str = None, timeout: int = 60):
+    def __init__(self, api_key: str = None, api_url: str = None, timeout: int = 60, enable_thinking: bool = True):
         """初始化中模型客户端
 
         Args:
             api_key: API 密钥
             api_url: API 地址
             timeout: 超时时间（秒）- 默认60秒支持深度推理
+            enable_thinking: 是否启用思考模式（DeepSeek 等支持 reasoning_content 的模型）
         """
         key = api_key or settings.MEDIUM_MODEL_API_KEY or settings.LARGE_MODEL_API_KEY
         tier_cfg = settings.resolve_model_tier("supervisor") if settings.MEDIUM_MODEL_PROVIDER else None
@@ -40,6 +41,7 @@ class MediumModelClient(BaseModelClient):
         if tier_cfg:
             url = api_url or tier_cfg.get("base_url") or url
         super().__init__(key, url, timeout)
+        self.enable_thinking = enable_thinking
         self.max_tokens = 1024
         self.temperature = 0.1
         self.model_name = settings.MEDIUM_MODEL_NAME
@@ -65,7 +67,7 @@ class MediumModelClient(BaseModelClient):
     # 原生工具调用 chat()
     # ------------------------------------------------------------------
 
-    # @link:block MEDIUM_Chat_Emit = Emit
+    # @link:block MEDIUM_Chat_Emit = Emit · Throttle
     async def chat(
         self,
         messages: List[ChatMessage],
@@ -103,6 +105,7 @@ class MediumModelClient(BaseModelClient):
             temperature=temperature,
             tools=tools,
             tool_choice=tool_choice,
+            **({"enable_thinking": self.enable_thinking} if self._api_format == "openai" else {}),
         )
 
         max_retries = kwargs.get("max_retries", 2)
@@ -178,6 +181,7 @@ class MediumModelClient(BaseModelClient):
             messages,
             max_tokens=kwargs.get("max_tokens", self.max_tokens),
             temperature=kwargs.get("temperature", self.temperature),
+            **({"enable_thinking": self.enable_thinking} if self._api_format == "openai" else {}),
         )
 
         try:

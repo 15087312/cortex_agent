@@ -38,6 +38,18 @@ if getattr(sys, "frozen", False):
         os.environ.setdefault("EMBEDDING_LOCAL_FILES_ONLY", "True")
         print(f"[..] Embedding 模型内置: {_embed_dir}")
 
+# ── Qt 平台插件路径修复 ──
+# anaconda base 环境的 conda qt 包会在 /opt/anaconda3/bin/qt.conf 把 Qt Prefix 指向
+# /opt/anaconda3，导致 pip 安装的 PyQt6 去找 conda 的 cocoa 插件（版本不匹配而失败）。
+# 强制优先使用 PyQt6 自带的 Qt6 插件目录（与 pet_launch.py 共用 frontend/qt_env.py）。
+# 注意：必须在 import PyQt6 之前执行，且先把本目录入 path 才能 import qt_env。
+_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+try:
+    from qt_env import fix_qt_plugin_path as _fix_qt_plugin_path
+    _fix_qt_plugin_path()
+except Exception:
+    pass
+
 from PyQt6.QtWidgets import QApplication, QMainWindow, QMenu, QMessageBox, QSystemTrayIcon
 from PyQt6.QtCore import QUrl, QSettings, Qt, QRect, QLockFile
 from PyQt6.QtGui import (
@@ -362,20 +374,106 @@ def _stop_server():
 
 
 # @link:block Pet_Stop = Guard
+def _backend_base():
+    """后端基地址（端口可能回退，从发现文件读取）。"""
+    try:
+        from utils.port_discovery import read_backend_port
+        return f"http://127.0.0.1:{read_backend_port()}"
+    except Exception:
+        return "http://127.0.0.1:8080"
+
+
 def _stop_pet():
-    """终止独立桌宠进程（Qt 退出时关闭宠物）"""
+    """关闭桌宠窗口（Qt 退出时调用）。
+
+    桌宠窗口进程由后端 window_supervisor 统一持有（桌宠进程 parent=后端），
+    优先走后端监管器统一停止（同步 _expected 状态，防监控线程自动重启）。
+    若 API 停止失败（后端忙/端口发现文件错位/超时），按 PID 文件直接杀进程兜底，
+    否则桌宠绑定的后端还活着永远不会自退 → 主程序退出后桌宠残留。
+    _pet_proc 保留仅为兼容（恒为 None）。
+    """
     global _pet_proc
-    if _pet_proc is not None:
+    _pet_proc = None
+
+    def _api_stop() -> bool:
         try:
-            if _pet_proc.poll() is None:
-                _pet_proc.terminate()
-                try:
-                    _pet_proc.wait(timeout=3)
-                except Exception:
-                    _pet_proc.kill()
+            import json as _json
+            import urllib.request as _urlreq
+            req = _urlreq.Request(
+                _backend_base() + "/stream/pet/window/stop",
+                data=_json.dumps({}).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with _urlreq.urlopen(req, timeout=3) as resp:
+                data = _json.loads(resp.read().decode("utf-8") or "{}")
+            return bool(data.get("success"))
         except Exception:
-            pass
-        _pet_proc = None
+            return False
+
+    if _api_stop():
+        return
+
+    # 兜底：按 PID 文件直接终止桌宠进程（ps 校验命令行防 PID 复用误杀；Windows 无 ps 跳过）。
+    # 后端监管器 monitor（约 5s 一 tick，_expected=True 时）会自动复活被杀的桌宠，
+    # 所以最多 3 轮「API 停止 + 击杀」，每轮间隔 6s 覆盖复活窗口：
+    # API 恢复 → 当轮 break（监管器状态已同步）；API 持续不通 → 多轮击杀后大概率收敛无残留。
+    if os.name == "nt":
+        return
+
+    def _kill_pet_via_pid_file() -> bool:
+        """SIGTERM → 等待 → SIGKILL；杀掉后清 PID 文件。返回是否确认击杀。"""
+        try:
+            import json as _json
+            import signal as _signal
+            import subprocess as _subproc
+            import time as _time
+            from pathlib import Path as _Path
+            pf = _Path.home() / ".cortex" / "pet_window_pid.json"
+            pid = int(_json.loads(pf.read_text(encoding="utf-8")).get("pid", 0))
+            if pid <= 1:
+                return False
+            chk = _subproc.run(
+                ["ps", "-p", str(pid), "-o", "command="],
+                capture_output=True, text=True, timeout=5,
+            )
+            if "pet_launch.py" not in (chk.stdout or ""):
+                return False  # PID 复用成别的进程，不能杀
+            try:
+                os.kill(pid, _signal.SIGTERM)
+                deadline = _time.time() + 3
+                while _time.time() < deadline:
+                    try:
+                        os.kill(pid, 0)
+                    except OSError:
+                        break
+                    _time.sleep(0.2)
+                try:
+                    os.kill(pid, 0)
+                    os.kill(pid, _signal.SIGKILL)
+                except OSError:
+                    pass
+            except OSError:
+                pass  # 进程已不在
+            try:
+                pf.unlink()
+            except Exception:
+                pass
+            return True
+        except Exception:
+            return False
+
+    killed = False
+    for attempt in range(3):
+        if _api_stop():
+            break
+        if _kill_pet_via_pid_file():
+            killed = True
+        if attempt < 2:
+            import time as _time
+            _time.sleep(6)
+    if killed:
+        _api_stop()  # best effort：同步后端监管器 _expected=False，防后续自动重启
 
 
 atexit.register(_stop_pet)
@@ -564,9 +662,10 @@ def main():
     print("[OK] cortex 已启动")
     print("[..] 如果窗口未自动加载，请手动打开 http://localhost:8765")
 
-    # 桌宠独立进程：先启动 Qt，再延迟拉起桌宠；Qt 退出时终止（_stop_pet / atexit / 信号）
+    # 桌宠独立进程：先启动 Qt，再延迟经后端监管器拉起桌宠窗口；
+    # Qt 退出时经监管器停止（_stop_pet / atexit / 信号）。
+    # 所有权收归后端 window_supervisor：崩溃自动重启、Web 页可见状态、防双进程。
     def _create_pet_later():
-        global _pet_proc
         if os.environ.get("CORTEX_DISABLE_PET", "0") == "1":
             print("[..] 桌宠已禁用 (CORTEX_DISABLE_PET=1)")
             return
@@ -575,10 +674,24 @@ def main():
             print("[..] 打包版跳过独立桌宠进程")
             return
         try:
-            import subprocess as _sp
-            script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pet_launch.py")
-            _pet_proc = _sp.Popen([sys.executable, script])
-            print("[OK] 桌宠已启动（独立进程）", flush=True)
+            import json as _json
+            import urllib.request as _urlreq
+            req = _urlreq.Request(
+                _backend_base() + "/stream/pet/window/start",
+                data=_json.dumps({}).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with _urlreq.urlopen(req, timeout=15) as resp:
+                data = _json.loads(resp.read().decode("utf-8") or "{}")
+            d = (data.get("data") if isinstance(data, dict) else None) or {}
+            if data.get("success"):
+                if d.get("already_running"):
+                    print(f"[OK] 桌宠窗口已在运行 (pid={d.get('pid')})", flush=True)
+                else:
+                    print(f"[OK] 桌宠已启动（独立进程 pid={d.get('pid')}，后端监管）", flush=True)
+            else:
+                print(f"[..] 桌宠启动被拒绝: {(data.get('error') if isinstance(data, dict) else None) or 'unknown'}")
         except Exception as e:
             print(f"[..] 桌宠启动失败: {e}")
 

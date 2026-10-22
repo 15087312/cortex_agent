@@ -239,8 +239,8 @@ class CognitiveBlackboard:
         try:
             from modules.database.blackboard_repo import save_observation
             save_observation(self._session_id, obs)
-        except Exception:
-            pass
+        except Exception as _swallowed_err:
+            logger.debug(f"[add_observation] ignored Exception: {_swallowed_err}")
         logger.debug(f"[CognitiveBlackboard] 添加观察: {observation_id}")
         return observation_id
 
@@ -263,14 +263,29 @@ class CognitiveBlackboard:
         """创建委托（通常由 large 调用），记录完整委托链字段
 
         delegation_id 缺省用 probe_id（唯一），再缺省生成 dlg_xxx。
+        入库只存任务摘要（防超长任务胀库）：超 2000 字截头保留并注记全文长度，
+        全文以下级收到的总线载荷 + 黑板对话为准，按需拉取。
         """
         import uuid
         did = delegation_id or probe_id or f"dlg_{uuid.uuid4().hex[:8]}"
+        task_text = str(task or "")
+        task_full_length = len(task_text)
+        if task_full_length > 2000:
+            from utils.logger import get_logger as _get_logger
+            _get_logger(__name__).debug(
+                f"[CognitiveBlackboard] 委托任务超长 {task_full_length} 字符，入库截断存摘要"
+            )
+            task_text = (
+                f"{task_text[:2000]}\n...[任务摘要截断，全文{task_full_length}字符，"
+                f"下级通过 read_context / query_delegation 按需拉取]..."
+            )
+        merged_metadata = dict(metadata or {})
+        merged_metadata.setdefault("task_full_length", task_full_length)
         delegation = Delegation(
             delegation_id=did,
             role=role,
-            task=task,
-            metadata=metadata or {},
+            task=task_text,
+            metadata=merged_metadata,
             caller_model_id=caller_model_id,
             caller_tier=caller_tier,
             parent_delegation_id=parent_delegation_id,
@@ -540,12 +555,12 @@ class CognitiveBlackboard:
             try:
                 loop = asyncio.get_running_loop()
                 loop.create_task(bus.broadcast(msg))
-            except RuntimeError:
-                pass
+            except RuntimeError as _swallowed_err:
+                logger.debug(f"[_broadcast] ignored RuntimeError: {_swallowed_err}")
         except Exception as e:
             logger.debug(f"[CognitiveBlackboard] 广播失败 (非致命): {e}")
 
-    # @link:block BB_WriteThought = Write
+    # @link:block BB_WriteThought = Guard · Write · Emit
     def write_thought(
         self, model_id: str, tier: str, content: str,
         round_num: int = 0, metadata: Optional[Dict[str, Any]] = None,
@@ -565,7 +580,7 @@ class CognitiveBlackboard:
         self._broadcast(entry)
         return entry
 
-    # @link:block BB_WriteResponse = Write
+    # @link:block BB_WriteResponse = Write · Emit
     def write_response(
         self, model_id: str, tier: str, content: str,
         metadata: Optional[Dict[str, Any]] = None,
@@ -898,8 +913,8 @@ class CognitiveBlackboard:
         try:
             from modules.database.blackboard_repo import save_blackboard
             save_blackboard(self.to_state_dict())
-        except Exception:
-            pass
+        except Exception as _swallowed_err:
+            logger.debug(f"[persist] ignored Exception: {_swallowed_err}")
 
     @classmethod
     def load(cls, session_id: str, blackboard_id: str) -> Optional["CognitiveBlackboard"]:

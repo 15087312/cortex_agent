@@ -121,8 +121,8 @@ def _get_active_window() -> str:
             )
             if result.returncode == 0:
                 return result.stdout.strip()
-        except Exception:
-            pass
+        except Exception as _swallowed_err:
+            logger.debug(f"[_get_active_window] ignored Exception: {_swallowed_err}")
 
     # Windows
     if sys.platform == "win32":
@@ -135,8 +135,8 @@ def _get_active_window() -> str:
                 buf = ctypes.create_unicode_buffer(length + 1)
                 user32.GetWindowTextW(hwnd, buf, length + 1)
                 return buf.value
-        except Exception:
-            pass
+        except Exception as _swallowed_err:
+            logger.debug(f"[_get_active_window] ignored Exception: {_swallowed_err}")
 
     # Linux
     if sys.platform.startswith("linux"):
@@ -148,8 +148,8 @@ def _get_active_window() -> str:
             )
             if result.returncode == 0:
                 return result.stdout.strip()
-        except Exception:
-            pass
+        except Exception as _swallowed_err:
+            logger.debug(f"[_get_active_window] ignored Exception: {_swallowed_err}")
 
     return "未知"
 

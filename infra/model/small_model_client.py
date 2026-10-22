@@ -35,6 +35,7 @@ class SmallModelClient(BaseModelClient):
         api_key: str = None,
         api_url: str = None,
         timeout: int = 30,
+        enable_thinking: bool = True,
     ):
         key = api_key or settings.SMALL_MODEL_API_KEY or settings.LARGE_MODEL_API_KEY
         url = api_url or settings.SMALL_MODEL_API_URL or settings.LARGE_MODEL_API_URL
@@ -43,6 +44,7 @@ class SmallModelClient(BaseModelClient):
             key = api_key or tier_cfg.get("api_key") or key
             url = api_url or tier_cfg.get("base_url") or url
         super().__init__(key, url, timeout)
+        self.enable_thinking = enable_thinking
         self.model_name = model_name or settings.SMALL_MODEL_NAME
         if tier_cfg:
             self.model_name = tier_cfg.get("model") or self.model_name
@@ -71,7 +73,7 @@ class SmallModelClient(BaseModelClient):
             api_url=settings.SMALL_MODEL_API_URL or settings.LARGE_MODEL_API_URL,
         )
 
-    # @link:block SMALL_Chat_Emit = Emit
+    # @link:block SMALL_Chat_Emit = Retrieve · Loop(Guard · Throttle) · Emit
     async def chat(
         self,
         messages: List[ChatMessage],
@@ -108,6 +110,7 @@ class SmallModelClient(BaseModelClient):
             tools=tools,
             tool_choice=tool_choice,
             top_p=kwargs.get("top_p"),
+            **({"enable_thinking": self.enable_thinking} if self._api_format == "openai" else {}),
         )
 
         max_retries = kwargs.get("max_retries", 3)
@@ -156,7 +159,7 @@ class SmallModelClient(BaseModelClient):
             usage={"prompt_tokens": data.get("usage", {}).get("prompt_tokens", 0), "completion_tokens": data.get("usage", {}).get("completion_tokens", 0)},
         )
 
-    # @link:block SMALL_Generate_Emit = Emit
+    # @link:block SMALL_Generate_Emit = Retrieve · Loop(Guard · Throttle) · Emit
     async def generate(self, prompt: str, *, system_prompt: str, max_retries: int = 3,  # type: ignore[override]
                        fallback_to_reasoning: bool = False, **kwargs) -> str:
         """生成响应 - 使用 OpenAI / Anthropic 兼容 API，带重试机制
@@ -181,6 +184,7 @@ class SmallModelClient(BaseModelClient):
             max_tokens=max_tokens,
             temperature=temp,
             top_p=kwargs.get("top_p", 0.9),
+            **({"enable_thinking": self.enable_thinking} if self._api_format == "openai" else {}),
         )
 
         last_error = None

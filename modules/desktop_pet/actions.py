@@ -1,4 +1,4 @@
-# @link:block PetActions_Emit = Emit
+# @link:block PetActions_Emit = Retrieve
 """桌宠互动动作模板 — 19 动作 5 分类（借鉴桌宠养成游戏）
 
 每动作：id / label / category / icon(Lucide 名称) / prompt(给模型的情境陈述) / effects(状态增减)

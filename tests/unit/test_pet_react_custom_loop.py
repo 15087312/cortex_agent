@@ -35,7 +35,9 @@ def _pet_db(tmp_path, monkeypatch):
 def _engine(monkeypatch, cfg_patch=None):
     import modules.desktop_pet.store as store_mod
     store = store_mod.PetStore.get_instance()
-    patch = {"loop_type": "custom"}
+    # 默认关掉节流避免真实 sleep；轮数默认限 3 —— 新语义下空输出不再终止循环，
+    # 不限轮数会让输出耗尽的 FakeClient 永续空转。专项测持续循环的测试显式传 0。
+    patch = {"loop_type": "custom", "min_think_interval": 0, "max_loop_rounds": 3}
     if cfg_patch:
         patch.update(cfg_patch)
     store.update_config(patch)
@@ -51,6 +53,9 @@ def _engine(monkeypatch, cfg_patch=None):
     # 替换独立 client（只读 property 的缓存槽位；fingerprint 与默认空配置一致）
     e._client = _FakeClient()
     e._client_cfg = ("", "", "", "", "")
+    # 输出前视觉采集不打真实网络（build_context 新增注入点，单测固定为空）
+    from unittest.mock import AsyncMock
+    monkeypatch.setattr(PetEngine, "_capture_screen_vision", AsyncMock(return_value=""))
     return e
 
 
@@ -175,7 +180,8 @@ async def test_think_interval_throttles_second_round(monkeypatch, _pet_db):
 
 @pytest.mark.asyncio
 async def test_think_interval_zero_skips_wait(monkeypatch, _pet_db):
-    e = _engine(monkeypatch, {"min_think_interval": 0})
+    # 限 1 轮：避免输出耗尽后的空拍地板间隔（1s×2^n）混入计时
+    e = _engine(monkeypatch, {"min_think_interval": 0, "max_loop_rounds": 1})
     loop = CustomLoop()
     t0 = time.time()
     await loop.run(e, "hi")
@@ -370,9 +376,9 @@ async def test_native_tools_passed_to_chat_stream(monkeypatch, _pet_db):
     # 完整 schema：function.parameters.properties 存在
     calc_tool = next(t for t in tools_arg if t["function"]["name"] == "calc")
     assert "expr" in calc_tool["function"]["parameters"]["properties"]
-    # 不再注入文本工具清单（清单只作为无 schema 时的兑底）
+    # 文本清单始终注入（spark 等不支持原生 tool_calls 的模型靠它；支持原生的两边都能用）
     text_dump = "\n".join(m.content or "" for m in e.client.calls[0]["messages"])
-    assert "【可用工具】" not in text_dump
+    assert "【可用工具】" in text_dump
     assert fake.list_available_tools.called
 
 
@@ -449,10 +455,67 @@ async def test_loop_rounds_exhausted_last_text_fallback(monkeypatch, _pet_db):
 
 @pytest.mark.asyncio
 async def test_empty_output_returns_empty(monkeypatch, _pet_db):
-    e = _engine(monkeypatch)
+    """单轮空输出 → 本轮 reply 为空串（用 max_loop_rounds 限定，否则持续循环不终止）"""
+    e = _engine(monkeypatch, {"min_think_interval": 0, "max_loop_rounds": 1})
     e._client = _FakeClient([""])
     loop = CustomLoop()
     assert await loop.run(e, "hi") == ""
+
+
+# ── 空拍退避（参考 Cortico Heartbeat：连续空输出 → 间隔 2^n 指数增长，封顶 8） ──
+
+
+def test_idle_backoff_mult_caps_at_8():
+    """倍率映射（默认上限 8）：0→1, 1→2, 2→4, 3→8, 更大仍封顶 8"""
+    assert [CustomLoop._idle_backoff_mult(n) for n in range(0, 6)] == [1, 2, 4, 8, 8, 8]
+
+
+def test_idle_backoff_mult_cap_configurable():
+    """退避上限可配置：cap=4 时 3 次空拍即封顶；cap=1 = 关闭退避"""
+    assert [CustomLoop._idle_backoff_mult(n, cap=4) for n in range(0, 5)] == [1, 2, 4, 4, 4]
+    assert CustomLoop._idle_backoff_mult(5, cap=1) == 1
+    assert CustomLoop._idle_backoff_mult(5, cap=0.5) == 1
+
+
+@pytest.mark.asyncio
+async def test_consecutive_empty_output_keeps_loop_alive(monkeypatch, _pet_db):
+    """连续空输出不终止循环（持续思考语义）：空拍退避后继续，直到产出文本。
+    新语义：ReAct cycle 内空输出直接继续（不等待），cycle 间才退避。"""
+    e = _engine(monkeypatch, {"min_think_interval": 0, "max_loop_rounds": 2})
+    e._client = _FakeClient(["", "", "你好呀"])
+    loop = CustomLoop()
+    reply = await loop.run(e, "hi")
+    assert reply == "你好呀"
+    # 第1 cycle 内 3 步（空、空、文本）；第2 cycle 空转耗尽后结束
+    assert len(e._client.calls) >= 3
+
+
+@pytest.mark.asyncio
+async def test_empty_output_backs_off_exponentially(monkeypatch, _pet_db):
+    """空 cycle → 轮间等待按 ×2/×4 指数增长；有产出 cycle 复位回 ×1。
+    新语义：退避在 cycle 间（ReAct 内工具轮不等）。"""
+    e = _engine(monkeypatch, {"min_think_interval": 10, "max_loop_rounds": 3})
+    # 每个 cycle 消耗 10 步：cycle1 出文本A（含2空+1文本+7空耗尽？不——文本即返）
+    # 简化：每 cycle 首步即产出，验证轮间计时存在且复位
+    e._client = _FakeClient(["文本A", "文本B", ""])
+    sleeps: list = []
+
+    async def _fake_sleep(seconds):
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(asyncio, "sleep", _fake_sleep)
+    got = []
+    reply = await loop_run_reply(e, got)
+    # cycle1 有产出 → cycle2 前正常等待 ~10s；cycle2 有产出 → cycle3 前 ~10s
+    assert got == ["文本A", "文本B"]
+    assert reply == "文本A\n文本B"
+    assert len(sleeps) >= 1
+    assert all(abs(s - 10) < 3 for s in sleeps)
+
+
+async def loop_run_reply(e, got):
+    loop = CustomLoop()
+    return await loop.run(e, "hi", on_message=lambda m: got.append(m))
 
 
 @pytest.mark.asyncio

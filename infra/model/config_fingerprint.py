@@ -5,9 +5,12 @@
   实例。用户在设置页修改模型 API URL/Key/名称后，缓存实例仍持有旧配置 → 请求 404 /
   仍是旧模型。心理活动之所以能立即生效，是因为它每次 think 都新建 SmallModelClient。
 
-  本模块提供"配置指纹"：URL/Key/名称/格式任一变化 → 指纹变化。
-  缓存持有者比对指纹，变化即重建 client。
+   本模块提供"配置指纹"：URL/Key/名称/格式任一变化 → 指纹变化。
+   缓存持有者比对指纹，变化即重建 client。
 """
+from utils.logger import setup_logger
+
+logger = setup_logger(__name__)
 
 
 # @link:block CONFIG_Fingerprint_Emit = Emit
@@ -39,5 +42,5 @@ def close_client_session(client) -> None:
                 asyncio.ensure_future(sess.close())
             except RuntimeError:
                 sess.close()  # 无运行中 loop：同步发起关闭（aiohttp 兼容）
-    except Exception:
-        pass
+    except Exception as _swallowed_err:
+        logger.debug(f"[close_client_session] ignored Exception: {_swallowed_err}")

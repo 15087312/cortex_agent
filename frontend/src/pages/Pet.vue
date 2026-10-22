@@ -21,6 +21,55 @@ const messagesWrap = ref(null)
 let autoTimer = null // 连续思考模式的下一轮定时器
 let stopAuto = false // 用户点「停止」后终止本页的持续思考
 let userChatted = false // 本次页面会话中用户是否手动发过消息（direct 循环续聊的前提）
+const sendQueue = [] // 排队等待发送的消息（AI 输出中用户新发的消息）
+
+// ── 语音录制 ──
+const recording = ref(false)
+let petMediaRecorder = null
+let petAudioChunks = []
+
+async function toggleRecording() {
+  if (recording.value) { stopRecording() } else { await startRecording() }
+}
+
+async function startRecording() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    petMediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' })
+    petAudioChunks = []
+    petMediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) petAudioChunks.push(e.data) }
+    petMediaRecorder.onstop = async () => {
+      stream.getTracks().forEach(t => t.stop())
+      const blob = new Blob(petAudioChunks, { type: 'audio/webm' })
+      petAudioChunks = []
+      await transcribeAudio(blob)
+    }
+    petMediaRecorder.start()
+    recording.value = true
+  } catch (e) {
+    toast.show(t('pet.micError'), 'error')
+  }
+}
+
+function stopRecording() {
+  if (petMediaRecorder && petMediaRecorder.state !== 'inactive') {
+    petMediaRecorder.stop()
+    recording.value = false
+  }
+}
+
+async function transcribeAudio(blob) {
+  try {
+    const r = await endpoints.recognizeSpeech(blob)
+    if (r?.success && r.data?.text) {
+      input.value += (input.value ? ' ' : '') + r.data.text
+    } else {
+      toast.show(t('pet.transcribeFailed'), 'error')
+    }
+  } catch {
+    toast.show(t('pet.transcribeFailed'), 'error')
+  }
+}
 
 // 智能滚动：只有当用户原本就在底部附近时才跟随新输出；
 // 用户向上翻阅历史时不强制拽回底部（距离底阈 60px）
@@ -129,7 +178,15 @@ async function send(autoText) {
     stopAuto = false // 手动发消息 = 重新唤醒桌宠（自动续聊链路恢复）
   }
   const text = isAuto ? '' : input.value.trim()
-  if (!isAuto && (!text || sending.value)) return
+  if (!isAuto && !text) return
+  // AI 正在输出时，用户消息排队等待
+  if (!isAuto && sending.value) {
+    if (!input.value.trim()) return
+    sendQueue.push(input.value.trim())
+    input.value = ''
+    toast.show(t('pet.queuedMessage'), 'info')
+    return
+  }
   if (!isAuto) input.value = ''
   if (!isAuto) messages.value.push({ role: 'user', content: text })
   messages.value.push({ role: 'assistant', content: '', thinking: '' })
@@ -181,7 +238,7 @@ async function send(autoText) {
     }
     if (shouldContinue()) {
       if (autoTimer) clearTimeout(autoTimer)
-      autoTimer = setTimeout(() => { autoTimer = null; if (!sending.value) send('') }, 2000)
+      autoTimer = setTimeout(() => { autoTimer = null; if (!sending.value) send('') }, (cfg.value.min_think_interval || 5) * 1000)
     }
   } catch (e) {
     if (e.name !== 'AbortError') {
@@ -192,6 +249,12 @@ async function send(autoText) {
     sending.value = false
     abortCtl.value = null
     scrollDown()
+    // 队列中有排队消息 → 自动发送下一条
+    if (sendQueue.length > 0) {
+      const next = sendQueue.shift()
+      input.value = next
+      send()
+    }
   }
 }
 
@@ -229,6 +292,67 @@ const cfg = ref({
 })
 const apiKeyDraft = ref('')
 const savingCfg = ref(false)
+// 桌宠总开关（全局 DESKTOP_PET_ENABLED，运行时启停后端引擎）
+const masterEnabled = ref(true)
+const savingMaster = ref(false)
+
+async function loadMasterEnabled() {
+  try {
+    const r = await request('GET', '/config/DESKTOP_PET_ENABLED')
+    masterEnabled.value = r?.value !== false && r?.value !== 0
+  } catch { /* 静默，保持默认 true */ }
+}
+
+async function toggleMaster() {
+  await setMasterEnabled(!masterEnabled.value)
+}
+
+// 打开/关闭桌面宠物（进程级：拉起/停止窗口进程 + 同步引擎总开关）
+// 窗口进程由后端 window_supervisor 统一持有：崩溃自动重启、Web 页可见状态。
+async function setMasterEnabled(v) {
+  if (savingMaster.value) return
+  savingMaster.value = true
+  try {
+    if (v) {
+      const r = await endpoints.updateConfig('DESKTOP_PET_ENABLED', true)
+      if (r?.success === false) throw new Error('config')
+      masterEnabled.value = true
+      try {
+        const w = await endpoints.petWindowStart()
+        if (w?.success === false) {
+          toast.show(t('pet.windowStartFailed') + '：' + (w?.error || ''), 'error')
+        } else {
+          toast.show(t('pet.enabled'), 'success')
+        }
+      } catch {
+        toast.show(t('pet.windowStartFailed'), 'error')
+      }
+    } else {
+      // 先停窗口进程，再关引擎开关（后端不可达时仍继续关开关）
+      try { await endpoints.petWindowStop() } catch { /* 忽略，继续 */ }
+      const r = await endpoints.updateConfig('DESKTOP_PET_ENABLED', false)
+      if (r?.success === false) throw new Error('config')
+      masterEnabled.value = false
+      toast.show(t('pet.disabled'), 'success')
+      if (abortCtl.value) abortCtl.value.abort() // 关闭时中断当前思考
+    }
+    await loadWindowStatus()
+  } catch {
+    toast.show(t('pet.saveFailed'), 'error')
+  } finally {
+    savingMaster.value = false
+  }
+}
+
+// ── 桌宠窗口进程状态（后端监管：运行中/pid/崩溃重启次数）──
+const petWindow = ref({ running: false, pid: null, restarts: 0, exit_code: null, gave_up_auto_restart: false })
+async function loadWindowStatus() {
+  try {
+    const r = await endpoints.petWindowStatus()
+    if (r?.data) petWindow.value = { ...petWindow.value, ...r.data }
+  } catch { /* 静默 */ }
+}
+let windowPollTimer = null
 
 const LOOP_TYPES = [
   { value: 'direct', labelKey: 'pet.loopDirect' },
@@ -249,7 +373,9 @@ async function loadConfig() {
       max_history: d.max_history ?? 8,
       max_output_tokens: d.max_output_tokens ?? 512,
       max_loop_rounds: d.max_loop_rounds ?? 0,
+      idle_backoff_max: d.idle_backoff_max ?? 8,
       voice_enabled: !!d.voice_enabled,
+      realtime_voice: !!d.realtime_voice,
     }
   } catch { /* 静默 */ }
 }
@@ -270,7 +396,9 @@ async function saveConfig() {
       max_history: Math.max(1, Number(cfg.value.max_history) || 8),
       max_output_tokens: Math.max(1, Number(cfg.value.max_output_tokens) || 512),
       max_loop_rounds: Math.max(0, Number(cfg.value.max_loop_rounds) || 0),
+      idle_backoff_max: Math.max(1, Number(cfg.value.idle_backoff_max) || 8),
       voice_enabled: !!cfg.value.voice_enabled,
+      realtime_voice: !!cfg.value.realtime_voice,
     }
     if (apiKeyDraft.value.trim()) patch.api_key = apiKeyDraft.value.trim()
     const r = await endpoints.updatePetConfig(patch)
@@ -411,18 +539,20 @@ async function delMemory(mid) {
 onMounted(async () => {
   loadHistory()
   await loadConfig()
+  await loadMasterEnabled()
   loadMemory()
   loadActions()
   loadState()
-  // 连续思考模式（max_loop_rounds=0）：页面加载 1.5 秒后自动开始思考；
-  // 之后的续轮由 send() 的 shouldContinue 链路接管（custom 循环或用户手动聊天后）
-  if (Number(cfg.value.max_loop_rounds) === 0) {
-    setTimeout(() => { if (!sending.value) send('') }, 1500)
-  }
+  loadWindowStatus()
+  // 窗口进程状态轮询（10s）：崩溃/重启后页眉徽标同步
+  if (windowPollTimer) clearInterval(windowPollTimer)
+  windowPollTimer = setInterval(loadWindowStatus, 10000)
+  // 不再自动说话：用户手动发送或点思考才触发
 })
 
 onUnmounted(() => {
   if (autoTimer) { clearTimeout(autoTimer); autoTimer = null }
+  if (windowPollTimer) { clearInterval(windowPollTimer); windowPollTimer = null }
 })
 </script>
 
@@ -434,6 +564,10 @@ onUnmounted(() => {
         <span class="pet-badge">{{ cfg.loop_type }}</span>
       </div>
       <div class="pet-header-right">
+        <span v-if="petWindow.running" class="badge badge-green" :title="'pid ' + petWindow.pid">{{ $t('pet.windowRunning') }} · {{ petWindow.pid }}</span>
+        <span v-else class="badge badge-gray">{{ $t('pet.windowStopped') }}</span>
+        <button v-if="!masterEnabled" class="btn btn-sm btn-primary" :disabled="savingMaster" @click="setMasterEnabled(true)"><Icon name="play" :size="13" /> {{ $t('pet.openPet') }}</button>
+        <button v-else class="btn btn-sm" :disabled="savingMaster" @click="setMasterEnabled(false)"><Icon name="stop" :size="13" /> {{ $t('pet.closePet') }}</button>
         <div class="seg">
           <button :class="{ on: tab === 'chat' }" @click="tab = 'chat'">{{ $t('pet.tabChat') }}</button>
           <button :class="{ on: tab === 'settings' }" @click="tab = 'settings'">{{ $t('pet.tabSettings') }}</button>
@@ -507,10 +641,10 @@ onUnmounted(() => {
           class="input pet-input"
           :placeholder="$t('pet.inputPlaceholder')"
           @keydown.enter="onInputEnter"
-          :disabled="sending"
         />
-        <button v-if="!sending" class="btn btn-primary" @click="send"><Icon name="send" :size="14" /> {{ $t('pet.send') }}</button>
-        <button v-else class="btn" @click="stopSend"><Icon name="x" :size="14" /> {{ $t('pet.stop') }}</button>
+        <button class="btn btn-icon" :class="{ 'btn-recording': recording }" @click="toggleRecording" :title="recording ? $t('pet.stopRecording') : $t('pet.startRecording')"><Icon name="mic" :size="14" /></button>
+        <button class="btn btn-primary" @click="send"><Icon name="send" :size="14" /> {{ $t('pet.send') }}</button>
+        <button v-if="sending" class="btn" @click="stopSend"><Icon name="x" :size="14" /> {{ $t('pet.stop') }}</button>
       </div>
       <!-- 状态条：心情/饱食/精力/清洁（与养成状态同源） -->
       <div v-if="petStateValues" class="pet-statebar">
@@ -523,6 +657,15 @@ onUnmounted(() => {
 
     <!-- 设置 -->
     <div v-else-if="tab === 'settings'" class="pet-settings">
+      <div class="settings-group">
+        <div class="settings-group-title">{{ $t('pet.masterTitle') }}</div>
+        <div class="setting-row">
+          <div class="lbl"><div class="t">{{ $t('pet.masterEnabled') }}</div><div class="d">{{ $t('pet.masterEnabledDesc') }}</div></div>
+          <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="masterEnabled" :disabled="savingMaster" @change="toggleMaster" /><span class="toggle-slider"></span></label></div>
+        </div>
+      </div>
+
+      <div class="settings-divider"></div>
       <div class="settings-group">
         <div class="settings-group-title">{{ $t('pet.personaTitle') }}</div>
         <div class="setting-row">
@@ -549,6 +692,10 @@ onUnmounted(() => {
         <div class="setting-row">
           <div class="lbl"><div class="t">{{ $t('pet.apiFormat') }}</div><div class="d">{{ $t('pet.apiFormatDesc') }}</div></div>
           <div class="setting-ctl"><input class="input w-160" v-model="cfg.api_format" placeholder="openai / dashscope / anthropic" /></div>
+        </div>
+        <div class="setting-row">
+          <div class="lbl"><div class="t">{{ $t('pet.apiProvider') }}</div><div class="d">{{ $t('pet.apiProviderDesc') }}</div></div>
+          <div class="setting-ctl"><input class="input w-160" v-model="cfg.api_provider" placeholder="openai / dashscope / anthropic" /></div>
         </div>
       </div>
 
@@ -588,8 +735,16 @@ onUnmounted(() => {
           <div class="setting-ctl"><input class="input w-100" type="number" min="0" max="50" v-model.number="cfg.max_loop_rounds" /></div>
         </div>
         <div class="setting-row">
+          <div class="lbl"><div class="t">{{ $t('pet.idleBackoffMax') }}</div><div class="d">{{ $t('pet.idleBackoffMaxDesc') }}</div></div>
+          <div class="setting-ctl"><input class="input w-100" type="number" min="1" max="64" step="1" v-model.number="cfg.idle_backoff_max" /></div>
+        </div>
+        <div class="setting-row">
           <div class="lbl"><div class="t">{{ $t('pet.voiceEnabled') }}</div><div class="d">{{ $t('pet.voiceEnabledDesc') }}</div></div>
           <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" v-model="cfg.voice_enabled" /><span class="toggle-slider"></span></label></div>
+        </div>
+        <div class="setting-row">
+          <div class="lbl"><div class="t">{{ $t('pet.realtimeVoice') }}</div><div class="d">{{ $t('pet.realtimeVoiceDesc') }}</div></div>
+          <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" v-model="cfg.realtime_voice" /><span class="toggle-slider"></span></label></div>
         </div>
       </div>
 
@@ -728,6 +883,8 @@ onUnmounted(() => {
 }
 .pet-input-row { display: flex; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--border-color, #E4E3DD); }
 .pet-input { flex: 1; }
+.btn-recording { background: var(--error-bg, rgba(239, 68, 68, 0.15)); color: var(--error, #ef4444); animation: pulse-recording 1.5s ease-in-out infinite; }
+@keyframes pulse-recording { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
 .pet-settings { flex: 1; overflow-y: auto; padding: 16px; }
 .pet-settings .settings-group { margin-bottom: 8px; }
 .pet-persona-input { width: 100%; resize: vertical; font-family: inherit; }

@@ -1335,3 +1335,112 @@ def test_web_search_respects_custom_priority(monkeypatch):
     monkeypatch.setattr(ws, "_sanitize_web_content", lambda t, max_chars=300: t)
     r = asyncio.run(ws.web_search("hello", fetch_content=False))
     assert r["source"] == "baidu"
+
+
+# ── API providers（Tavily / Exa / Bocha，抄 Cherry）──
+
+def test_next_api_key_rotation(monkeypatch):
+    """多 Key 轮换：依次返回不同 Key，超界回绕"""
+    monkeypatch.setenv("TAVILY_API_KEY", "k1,k2,k3")
+    ws._API_KEY_INDEX.clear()
+    assert ws._next_api_key("tavily") == "k1"
+    assert ws._next_api_key("tavily") == "k2"
+    assert ws._next_api_key("tavily") == "k3"
+    assert ws._next_api_key("tavily") == "k1"
+
+
+def test_next_api_key_empty(monkeypatch):
+    """无 Key 返回 None（调用方跳过该引擎）"""
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+    monkeypatch.setattr(ws, "_get_api_keys", lambda p: [])
+    assert ws._next_api_key("tavily") is None
+
+
+def test_search_tavily_ok(monkeypatch):
+    """Tavily 正常返回：解析 results + cite_id"""
+    monkeypatch.setattr(ws, "_next_api_key", lambda p: "fake-key")
+    captured = {}
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        captured["url"] = url
+        captured["auth"] = headers.get("Authorization")
+        captured["body"] = json
+        return _Resp(json_data={
+            "results": [
+                {"title": "T", "url": "https://ex.com/1", "content": "snippet text"},
+                {"title": "T2", "url": "https://ex.com/2", "content": "more"},
+            ]
+        })
+
+    monkeypatch.setattr(ws.requests, "post", fake_post)
+    out = ws._search_tavily("hello", 2)
+    assert captured["url"] == "https://api.tavily.com/search"
+    assert captured["auth"] == "Bearer fake-key"
+    assert captured["body"]["query"] == "hello"
+    assert len(out) == 2
+    assert out[0]["cite_id"] == "[cite:1]"
+    assert out[1]["cite_id"] == "[cite:2]"
+    assert "snippet text" in out[0]["snippet"]
+
+
+def test_search_tavily_no_key(monkeypatch):
+    """无 Key 返回空（引擎链跳过，不抛异常）"""
+    monkeypatch.setattr(ws, "_next_api_key", lambda p: None)
+    assert ws._search_tavily("hello", 5) == []
+
+
+def test_search_exa_ok(monkeypatch):
+    """Exa 用 x-api-key 头，解析 text 字段"""
+    monkeypatch.setattr(ws, "_next_api_key", lambda p: "exa-key")
+    captured = {}
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        captured["auth"] = headers.get("x-api-key")
+        captured["body"] = json
+        return _Resp(json_data={
+            "results": [{"title": "E", "url": "https://ex.com", "text": "exa content here"}]
+        })
+
+    monkeypatch.setattr(ws.requests, "post", fake_post)
+    out = ws._search_exa("hello", 1)
+    assert captured["auth"] == "exa-key"
+    assert captured["body"]["numResults"] == 1
+    assert out[0]["snippet"] == "exa content here"
+    assert out[0]["cite_id"] == "[cite:1]"
+
+
+def test_search_bocha_ok(monkeypatch):
+    """Bocha 解析嵌套 data.webPages.value + summary"""
+    monkeypatch.setattr(ws, "_next_api_key", lambda p: "bocha-key")
+    captured = {}
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        captured["url"] = url
+        captured["body"] = json
+        return _Resp(json_data={
+            "data": {"webPages": {"value": [
+                {"name": "标题", "url": "https://ex.cn", "summary": "摘要内容"},
+            ]}}
+        })
+
+    monkeypatch.setattr(ws.requests, "post", fake_post)
+    out = ws._search_bocha("你好", 1)
+    assert "bochaai.com" in captured["url"]
+    assert captured["body"]["summary"] is True
+    assert out[0]["title"] == "标题"
+    assert out[0]["snippet"] == "摘要内容"
+
+
+def test_api_engines_in_priority_chain(monkeypatch):
+    """API 引擎排在 scraping 之前：tavily 命中则直接返回"""
+    from config.settings import settings as gsettings
+    monkeypatch.setattr(gsettings, "SEARCH_ENGINE_PRIORITY", "tavily,sogou")
+    monkeypatch.setattr(ws, "_search_tavily",
+                        lambda q, lim: [{"title": "t", "url": "u", "snippet": "s", "cite_id": "[cite:1]"}])
+    monkeypatch.setattr(ws, "_search_sogou",
+                        lambda q, lim: (_ for _ in ()).throw(RuntimeError("should not reach")))
+    monkeypatch.setattr(ws, "_fetch_results_content", lambda r, max_fetch=3: r)
+    monkeypatch.setattr(ws, "_sanitize_web_content", lambda t, max_chars=300: t)
+    r = asyncio.run(ws.web_search("hello", fetch_content=False))
+    assert r["source"] == "tavily"
+    assert r["results"][0]["cite_id"] == "[cite:1]"

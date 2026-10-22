@@ -29,13 +29,13 @@ class WindowDetector(PerceptionDetector):
         self._last_window: Optional[str] = None
         self._last_app: Optional[str] = None
         self._backend = None
-        # 懒加载: _init_backend() 在首次 detect() 时调用，避免 import AppKit 阻塞启动
+        self._detect_count = 0
 
     def _init_backend(self):
         """根据平台初始化窗口检测后端
 
         Windows: pywin32 (win32gui.GetForegroundWindow)
-        macOS: pyobjc (NSWorkspace.frontmostApplication)
+        macOS: Quartz (CGWindowListCopyWindowInfo, 线程安全)
         """
         if self._platform == "Windows":
             try:
@@ -45,10 +45,10 @@ class WindowDetector(PerceptionDetector):
                 logger.debug("pywin32 不可用")
         elif self._platform == "Darwin":
             try:
-                from AppKit import NSWorkspace  # noqa: F401
-                self._backend = "appkit"
+                from Quartz import CGWindowListCopyWindowInfo  # noqa: F401
+                self._backend = "quartz"
             except ImportError:
-                logger.debug("pyobjc AppKit 不可用")
+                logger.debug("Quartz 不可用")
 
     def is_available(self) -> bool:
         if self._backend is None:
@@ -74,11 +74,16 @@ class WindowDetector(PerceptionDetector):
         window_title, app_name = self._get_active_window()
 
         if window_title is None:
+            logger.warning("窗口检测: _get_active_window 返回 None（系统API可能失败）")
             return []
+
+        self._detect_count += 1
 
         # 窗口和应用均无变化时跳过，避免重复触发事件
         if window_title == self._last_window and app_name == self._last_app:
             return []
+
+        logger.info(f"窗口切换: {app_name} — {window_title[:80]}")
 
         event = PerceptionEvent(
             event_type=PerceptionEventType.SCREEN_WINDOW,
@@ -95,7 +100,6 @@ class WindowDetector(PerceptionDetector):
         self._last_window = window_title
         self._last_app = app_name
 
-        logger.debug(f"窗口切换: {app_name} — {window_title[:50]}")
         return [event]
 
     def _get_active_window(self):
@@ -106,10 +110,10 @@ class WindowDetector(PerceptionDetector):
         try:
             if self._backend == "win32":
                 return self._get_window_win32()
-            elif self._backend == "appkit":
-                return self._get_window_appkit()
+            elif self._backend == "quartz":
+                return self._get_window_quartz()
         except Exception as e:
-            logger.debug(f"获取窗口信息失败: {e}")
+            logger.warning(f"获取窗口信息失败: {type(e).__name__}: {e}")
         return None, None
 
     @staticmethod
@@ -130,46 +134,33 @@ class WindowDetector(PerceptionDetector):
         return title, app
 
     @staticmethod
-    def _get_window_appkit():
-        """macOS 窗口信息获取（NSWorkspace + Quartz）
+    def _get_window_quartz():
+        """macOS 窗口信息获取（纯 Quartz，线程安全）
 
-        使用 kCGWindowListOptionOnScreenOnly 获取屏幕上所有窗口，
-        按 PID 和窗口层级过滤出前端应用的顶层窗口。
+        CGWindowListCopyWindowInfo 是 C API，可在任意线程调用。
+        返回的窗口列表按前后顺序排列，第一个 layer==0 的窗口即前端窗口。
         """
-        from AppKit import NSWorkspace
-        workspace = NSWorkspace.sharedWorkspace()
-        app = workspace.frontmostApplication()
-        app_name = app.localizedName() if app else ""
+        from Quartz import (
+            CGWindowListCopyWindowInfo,
+            kCGNullWindowID,
+            kCGWindowListOptionOnScreenOnly,
+        )
 
-        app_pid = app.processIdentifier() if app else None
+        all_windows = CGWindowListCopyWindowInfo(
+            kCGWindowListOptionOnScreenOnly, kCGNullWindowID
+        )
+        if not all_windows:
+            logger.warning("CGWindowListCopyWindowInfo 返回空")
+            return None, None
 
-        window_title = ""
-        try:
-            from Quartz import (
-                CGWindowListCopyWindowInfo,
-                kCGNullWindowID,
-                kCGWindowListOptionOnScreenOnly,
-            )
-            all_windows = CGWindowListCopyWindowInfo(
-                kCGWindowListOptionOnScreenOnly, kCGNullWindowID
-            )
-            if all_windows and app_pid is not None:
-                # 过滤出属于前端应用且层级为 0（非 dock/菜单栏）的窗口
-                front_windows = [
-                    w for w in all_windows
-                    if w.get("kCGWindowOwnerPID") == app_pid
-                       and w.get("kCGWindowLayer", 0) == 0
-                ]
-                # 按层级排序取最上层窗口
-                front_windows.sort(
-                    key=lambda w: w.get("kCGWindowLayer", 0), reverse=True
-                )
-                if front_windows:
-                    window_title = front_windows[0].get("kCGWindowName", "") or ""
-        except Exception:
-            pass
+        for w in all_windows:
+            if w.get("kCGWindowLayer", 0) == 0:
+                app_name = w.get("kCGWindowOwnerName", "") or ""
+                window_title = w.get("kCGWindowName", "") or ""
+                return window_title or app_name, app_name
 
-        return window_title or app_name, app_name
+        logger.warning("未找到 layer==0 的窗口")
+        return None, None
 
     def reset(self) -> None:
         """重置窗口状态缓存"""

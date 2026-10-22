@@ -197,8 +197,8 @@ def _parse_target_files(command: str, workdir: Optional[str]) -> List[Path]:
                     path = path.resolve()
                     if path.exists() and path not in targets:
                         targets.append(path)
-                except (OSError, ValueError):
-                    pass
+                except (OSError, ValueError) as _swallowed_err:
+                    logger.debug(f"[_parse_target_files] ignored (OSError, ValueError): {_swallowed_err}")
                 j += 1
         i += 1
 
@@ -212,8 +212,8 @@ def _parse_target_files(command: str, workdir: Optional[str]) -> List[Path]:
                 path = path.resolve()
                 if path.exists() and path not in targets:
                     targets.append(path)
-            except (OSError, ValueError):
-                pass
+            except (OSError, ValueError) as _swallowed_err:
+                logger.debug(f"[_parse_target_files] ignored (OSError, ValueError): {_swallowed_err}")
 
     return targets
 
@@ -325,12 +325,12 @@ def _kill_process_group(proc) -> None:
     except Exception:
         try:
             proc.kill()
-        except Exception:
-            pass
+        except Exception as _swallowed_err:
+            logger.debug(f"[_kill_process_group] ignored Exception: {_swallowed_err}")
     try:
         proc.wait(timeout=5)
-    except Exception:
-        pass
+    except Exception as _swallowed_err:
+        logger.debug(f"[_kill_process_group] ignored Exception: {_swallowed_err}")
 
 
 def _run_subprocess(command, *, shell: bool = False, cwd=None, timeout: int = DEFAULT_TIMEOUT):
@@ -412,8 +412,8 @@ def exec_command(command: str, timeout: Optional[int] = None, workdir: Optional[
         try:
             import threading
             threading.Thread(target=_prune_old_snapshots, daemon=True).start()
-        except Exception:
-            pass
+        except Exception as _swallowed_err:
+            logger.debug(f"[exec_command] ignored Exception: {_swallowed_err}")
 
     try:
         start = time.time()
@@ -565,8 +565,8 @@ def run_script(code: str, language: str = "python", timeout: Optional[int] = 30)
     finally:
         try:
             shutil.rmtree(script_dir, ignore_errors=True)
-        except Exception:
-            pass
+        except Exception as _swallowed_err:
+            logger.debug(f"[run_script] ignored Exception: {_swallowed_err}")
 
 
 

@@ -177,7 +177,7 @@ describe('Pet 页面', () => {
     try {
       routeFetch([
         { match: '/stream/pet/history', data: { data: { items: [] } } },
-        { match: '/stream/pet/config', data: { data: { loop_type: 'custom', max_loop_rounds: 0 } } },
+        { match: '/stream/pet/config', data: { data: { loop_type: 'custom', max_loop_rounds: 0, min_think_interval: 1 } } },
         { match: '/stream/pet/memory', data: { data: { items: [] } } },
       ])
       const w = mountPage()
@@ -194,12 +194,13 @@ describe('Pet 页面', () => {
         }
         return prevFetch(url, init)
       }
-      // 页面加载 1.5s 后的自动首轮
-      await vi.advanceTimersByTimeAsync(1600)
+      // 页面不再自动首轮（不再自动说话）：手动触发首轮，验证 SSE 结束后的自动续轮链路
+      await w.vm.send('')
+      await vi.advanceTimersByTimeAsync(100)
       expect(chatStreams.length).toBe(1)
-      // SSE 已结束（空流），等 2s 续轮延迟 → 应自动发起第二轮
+      // SSE 已结束（空流），续轮延迟由 min_think_interval（mock 为 1s）控制 → 应自动续轮
       await vi.advanceTimersByTimeAsync(2200)
-      expect(chatStreams.length).toBe(2)
+      expect(chatStreams.length).toBeGreaterThanOrEqual(2)
     } finally {
       vi.useRealTimers()
     }
@@ -487,6 +488,45 @@ describe('Pet 页面', () => {
     await tick()
     expect(audioCreated).toBe(0)
     expect(w.vm.messages[w.vm.messages.length - 1].content).toBe('喵')
+  })
+
+  it('页眉桌面宠物开关：开启时显示关闭按钮，点击后调用 updateConfig(false)', async () => {
+    const { endpoints } = await import('@/api.js')
+    const updSpy = vi.spyOn(endpoints, 'updateConfig').mockResolvedValue({ success: true })
+    const startSpy = vi.spyOn(endpoints, 'petWindowStart').mockResolvedValue({ success: true, data: { ok: true, pid: 1234 } })
+    const stopSpy = vi.spyOn(endpoints, 'petWindowStop').mockResolvedValue({ success: true, data: { ok: true } })
+    const statusSpy = vi.spyOn(endpoints, 'petWindowStatus').mockResolvedValue({ success: true, data: { running: true, pid: 1234 } })
+    try {
+      routeFetch(BASE_ROUTES())
+      const w = mountPage()
+      await tick()
+      await w.vm.$nextTick()
+      // 默认 masterEnabled=true → 显示「关闭桌面宠物」
+      expect(w.vm.masterEnabled).toBe(true)
+      const closeBtn = w.findAll('button').find((b) => b.text().includes('关闭桌面宠物'))
+      expect(closeBtn).toBeTruthy()
+      await closeBtn.trigger('click')
+      await tick()
+      // 进程级关闭：先停窗口进程，再关引擎开关
+      expect(stopSpy).toHaveBeenCalled()
+      expect(updSpy).toHaveBeenCalledWith('DESKTOP_PET_ENABLED', false)
+      expect(w.vm.masterEnabled).toBe(false)
+      // 关闭后显示「打开桌面宠物」，点击后拉起进程 + 开引擎
+      await w.vm.$nextTick()
+      const openBtn = w.findAll('button').find((b) => b.text().includes('打开桌面宠物'))
+      expect(openBtn).toBeTruthy()
+      await openBtn.trigger('click')
+      await tick()
+      expect(updSpy).toHaveBeenCalledWith('DESKTOP_PET_ENABLED', true)
+      expect(startSpy).toHaveBeenCalled()
+      expect(w.vm.masterEnabled).toBe(true)
+      expect(statusSpy).toHaveBeenCalled()
+    } finally {
+      updSpy.mockRestore()
+      startSpy.mockRestore()
+      stopSpy.mockRestore()
+      statusSpy.mockRestore()
+    }
   })
 })
 

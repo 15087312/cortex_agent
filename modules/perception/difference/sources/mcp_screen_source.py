@@ -247,8 +247,8 @@ class ScreenDiffSource(DifferenceSource):
                 except Exception:
                     try:
                         self._proc.kill()
-                    except Exception:
-                        pass
+                    except Exception as _swallowed_err:
+                        logger.debug(f"[_close_process] ignored Exception: {_swallowed_err}")
                 self._proc = None
         # 等待旧 reader 线程退出，避免重启后新旧线程竞争读新进程 stdout
         if self._reader_thread:
@@ -350,10 +350,10 @@ class ScreenDiffSource(DifferenceSource):
             line = self._resp_queue.get(timeout=timeout)
             if line:
                 return json.loads(line)
-        except Empty:
-            pass
-        except Exception:
-            pass
+        except Empty as _swallowed_err:
+            logger.debug(f"[_read_response] ignored Empty: {_swallowed_err}")
+        except Exception as _swallowed_err:
+            logger.debug(f"[_read_response] ignored Exception: {_swallowed_err}")
         return None
 
     # ── 检测主循环 ──
@@ -436,7 +436,7 @@ class ScreenDiffSource(DifferenceSource):
 
     def _publish_screen_diff_event(self, change_ratio: float,
                                     regions: list, data: dict) -> None:
-        # @link:block ScreenDiff_Emit = Emit
+        # @link:block ScreenDiff_Emit = Guard · Emit
         """发布屏幕差异事件到事件总线（带限频，避免刷屏）"""
         now = time.time()
         if now - self._last_event_publish_time < _PERCEPTION_EVENT_IDLE_INTERVAL:

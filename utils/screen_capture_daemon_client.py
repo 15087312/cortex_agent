@@ -78,8 +78,8 @@ def _rpc(method: str, params: dict = None, timeout: float = DEFAULT_TIMEOUT) -> 
             finally:
                 try:
                     client.close()
-                except OSError:
-                    pass
+                except OSError as _swallowed_err:
+                    logger.debug(f"[_rpc] ignored OSError: {_swallowed_err}")
         except (ConnectionRefusedError, FileNotFoundError):
             # daemon 可能刚启动/竞态，稍等重试一次
             if attempt == 0:

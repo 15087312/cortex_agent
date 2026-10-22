@@ -48,8 +48,8 @@ class ConnectionManager:
                 # 旧客户端不响应会永久阻塞锁 → 整个连接管理器瘫痪）
                 try:
                     asyncio.create_task(self._close_old_connection(old))
-                except Exception:
-                    pass
+                except Exception as _swallowed_err:
+                    logger.debug(f"[connect] ignored Exception: {_swallowed_err}")
             self.active_connections[session_id] = websocket
             self._loop = asyncio.get_running_loop()
 
@@ -60,8 +60,8 @@ class ConnectionManager:
                 old.close(code=4000, reason="session 已被新连接接管"),
                 timeout=2.0,
             )
-        except Exception:
-            pass
+        except Exception as _swallowed_err:
+            logger.debug(f"[_close_old_connection] ignored Exception: {_swallowed_err}")
 
     async def disconnect(self, session_id: str):
         async with self._lock:
@@ -117,8 +117,8 @@ class ConnectionManager:
             async def _fire_and_forget():
                 try:
                     await _send()
-                except BaseException:
-                    pass
+                except BaseException as _swallowed_err:
+                    logger.debug(f"[_fire_and_forget] ignored BaseException: {_swallowed_err}")
             asyncio.create_task(_fire_and_forget())
             return True
 
@@ -454,8 +454,8 @@ class StreamThinkingSystem:
                     snapshot["active_supervisors"].append(entry)
                 elif tier == "expert":
                     snapshot["active_experts"].append(entry)
-        except Exception:
-            pass
+        except Exception as _swallowed_err:
+            logger.debug(f"[_collect_process_snapshot] ignored Exception: {_swallowed_err}")
         return snapshot
 
     def _budget_trim(self, messages: List[Dict[str, Any]], ratio: float = 0.8) -> List[Dict[str, Any]]:
@@ -608,8 +608,8 @@ class StreamThinkingSystem:
                 _ec = event.get("payload", {}).get("content") or {}
                 if isinstance(_ec, dict):
                     _entry_type = _ec.get("entry_type", "")
-            except Exception:
-                pass
+            except Exception as _swallowed_err:
+                logger.debug(f"[_format_scheduler_event] ignored Exception: {_swallowed_err}")
             result_data["entry_type"] = _entry_type
         # 身份信息：供前端渲染不同的头像/名字（如 代码主管 / 总指挥）
         if event_type == "model_comm":
@@ -638,8 +638,8 @@ class StreamThinkingSystem:
             busy_msg_id = ""
             try:
                 busy_msg_id = await self._append_message(session_id, "user", user_input)
-            except Exception:
-                pass
+            except Exception as _swallowed_err:
+                logger.debug(f"[think] ignored Exception: {_swallowed_err}")
             await self._emit(
                 session_id,
                 _build_event(
@@ -902,8 +902,8 @@ class StreamThinkingSystem:
                                 content=formatted.get("content", ""),
                                 ts=_time.time(),
                             )
-                    except Exception:
-                        pass
+                    except Exception as _swallowed_err:
+                        logger.debug(f"[scheduler_event_callback] ignored Exception: {_swallowed_err}")
                     event_role = formatted["data"].get("dialog_tier", "thinking")
                     # 安全审查/审批/提问是瞬态交互事件，持久化用独立 tier='security'，
                     # 前端恢复时识别并跳过（不折叠进大模型思考区，避免审批文本污染历史思考）
@@ -917,8 +917,8 @@ class StreamThinkingSystem:
                         _payload_content = (formatted.get("data") or {}).get("payload", {}).get("content") or {}
                         if isinstance(_payload_content, dict):
                             _inject_entry_type = _payload_content.get("entry_type", "")
-                    except Exception:
-                        pass
+                    except Exception as _swallowed_err:
+                        logger.debug(f"[scheduler_event_callback] ignored Exception: {_swallowed_err}")
                     if _fcontent and _inject_entry_type != "response":
                         async with self._lock:
                             _proc = self.sessions.setdefault(session_id, {}).setdefault("_process_flow", [])
@@ -931,8 +931,8 @@ class StreamThinkingSystem:
                             session_id, formatted["content"], tier=event_role,
                             identity_name=formatted.get("data", {}).get("identity_name", ""),
                         )
-                    except Exception:
-                        pass
+                    except Exception as _swallowed_err:
+                        logger.debug(f"[scheduler_event_callback] ignored Exception: {_swallowed_err}")
                     await self._emit(
                         session_id,
                         _build_event(
@@ -966,8 +966,8 @@ class StreamThinkingSystem:
                 if partial_response:
                     try:
                         await self._append_message(session_id, "assistant", partial_response)
-                    except Exception:
-                        pass
+                    except Exception as _swallowed_err:
+                        logger.debug(f"[scheduler_event_callback] ignored Exception: {_swallowed_err}")
                     await self._emit(
                         session_id,
                         _build_event(
@@ -1099,20 +1099,20 @@ class StreamThinkingSystem:
                     from modules.thinking.probes.probe_tools import _session_guidance
                     g = _session_guidance.get((model_id, session_id), {})
                     meta["inner_monologue"] = g.get("inner_thoughts", "") or ""
-                except Exception:
-                    pass
+                except Exception as _swallowed_err:
+                    logger.debug(f"[scheduler_event_callback] ignored Exception: {_swallowed_err}")
                 try:
                     from modules.thinking.core.model_runner import _session_memory_context
                     meta["event_memory"] = _session_memory_context.get(session_id, "") or ""
-                except Exception:
-                    pass
+                except Exception as _swallowed_err:
+                    logger.debug(f"[scheduler_event_callback] ignored Exception: {_swallowed_err}")
                 try:
                     # 附加上一轮实际注入 AI 的【对话历史】原文（前端直接展示，保证一致）
                     from modules.thinking.multi_model_orchestrator import _session_dialog_history, _session_dialog_history_lock
                     with _session_dialog_history_lock:
                         meta["conversation_history"] = _session_dialog_history.get(session_id, "") or ""
-                except Exception:
-                    pass
+                except Exception as _swallowed_err:
+                    logger.debug(f"[scheduler_event_callback] ignored Exception: {_swallowed_err}")
                 await self._emit(
                     session_id,
                     _build_event(
@@ -1219,8 +1219,8 @@ class StreamThinkingSystem:
                 from modules.database.session_repo import get_session_repo
                 snap = get_session_graph_store().snapshot(session_id)
                 get_session_repo().set_session_metadata(session_id, {"session_graph": snap})
-            except Exception:
-                pass
+            except Exception as _swallowed_err:
+                logger.debug(f"[think] ignored Exception: {_swallowed_err}")
             await self._set_processing(session_id, False)
 
     async def _post_task_extraction(
@@ -1312,16 +1312,16 @@ class StreamThinkingSystem:
                 try:
                     from modules.memory.event_reducer import get_reducer
                     get_reducer()._model_client = model_client
-                except Exception:
-                    pass
+                except Exception as _swallowed_err:
+                    logger.debug(f"[_post_task_extraction] ignored Exception: {_swallowed_err}")
 
             # 记忆总结开关：关闭则跳过自动提炼事件记忆（EventReducer）
             try:
                 from config.settings import settings as _cfg
                 if not getattr(_cfg, "MEMORY_SUMMARY_ENABLED", True):
                     return
-            except Exception:
-                pass
+            except Exception as _swallowed_err:
+                logger.debug(f"[_post_task_extraction] ignored Exception: {_swallowed_err}")
 
             events = await reducer.reduce(session_id, conversation_text, owner_id=owner_id)
             if events:
@@ -1376,8 +1376,8 @@ async def initialize_system():
     global _main_event_loop
     try:
         _main_event_loop = asyncio.get_running_loop()
-    except Exception:
-        pass
+    except Exception as _swallowed_err:
+        logger.debug(f"[initialize_system] ignored Exception: {_swallowed_err}")
     return get_thinking_system()
 
 
@@ -1417,8 +1417,8 @@ async def _safe_think(system, session_id: str, user_input: str, callback=None) -
         error_text = f"[模型调用失败: {e}]"
         try:
             await system._append_message(session_id, "assistant", error_text)
-        except Exception:
-            pass
+        except Exception as _swallowed_err:
+            logger.debug(f"[_safe_think] ignored Exception: {_swallowed_err}")
         try:
             await system._emit(
                 session_id,
@@ -1431,8 +1431,8 @@ async def _safe_think(system, session_id: str, user_input: str, callback=None) -
                 ),
                 callback,
             )
-        except Exception:
-            pass
+        except Exception as _swallowed_err:
+            logger.debug(f"[_safe_think] ignored Exception: {_swallowed_err}")
 
 
 @router.websocket("/ws/{session_id}")
@@ -1502,9 +1502,16 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
                             )
                             from config.settings import settings
                             # 直连模式：图片直接附给大模型（不调独立视觉模型）
-                            if str(getattr(settings, "CHAT_IMAGE_MODE", "describe") or "describe").lower() == "direct":
+                            # 同时检查模型层的 ENABLE_IMAGE 开关
+                            image_mode = str(getattr(settings, "CHAT_IMAGE_MODE", "describe") or "describe").lower()
+                            enable_image = getattr(settings, "LARGE_MODEL_ENABLE_IMAGE", True)
+                            if image_mode == "direct" and enable_image:
                                 att_images = extract_images(attachments)
                                 att_text = summarize_attachments(attachments)
+                            elif not enable_image:
+                                # 图片功能被关闭，跳过所有图片处理
+                                att_images = []
+                                att_text = summarize_attachments([a for a in attachments if not getattr(a, "is_image", False)]) if attachments else ""
                             else:
                                 att_images = []
                                 att_text = await parse_attachments(attachments)
@@ -1716,8 +1723,8 @@ async def close_session(session_id: str):
         _session_memory_context.pop(session_id, None)
         if isinstance(_resume_context, dict):
             _resume_context.pop(session_id, None)
-    except Exception:
-        pass
+    except Exception as _swallowed_err:
+        logger.debug(f"[close_session] ignored Exception: {_swallowed_err}")
     return {"success": True, "data": {"message": "会话已删除"}}
 
 

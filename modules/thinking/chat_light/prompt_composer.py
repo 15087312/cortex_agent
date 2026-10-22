@@ -43,8 +43,8 @@ class PromptComposer:
                 self._identity = data.get("identity", "")
                 self._base_mtime = mtime
                 logger.info("[PromptComposer] 检测到 base.yaml 变更，已热重载 identity")
-        except Exception:
-            pass
+        except Exception as _swallowed_err:
+            logger.debug(f"[_ensure_fresh_identity] ignored Exception: {_swallowed_err}")
 
     def build_system(self, memory_context: str = "") -> str:
         """Assemble full system prompt.
@@ -84,9 +84,12 @@ class PromptComposer:
                             if p:
                                 custom_persona = p
                         break
-        except Exception:
-            pass
-        if persona_override:
+        except Exception as _swallowed_err:
+            logger.debug(f"[build_system] ignored Exception: {_swallowed_err}")
+        # 人设优先：用户显式设置的人设（personas[role]）应覆盖可能陈旧的
+        # system_override（savePersona/apply_persona_preset 只写 personas、不清 override）。
+        # 仅在未设置人设时，system_override（高级修改）才作为完整 system 兜底。
+        if persona_override and not custom_persona:
             return persona_override
 
         parts = []

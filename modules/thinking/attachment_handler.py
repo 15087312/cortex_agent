@@ -82,8 +82,8 @@ async def parse_attachments(attachments) -> str:
                         text = base64.b64decode(m.group(1)).decode("utf-8", errors="replace")
                         parts.append(f"[用户上传文件: {name or atype}] 内容：\n{text[:2000]}")
                         continue
-            except Exception:
-                pass
+            except Exception as _swallowed_err:
+                logger.debug(f"[parse_attachments] ignored Exception: {_swallowed_err}")
             parts.append(f"[用户上传文件: {name or atype}]")
     return "\n".join(parts)
 
@@ -127,7 +127,7 @@ def summarize_attachments(attachments) -> str:
                         text = base64.b64decode(m.group(1)).decode("utf-8", errors="replace")
                         parts.append(f"[用户上传文件: {name or atype}] 内容：\n{text[:2000]}")
                         continue
-            except Exception:
-                pass
+            except Exception as _swallowed_err:
+                logger.debug(f"[summarize_attachments] ignored Exception: {_swallowed_err}")
             parts.append(f"[用户上传文件: {name or atype}]")
     return "\n".join(parts)

@@ -77,16 +77,25 @@ def _engine(monkeypatch, cfg_patch=None):
 
 
 def _fast_tool_manager(monkeypatch):
-    """轻量 ToolManager：避免 MCP/内置工具加载干扰泄漏测量"""
+    """轻量 ToolManager：避免 MCP/内置工具加载干扰泄漏测量
+
+    注意：用普通函数而非 AsyncMock/MagicMock 方法 —— mock 的调用记录
+    （call_args_list 等）会随持续循环跨 run 无界累积，污染 gc 对象数测量。
+    """
     import importlib
+    from unittest.mock import MagicMock
     tm_mod = importlib.import_module("infra.tool_manager.tool_manager")
-    from unittest.mock import AsyncMock, MagicMock
+
     fake = MagicMock()
-    fake.get_tool_info.side_effect = lambda n: {
+    fake.get_tool_info = lambda n: {
         "calc": {"name": "calc", "params": {"expr": "表达式"}},
     }.get(n)
-    fake.list_available_tools.return_value = {"calc": {"name": "calc", "params": {"expr": "x"}}}
-    fake.call_tool = AsyncMock(return_value={"success": True, "result": "2"})
+    fake.list_available_tools = lambda: {"calc": {"name": "calc", "params": {"expr": "x"}}}
+
+    async def _call_tool(name, params, caller_role=None):
+        return {"success": True, "result": "2"}
+
+    fake.call_tool = _call_tool
     monkeypatch.setattr(tm_mod, "ToolManager", lambda: fake)
     return fake
 

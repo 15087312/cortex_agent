@@ -60,8 +60,8 @@ def plan(action: str, plan_id: str = "", title: str = "", content: str = "",
                         "created_at": data.get("created_at", ""),
                         "updated_at": data.get("updated_at", ""),
                     })
-            except Exception:
-                pass
+            except Exception as _swallowed_err:
+                logger.debug(f"[plan] ignored Exception: {_swallowed_err}")
         return {"success": True, "plans": plans}
 
     elif action == "create":

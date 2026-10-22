@@ -82,7 +82,7 @@ class LargeModelClient(BaseModelClient):
         # 默认 OpenAI 兼容（绝大多数兼容端点都是该格式；dashscope 已在上方精确识别）
         return "openai"
     
-    # @link:block LARGE_Generate_Emit = Emit
+    # @link:block LARGE_Generate_Emit = Emit · Throttle
     async def generate(self, prompt: str, *, system_prompt: str, max_retries: int = 2,  # type: ignore[override]
                        fallback_to_reasoning: bool = False, **kwargs) -> str:
         """生成响应 - 支持 DashScope / OpenAI / Anthropic，带重试机制
@@ -234,7 +234,7 @@ class LargeModelClient(BaseModelClient):
     # 原生工具调用 chat()
     # ------------------------------------------------------------------
 
-    # @link:block LARGE_Chat_Emit = Emit
+    # @link:block LARGE_Chat_Emit = Emit · Throttle
     async def chat(
         self,
         messages: List[ChatMessage],
@@ -339,7 +339,7 @@ class LargeModelClient(BaseModelClient):
     # 流式对话生成
     # ------------------------------------------------------------------
 
-    # @link:block LARGE_ChatStream_Emit = Emit
+    # @link:block LARGE_ChatStream_Emit = Emit · Throttle
     async def chat_stream(
         self,
         messages: List[ChatMessage],

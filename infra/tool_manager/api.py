@@ -54,7 +54,7 @@ def require_tool_auth(x_api_key: str = Header(None), caller_role: str = Header(d
 router = APIRouter(prefix="/tools", tags=["工具"])
 
 
-# @link:block Tool_Emit = Emit
+# @link:block Tool_Emit = Retrieve · Emit
 @router.get("/")
 async def list_tools(source: str = Query(None, description="来源过滤: builtin/plugin/dynamic")):
     """列出所有可用工具"""
@@ -207,8 +207,8 @@ async def list_ai_tools():
                 rec = persisted.get(name)
                 if rec and isinstance(rec, dict):
                     ai_tools[name]["code"] = rec.get("code", "")
-    except Exception:
-        pass
+    except Exception as _swallowed_err:
+        logger.debug(f"[list_ai_tools] ignored Exception: {_swallowed_err}")
     return {"success": True, "data": {"tools": ai_tools, "count": len(ai_tools)}}
 
 

@@ -1,4 +1,4 @@
-# @link:block Git_Tools_Emit = Emit
+# @link:block Git_Tools_Emit = Emit · Tool
 """
 Git 工具包 — git_status, git_add, git_commit, git_push, git_pull, git_diff
 """

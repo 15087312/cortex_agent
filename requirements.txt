@@ -36,6 +36,8 @@ faiss-cpu>=1.7.4  # 向量索引
 SpeechRecognition>=3.10.0
 gTTS>=2.5.0
 openai-whisper>=20231117  # 本地语音识别 STT（随 torch 一起安装）
+resemblyzer>=0.1.3        # 声纹识别（说话人 d-vector 嵌入）
+soundfile>=0.12.1         # 音频文件读写（声纹提取用）
 # 本地硬件依赖（pyaudio/pynput/pyautogui/pyserial）见 requirements-voice.txt ——
 # 依赖系统库（portaudio 等），服务器/无头环境无法编译且无用
 

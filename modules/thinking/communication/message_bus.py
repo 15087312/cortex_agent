@@ -191,7 +191,7 @@ class ModelMessageBus:
     # 发送
     # ------------------------------------------------------------------
 
-    # @link:block BusSend = Emit
+    # @link:block BusSend = Write · Emit
     async def send(self, message: Message) -> str:
         """发送消息到指定接收者
 
@@ -210,7 +210,7 @@ class ModelMessageBus:
         await self.notify_subscribers(message.recipient)
         return message.msg_id
 
-    # @link:block BusBroadcast = Emit
+    # @link:block BusBroadcast = Write · Emit
     async def broadcast(self, message: Message) -> str:
         """广播消息到所有已知接收者"""
         message.msg_type = MessageType.BROADCAST
@@ -237,7 +237,7 @@ class ModelMessageBus:
         self._emit_event("broadcast", message, {"recipient_count": len(known_recipients)})
         return message.msg_id
 
-    # @link:block BusRequest = Emit
+    # @link:block BusRequest = Emit · Retrieve
     async def request(self, message: Message, timeout: float = 30) -> Optional[Message]:
         """发送请求并等待响应 (RPC 风格)
 

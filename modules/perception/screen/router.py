@@ -42,8 +42,8 @@ class DetectorRouter:
         try:
             from infra.data_process.core.cdp_scanner import get_cdp_scanner
             self._cdp = get_cdp_scanner()
-        except Exception:
-            pass
+        except Exception as _swallowed_err:
+            logger.debug(f"[_init_backends] ignored Exception: {_swallowed_err}")
 
     def detect(self, app: str = "", depth: int = 3) -> ScreenContext:
         # @link:block DetectorRouter_Guard = Guard
@@ -91,8 +91,8 @@ class DetectorRouter:
             active = [w for w in wins if w.is_active]
             if active:
                 return active[0].app
-        except Exception:
-            pass
+        except Exception as _swallowed_err:
+            logger.debug(f"[_get_active_app] ignored Exception: {_swallowed_err}")
         return ""
 
     def _is_chromium_app(self, app_name: str) -> bool:

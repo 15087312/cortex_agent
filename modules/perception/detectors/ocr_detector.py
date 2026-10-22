@@ -177,8 +177,8 @@ class OCRDetector(PerceptionDetector):
         try:
             bus = get_event_bus()
             bus.publish(event)
-        except Exception:
-            pass
+        except Exception as _swallowed_err:
+            logger.debug(f"[_publish_event] ignored Exception: {_swallowed_err}")
 
     def detect(self, roi_image: np.ndarray, roi_name: str, context: Optional[Dict] = None) -> List[PerceptionEvent]:
         return []

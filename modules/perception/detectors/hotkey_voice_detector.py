@@ -149,8 +149,8 @@ class HotkeyVoiceDetector(PerceptionDetector):
         if self._listener:
             try:
                 self._listener.stop()
-            except Exception:
-                pass
+            except Exception as _swallowed_err:
+                logger.debug(f"[stop] ignored Exception: {_swallowed_err}")
             self._listener = None
         logger.info("热键语音检测器已停止")
 

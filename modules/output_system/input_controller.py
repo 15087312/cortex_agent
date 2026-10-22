@@ -54,7 +54,7 @@ class InputController:
             return False
         return self._controller.move_to(x, y, duration)
     
-    # @link:block InputClick = Guard · Emit
+    # @link:block InputClick = Guard · Tool
     def click(
         self,
         x: int = None,
@@ -109,7 +109,7 @@ class InputController:
             return False
         return self._controller.press_key(key)
     
-    # @link:block InputType = Guard · Emit
+    # @link:block InputType = Guard · Tool
     def typewrite(self, text: str, interval: float = 0.05) -> bool:
         """输入文本"""
         if self._paused:

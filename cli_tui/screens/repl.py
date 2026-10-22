@@ -742,7 +742,7 @@ class REPL(Screen):
         self.state.add_input_history(text)
         self._process_user_input(text)
 
-    # @link:block InputProcess
+    # @link:block InputProcess = Guard · Retrieve · Loop(Write) · Emit
     @work(exclusive=True)
     async def _process_user_input(self, text: str):
         self.state.processing = True

@@ -58,6 +58,7 @@ def _make_client():
     c.model_name = "m"
     c.api_key = "k"
     c.api_url = "https://api.deepseek.com/v1"
+    c.enable_thinking = True
     from config.providers.registry import get_provider
     c._provider = get_provider("m", "k", "https://api.deepseek.com/v1", "openai")
     c._chat_url = c._provider.chat_url()

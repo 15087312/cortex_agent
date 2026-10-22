@@ -38,7 +38,8 @@ class ModuleRegistry:
         self.modules: Dict[str, ModuleInfo] = {}
         self._discover_modules()
     
-    # @link:block ModuleScan
+    # @link:block ModuleScan = Loop(Guard · Retrieve)
+# 注：模块登记 self.modules[name]= 是内存 dict 下标写，非持久 Write，故不进项
     def _discover_modules(self) -> None:
         """自动发现所有模块"""
         modules_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))

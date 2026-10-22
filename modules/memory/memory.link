@@ -6,3 +6,7 @@ eq MemRetrieve = Retrieve · Guard · Retrieve
 
 export MemSaveInner
 eq MemSaveInner = Guard · Write · Retrieve
+
+# L2 数据流：retrieve(query) -> top_events；save(event) -> ok
+eq MemRetrieveFlow = Retrieve(query) · Guard(query) · Retrieve(top_events) · Write(top_events)
+eq MemSaveFlow = Retrieve(event) · Guard(event) · Write(event) · Retrieve(ok) · Write(ok)

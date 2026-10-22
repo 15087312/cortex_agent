@@ -28,6 +28,8 @@ from modules.thinking.core.process_collector import (
 )
 from infra.error_bus import error_bus, ErrorContext
 
+
+logger = setup_logger(__name__)
 # 单次思考超时（秒）
 SINGLE_THINK_TIMEOUT = 120.0
 # 单次思考最大重试次数
@@ -119,8 +121,8 @@ class ContinuousThinker:
         if self.memory is not None:
             try:
                 self.memory.set_session_id(self._session_id)
-            except Exception:
-                pass
+            except Exception as _swallowed_err:
+                logger.debug(f"[__init__] ignored Exception: {_swallowed_err}")
 
         # 工具调用累计计数器 (防止无限工具调用循环)
         self._total_tool_calls_in_session: int = 0
@@ -307,8 +309,8 @@ class ContinuousThinker:
                 for key, idata in get_identities().items():
                     if idata.get("model_id") == mid:
                         return f"{idata.get('name', key)}({key})"
-            except Exception:
-                pass
+            except Exception as _swallowed_err:
+                logger.debug(f"[_readable] ignored Exception: {_swallowed_err}")
             return mid
 
         # 根据 tier 输出不同的控制工具指令
@@ -731,8 +733,8 @@ class ContinuousThinker:
                             pool.add(ContextFragment("skill_suggestion",
                                 f"【建议技能】当前场景推荐激活「{suggested.name}」，可用 request_skill(skill_id='{suggested.id}') 激活",
                                 ("large",), "技能建议", 70))
-        except Exception:
-            pass
+        except Exception as _swallowed_err:
+            logger.debug(f"[_build_prompt] ignored Exception: {_swallowed_err}")
 
         composer = PromptComposer()
         prompt = composer.build(
@@ -1237,10 +1239,11 @@ class ContinuousThinker:
                         updater = getattr(runner, '_update_loop_state', None)
                         if updater:
                             updater(think_round=round_num, think_max=rounds, think_wait=wait_seconds)
-                except Exception:
-                    pass
+                except Exception as _swallowed_err:
+                    logger.debug(f"[continuous_think] ignored Exception: {_swallowed_err}")
 
                 # 等待间隔
+                # @link:block ThinkLoop_Throttle = Throttle
                 if i < rounds - 1 and self._running:
                     await asyncio.sleep(wait_seconds)
             

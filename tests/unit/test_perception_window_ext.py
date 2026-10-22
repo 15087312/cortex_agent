@@ -1,7 +1,7 @@
 """window_detector + screen/context.py 分支覆盖扩展
 
-window_detector: 平台初始化(win32/appkit/linux, import 成功/失败)、
-                 is_available、detect 各分支、win32/appkit 后端实现、异常兜底。
+window_detector: 平台初始化(win32/quartz/linux, import 成功/失败)、
+                 is_available、detect 各分支、win32/quartz 后端实现、异常兜底。
 context.py: get_summary 全字段、to_dict 截断限制。
 """
 import sys
@@ -39,19 +39,19 @@ class TestWindowDetectorPlatform:
             det._init_backend()
         assert det._backend is None
 
-    def test_init_backend_appkit_available(self, monkeypatch):
+    def test_init_backend_quartz_available(self, monkeypatch):
         monkeypatch.setattr("platform.system", lambda: "Darwin")
         det = WindowDetector()
-        fake = types.ModuleType("AppKit")
-        fake.NSWorkspace = MagicMock()
-        with patch.dict(sys.modules, {"AppKit": fake}):
+        fake = types.ModuleType("Quartz")
+        fake.CGWindowListCopyWindowInfo = MagicMock()
+        with patch.dict(sys.modules, {"Quartz": fake}):
             det._init_backend()
-        assert det._backend == "appkit"
+        assert det._backend == "quartz"
 
-    def test_init_backend_appkit_missing(self, monkeypatch):
+    def test_init_backend_quartz_missing(self, monkeypatch):
         monkeypatch.setattr("platform.system", lambda: "Darwin")
         det = WindowDetector()
-        with patch.dict(sys.modules, {"AppKit": None}):
+        with patch.dict(sys.modules, {"Quartz": None}):
             det._init_backend()
         assert det._backend is None
 
@@ -115,10 +115,10 @@ class TestWindowDetectorDetectExt:
         with patch.object(det, "_get_window_win32", side_effect=RuntimeError("boom")):
             assert det._get_active_window() == (None, None)
 
-    def test_get_active_window_appkit(self):
+    def test_get_active_window_quartz(self):
         det = WindowDetector()
-        det._backend = "appkit"
-        with patch.object(det, "_get_window_appkit", return_value=("T", "A")):
+        det._backend = "quartz"
+        with patch.object(det, "_get_window_quartz", return_value=("T", "A")):
             assert det._get_active_window() == ("T", "A")
 
     def test_get_active_window_unknown_backend(self):
@@ -162,16 +162,10 @@ class TestWindowDetectorWin32:
 
 
 # ====================================================================
-# WindowDetector — appkit 后端实现
+# WindowDetector — quartz 后端实现（纯 Quartz，无 AppKit 依赖）
 # ====================================================================
 
-def _appkit_env(app, all_windows=None, quartz_raises=False):
-    appkit = types.ModuleType("AppKit")
-    workspace = MagicMock()
-    workspace.frontmostApplication.return_value = app
-    appkit.NSWorkspace = MagicMock()
-    appkit.NSWorkspace.sharedWorkspace.return_value = workspace
-
+def _quartz_env(all_windows=None, quartz_raises=False):
     quartz = types.ModuleType("Quartz")
     quartz.kCGNullWindowID = 0
     quartz.kCGWindowListOptionOnScreenOnly = 1
@@ -181,55 +175,59 @@ def _appkit_env(app, all_windows=None, quartz_raises=False):
         quartz.CGWindowListCopyWindowInfo = _copy
     else:
         quartz.CGWindowListCopyWindowInfo = lambda *a: all_windows
-    return {"AppKit": appkit, "Quartz": quartz}
+    return {"Quartz": quartz}
 
 
-def _make_app(name="Safari", pid=123):
-    app = MagicMock()
-    app.localizedName.return_value = name
-    app.processIdentifier.return_value = pid
-    return app
+class TestWindowDetectorQuartz:
+    def test_empty_list_returns_none(self):
+        with patch.dict(sys.modules, _quartz_env([])):
+            assert WindowDetector._get_window_quartz() == (None, None)
 
-
-class TestWindowDetectorAppKit:
-    def test_app_none(self):
-        with patch.dict(sys.modules, _appkit_env(None, [])):
-            assert WindowDetector._get_window_appkit() == ("", "")
-
-    def test_no_windows_return_app_name(self):
-        with patch.dict(sys.modules, _appkit_env(_make_app(), None)):
-            assert WindowDetector._get_window_appkit() == ("Safari", "Safari")
+    def test_no_layer_zero_returns_none(self):
+        wins = [
+            {"kCGWindowOwnerPID": 999, "kCGWindowLayer": 1, "kCGWindowName": "Dock"},
+        ]
+        with patch.dict(sys.modules, _quartz_env(wins)):
+            assert WindowDetector._get_window_quartz() == (None, None)
 
     def test_front_window_with_name(self):
         wins = [
-            {"kCGWindowOwnerPID": 999, "kCGWindowLayer": 0, "kCGWindowName": "Other"},
-            {"kCGWindowOwnerPID": 123, "kCGWindowLayer": 0, "kCGWindowName": "Front Window"},
-            {"kCGWindowOwnerPID": 123, "kCGWindowLayer": 1, "kCGWindowName": "Dock Layer"},
+            {"kCGWindowOwnerPID": 999, "kCGWindowLayer": 1,
+             "kCGWindowOwnerName": "Other", "kCGWindowName": "Dock"},
+            {"kCGWindowOwnerPID": 123, "kCGWindowLayer": 0,
+             "kCGWindowOwnerName": "Safari", "kCGWindowName": "Front Window"},
+            {"kCGWindowOwnerPID": 123, "kCGWindowLayer": 1,
+             "kCGWindowOwnerName": "Safari", "kCGWindowName": "Dock Layer"},
         ]
-        with patch.dict(sys.modules, _appkit_env(_make_app(), wins)):
-            title, app = WindowDetector._get_window_appkit()
+        with patch.dict(sys.modules, _quartz_env(wins)):
+            title, app = WindowDetector._get_window_quartz()
             assert title == "Front Window"
             assert app == "Safari"
 
     def test_front_window_without_name(self):
         wins = [
-            {"kCGWindowOwnerPID": 123, "kCGWindowLayer": 0, "kCGWindowName": None},
+            {"kCGWindowOwnerPID": 123, "kCGWindowLayer": 0,
+             "kCGWindowOwnerName": "Safari", "kCGWindowName": None},
         ]
-        with patch.dict(sys.modules, _appkit_env(_make_app(), wins)):
-            title, app = WindowDetector._get_window_appkit()
+        with patch.dict(sys.modules, _quartz_env(wins)):
+            title, app = WindowDetector._get_window_quartz()
             assert title == "Safari"
             assert app == "Safari"
 
-    def test_no_matching_pid(self):
-        wins = [
-            {"kCGWindowOwnerPID": 999, "kCGWindowLayer": 0, "kCGWindowName": "Other"},
-        ]
-        with patch.dict(sys.modules, _appkit_env(_make_app(), wins)):
-            assert WindowDetector._get_window_appkit() == ("Safari", "Safari")
+    def test_quartz_raises_propagates(self):
+        """底层异常直接抛出，由 _get_active_window 统一兜底为 (None, None)"""
+        import pytest as _pytest
 
-    def test_quartz_raises(self):
-        with patch.dict(sys.modules, _appkit_env(_make_app(), [], quartz_raises=True)):
-            assert WindowDetector._get_window_appkit() == ("Safari", "Safari")
+        with patch.dict(sys.modules, _quartz_env([], quartz_raises=True)):
+            with _pytest.raises(RuntimeError):
+                WindowDetector._get_window_quartz()
+
+    def test_quartz_raises_via_active_window(self):
+        det = WindowDetector()
+        det._backend = "quartz"
+        with patch.object(det, "_get_window_quartz",
+                          side_effect=RuntimeError("quartz down")):
+            assert det._get_active_window() == (None, None)
 
 
 # ====================================================================

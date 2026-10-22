@@ -410,3 +410,50 @@ class TestAutoReconnect:
         await mgr.shutdown()
         assert mgr._watch_tasks == {}
         assert mgr._stop_events == {}
+
+    # ── 传输路由 + 工具级开关（抄 Cherry）──
+
+    def test_init_routes_streamablehttp(self):
+        """transport=streamableHttp + url → MCPStreamableHttpTransport"""
+        from infra.mcp.transport import MCPStreamableHttpTransport
+        cfg = _cfg("httpsrv", transport="streamableHttp", url="http://x/mcp",
+                   headers={"Authorization": "Bearer t"})
+        mgr = MCPServerManager([cfg])
+        assert "httpsrv" in mgr._transports
+        assert isinstance(mgr._transports["httpsrv"], MCPStreamableHttpTransport)
+
+    def test_init_routes_sse_by_transport_field(self):
+        """transport=sse + url → MCPSseTransport"""
+        from infra.mcp.transport import MCPSseTransport
+        cfg = _cfg("ssesrv", transport="sse", url="http://x/sse")
+        mgr = MCPServerManager([cfg])
+        assert isinstance(mgr._transports["ssesrv"], MCPSseTransport)
+
+    def test_init_stdio_still_default(self):
+        """有 command → 仍走 stdio（回归）"""
+        from infra.mcp.transport import MCPStdioTransport
+        cfg = _cfg("stdsrv", command="npx", args=["-y", "x"])
+        mgr = MCPServerManager([cfg])
+        assert isinstance(mgr._transports["stdsrv"], MCPStdioTransport)
+
+    async def test_start_all_skips_disabled_tools(self):
+        """disabled_tools 中的工具不注册（抄 Cherry disabledTools）"""
+        t = _fake_transport("srv", tools=[_tool("keep"), _tool("drop"), _tool("also_keep")])
+        mgr = MCPServerManager([])
+        mgr._transports = {"srv": t}
+        mgr._configs["srv"] = MCPServerConfig(
+            name="srv", command="x", disabled_tools=["drop"])
+        await mgr.start_all()
+        assert "keep" in mgr._tools_index
+        assert "also_keep" in mgr._tools_index
+        assert "drop" not in mgr._tools_index
+        assert "drop" not in mgr._tool_to_server
+
+    async def test_start_all_no_disabled_registers_all(self):
+        """无 disabled_tools → 全注册（回归）"""
+        t = _fake_transport("srv", tools=[_tool("a"), _tool("b")])
+        mgr = MCPServerManager([])
+        mgr._transports = {"srv": t}
+        mgr._configs["srv"] = MCPServerConfig(name="srv", command="x")
+        await mgr.start_all()
+        assert set(mgr._tools_index) == {"a", "b"}

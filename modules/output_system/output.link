@@ -5,4 +5,7 @@ eq OutputPipe = Guard · Emit
 export Distrib
 input Distrib: [Emit]
 output Distrib: [Emit]
-eq Distrib = Guard · Write · Emit
+eq Distrib = Guard · (Write | Emit)
+
+# L2 数据流：distribute(content, channel) -> ok；channel 经 console/file/api/voice 分发
+eq DistribFlow = Retrieve(content) · Retrieve(channel) · Guard(content) · Guard(channel) · Emit(ok) · Write(ok)

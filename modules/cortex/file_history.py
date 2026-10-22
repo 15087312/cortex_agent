@@ -113,7 +113,7 @@ class FileHistory:
             except ValueError:
                 next_version = "v1"
 
-        # @link:block FileVer_Retrieve2 = Retrieve
+        # @link:block FileVer_Retrieve2 = Loop(Retrieve)
         # 检查版本是否已存在（防御性）
         existing = conn.execute(
             "SELECT id FROM file_versions WHERE session_id=? AND path=? AND version=?",

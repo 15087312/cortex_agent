@@ -75,11 +75,11 @@ class ApiLogStore:
             if self._conn:
                 try:
                     self.flush()
-                except Exception:
-                    pass
+                except Exception as _swallowed_err:
+                    logger.debug(f"[stop] ignored Exception: {_swallowed_err}")
                 self._conn.close()
-        except Exception:
-            pass
+        except Exception as _swallowed_err:
+            logger.debug(f"[stop] ignored Exception: {_swallowed_err}")
         self._conn = None  # type: ignore[assignment]
 
     @classmethod
@@ -109,8 +109,8 @@ class ApiLogStore:
             time.sleep(_FLUSH_INTERVAL)
             try:
                 self.flush()
-            except Exception:
-                pass
+            except Exception as _swallowed_err:
+                logger.debug(f"[_flush_loop] ignored Exception: {_swallowed_err}")
 
     def flush(self) -> None:
         with self._qlock:

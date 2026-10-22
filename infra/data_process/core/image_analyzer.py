@@ -23,6 +23,9 @@ logger = setup_logger("image_analyzer")
 # 平台检测
 _IS_APPLE_SILICON = sys.platform == "darwin" and hasattr(__import__("platform"), "machine") and __import__("platform").machine() == "arm64"
 
+# 云端视觉分析输出 token 上限（防止模型长篇输出烧钱；屏幕概括类调用足够）
+_VISION_MAX_OUTPUT_TOKENS = 1000
+
 # 全局模型缓存（避免重复加载）
 _MODEL_CACHE = {
     "mlx_vlm": None,
@@ -130,8 +133,8 @@ class ImageAnalyzer:
                             try:
                                 from mlx_vlm import generate, load  # noqa: F401
                                 return "mlx_vlm"
-                            except ImportError:
-                                pass
+                            except ImportError as _swallowed_err:
+                                logger.debug(f"[_detect_available_model] ignored ImportError: {_swallowed_err}")
 
                     # Qwen2-VL / Qwen-VL 系列
                     if "qwen" in model_type.lower() or "Qwen2VL" in arch:
@@ -139,23 +142,23 @@ class ImageAnalyzer:
                             from transformers import Qwen2VLForConditionalGeneration  # noqa: F401
                             from qwen_vl_utils import process_vision_info  # noqa: F401
                             return "qwen_vl"
-                        except ImportError:
-                            pass
+                        except ImportError as _swallowed_err:
+                            logger.debug(f"[_detect_available_model] ignored ImportError: {_swallowed_err}")
 
                     # LLaVA 系列
                     if "llava" in model_type.lower():
                         try:
                             import llava  # noqa: F401
                             return "llava"
-                        except ImportError:
-                            pass
+                        except ImportError as _swallowed_err:
+                            logger.debug(f"[_detect_available_model] ignored ImportError: {_swallowed_err}")
 
                     # 通用 transformers 模型 — 尝试 AutoModel
                     try:
                         from transformers import AutoModelForCausalLM, AutoProcessor  # noqa: F401
                         return "qwen_vl"  # 用 qwen_vl 路径加载通用模型
-                    except ImportError:
-                        pass
+                    except ImportError as _swallowed_err:
+                        logger.debug(f"[_detect_available_model] ignored ImportError: {_swallowed_err}")
                 except Exception as e:
                     logger.debug(f"解析模型 config.json 失败: {e}")
 
@@ -166,8 +169,8 @@ class ImageAnalyzer:
                 from mlx_vlm import generate, load  # noqa: F401
                 logger.info("视觉后端: MLX-VLM (Apple Silicon)")
                 return "mlx_vlm"
-            except ImportError:
-                pass
+            except ImportError as _swallowed_err:
+                logger.debug(f"[_detect_available_model] ignored ImportError: {_swallowed_err}")
 
         # 2) transformers + Qwen2-VL
         try:
@@ -175,15 +178,15 @@ class ImageAnalyzer:
             from qwen_vl_utils import process_vision_info  # noqa: F401
             logger.info("视觉后端: transformers (本地模型)")
             return "qwen_vl"
-        except ImportError:
-            pass
+        except ImportError as _swallowed_err:
+            logger.debug(f"[_detect_available_model] ignored ImportError: {_swallowed_err}")
 
         try:
             import llava  # noqa: F401
             logger.info("视觉后端: LLaVA (本地模型)")
             return "llava"
-        except ImportError:
-            pass
+        except ImportError as _swallowed_err:
+            logger.debug(f"[_detect_available_model] ignored ImportError: {_swallowed_err}")
 
         # 3) 本地模型都不可用，回退到云端 API
         if settings.effective_vision_api_key:
@@ -538,7 +541,8 @@ class ImageAnalyzer:
         model = settings.effective_vision_api_model
 
         # 创建自定义 httpx client，避免 openai 库的 proxies 参数错误
-        http_client = httpx.AsyncClient(timeout=30.0, trust_env=True)
+        # 本地模型较慢时增加超时（300s = 5分钟）
+        http_client = httpx.AsyncClient(timeout=300.0, trust_env=True)
         client = openai.AsyncOpenAI(
             api_key=api_key,
             base_url=api_url,
@@ -571,11 +575,18 @@ class ImageAnalyzer:
 
             response = await client.chat.completions.create(
                 model=model,
-                messages=messages
+                messages=messages,
+                max_tokens=_VISION_MAX_OUTPUT_TOKENS,
             )
 
+            # 思考模型（如 Qwen3）可能把实际回复放在 reasoning_content 而非 content
+            message = response.choices[0].message
+            description = message.content or ""
+            if not description and hasattr(message, "reasoning_content"):
+                description = message.reasoning_content or ""
+
             return {
-                "description": response.choices[0].message.content,
+                "description": description,
                 "objects": [],
                 "scene": "unknown",
                 "colors": [],
@@ -731,7 +742,8 @@ class ImageAnalyzer:
         import httpx
 
         # 创建自定义 httpx client，避免 openai 库的 proxies 参数错误
-        http_client = httpx.AsyncClient(timeout=30.0, trust_env=True)
+        # 本地模型较慢时增加超时（300s = 5分钟）
+        http_client = httpx.AsyncClient(timeout=300.0, trust_env=True)
         api_url = settings.OPENAI_API_BASE_URL
         # 去除 base_url 尾部 /chat/completions，避免 openai SDK 再拼接导致双重路径 404
         api_url = api_url.rstrip("/")

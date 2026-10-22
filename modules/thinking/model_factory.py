@@ -143,9 +143,11 @@ class ModelInstanceFactory:
                 api_key=api_key,
                 api_url=api_url,
                 timeout=kwargs.get("timeout", 120),
+                enable_thinking=settings.LARGE_MODEL_ENABLE_THINKING,
             )
         else:
             client = LargeModelClient.from_config()
+            client.enable_thinking = settings.LARGE_MODEL_ENABLE_THINKING
         client.max_tokens = identity.max_tokens or 4096
         client.temperature = identity.temperature or 0.7
         client.reasoning_effort = getattr(identity, "reasoning_effort", "") or ""
@@ -174,9 +176,11 @@ class ModelInstanceFactory:
                 api_key=api_key,
                 api_url=api_url,
                 timeout=kwargs.get("timeout", 60),
+                enable_thinking=settings.MEDIUM_MODEL_ENABLE_THINKING,
             )
         else:
             client = MediumModelClient.from_config()
+            client.enable_thinking = settings.MEDIUM_MODEL_ENABLE_THINKING
         client.max_tokens = identity.max_tokens or 1024
         client.temperature = identity.temperature or 0.1
         # 输入上下文长度：主管走 MEDIUM 模型配置
@@ -206,9 +210,11 @@ class ModelInstanceFactory:
                 temperature=identity.temperature or 0.3,
                 api_key=api_key or settings.SMALL_MODEL_API_KEY or settings.LARGE_MODEL_API_KEY,
                 api_url=api_url or settings.SMALL_MODEL_API_URL or settings.LARGE_MODEL_API_URL,
+                enable_thinking=settings.SMALL_MODEL_ENABLE_THINKING,
             )
         else:
             client = SmallModelClient.from_config()
+            client.enable_thinking = settings.SMALL_MODEL_ENABLE_THINKING
             client.model_name = identity.model_name or client.model_name
             client.max_tokens = identity.max_tokens or client.max_tokens
             client.temperature = identity.temperature or client.temperature
@@ -232,6 +238,7 @@ class ModelInstanceFactory:
             temperature=identity.temperature or 0.1,
             api_key=kwargs.get("api_key") or settings.SMALL_MODEL_API_KEY or settings.LARGE_MODEL_API_KEY,
             api_url=kwargs.get("api_url") or settings.SMALL_MODEL_API_URL or settings.LARGE_MODEL_API_URL,
+            enable_thinking=settings.SMALL_MODEL_ENABLE_THINKING,
         )
 
         return self._register(identity, client)

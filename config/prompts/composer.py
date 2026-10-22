@@ -122,8 +122,8 @@ class PromptComposer:
                 custom = get_identities().get(role_key)
                 if custom:
                     data = custom
-            except Exception:
-                pass
+            except Exception as _swallowed_err:
+                logger.debug(f"[_get_role] ignored Exception: {_swallowed_err}")
         expertise = data.get("expertise", []) or []
         if isinstance(expertise, str):
             expertise = [s.strip() for s in expertise.split(",") if s.strip()]
@@ -150,11 +150,15 @@ class PromptComposer:
             custom = settings.get_persona(role.key)
             if custom:
                 personality = custom
-        except Exception:
-            pass
+        except Exception as _swallowed_err:
+            logger.debug(f"[_build_identity] ignored Exception: {_swallowed_err}")
         lines = []
         if identity_text:
             lines.append(identity_text)
+        if personality and personality.strip():
+            lines.append(f"【人格】{personality}")
+        if role.speaking_style:
+            lines.append(f"【风格】{role.speaking_style}")
         lines.append(
             "【工具使用】所有工具在用户本地电脑上执行。"
             "只能调用系统已列出的工具，禁止编造、推测或假设存在未列出的工具名。"
@@ -261,8 +265,8 @@ class PromptComposer:
                     "weaknesses": [],
                     "tool_whitelist": [],
                 }
-        except Exception:
-            pass
+        except Exception as _swallowed_err:
+            logger.debug(f"[_merged_roles] ignored Exception: {_swallowed_err}")
         return roles
 
     def _build_expert_table(self) -> str:

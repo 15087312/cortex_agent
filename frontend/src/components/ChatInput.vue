@@ -2,6 +2,7 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import Icon from '@/components/Icon.vue'
 import { useI18n } from 'vue-i18n'
+import { endpoints } from '@/api.js'
 
 const props = defineProps({
   processing: { type: Boolean, default: false },
@@ -14,6 +15,64 @@ const input = ref('')
 const attachments = ref([])
 const dragging = ref(false)
 const fieldRef = ref(null)
+
+// ── 语音录制 ──
+const recording = ref(false)
+let mediaRecorder = null
+let audioChunks = []
+
+async function toggleRecording() {
+  if (recording.value) {
+    stopRecording()
+  } else {
+    await startRecording()
+  }
+}
+
+async function startRecording() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' })
+    audioChunks = []
+
+    mediaRecorder.ondataavailable = (e) => {
+      if (e.data.size > 0) audioChunks.push(e.data)
+    }
+
+    mediaRecorder.onstop = async () => {
+      stream.getTracks().forEach(t => t.stop())
+      const blob = new Blob(audioChunks, { type: 'audio/webm' })
+      audioChunks = []
+      await transcribeAudio(blob)
+    }
+
+    mediaRecorder.start()
+    recording.value = true
+  } catch (e) {
+    emit('toast', { message: t('chatInput.micError'), type: 'error' })
+  }
+}
+
+function stopRecording() {
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    mediaRecorder.stop()
+    recording.value = false
+  }
+}
+
+async function transcribeAudio(blob) {
+  try {
+    const r = await endpoints.recognizeSpeech(blob)
+    if (r?.success && r.data?.text) {
+      input.value += (input.value ? ' ' : '') + r.data.text
+      autoResize()
+    } else {
+      emit('toast', { message: t('chatInput.transcribeFailed'), type: 'error' })
+    }
+  } catch {
+    emit('toast', { message: t('chatInput.transcribeFailed'), type: 'error' })
+  }
+}
 
 // 输入框最大高度（超出滚动），自动随输入文字增长/收缩
 const MAX_INPUT_H = 160
@@ -126,6 +185,7 @@ function removeAttachment(i) {
     <div class="chat-input-wrapper">
       <div class="chat-input-toolbar">
         <button class="chat-btn-icon" @click="$refs.fileInput.click()" :title="$t('chatInput.uploadFile')"><Icon name="paperclip" :size="16" /></button>
+        <button class="chat-btn-icon" :class="{ 'chat-btn-recording': recording }" @click="toggleRecording" :title="recording ? $t('chatInput.stopRecording') : $t('chatInput.startRecording')"><Icon name="mic" :size="16" /></button>
         <input ref="fileInput" type="file" multiple accept="image/*,.pdf,.txt" hidden @change="handleFiles($event.target.files)" />
       </div>
       <textarea

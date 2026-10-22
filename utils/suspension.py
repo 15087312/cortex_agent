@@ -13,7 +13,10 @@ import asyncio
 import threading
 import time
 from typing import Any, Awaitable, Optional
+from utils.logger import setup_logger
 
+
+logger = setup_logger(__name__)
 _lock = threading.Lock()
 _suspended_at: Optional[float] = None   # 当前挂起开始时间（未挂起为 None）
 _total_suspended: float = 0.0            # 累计挂起时长（秒）
@@ -90,5 +93,5 @@ async def pausable_wait_for(awaitable: Awaitable, timeout: float) -> Any:
             task.cancel()
             try:
                 await task
-            except (asyncio.CancelledError, Exception):
-                pass
+            except (asyncio.CancelledError, Exception) as _swallowed_err:
+                logger.debug(f"[pausable_wait_for] ignored (asyncio.CancelledError, Exception): {_swallowed_err}")

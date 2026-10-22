@@ -55,7 +55,7 @@ def test_delegate_permission_denied(monkeypatch):
     ppm.validate_probe_start.return_value = "无权限"
     monkeypatch.setattr(pp, "get_probe_permission_manager", lambda: ppm)
     a = _adapter()
-    result = asyncio.run(a.delegate(_req(role="expert_code_writer")))
+    result = asyncio.run(a.delegate(_req(role="code_writer")))
     assert result.success is False
     assert "无权限" in result.error
 
@@ -69,13 +69,13 @@ def test_delegate_success(monkeypatch):
     ppm = MagicMock()
     ppm.validate_probe_start.return_value = None
     monkeypatch.setattr(pp, "get_probe_permission_manager", lambda: ppm)
-    monkeypatch.setattr(ident_mod, "get_identities", lambda: {"code_writer": {}})
+    monkeypatch.setattr(ident_mod, "get_identities", lambda: {"code_writer": {"tier": "expert"}})
     bus = MagicMock()
     bus.send = AsyncMock()
     monkeypatch.setattr(mb, "get_message_bus", lambda: bus)
 
     a = _adapter()
-    result = asyncio.run(a.delegate(_req(role="expert_code_writer", task_id="t1")))
+    result = asyncio.run(a.delegate(_req(role="code_writer", task_id="t1")))
     assert result.success is True
     assert result.probe_id.startswith("probe_expert")
     assert bus.send.called
@@ -91,13 +91,13 @@ def test_delegate_think_timeout_passed(monkeypatch):
     ppm = MagicMock()
     ppm.validate_probe_start.return_value = None
     monkeypatch.setattr(pp, "get_probe_permission_manager", lambda: ppm)
-    monkeypatch.setattr(ident_mod, "get_identities", lambda: {"code_writer": {}})
+    monkeypatch.setattr(ident_mod, "get_identities", lambda: {"code_writer": {"tier": "expert"}})
     bus = MagicMock()
     bus.send = AsyncMock()
     monkeypatch.setattr(mb, "get_message_bus", lambda: bus)
 
     a = _adapter()
-    result = asyncio.run(a.delegate(_req(role="expert_code_writer", task_id="t1", wait_seconds=150)))
+    result = asyncio.run(a.delegate(_req(role="code_writer", task_id="t1", wait_seconds=150)))
     assert result.success is True
     content = bus.send.call_args.args[0].content
     assert content["think_timeout"] == 150
@@ -114,13 +114,13 @@ def test_delegate_think_timeout_fallback(monkeypatch):
     ppm = MagicMock()
     ppm.validate_probe_start.return_value = None
     monkeypatch.setattr(pp, "get_probe_permission_manager", lambda: ppm)
-    monkeypatch.setattr(ident_mod, "get_identities", lambda: {"code_writer": {}})
+    monkeypatch.setattr(ident_mod, "get_identities", lambda: {"code_writer": {"tier": "expert"}})
     bus = MagicMock()
     bus.send = AsyncMock()
     monkeypatch.setattr(mb, "get_message_bus", lambda: bus)
 
     a = _adapter()
-    result = asyncio.run(a.delegate(_req(role="expert_code_writer", task_id="t1", wait_seconds=None)))
+    result = asyncio.run(a.delegate(_req(role="code_writer", task_id="t1", wait_seconds=None)))
     assert result.success is True
     content = bus.send.call_args.args[0].content
     assert content["think_timeout"] == dp.DEFAULT_DELEGATE_THINK_TIMEOUT
@@ -138,18 +138,29 @@ def test_resolve_role_dynamic_identity_fallback(monkeypatch):
 
 
 def test_resolve_role_dynamic_fallback_substr(monkeypatch):
+    """无模糊兜底：半截词不再静默派给别人，直接失败由上层报可用列表"""
     fake = {"security_supervisor": {"tier": "supervisor"}}
     monkeypatch.setattr("modules.thinking.identity.get_identities", lambda: fake)
-    assert _resolve_role("security") == ("supervisor", "security_supervisor")
+    assert _resolve_role("security") is None
     assert _resolve_role("ghost") is None
+
+
+def test_resolve_role_normalized(monkeypatch):
+    """归一化：大小写/空格/连字符统一后精确命中"""
+    fake = {"code_supervisor": {"tier": "supervisor", "name": "代码主管"}}
+    monkeypatch.setattr("modules.thinking.identity.get_identities", lambda: fake)
+    assert _resolve_role("Code Supervisor") == ("supervisor", "code_supervisor")
+    assert _resolve_role("code-supervisor") == ("supervisor", "code_supervisor")
+    assert _resolve_role("CODE_SUPERVISOR") == ("supervisor", "code_supervisor")
+    assert _resolve_role("代码主管") == ("supervisor", "code_supervisor")
 
 
 def test_delegate_disabled_agent_rejected(monkeypatch):
     """编排页关闭的角色委托被拒绝（与能力表过滤一致）"""
     _stub_active(monkeypatch, False)
     import modules.thinking.identity as ident_mod
-    monkeypatch.setattr(ident_mod, "get_identities", lambda: {"code_writer": {}})
+    monkeypatch.setattr(ident_mod, "get_identities", lambda: {"code_writer": {"tier": "expert"}})
     a = _adapter()
-    result = asyncio.run(a.delegate(_req(role="expert_code_writer", task_id="t1")))
+    result = asyncio.run(a.delegate(_req(role="code_writer", task_id="t1")))
     assert result.success is False
     assert "禁用" in result.error

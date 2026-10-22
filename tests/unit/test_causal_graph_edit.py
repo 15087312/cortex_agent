@@ -11,16 +11,32 @@ from infra.tool_manager.tools import causal_graph_edit as cge
 
 @pytest.fixture
 def isolated(monkeypatch, tmp_path):
-    """隔离的因果图 + 事件库，替换工具内部的 get_instance"""
+    """隔离的因果图 + 事件库：注册到能力表（工具经 get_capability 取实例）"""
+    from infra.tool_manager.service_registry import (
+        get_capability,
+        register_capability,
+        unregister_capability,
+    )
+
     graph = CausalGraph(db_path=str(tmp_path / "causal.db"))
     store = EventStore(
         db_path=str(tmp_path / "mem.db"),
         faiss_index_path=str(tmp_path / "mem.faiss"),
         id_map_path=str(tmp_path / "mem.json"),
     )
-    monkeypatch.setattr(CausalGraph, "get_instance", classmethod(lambda cls: graph))
-    monkeypatch.setattr(EventStore, "get_instance", classmethod(lambda cls: store))
-    return graph, store
+    orig_graph = get_capability("causal_graph")
+    orig_store = get_capability("event_store")
+    register_capability("causal_graph", lambda: graph)
+    register_capability("event_store", lambda: store)
+    yield graph, store
+    if orig_graph is None:
+        unregister_capability("causal_graph")
+    else:
+        register_capability("causal_graph", orig_graph)
+    if orig_store is None:
+        unregister_capability("event_store")
+    else:
+        register_capability("event_store", orig_store)
 
 
 def _seed(graph, store):

@@ -591,3 +591,86 @@ class TestMCPSseTransport:
         assert t.is_connected is False
         t._connected = True
         assert t.is_connected is True
+
+
+class TestMCPStreamableHttpTransport:
+    """streamableHttp 传输（抄 Cherry）：直连 + 405/404 自动降级 SSE"""
+
+    def make(self, **kw):
+        from infra.mcp.transport import MCPStreamableHttpTransport
+        kw.setdefault("server_name", "http_srv")
+        kw.setdefault("url", "http://localhost:9999/mcp")
+        return MCPStreamableHttpTransport(**kw)
+
+    async def test_connect_success(self):
+        from infra.mcp.transport import MCPStreamableHttpTransport
+        t = self.make(timeout=10)
+        session = AsyncMock()
+        session.initialize = AsyncMock()
+        session.list_tools = AsyncMock(return_value=_tools_result("h1", "h2"))
+        ctx = AsyncMock()
+        ctx.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock(), AsyncMock()))
+        with patch("mcp.client.streamable_http.streamablehttp_client", return_value=ctx) as mock_http, \
+             patch("mcp.ClientSession") as mock_cs:
+            mock_cs.return_value.__aenter__ = AsyncMock(return_value=session)
+            ok = await t.connect()
+        assert ok is True
+        assert t.is_connected is True
+        assert [x.name for x in t._tools_cache] == ["h1", "h2"]
+        mock_http.assert_called_once_with(url=t._url, headers=None)
+
+    async def test_connect_with_headers(self):
+        t = self.make(headers={"Authorization": "Bearer tok"})
+        session = AsyncMock()
+        session.initialize = AsyncMock()
+        session.list_tools = AsyncMock(return_value=_tools_result("h1"))
+        ctx = AsyncMock()
+        ctx.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock(), AsyncMock()))
+        with patch("mcp.client.streamable_http.streamablehttp_client", return_value=ctx) as mock_http, \
+             patch("mcp.ClientSession") as mock_cs:
+            mock_cs.return_value.__aenter__ = AsyncMock(return_value=session)
+            await t.connect()
+        mock_http.assert_called_once_with(url=t._url, headers={"Authorization": "Bearer tok"})
+
+    async def test_connect_fallback_to_sse(self):
+        """streamableHttp 失败 → 自动降级 SSE（抄 Cherry getTransportCandidates）"""
+        t = self.make(timeout=10)
+        session = AsyncMock()
+        session.initialize = AsyncMock()
+        session.list_tools = AsyncMock(return_value=_tools_result("s1"))
+        sse_ctx = _fake_ctx()
+        with patch("mcp.client.streamable_http.streamablehttp_client",
+                   side_effect=RuntimeError("405 Method Not Allowed")), \
+             patch("mcp.client.sse.sse_client", return_value=sse_ctx) as mock_sse, \
+             patch("mcp.ClientSession") as mock_cs:
+            mock_cs.return_value.__aenter__ = AsyncMock(return_value=session)
+            ok = await t.connect()
+        assert ok is True
+        assert t.is_connected is True
+        assert [x.name for x in t._tools_cache] == ["s1"]
+        mock_sse.assert_called_once()
+
+    async def test_connect_both_fail(self):
+        t = self.make(timeout=10)
+        with patch("mcp.client.streamable_http.streamablehttp_client",
+                   side_effect=RuntimeError("http down")), \
+             patch("mcp.client.sse.sse_client",
+                   side_effect=RuntimeError("sse down")):
+            ok = await t.connect()
+        assert ok is False
+        assert t.is_connected is False
+
+    async def test_list_tools_auto_connect(self):
+        t = self.make()
+        assert t.is_connected is False
+        with patch.object(t, "connect", new=AsyncMock(return_value=False)):
+            assert await t.list_tools() == []
+
+    async def test_close_resets(self):
+        t = self.make()
+        t._connected = True
+        t._session_ctx = AsyncMock()
+        t._ctx = AsyncMock()
+        await t.close()
+        assert t.is_connected is False
+        assert t._tools_cache == []

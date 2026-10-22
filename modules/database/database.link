@@ -1,7 +1,7 @@
 # database 模块：数据持久化
 # 初始化 = 幂等守卫 → 建表写入；连接 = 守卫 → 提交写入；落库 = 守卫 → 查重 → 写入；查询 = 守卫 → 读取
 export DbInit
-eq DbInit = Guard · Write
+eq DbInit = Guard · Retrieve · Write
 
 export DbConn
 eq DbConn = Guard · Retrieve · Write
@@ -10,4 +10,4 @@ export DbSave
 eq DbSave = Guard · Retrieve · Write
 
 export DbQuery
-eq DbQuery = Guard · Retrieve
+eq DbQuery = Retrieve

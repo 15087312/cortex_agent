@@ -136,8 +136,8 @@ class EventStore:
             if not os.path.exists(self._db_path):
                 try:
                     self._conn.close()
-                except Exception:
-                    pass
+                except Exception as _swallowed_err:
+                    logger.debug(f"[_get_conn] ignored Exception: {_swallowed_err}")
                 self._conn = None
                 return self._get_conn()
         return self._conn
@@ -586,5 +586,5 @@ class EventStore:
             return
         try:
             self.close()
-        except Exception:
-            pass
+        except Exception as _swallowed_err:
+            logger.debug(f"[__del__] ignored Exception: {_swallowed_err}")

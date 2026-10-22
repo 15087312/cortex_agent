@@ -11,6 +11,14 @@ import threading
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Qt 平台插件路径修复（与 main.py 共用逻辑，见 frontend/qt_env.py）：
+# anaconda 的 conda qt 包经 bin/qt.conf 劫持插件路径会导致 cocoa 加载失败，
+# 桌宠独立进程必须在 import PyQt6 之前修复，否则起即崩（exit=-6 SIGABRT）。
+try:
+    from qt_env import fix_qt_plugin_path as _fix_qt_plugin_path
+    _fix_qt_plugin_path()
+except Exception:
+    pass
 # 防残留: 除父进程（Qt）监控外，再绑定后端进程（env > ~/.cortex/backend_pid.json）——
 # 后端退出时桌宠随之退出，避免任何启动路径下的残留。
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

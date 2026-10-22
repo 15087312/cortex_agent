@@ -51,7 +51,7 @@ class ContinuousThinker:
         except Exception:
             return {}
 
-    # @link:block LightThink_Think = Think
+    # @link:block LightThink_Think = Retrieve · Think · Emit
     async def think(
         self,
         session_id: str,
@@ -99,10 +99,10 @@ class ContinuousThinker:
                                 "content": _mental,
                                 "identity_name": "总指挥",
                             })
-                        except Exception:
-                            pass
-                except Exception:
-                    pass
+                        except Exception as _swallowed_err:
+                            logger.debug(f"[think] ignored Exception: {_swallowed_err}")
+                except Exception as _swallowed_err:
+                    logger.debug(f"[think] ignored Exception: {_swallowed_err}")
 
                 # 3.6 环境感知注入（纯对话：感知系统实时采集 → PerceptionPool → 注入模型上下文）
                 try:
@@ -120,8 +120,8 @@ class ContinuousThinker:
                     full_response.append(token)
                     try:
                         message_queue.put_nowait({"type": "message", "content": token})
-                    except asyncio.QueueFull:
-                        pass
+                    except asyncio.QueueFull as _swallowed_err:
+                        logger.debug(f"[on_token] ignored asyncio.QueueFull: {_swallowed_err}")
 
                 # 尊重激活的编排角色 model_params（temperature/max_tokens），与 agent 模式一致：
                 # 纯对话此前硬编码用全局 MODEL_MAX_TOKENS，编排页改的每角色参数从不生效。
@@ -143,8 +143,8 @@ class ContinuousThinker:
                             "identity_name": "总指挥",
                             "tier": "large",
                         })
-                except Exception:
-                    pass
+                except Exception as _swallowed_err:
+                    logger.debug(f"[think] ignored Exception: {_swallowed_err}")
                 # 5. Assistant 响应由调用方（_consume_turn）保存到 DB
                 #    此处不再写入，避免重复且无 id
                 assistant_content = response.message.content or "".join(full_response)
@@ -160,7 +160,7 @@ class ContinuousThinker:
                 logger.error(f"Thinking failed: {e}")
                 await message_queue.put({"type": "error", "content": str(e)})
 
-    # @link:block LightThink_Retrieve = Retrieve
+    # @link:block LightThink_Retrieve = Guard · Retrieve
     async def _recall_memories(self, query: str, session_id: str) -> str:
         """Retrieve global event memory.
 

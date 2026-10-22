@@ -125,3 +125,40 @@ def test_pet_chat_stream(gw_app, monkeypatch):
             assert "token" in body
             assert "你好" in body
             assert "done" in body
+
+
+def test_pet_config_idle_backoff_roundtrip(gw_app, monkeypatch, tmp_path):
+    """e2e：PUT /stream/pet/config 透传 idle_backoff_max，GET 读回一致"""
+    import modules.desktop_pet.store as store_mod
+    store = store_mod.PetStore(str(tmp_path / "pet_cfg.db"))
+    monkeypatch.setattr(store_mod.PetStore, "_instance", store)
+    app, _ = gw_app
+    with TestClient(app) as client:
+        # 显式设置 → 读回
+        r = client.put("/stream/pet/config", json={"idle_backoff_max": 16})
+        assert r.status_code == 200
+        assert r.json()["data"]["idle_backoff_max"] == 16.0
+        r = client.get("/stream/pet/config")
+        assert r.status_code == 200
+        assert r.json()["data"]["idle_backoff_max"] == 16.0
+
+
+def test_pet_config_idle_backoff_clamped(gw_app, monkeypatch, tmp_path):
+    """e2e：非法值（<1 / 非数字）在 HTTP 层也被 clamp/回退，不裸传存储"""
+    import modules.desktop_pet.store as store_mod
+    store = store_mod.PetStore(str(tmp_path / "pet_cfg2.db"))
+    monkeypatch.setattr(store_mod.PetStore, "_instance", store)
+    app, _ = gw_app
+    with TestClient(app) as client:
+        r = client.put("/stream/pet/config", json={"idle_backoff_max": 0})
+        assert r.status_code == 200
+        assert r.json()["data"]["idle_backoff_max"] == 1.0  # 下限钉 1（关退避）
+
+        # 负数同样被 store 钉回下限
+        r = client.put("/stream/pet/config", json={"idle_backoff_max": -5})
+        assert r.status_code == 200
+        assert r.json()["data"]["idle_backoff_max"] == 1.0
+
+        # 非数字被 pydantic 在 HTTP 层直接拒绝（422），不落库
+        r = client.put("/stream/pet/config", json={"idle_backoff_max": "abc"})
+        assert r.status_code == 422

@@ -48,18 +48,22 @@ class Settings(BaseSettings):
         "LARGE_MODEL_API_KEY", "LARGE_MODEL_API_URL", "LARGE_MODEL_NAME", "LARGE_MODEL_API_FORMAT",
         "LARGE_MODEL_PROVIDER",
         "LARGE_MODEL_OPENROUTER_SUPPLIER",
+        "LARGE_MODEL_ENABLE_THINKING", "LARGE_MODEL_ENABLE_IMAGE",
         "MEDIUM_MODEL_API_KEY", "MEDIUM_MODEL_API_URL", "MEDIUM_MODEL_NAME",
         "MEDIUM_MODEL_PROVIDER",
         "MEDIUM_MODEL_OPENROUTER_SUPPLIER",
+        "MEDIUM_MODEL_ENABLE_THINKING", "MEDIUM_MODEL_ENABLE_IMAGE",
         "SMALL_MODEL_API_KEY", "SMALL_MODEL_API_URL", "SMALL_MODEL_NAME",
         "SMALL_MODEL_PROVIDER",
         "SMALL_MODEL_OPENROUTER_SUPPLIER",
+        "SMALL_MODEL_ENABLE_THINKING", "SMALL_MODEL_ENABLE_IMAGE",
         "PERSONA_PROMPTS",# 自定义人设提示词（JSON: {role: prompt}）
         "SYSTEM_PROMPT_OVERRIDES",  # 完整系统提示词覆盖（JSON: {role: prompt}，高级设置）
         "OUTPUT_TTS_ENABLED",    # TTS 语音输出总开关
         "CHAT_CONTEXT_MAX_MESSAGES", # 会话上下文最大消息条数
         "CHAT_CONTEXT_MAX_TOKENS",   # 会话上下文最大 Token 数
         "CHAT_SUMMARY_TRIGGER_TOKENS", # 触发自动总结的上下文 Token 阈值
+        "CONTEXT_WINDOW_SIZE",   # 大模型上下文窗口大小（token 数，历史裁剪预算基准）
 
         # ── 感知系统模块开关 ──
         "PERCEPTION_ENABLED", "PERCEPTION_SCREEN_ENABLED",
@@ -82,8 +86,12 @@ class Settings(BaseSettings):
         "PERCEPTION_VOICE_MAX_DURATION", "PERCEPTION_VOICE_END_STOP",
         "PERCEPTION_VOICE_BACKEND", "PERCEPTION_VOICE_API_KEY", "PERCEPTION_VOICE_API_URL",
         "PERCEPTION_VOICE_API_MODEL",
+        "PERCEPTION_VOICE_REALTIME", "PERCEPTION_VOICE_VAD_THRESHOLD", "PERCEPTION_VOICE_SILENCE_DURATION",
         "OUTPUT_TTS_BACKEND", "OUTPUT_TTS_API_KEY", "OUTPUT_TTS_API_URL",
         "OUTPUT_TTS_API_MODEL", "OUTPUT_TTS_API_VOICE",
+
+        # ── 声纹识别 ──
+        "VOICEPRINT_ENABLED", "VOICEPRINT_THRESHOLD", "VOICEPRINT_AUTO_REGISTER",
 
         # ── 视觉模型 ──
         "VISION_BACKEND", "VISION_API_FORMAT", "VISION_API_URL", "VISION_API_KEY",
@@ -136,6 +144,14 @@ class Settings(BaseSettings):
     LARGE_MODEL_OPENROUTER_SUPPLIER: str = ""
     MEDIUM_MODEL_OPENROUTER_SUPPLIER: str = ""
     SMALL_MODEL_OPENROUTER_SUPPLIER: str = ""
+
+    # ── 各模型层思考模式 & 图片支持开关 ──
+    LARGE_MODEL_ENABLE_THINKING: bool = True
+    LARGE_MODEL_ENABLE_IMAGE: bool = True
+    MEDIUM_MODEL_ENABLE_THINKING: bool = True
+    MEDIUM_MODEL_ENABLE_IMAGE: bool = True
+    SMALL_MODEL_ENABLE_THINKING: bool = True
+    SMALL_MODEL_ENABLE_IMAGE: bool = True
 
     # ── 各模型输入上下文长度（token 数）──
     # 以设置模型 API 时的「输入上下文长度」为标准（0 = 使用全局 CONTEXT_WINDOW_SIZE）
@@ -293,13 +309,10 @@ class Settings(BaseSettings):
     # ── 纯对话（chatonly）兼容字段（原 backend/config/settings 并入，统一基础设施）──
     MODEL_MAX_TOKENS: int = 4096
     MODEL_TEMPERATURE: float = 0.7
-    EMBEDDING_DEVICE: str = "cpu"
     MEMORY_REDUCE_ENABLED: bool = True
-    CHAT_MAX_ROUNDS: int = 5
     CHAT_CONTEXT_MAX_MESSAGES: int = 10
     CHAT_CONTEXT_MAX_TOKENS: int = 32000
     CHAT_SUMMARY_TRIGGER_TOKENS: int = 32000  # 触发自动总结的上下文Token阈值（超出时调模型总结）
-    CHAT_CONTEXT_MAX_CHARS: int = 6000  # 会话记忆总上限字数（超出部分由 LLM 总结）
 
     # ── 因果记忆（backend 并入）──
     CAUSAL_DB_PATH: str = "data/causal.db"
@@ -308,11 +321,6 @@ class Settings(BaseSettings):
     CAUSAL_MAX_TREE_DEPTH: int = 4
     CAUSAL_MAX_EVENTS_RECALL: int = 30
     CAUSAL_MIN_CONFIDENCE: float = 0.2
-
-    # ── 服务（backend/main 并入，统一入口后以 api/main 为准）──
-    HOST: str = "0.0.0.0"
-    PORT: int = 8000
-    CORS_ORIGINS: str = "http://localhost:5173"
 
     # ── 身份（backend 并入）──
     ASSISTANT_NAME: str = "Cortex"
@@ -323,7 +331,6 @@ class Settings(BaseSettings):
     # ── 前端 UI 设置（原 backend ~/.cortex-mini/settings.json 持久化，并入主 settings）──
     launch_at_startup: bool = True
     prevent_sleep: bool = False
-    show_filename_in_gallery: bool = False
     allow_geolocation: bool = False
     shortcut_keys: str = "⌥ + T"
     storage_path: str = ""
@@ -594,8 +601,8 @@ class Settings(BaseSettings):
         try:
             import modules.thinking.identity as _ident
             _ident._merged_identities = None
-        except Exception:
-            pass
+        except Exception as _swallowed_err:
+            logger.debug(f"[_invalidate_identity_cache] ignored Exception: {_swallowed_err}")
 
     def set_agent_active(self, role: str, active: bool) -> None:
         """设置 agent 启用/禁用状态"""
@@ -756,8 +763,8 @@ class Settings(BaseSettings):
             # 写入失败 → 清理残留 tmp 文件，防止下次读到半写
             try:
                 tmp.unlink(missing_ok=True)
-            except Exception:
-                pass
+            except Exception as _swallowed_err:
+                logger.debug(f"[_save_personas_yaml] ignored Exception: {_swallowed_err}")
             raise
         return True
 
@@ -822,9 +829,9 @@ class Settings(BaseSettings):
     @field_validator("EXECUTION_MODE")
     @classmethod
     def validate_execution_mode(cls, v: str) -> str:
-        allowed = {"plan", "edit", "yolo", "control"}
+        allowed = {"plan", "edit", "yolo", "control", "nocheck"}
         if v.lower() not in allowed:
-            raise ValueError(f"EXECUTION_MODE must be one of plan/edit/yolo/control, got '{v}'")
+            raise ValueError(f"EXECUTION_MODE must be one of plan/edit/yolo/control/nocheck, got '{v}'")
         return v.lower()
 
     # @link:block Settings_ValidateProduction = Guard
@@ -864,15 +871,19 @@ class Settings(BaseSettings):
 
     # ── 搜索配置 ──────────────────────────────────────────
     # 搜索引擎优先级（逗号分隔），按序尝试，首个成功的返回。
-    # 可选: searxng / ddg_html / ddg_lite / ddg_api / sogou / bing_cn / baidu
-    SEARCH_ENGINE_PRIORITY: str = "ddg_html,ddg_lite,ddg_api,sogou,bing_cn,baidu"
+    # 可选: tavily / exa / bocha / searxng / ddg_html / ddg_lite / ddg_api / sogou / bing_cn / baidu
+    SEARCH_ENGINE_PRIORITY: str = "tavily,exa,bocha,ddg_html,ddg_lite,ddg_api,sogou,bing_cn,baidu"
     # searXNG 实例地址（自部署元搜索引擎），配置后 SEARCH_ENGINE_PRIORITY 含 searxng 时优先用其 JSON API
     SEARXNG_URL: str = ""
+    # API 搜索 Key（逗号分隔多 Key 自动轮换，抄 Cherry ApiKeyRotationState）
+    SEARCH_TAVILY_KEY: str = ""
+    SEARCH_EXA_KEY: str = ""
+    SEARCH_BOCHA_KEY: str = ""
 
     # @link:block Settings_GetSearchEngines = Think
     def get_search_engines(self) -> "list[str]":
         """解析搜索引擎优先级配置为有序列表（去重、过滤非法项）"""
-        allowed = {"searxng", "ddg_html", "ddg_lite", "ddg_api", "sogou", "bing_cn", "baidu"}
+        allowed = {"tavily", "exa", "bocha", "searxng", "ddg_html", "ddg_lite", "ddg_api", "sogou", "bing_cn", "baidu"}
         raw = (self.SEARCH_ENGINE_PRIORITY or "").strip()
         seen = []
         for part in raw.split(","):
@@ -911,6 +922,17 @@ class Settings(BaseSettings):
     PERCEPTION_VOICE_API_URL: str = ""                 # 云端 STT 地址（留空用 https://api.openai.com/v1/audio/transcriptions）
     PERCEPTION_VOICE_API_MODEL: str = ""               # 云端 STT 模型名（留空用 whisper-1）
 
+    # ── 实时语音（全双工） ──────────────────────────
+    PERCEPTION_VOICE_REALTIME: bool = False             # 实时语音总开关（true=全双工管线替代半双工 VoiceDetector）
+    PERCEPTION_VOICE_VAD_THRESHOLD: float = 0.5         # Silero VAD 语音概率阈值 (0-1)
+    PERCEPTION_VOICE_SILENCE_DURATION: float = 1.5      # 静音多少秒后结束语句、触发最终转写
+
+    # ── 声纹识别（Speaker Identification） ──────────────────────
+    VOICEPRINT_ENABLED: bool = False                    # 声纹识别总开关
+    VOICEPRINT_THRESHOLD: float = 0.75                  # 声纹匹配阈值 (0-1)，越高越严格
+    VOICEPRINT_DATA_DIR: str = "data/speaker_profiles"  # 说话人档案存储目录
+    VOICEPRINT_AUTO_REGISTER: bool = False              # 自动注册未知说话人（前端可覆盖）
+
     # ── 思考辅助（可自由开关）────────────────────────────────
     MENTAL_ACTIVITY_ENABLED: bool = False                # 心理活动：良知系统内心独白（生成+推送）
     MEMORY_SUMMARY_ENABLED: bool = True                  # 记忆总结：会话结束后自动提炼为事件记忆（EventReducer）
@@ -937,17 +959,12 @@ class Settings(BaseSettings):
     SCREEN_DIFF_INTERVAL: float = 1.0                  # 检测间隔（秒）
     SCREEN_DIFF_CHANGE_THRESHOLD: float = 0.01         # 最小变化面积比例 (1%)
 
-    # 记忆配置
-    MEMORY_TTL_SHORT: int = 3600  # 1 小时
-    MEMORY_TTL_LONG: int = 86400  # 24 小时
-
     # ── 因果系统配置 ──
     CAUSAL_MAX_NODES: int = 500             # 因果图最大节点数
     CAUSAL_MIN_COOCCUR: int = 2             # 共现统计最小阈值
     CAUSAL_HOT_CACHE_TTL: int = 300         # 热缓存 TTL（秒）
     CAUSAL_CONFIDENCE_BOOST_DELTA: float = 0.05  # 每次回忆边置信度增量
     CAUSAL_CONFIDENCE_MAX: float = 0.99     # 最大置信度上限
-    CAUSAL_UPDATE_STATS_INTERVAL: int = 10  # 增量更新统计推送（秒）
     CAUSAL_MIN_ANCHOR_CONFIDENCE: float = 0.50  # 锚点置信度下限：低于此值视为无关查询，深度回忆回退
     #   （语义纯匹配实测：真实≥0.53，闲聊噪声≤0.37，0.50 可干净分离）
     CAUSAL_MIN_EVENT_RELEVANCE: float = 0.35   # 佐证事件最低因果关联度：低于此值不入佐证、不挂链
@@ -1021,8 +1038,8 @@ class Settings(BaseSettings):
                 lib.get("causal") or self._causal_db_path_for(
                     data.get("current", "默认"), str(Path(self.MEMORY_DB_PATH).parent)),
             )
-        except Exception:
-            pass
+        except Exception as _swallowed_err:
+            logger.debug(f"[_apply_current_memory_lib] ignored Exception: {_swallowed_err}")
 
     def _load_user_config(self):
         """加载 ~/.cortex/settings.json，覆盖 .env 中的同名配置
@@ -1149,29 +1166,29 @@ class Settings(BaseSettings):
         try:
             import modules.memory.event_store as es_mod
             es_mod.EventStore._instance = None
-        except Exception:
-            pass
+        except Exception as _swallowed_err:
+            logger.debug(f"[_reset_memory_singletons] ignored Exception: {_swallowed_err}")
         try:
             import modules.memory.event_retrieval as er_mod
             er_mod.EventRetrieval._instance = None
             # 生产检索单例（get_event_retrieval() 返回），漏重置会导致切库后仍读旧库
             er_mod._retrieval_instance = None
-        except Exception:
-            pass
+        except Exception as _swallowed_err:
+            logger.debug(f"[_reset_memory_singletons] ignored Exception: {_swallowed_err}")
         # Embedding 模型与记忆库无关（同一个模型），切库保留实例，避免反复重载模型
         # （旧 backend 时代因两套单例需重置；合并后唯一单例可复用）
         # 事件提取器缓存旧 EventStore，需一并重置
         try:
             import modules.memory.event_reducer as red_mod
             red_mod._reducer_instance = None
-        except Exception:
-            pass
+        except Exception as _swallowed_err:
+            logger.debug(f"[_reset_memory_singletons] ignored Exception: {_swallowed_err}")
         # 因果图跟记忆库走：切换库后重置 CausalGraph 单例，按新 CAUSAL_DB_PATH 重新加载
         try:
             import modules.memory.causal_graph as cg_mod
             cg_mod.CausalGraph._instance = None
-        except Exception:
-            pass
+        except Exception as _swallowed_err:
+            logger.debug(f"[_reset_memory_singletons] ignored Exception: {_swallowed_err}")
 
     def switch_memory_lib(self, name: str) -> bool:
         """切换到指定记忆库（更新运行时路径 + 重置记忆单例，原子化）

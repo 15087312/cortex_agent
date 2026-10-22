@@ -39,7 +39,7 @@ class EmbeddingEngine:
                     cls._instance = cls()
         return cls._instance
 
-    # @link:block Embedding_LoadModel = Guard
+    # @link:block Embedding_LoadModel = Guard · Retrieve
     def _load_model(self) -> bool:
         if self._attempted:
             return self._loaded

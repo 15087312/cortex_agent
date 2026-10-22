@@ -552,14 +552,20 @@ class ToolRegistry:
 
     @classmethod
     def get_core_tools_for_api(cls, tool_whitelist: List[str] = None, sort_by_priority: bool = True) -> List[Dict]:
-        """仅返回核心工具的完整 schema（core=True 或在白名单中的工具）。
+        """仅返回核心工具的完整 schema（core=True 或在白名单中显式列出的工具）。
 
         非核心工具不返回 schema，模型需通过 query_tool_details 查询后才能调用。
+        白名单中显式点名的工具（非 * 通配）即使是非核心也返回完整 schema，
+        否则仅配置了非核心工具的角色会得到空工具列表而无法执行工具调用。
 
         Returns:
             API 工具列表：[{"type": "function", "function": {...}}, ...]
         """
         filtered = cls._get_filtered_tools(tool_whitelist)
+        whitelist_names = (
+            {item for item in (tool_whitelist or []) if not item.startswith("tag:")}
+            if tool_whitelist and "*" not in tool_whitelist else None
+        )
 
         if sort_by_priority:
             filtered = sorted(filtered, key=lambda t: (-t.priority, t.name))
@@ -574,7 +580,7 @@ class ToolRegistry:
                 },
             }
             for t in filtered
-            if t.core
+            if t.core or (whitelist_names is not None and t.name in whitelist_names)
         ]
 
     @classmethod

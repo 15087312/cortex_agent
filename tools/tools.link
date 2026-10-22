@@ -3,8 +3,8 @@
 export MockLog
 eq MockLog = Write
 export MockHttp
-eq MockHttp = Guard
+eq MockHttp = Guard · Retrieve
 export MockWs
-eq MockWs = Loop(Guard · Emit)
+eq MockWs = Loop(Retrieve · Guard · Write · Emit)
 export MockReply
-eq MockReply = Guard · Loop(Emit)
+eq MockReply = Guard · Loop(Emit · Throttle)

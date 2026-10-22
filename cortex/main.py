@@ -17,7 +17,7 @@ import time
 from pathlib import Path
 
 
-# @link:block BootProbe
+# @link:block BootProbe = Loop(Retrieve · Guard · Throttle)
 def _wait_for_server(url: str, timeout: int = 120) -> bool:
     """等待后端服务就绪（后端启动含感知/视觉/embedding 初始化，可能较慢）"""
     import urllib.request
@@ -89,7 +89,7 @@ def parse_args():
     return parser.parse_args()
 
 
-# @link:block BootStart
+# @link:block BootStart = Guard · Tool
 def start_backend(args) -> subprocess.Popen:
     """启动后端 uvicorn 子进程"""
     # 限流依赖单进程内存计数，强制 workers=1

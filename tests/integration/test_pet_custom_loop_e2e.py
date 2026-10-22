@@ -110,9 +110,14 @@ def _install_fake_client(monkeypatch, outputs):
 
 
 def _setup_custom(monkeypatch, **extra):
-    """配置 loop_type=custom + 引擎假 client"""
+    """配置 loop_type=custom + 引擎假 client
+
+    默认 max_loop_rounds=2：新语义下空输出不再终止循环（持续思考），
+    FakeClient 输出耗尽后会永续空转，SSE 流永不结束。默认限 2 轮让
+    单次产出的测试正常收尾；测持续循环的测试显式传 max_loop_rounds=0。
+    """
     from modules.desktop_pet.store import PetStore
-    patch = {"loop_type": "custom", "min_think_interval": 0}
+    patch = {"loop_type": "custom", "min_think_interval": 0, "max_loop_rounds": 2}
     patch.update(extra)
     PetStore.get_instance().update_config(patch)
     fake = _install_fake_client(monkeypatch, [])
@@ -261,8 +266,14 @@ def test_chat_sse_direct_loop_default(app, monkeypatch, _pet_db):
 
 
 def test_chat_sse_continuous_loop_multiple_rounds(app, monkeypatch, _pet_db):
-    """持续思考循环：多轮文本全部流式返回（max_loop_rounds=0），每轮均持久化"""
-    _setup_custom(monkeypatch, max_loop_rounds=0)
+    """多轮思考循环：每轮文本全部流式返回并逐轮持久化
+
+    注：无限持续循环（max_loop_rounds=0）在 FakeClient 输出耗尽后会进入
+    空拍退避永续空转（真实语义如此，等待真实模型的新想法），HTTP 层无法
+    自然收尾；无限循环语义由单元测试 test_consecutive_empty_output_keeps_loop_alive
+    覆盖，这里用 max_loop_rounds=3 验证多轮流式 + 落库。
+    """
+    _setup_custom(monkeypatch, max_loop_rounds=3)
     PetEngine.get_instance()._client.outputs = ["第一轮", "第二轮", "第三轮"]
     with TestClient(app) as c:
         with c.stream("POST", "/stream/pet/chat", json={"text": "hi"}) as r:

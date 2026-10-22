@@ -23,7 +23,10 @@ import traceback
 import time
 
 import numpy as np
+from utils.logger import setup_logger
 
+
+logger = setup_logger(__name__)
 _available = True
 _cv2 = None
 
@@ -375,8 +378,8 @@ def main():
             sys.path.insert(0, _root)
         from cortex.watchdog import bind_backend
         bind_backend(fail_after=0)
-    except Exception:
-        pass
+    except Exception as _swallowed_err:
+        logger.debug(f"[main] ignored Exception: {_swallowed_err}")
     if not _available:
         error_msg = json.dumps({
             "jsonrpc": "2.0",

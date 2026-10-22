@@ -350,8 +350,8 @@ class RuntimeExpert(ABC):
                         await asyncio.wait_for(
                             message_event.wait(), timeout=think_interval * 3,
                         )
-                    except asyncio.TimeoutError:
-                        pass
+                    except asyncio.TimeoutError as _swallowed_err:
+                        logger.debug(f"[run_loop] ignored asyncio.TimeoutError: {_swallowed_err}")
                     message_event.clear()
                     # debounce：短时间内多次变化批处理
                     await asyncio.sleep(0.3)
@@ -366,8 +366,8 @@ class RuntimeExpert(ABC):
                     # 异常记录到 Blackboard — 让其他模型能看到发生了什么
                     try:
                         self.write_thought(f"[专家异常: {str(e)[:200]}]", round_num=self._round)
-                    except Exception:
-                        pass
+                    except Exception as _swallowed_err:
+                        logger.debug(f"[run_loop] ignored Exception: {_swallowed_err}")
                     # 异常时用兜底 sleep 代替 event wait
                     await asyncio.sleep(think_interval)
 

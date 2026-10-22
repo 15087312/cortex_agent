@@ -1,8 +1,8 @@
-"""output_system/tts 补充测试：gTTS 失败分支 / 云端 API 后端"""
+"""output_system/tts 补充测试：edge-tts 失败分支 / 云端 API 后端"""
 import sys
 import types
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -20,32 +20,36 @@ def tts_enabled(monkeypatch):
 
 
 def test_available_cached(monkeypatch):
-    fake_mod = types.ModuleType("gtts")
-    monkeypatch.setitem(sys.modules, "gtts", fake_mod)
+    fake_mod = types.ModuleType("edge_tts")
+    fake_mod.Communicate = MagicMock()
+    monkeypatch.setitem(sys.modules, "edge_tts", fake_mod)
     engine = TTSEngine()
     engine._available = None
     assert engine.available is True
     # 已缓存 True，即使后续 import 失败也保持
-    monkeypatch.setitem(sys.modules, "gtts", None)
+    monkeypatch.setitem(sys.modules, "edge_tts", None)
     assert engine.available is True
 
 
-def test_synthesize_gtts_unavailable(tts_enabled, monkeypatch, tmp_path):
-    monkeypatch.setitem(sys.modules, "gtts", None)
+def test_synthesize_edge_unavailable(tts_enabled, monkeypatch, tmp_path):
+    monkeypatch.setitem(sys.modules, "edge_tts", None)
     engine = TTSEngine(output_dir=str(tmp_path))
     engine._available = False
     assert engine.synthesize_sync("你好") is None
 
 
-def test_synthesize_gtts_failure(tts_enabled, monkeypatch, tmp_path):
-    fake_mod = types.ModuleType("gtts")
-    class BoomGtts:
-        def __init__(self, **kw):
+def test_synthesize_edge_failure(tts_enabled, monkeypatch, tmp_path):
+    fake_mod = types.ModuleType("edge_tts")
+
+    class BoomCommunicate:
+        def __init__(self, *args, **kwargs):
             pass
-        def save(self, path):
+
+        async def save(self, path):
             raise RuntimeError("network error")
-    fake_mod.gTTS = BoomGtts
-    monkeypatch.setitem(sys.modules, "gtts", fake_mod)
+
+    fake_mod.Communicate = BoomCommunicate
+    monkeypatch.setitem(sys.modules, "edge_tts", fake_mod)
     engine = TTSEngine(output_dir=str(tmp_path))
     assert engine.synthesize_sync("你好") is None
 

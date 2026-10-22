@@ -24,8 +24,8 @@ from cortex.watchdog import enable as _enable_orphan_watchdog
 # 防残留: 若启动本后端的 cortex 父进程被强杀，自动退出避免孤儿进程
 try:
     _enable_orphan_watchdog()
-except Exception:
-    pass
+except Exception as _swallowed_err:
+    logger.debug(f"[module] ignored Exception: {_swallowed_err}")
 from infra.data_process.api import router as data_process_router
 from infra.tool_manager.api import router as tool_router
 from modules.thinking.chat_gateway import router as stream_router
@@ -59,8 +59,8 @@ async def lifespan(app: FastAPI):
     try:
         from cortex.watchdog import write_backend_pid_file
         write_backend_pid_file(os.getpid())
-    except Exception:
-        pass
+    except Exception as _swallowed_err:
+        logger.debug(f"[lifespan] ignored Exception: {_swallowed_err}")
 
     # SEC-2: 生产环境必须配置 API Key
     # @link:block App_Guard = Guard
@@ -151,7 +151,7 @@ async def lifespan(app: FastAPI):
         logger.error(f"✗ 全局错误总线初始化失败: {e}")
 
     # 注册错误总线 WebSocket 回调 — 错误推送到前端 TUI
-    # @link:block App_Emit = Emit
+    # @link:block App_Emit = Retrieve · Emit
     try:
         from infra.error_bus import error_bus
         from modules.thinking.api_stream import connection_manager
@@ -256,13 +256,22 @@ async def lifespan(app: FastAPI):
     try:
         from cortex.watchdog import clear_backend_pid_file
         clear_backend_pid_file(os.getpid())
-    except Exception:
-        pass
+    except Exception as _swallowed_err:
+        logger.debug(f"[lifespan] ignored Exception: {_swallowed_err}")
     try:
         from cortex.process_registry import shutdown_all_children
         shutdown_all_children()
-    except Exception:
-        pass
+    except Exception as _swallowed_err:
+        logger.debug(f"[lifespan] ignored Exception: {_swallowed_err}")
+
+    # 桌宠窗口监管器收尾：停监控线程 + 终止 adopt 的外来窗口 + 清 pet_window_pid.json
+    # （shutdown_all_children 只收编 Popen 登记，收编的 adopted_pid 与残留 pid 文件需要这里清）
+    try:
+        from modules.desktop_pet.window_supervisor import get_pet_window_supervisor
+        get_pet_window_supervisor().shutdown()
+        logger.info("✓ 桌宠窗口监管器已关闭")
+    except Exception as _swallowed_err:
+        logger.debug(f"[lifespan] ignored Exception: {_swallowed_err}")
 
     # 关闭模型调度管理器
     try:
@@ -493,8 +502,8 @@ def _cleanup_request_counts() -> None:
             _ip, minute = k.split("|", 1)
             if int(minute) < current_minute:
                 del request_counts[k]
-        except (ValueError, KeyError):
-            pass
+        except (ValueError, KeyError) as _swallowed_err:
+            logger.debug(f"[_cleanup_request_counts] ignored (ValueError, KeyError): {_swallowed_err}")
     # 如果清理后仍然超限，强制清空最旧的一半
     if len(request_counts) > _MAX_RATE_LIMIT_KEYS:
         sorted_keys = sorted(request_counts.keys())
@@ -571,8 +580,8 @@ async def api_request_log_middleware(request: Request, call_next):
             req_body = _truncate_body(
                 _sanitize_body("?" + request.url.query), _API_LOG_MAX_REQ_BODY
             )
-    except Exception:
-        pass
+    except Exception as _swallowed_err:
+        logger.debug(f"[api_request_log_middleware] ignored Exception: {_swallowed_err}")
 
     response = await call_next(request)
     try:
@@ -608,8 +617,8 @@ async def api_request_log_middleware(request: Request, call_next):
             request_body=req_body,
             response_body=resp_body,
         )
-    except Exception:
-        pass
+    except Exception as _swallowed_err:
+        logger.debug(f"[api_request_log_middleware] ignored Exception: {_swallowed_err}")
     return response
 
 
@@ -1312,6 +1321,18 @@ async def update_config(key: str, body: PutConfigRequest):
                 else:
                     ps.stop()
                     logger.info("感知系统已停止（运行时关闭）")
+            elif key_upper == "DESKTOP_PET_ENABLED":
+                from modules.desktop_pet.pet_engine import PetEngine
+                try:
+                    engine = PetEngine.get_instance()
+                    if validated:
+                        engine.start()
+                        logger.info("桌宠已启动（运行时开启）")
+                    else:
+                        engine.stop()
+                        logger.info("桌宠已停止（运行时关闭）")
+                except Exception as _pet_err:
+                    logger.warning(f"桌宠运行时切换失败: {_pet_err}")
         except Exception as e:
             logger.warning(f"系统级配置应用失败 {key}: {e}")
         logger.info(f"配置已更新: {actual} = {validated} (旧值: {old_value})")

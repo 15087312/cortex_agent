@@ -18,9 +18,14 @@ import numpy as np
 from typing import Any
 
 # 将项目根目录加入 path，使得 from utils.screen_capture import SCREENSHOT_ENABLED 等导入可用
+# 必须在 import utils.* 之前执行（MCP stdio 子进程的 cwd/sys.path 不保证包含项目根）
 _project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
+
+from utils.logger import setup_logger
+
+logger = setup_logger(__name__)
 
 _available = True
 _cv2: Any = None
@@ -47,8 +52,8 @@ def _init():
     try:
         from rapidocr_onnxruntime import RapidOCR
         _ocr = RapidOCR()
-    except ImportError:
-        pass
+    except ImportError as _swallowed_err:
+        logger.debug(f"[_init] ignored ImportError: {_swallowed_err}")
 
     _available = True
 
@@ -232,8 +237,8 @@ def _detect_elements(img, detect_buttons=True, extract_text=True, confidence=0.3
                                 "center_y": (y1 + y2) // 2,
                                 "confidence": round(score_f, 2),
                             })
-        except Exception:
-            pass
+        except Exception as _swallowed_err:
+            logger.debug(f"[_detect_elements] ignored Exception: {_swallowed_err}")
 
     # 2. 按钮检测（基于轮廓分析）
     if detect_buttons:
@@ -405,8 +410,8 @@ def main():
             sys.path.insert(0, _root)
         from cortex.watchdog import bind_backend
         bind_backend(fail_after=0)
-    except Exception:
-        pass
+    except Exception as _swallowed_err:
+        logger.debug(f"[main] ignored Exception: {_swallowed_err}")
     if not _available:
         error_msg = json.dumps({
             "jsonrpc": "2.0",

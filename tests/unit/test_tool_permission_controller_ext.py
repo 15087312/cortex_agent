@@ -460,7 +460,7 @@ def test_get_control_tools_no_delegation():
 def test_get_control_tools_expert():
     ctrl = _make()
     tools = _names(ctrl.get_control_tools("expert", "edit", delegation_available=False))
-    assert tools == ["continue_thinking", "query_tool_details"]
+    assert tools == ["continue_thinking", "query_tool_details", "narrow_my_tools", "reset_my_tools"]
 
 
 # ── 单例 ──────────────────────────────────────────────────────────────────────

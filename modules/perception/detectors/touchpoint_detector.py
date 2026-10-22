@@ -6,7 +6,10 @@ detect() / detect_elements() / CDP 管线已删除——UI 事件由 ScreenMonit
 import os
 import platform
 from typing import Optional
+from utils.logger import setup_logger
 
+
+logger = setup_logger(__name__)
 _IS_MAC = platform.system() == "Darwin"
 
 
@@ -15,7 +18,7 @@ class TouchpointDetector:
 
     @staticmethod
     def _find_app_path(app_name: str) -> Optional[str]:
-        # @link:block Touchpoint_Guard = Guard
+        # @link:block Touchpoint_Guard = Guard · Loop(Tool · Guard)
         """查找 macOS 应用 .app 路径"""
         if not _IS_MAC:
             return None
@@ -38,8 +41,8 @@ class TouchpointDetector:
                                     path = line.split("=")[-1].strip().strip('"')
                                     if os.path.exists(path):
                                         return path
-        except Exception:
-            pass
+        except Exception as _swallowed_err:
+            logger.debug(f"[_find_app_path] ignored Exception: {_swallowed_err}")
 
         # 方法2: mdfind
         try:
@@ -56,10 +59,10 @@ class TouchpointDetector:
                         name = plist.get("CFBundleDisplayName", plist.get("CFBundleName", ""))
                         if name == app_name or app_name.lower() in path.lower():
                             return path
-                    except Exception:
-                        pass
-        except Exception:
-            pass
+                    except Exception as _swallowed_err:
+                        logger.debug(f"[_find_app_path] ignored Exception: {_swallowed_err}")
+        except Exception as _swallowed_err:
+            logger.debug(f"[_find_app_path] ignored Exception: {_swallowed_err}")
 
         # 方法3: /Applications 扫描
         for root in ["/Applications", os.path.expanduser("~/Applications")]:
@@ -71,8 +74,8 @@ class TouchpointDetector:
                     if os.path.isdir(full) and item.endswith(".app"):
                         if app_name.lower() in item.lower():
                             return full
-            except PermissionError:
-                pass
+            except PermissionError as _swallowed_err:
+                logger.debug(f"[_find_app_path] ignored PermissionError: {_swallowed_err}")
 
         return None
 
@@ -86,6 +89,6 @@ class TouchpointDetector:
             for item in os.listdir(frameworks):
                 if "Helper (Renderer).app" in item or " Helper" in item:
                     return True
-        except PermissionError:
-            pass
+        except PermissionError as _swallowed_err:
+            logger.debug(f"[_is_electron_app] ignored PermissionError: {_swallowed_err}")
         return False

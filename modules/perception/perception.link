@@ -1,11 +1,12 @@
-# 感知模块的结构骨架：定时扫描 → 规则守卫 → 触发搭话推送
+# 感知模块的结构骨架：定时扫描 → 规则守卫 → 触发搭话推送（无 LLM 推理，全是规则+推送）
 export PerceiveLoop
-input PerceiveLoop: [Think]
-output PerceiveLoop: [Think]
-eq PerceiveLoop = Loop(Think)
+eq PerceiveLoop = Loop(Guard · Emit)
 
 export SenseScan
 eq SenseScan = Loop(Guard · Emit)
 
 export Outreach
 eq Outreach = Guard · Retrieve · Emit
+
+# L2 数据流：outreach(trigger) -> message（L2 要求先生產後消費，顺序与 v1 eq 不同属正常）
+eq OutreachFlow = Retrieve(trigger) · Guard(trigger) · Emit(message) · Write(message)

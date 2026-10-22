@@ -69,6 +69,6 @@ class SecurityAuditLogger:
                         logs.append(json.loads(line.strip()))
                     except Exception:
                         continue
-        except FileNotFoundError:
-            pass
+        except FileNotFoundError as _swallowed_err:
+            logger.debug(f"[get_recent_logs] ignored FileNotFoundError: {_swallowed_err}")
         return logs

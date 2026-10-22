@@ -9,8 +9,11 @@ import json
 from typing import Any, Dict, List, Optional
 
 from config.providers.base import ProviderBase
+from utils.logger import setup_logger
 
 
+
+logger = setup_logger(__name__)
 class GeminiProvider(ProviderBase):
     """Google Gemini 原生 GenerateContent API"""
 
@@ -178,8 +181,8 @@ class GeminiProvider(ProviderBase):
             for p in thought:
                 if "thought" in p:
                     return p["thought"]
-        except Exception:
-            pass
+        except Exception as _swallowed_err:
+            logger.debug(f"[_extract_reasoning] ignored Exception: {_swallowed_err}")
         return None
 
     def parse_stream_line(self, line: str) -> Optional[Dict[str, Any]]:

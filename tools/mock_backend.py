@@ -51,7 +51,7 @@ def _new_session():
     return f"mock_{_seq}_{uuid.uuid4().hex[:6]}"
 
 
-# @link:block MockHttp
+# @link:block MockHttp = Guard · Retrieve
 @app.middleware("http")
 async def trace_http(request: Request, call_next):
     body = b""
@@ -135,7 +135,7 @@ async def catch_all(full_path: str, request: Request):
 # ── WebSocket：记录前端每条消息并按脚本回复 ──────────────────────────────────
 
 
-# @link:block MockWs
+# @link:block MockWs = Loop(Retrieve · Guard · Write · Emit)
 @app.websocket("/stream/ws/{session_id}")
 async def chat_ws(websocket: WebSocket, session_id: str):
     await websocket.accept()

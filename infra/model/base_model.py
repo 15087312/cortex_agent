@@ -248,8 +248,8 @@ class BaseModelClient(ABC):
         # 使用 DEFAULT + @SECLEVEL=1 放宽 OpenSSL 3.6 对部分密码套件的限制
         try:
             ctx.set_ciphers('DEFAULT:@SECLEVEL=1')
-        except ssl.SSLError:
-            pass
+        except ssl.SSLError as _swallowed_err:
+            logger.debug(f"[_create_ssl_context] ignored ssl.SSLError: {_swallowed_err}")
 
         return ctx
 
@@ -281,8 +281,8 @@ class BaseModelClient(ABC):
                 # 下次 _get_session 会重新创建
                 import asyncio
                 asyncio.ensure_future(self._session.close())
-            except Exception:
-                pass
+            except Exception as _swallowed_err:
+                logger.debug(f"[_reset_session] ignored Exception: {_swallowed_err}")
         self._session = None
     
     async def close(self):

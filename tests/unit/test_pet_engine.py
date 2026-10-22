@@ -27,6 +27,7 @@ def _engine():
     pe._sub_id = ""
     pe._running = False
     pe._reply_listeners = []
+    pe._perception_sub_ids = []  # 感知事件订阅（start/stop 用）
     pe.last_reply = None
     pe._loop = None
     return pe
@@ -65,6 +66,20 @@ def test_voice_enabled_config_roundtrip(pet_db):
     # 重复写 False → 关闭
     pet_db.update_config({"voice_enabled": False})
     assert not pet_db.get_config()["voice_enabled"]
+
+
+def test_idle_backoff_max_config_roundtrip(pet_db):
+    """空拍退避上限：默认 8，可修改；下限 1（关闭退避），非法值回退默认"""
+    cfg = pet_db.get_config()
+    assert cfg["idle_backoff_max"] == 8.0
+    pet_db.update_config({"idle_backoff_max": 32})
+    assert pet_db.get_config()["idle_backoff_max"] == 32.0
+    # 低于 1 → 钉在 1（关闭退避）
+    pet_db.update_config({"idle_backoff_max": 0.5})
+    assert pet_db.get_config()["idle_backoff_max"] == 1.0
+    # 非法值 → 回退默认 8
+    pet_db.update_config({"idle_backoff_max": "abc"})
+    assert pet_db.get_config()["idle_backoff_max"] == 8.0
 
 
 def test_build_messages(pet_db, monkeypatch):
@@ -124,6 +139,7 @@ def test_build_client_falls_back_to_global(monkeypatch, pet_db):
     pe._sub_id = ""
     pe._running = False
     pe._reply_listeners = []
+    pe._perception_sub_ids = []  # 感知事件订阅（start/stop 用）
     pe.last_reply = None
     pe._loop = None
     monkeypatch.setattr(settings, "LARGE_MODEL_API_URL", "http://global/v1")
@@ -253,6 +269,8 @@ def test_auto_think_repeated_output_skipped_in_fake_engine(monkeypatch, pet_db):
     env._loop = None
     env._client_cfg = ("", "", "", "", "")
     env.start()
+    # 输出前视觉采集不打真实网络
+    monkeypatch.setattr(PetEngine, "_capture_screen_vision", AsyncMock(return_value=""))
     # 预埋最近一条 assistant 为「你好呀」——防重轴缘命中
     fake_store.add_history("user", "你好")
     fake_store.add_history("assistant", "你好呀")
@@ -305,6 +323,7 @@ def test_build_context_uses_pet_memory(monkeypatch, pet_db):
     pe._sub_id = ""
     pe._running = False
     pe._reply_listeners = []
+    pe._perception_sub_ids = []  # 感知事件订阅（start/stop 用）
     pe.last_reply = None
     pe._loop = None
     import modules.desktop_pet.memory as mem_mod
@@ -320,6 +339,8 @@ def test_build_context_uses_pet_memory(monkeypatch, pet_db):
         async def collect(self):
             return frag
     monkeypatch.setattr(ps_mod, "PerceptionSource", FakePS)
+    # 输出前视觉采集不打真实网络（build_context 新增的注入点，单测里置空）
+    monkeypatch.setattr(PetEngine, "_capture_screen_vision", AsyncMock(return_value=""))
     out = asyncio.run(pe.build_context("查询"))
     assert "感知信息" in out
     assert "用户喜欢猫" in out

@@ -40,7 +40,7 @@ def _build_plist() -> dict:
     }
 
 
-# @link:block Autostart_Apply = Guard
+# @link:block Autostart_Apply = Guard · Tool
 def apply(enabled: bool) -> bool:
     """应用开机启动设置。返回是否成功。"""
     if sys.platform != "darwin":
@@ -59,8 +59,8 @@ def apply(enabled: bool) -> bool:
                 subprocess.run(["launchctl", "unload", path], capture_output=True, timeout=10)
                 try:
                     os.unlink(path)
-                except OSError:
-                    pass
+                except OSError as _swallowed_err:
+                    logger.debug(f"[apply] ignored OSError: {_swallowed_err}")
             logger.info("[开机启动] 已关闭")
         return True
     except Exception as e:

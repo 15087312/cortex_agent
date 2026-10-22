@@ -385,8 +385,8 @@ class Conscience:
                 from config.settings import settings as _cfg
                 if not getattr(_cfg, "MENTAL_ACTIVITY_ENABLED", True):
                     return ""
-            except Exception:
-                pass
+            except Exception as _swallowed_err:
+                logger.debug(f"[think] ignored Exception: {_swallowed_err}")
 
             # 1. 从因果图提取相关知识（先清本轮残留，防 analyze_feedback 未跑时累积）
             self._last_analyzed_node_ids = []
@@ -427,8 +427,8 @@ class Conscience:
                         "每一步写明身体朝向、四肢姿势、移动距离、障碍物；\n"
                         "只输出文本，不需要图片，步骤清晰，遵守现实人体物理约束。\n"
                     )
-            except Exception:
-                pass
+            except Exception as _swallowed_err:
+                logger.debug(f"[think] ignored Exception: {_swallowed_err}")
 
             # 有因果知识 → "回忆经验"；无历史经验（空或"暂无相关因果经验"占位）→ 明确"不编造，仅基于当前情境与价值观推测"
             _has_knowledge = bool(causal_knowledge) and causal_knowledge.strip() and "暂无相关因果经验" not in causal_knowledge

@@ -1,4 +1,4 @@
-# @link:block MCP_Tools_Emit = Emit
+# @link:block MCP_Tools_Emit = Emit · Retrieve
 """
 MCP 协议工具 — 发现、调用已注册的 MCP server 工具
 

@@ -28,8 +28,8 @@ def _context_window_size() -> int:
         window = int(getattr(settings, "CONTEXT_WINDOW_SIZE", 0) or 0)
         if window > 0:
             return window
-    except Exception:
-        pass
+    except Exception as _swallowed_err:
+        logger.debug(f"[_context_window_size] ignored Exception: {_swallowed_err}")
     try:
         from config.settings import settings
         return int(settings.get_context_length("large") or 0)
@@ -87,7 +87,7 @@ def load_dialog_from_db(
     return dialog
 
 
-# @link:block DialogBudget_Guard = Guard
+# @link:block DialogBudget_Guard = Loop(Guard)
 def budget_trim(
     messages: List[Dict[str, Any]],
     ratio: float = 0.8,

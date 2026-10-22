@@ -38,7 +38,7 @@ class ModelRunner:
         cfg = model_config_fingerprint("large")
         if self._client is None:
             # 懒建：按当前配置构建
-            self._client = LargeModelClient()
+            self._client = LargeModelClient(enable_thinking=settings.LARGE_MODEL_ENABLE_THINKING)
             self._client_cfg = cfg
         elif self._client_cfg is None:
             # 显式注入的 client（未记录指纹）：尊重注入，仅记录当前指纹，不重建
@@ -46,12 +46,12 @@ class ModelRunner:
         elif self._client_cfg != cfg:
             # 配置变更：重建
             old = self._client
-            self._client = LargeModelClient()
+            self._client = LargeModelClient(enable_thinking=settings.LARGE_MODEL_ENABLE_THINKING)
             self._client_cfg = cfg
             close_client_session(old)
         return self._client
 
-    # @link:block LightRun_Think = Think
+    # @link:block LightRun_Think = Think · Emit
     async def run(
         self,
         messages: List[dict],

@@ -173,6 +173,17 @@ def test_build_identity_custom_persona():
     with patch.object(_settings(), "get_persona", return_value="自定义人设"):
         out = c._build_identity(RoleInfo(key="r", personality="默认", speaking_style="S"))
     assert "【工具使用】" in out
+    # 回归：personality 必须真正进入 system prompt（曾被计算出但从未 append）
+    assert "自定义人设" in out
+
+
+def test_build_identity_default_personality_emitted():
+    """无自定义人设时，默认人格/风格也要进 prompt（Bug2 回归）"""
+    c = _composer({"base": {"tiers": {}}})
+    with patch.object(_settings(), "get_persona", return_value=""):
+        out = c._build_identity(RoleInfo(key="r", personality="默认人格", speaking_style="默认风格"))
+    assert "【人格】默认人格" in out
+    assert "【风格】默认风格" in out
 
 
 def test_build_identity_persona_exception():

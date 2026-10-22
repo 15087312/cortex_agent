@@ -1,4 +1,4 @@
-# @link:block Open_App_Emit = Emit
+# @link:block Open_App_Emit = Emit · Tool
 """open_app 工具 — 打开/切换到指定应用"""
 import os
 import subprocess
@@ -56,8 +56,8 @@ def open_app(app_name: str, activate_only: bool = False) -> dict:
                     "app": w_app,
                     "message": f"已切换到 {w_app}（应用已在运行）",
                 }
-    except Exception:
-        pass
+    except Exception as _swallowed_err:
+        logger.debug(f"[open_app] ignored Exception: {_swallowed_err}")
 
     # 2. 用 TouchpointDetector 查找应用路径（支持中文名→英文路径映射）
     app_path = ""
@@ -67,8 +67,8 @@ def open_app(app_name: str, activate_only: bool = False) -> dict:
             p = factory()._find_app_path(app_name)
             if p:
                 app_path = p
-    except Exception:
-        pass
+    except Exception as _swallowed_err:
+        logger.debug(f"[open_app] ignored Exception: {_swallowed_err}")
 
     if activate_only:
         return {
@@ -135,8 +135,8 @@ def open_app(app_name: str, activate_only: bool = False) -> dict:
             import touchpoint as tp
             tp.configure(cdp_discover=True)
             logger.info(f"已为 {app_name} 配置 CDP 发现")
-    except Exception:
-        pass
+    except Exception as _swallowed_err:
+        logger.debug(f"[open_app] ignored Exception: {_swallowed_err}")
 
     import sys as _sys
     if _sys.platform == "darwin":

@@ -91,15 +91,16 @@ class TestLargeModelPostFormat:
         from infra.model.large_model_client import LargeModelClient
         from config.settings import settings
 
-        # 隔离用户的自定义人设/覆盖，保证断言默认人格（不受 ~/.cortex 配置影响）
+        # 隔离用户的自定义人设/覆盖/自定义 Agent，保证断言默认人格（不受 ~/.cortex 配置影响）
         with patch.object(type(settings), 'get_persona', return_value=""), \
-             patch.object(type(settings), 'get_system_override', return_value=""):
+             patch.object(type(settings), 'get_system_override', return_value=""), \
+             patch.object(type(settings), 'get_custom_agents', return_value=[]):
             data = await _capture_generate(LargeModelClient, settings.LARGE_MODEL_API_URL, "large", "orchestrator")
             sys_content = data["body"]["messages"][0]["content"]
 
             assert "系统主模型" in sys_content, "缺少层级身份声明"
-            # 角色边界段已从 system prompt 移除（§95）：人格/擅长不再注入
-            assert "【人格】" not in sys_content, "角色边界应已移除"
+            # 人格来自 roles.yaml 默认模板（自定义人设通过 get_persona 覆盖，此处已隔离为空）
+            assert "【人格】" in sys_content, "缺少默认人格段"
 
     @pytest.mark.asyncio
     async def test_system_prompt_contains_safety_rules(self):

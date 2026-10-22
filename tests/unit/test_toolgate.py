@@ -651,6 +651,7 @@ class TestRejectSessionReviews:
     @pytest.mark.asyncio
     async def test_check_tags_session_and_reject(self, gate_no_llm):
         """gate.check(session_id=...) 把审批关联到会话，断开可批量拒绝"""
+        _set_mode(gate_no_llm, "edit")
         ToolSecurityGate._pending_reviews.clear()
         ToolSecurityGate._pending_review_sessions.clear()
         gate = gate_no_llm

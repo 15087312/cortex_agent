@@ -5,6 +5,9 @@ use think    := thinking.ThinkLoop
 use memory   := memory.MemRetrieve
 use output   := output_system.Distrib
 use app      := api.App
+use pet      := desktop_pet.PetChat
+use manage   := management.StatusCollect
+use secure   := security_system.GateCheck
 
 # 主链路：感知 → 思考 → 记忆（真实调用：perception→thinking→memory 均有 import 证据）
 # 说明：memory → output 在真实代码中无直接调用（文档 E301 示例场景），
@@ -16,8 +19,24 @@ eq ApiThink    = app · think
 eq ApiMemory   = app · memory
 eq ApiOutput   = app · output
 eq ApiPerceive = app · perceive
+eq ApiPet      = app · pet
+eq ApiManage   = app · manage
+eq ApiSecure   = app · secure
+
+# 桌宠组合链（pet 是组合型模块，复用各基础能力）
+eq PetToMem      = pet · memory
+eq PetToOutput   = pet · output
+eq PetToPerceive = pet · perceive
+eq PetToThink    = pet · think
 
 # 已知未声明耦合（L3 E302 如实报告，暂不声明）：
 #   thinking → output_system：modules/thinking/adapters.py:80 借用 OutputSystem.clean_response
 #   做思考循环内的输出清洗（端口语义为 Write，非 Distrib 的 Emit，无法用 eq 声明）。
 #   收敛方向：清洗逻辑下沉 infra 或经注入，使 think 不再直接依赖 output_system。
+#
+#   横切基础设施耦合（管理面/安全/配置复用，不进主链路）：
+#   management → perception：interfaces.py:16 状态收集查感知健康（管理面监控）
+#   management → security_system：interfaces.py:30 状态收集查安全状态（管理面监控）
+#   output_system → security_system：__init__.py:14 输出前安全校验（安全强制检查）
+#   security_system → thinking：tool_permission_controller.py:75 复用工具白名单（配置复用）
+#   thinking → security_system：model_runner.py:44 工具执行前安全门检查（安全强制检查）

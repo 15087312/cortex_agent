@@ -19,7 +19,7 @@ def get_process() -> subprocess.Popen:
     """返回 caffeinate 子进程句柄（供后端 shutdown 收编；无则 None）"""
     return _proc
 
-# @link:block Power_Apply = Guard
+# @link:block Power_Apply = Guard · Tool
 def apply(enabled: bool) -> bool:
     """应用防休眠设置。返回是否成功。"""
     global _proc
@@ -36,8 +36,8 @@ def apply(enabled: bool) -> bool:
                 try:
                     from cortex.process_registry import register
                     register("caffeinate", _proc)
-                except Exception:
-                    pass
+                except Exception as _swallowed_err:
+                    logger.debug(f"[apply] ignored Exception: {_swallowed_err}")
                 logger.info("[防休眠] 已启用 (caffeinate)")
             except Exception as e:
                 logger.warning(f"[防休眠] 启动失败: {e}")
@@ -50,8 +50,8 @@ def apply(enabled: bool) -> bool:
                     _proc.wait(timeout=5)
                 except subprocess.TimeoutExpired:
                     _proc.kill()
-            except Exception:
-                pass
+            except Exception as _swallowed_err:
+                logger.debug(f"[apply] ignored Exception: {_swallowed_err}")
             _proc = None
             logger.info("[防休眠] 已关闭")
         return True

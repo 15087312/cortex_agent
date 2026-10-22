@@ -45,15 +45,15 @@ class PetTask:
         try:
             if self.future is not None and not self.future.done():
                 self.future.set_result(result)
-        except Exception:
-            pass  # 提交方循环已关闭等场景：结果无人接收，静默丢弃
+        except Exception as _swallowed_err:
+            logger.debug(f"[_set_result] ignored Exception: {_swallowed_err}") # 提交方循环已关闭等场景：结果无人接收，静默丢弃
 
     def _set_exception(self, exc: BaseException) -> None:
         try:
             if self.future is not None and not self.future.done():
                 self.future.set_exception(exc)
-        except Exception:
-            pass
+        except Exception as _swallowed_err:
+            logger.debug(f"[_set_exception] ignored Exception: {_swallowed_err}")
 
     async def execute(self) -> None:
         """worker 调用：运行工厂协程并把结果/异常转写到提交方 future"""

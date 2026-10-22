@@ -160,3 +160,13 @@ data/backup_test_cleanup_*
 data/memory.db
 data/memory.db.bak*
 data/*.db
+
+# venv (311)
+.venv311/
+
+# embedded repo
+Cortico/
+
+# runtime outputs
+data/output/
+.preview/

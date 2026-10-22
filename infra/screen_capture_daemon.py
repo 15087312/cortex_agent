@@ -21,7 +21,10 @@ import stat
 import sys
 import threading
 import time
+from utils.logger import setup_logger
 
+
+logger = setup_logger(__name__)
 SOCKET_PATH = os.environ.get(
     "CORTEX_SCREEN_CAPTURE_SOCKET",
     "/tmp/cortex_screen_capture.sock",
@@ -60,8 +63,8 @@ def _screencapture_image():
         finally:
             try:
                 os.unlink(tmp_path)
-            except OSError:
-                pass
+            except OSError as _swallowed_err:
+                logger.debug(f"[_screencapture_image] ignored OSError: {_swallowed_err}")
     except Exception as e:
         _log(f"截图失败: {e}")
         return None
@@ -166,8 +169,8 @@ class ScreenCaptureDaemon:
         finally:
             try:
                 conn.close()
-            except OSError:
-                pass
+            except OSError as _swallowed_err:
+                logger.debug(f"[_serve_connection] ignored OSError: {_swallowed_err}")
 
     def _bind_server(self):
         """绑定 Unix socket。处理多进程竞态：
@@ -229,8 +232,8 @@ class ScreenCaptureDaemon:
                     if stat.S_ISCHR(mode.st_mode):
                         return  # /dev/null：不监听
                 sys.stdin.read()
-            except Exception:
-                pass
+            except Exception as _swallowed_err:
+                logger.debug(f"[_watch_stdin] ignored Exception: {_swallowed_err}")
             self._shutdown.set()
 
         threading.Thread(target=_watch_stdin, daemon=True).start()
@@ -253,8 +256,8 @@ class ScreenCaptureDaemon:
             try:
                 if os.path.exists(self._socket_path):
                     os.unlink(self._socket_path)
-            except OSError:
-                pass
+            except OSError as _swallowed_err:
+                logger.debug(f"[_watch_stdin] ignored OSError: {_swallowed_err}")
             _log("已退出")
 
 
@@ -268,8 +271,8 @@ def main():
             sys.path.insert(0, _root)
         from cortex.watchdog import bind_backend
         bind_backend()
-    except Exception:
-        pass
+    except Exception as _swallowed_err:
+        logger.debug(f"[main] ignored Exception: {_swallowed_err}")
     daemon = ScreenCaptureDaemon()
     daemon.run()
 

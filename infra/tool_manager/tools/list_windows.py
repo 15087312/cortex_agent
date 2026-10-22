@@ -34,11 +34,11 @@ def _is_electron(app_name: str) -> bool:
                             is_elec = "electron" in cmdline or "cef" in cmdline or "helper (renderer)" in cmdline
                             _electron_cache[app_name] = is_elec
                             return is_elec
-                        except Exception:
-                            pass
+                        except Exception as _swallowed_err:
+                            logger.debug(f"[_is_electron] ignored Exception: {_swallowed_err}")
                     break
-        except Exception:
-            pass
+        except Exception as _swallowed_err:
+            logger.debug(f"[_is_electron] ignored Exception: {_swallowed_err}")
 
         # 降级：检查 .app bundle 结构（仅 macOS）
         try:
@@ -50,8 +50,8 @@ def _is_electron(app_name: str) -> bool:
                     result = TouchpointDetector._is_electron_app(app_path)
                     _electron_cache[app_name] = result
                     return result
-        except Exception:
-            pass
+        except Exception as _swallowed_err:
+            logger.debug(f"[_is_electron] ignored Exception: {_swallowed_err}")
 
     # Windows: 通过 wmic 查询进程命令行
     elif sys.platform == "win32":
@@ -65,8 +65,8 @@ def _is_electron(app_name: str) -> bool:
             if "electron" in cmdline or "cef" in cmdline:
                 _electron_cache[app_name] = True
                 return True
-        except Exception:
-            pass
+        except Exception as _swallowed_err:
+            logger.debug(f"[_is_electron] ignored Exception: {_swallowed_err}")
 
     _electron_cache[app_name] = False
     return False

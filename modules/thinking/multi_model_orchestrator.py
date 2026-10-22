@@ -53,8 +53,8 @@ def resolve_active_large_role() -> str:
         for ca in _cfg.get_custom_agents():
             if ca.get("tier") == "large" and ca.get("role") and _cfg.get_agent_active(ca["role"]):
                 return ca["role"]
-    except Exception:
-        pass
+    except Exception as _swallowed_err:
+        logger.debug(f"[resolve_active_large_role] ignored Exception: {_swallowed_err}")
     return "orchestrator"
 
 
@@ -563,8 +563,8 @@ class MultiModelOrchestrator:
                         global _session_dialog_history, _session_dialog_history_lock
                         with _session_dialog_history_lock:
                             _session_dialog_history[session_id or ""] = history_text
-                    except Exception:
-                        pass
+                    except Exception as _swallowed_err:
+                        logger.debug(f"[_execute_multi_model_thinking] ignored Exception: {_swallowed_err}")
                     logger.info(f"[编排器] 注入对话历史到黑板: {len(history_lines)} 条, {len(history_text)} 字符")
             else:
                 logger.info(f"[编排器] 无对话历史 (blackboard={bool(blackboard)}, context={len(context) if context else 0})")
@@ -701,8 +701,8 @@ class MultiModelOrchestrator:
                         await asyncio.wait_for(done_event.wait(), timeout=POLL_INTERVAL)
                         completed = True
                         break
-                    except asyncio.TimeoutError:
-                        pass
+                    except asyncio.TimeoutError as _swallowed_err:
+                        logger.debug(f"[_has_pending_delegations] ignored asyncio.TimeoutError: {_swallowed_err}")
 
                     elapsed = time.time() - t_wait_start
                     if blackboard and blackboard.final_response:

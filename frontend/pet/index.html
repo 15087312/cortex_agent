@@ -46,6 +46,25 @@
   .st-item:nth-child(3) .st-fill { background: linear-gradient(90deg, #8fd4ff, #3da9ff); box-shadow: 0 0 5px rgba(61,169,255,.6); }
   .st-item:nth-child(4) .st-fill { background: linear-gradient(90deg, #a7f0c0, #4ecb7a); box-shadow: 0 0 5px rgba(78,203,122,.6); }
 
+  /* ── 麦克风按钮（实时语音） ── */
+  #mic-btn {
+    width: 28px; height: 28px; border-radius: 50%; border: none; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    background: linear-gradient(135deg, rgba(255,255,255,.9), rgba(240,240,245,.8));
+    box-shadow: 0 2px 8px rgba(0,0,0,.12);
+    color: #888; transition: all .2s ease;
+  }
+  #mic-btn:hover { transform: scale(1.1); }
+  #mic-btn.active {
+    background: linear-gradient(135deg, #ff5f8f, #ff7eb3);
+    color: #fff; animation: micPulse 1.2s ease-in-out infinite;
+  }
+  #mic-btn .lucide { width: 14px; height: 14px; }
+  @keyframes micPulse {
+    0%, 100% { box-shadow: 0 2px 8px rgba(255,95,143,.4); }
+    50% { box-shadow: 0 2px 16px rgba(255,95,143,.7); }
+  }
+
   /* ── 圆环菜单 ── */
   #menu {
     position: fixed; left: 0; top: 0; width: 0; height: 0; z-index: 8;
@@ -263,8 +282,16 @@
         '<div class="st-bar"><div class="st-fill" style="width:' + v + '%"></div></div>';
       stateBarEl.appendChild(item);
     });
+    // 麦克风按钮（实时语音）
+    var micItem = document.createElement('div');
+    micItem.className = 'st-item';
+    micItem.innerHTML = '<button id="mic-btn" title="实时语音"><div data-lucide="mic"></div></button>';
+    stateBarEl.appendChild(micItem);
     stateBarEl.classList.add('visible');
     if (window.lucide) lucide.createIcons();
+    // 绑定麦克风按钮事件
+    var micBtn = document.getElementById('mic-btn');
+    if (micBtn) micBtn.addEventListener('click', toggleRealtimeVoice);
   }
   function pollState() {
     fetch('/stream/pet/state', { headers: { 'Accept': 'application/json' } })
@@ -479,15 +506,145 @@
     postMove({ active: false });
   });
 
+  /* ═══════════ 实时语音（全双工 WebSocket） ═══════════ */
+  var rtWs = null;
+  var rtStream = null;
+  var rtAudioCtx = null;
+  var rtProcessor = null;
+  var rtActive = false;
+
+  function toggleRealtimeVoice() {
+    if (rtActive) {
+      stopRealtimeVoice();
+    } else {
+      startRealtimeVoice();
+    }
+  }
+
+  function startRealtimeVoice() {
+    if (rtActive) return;
+    // 检查后端是否启用实时语音
+    fetch('/config', { headers: { 'Accept': 'application/json' } })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        var cfg = (d && d.data) || {};
+        if (!cfg.PERCEPTION_VOICE_REALTIME) {
+          showBubble('实时语音未开启，请在设置中启用 PERCEPTION_VOICE_REALTIME');
+          return;
+        }
+        startMicCapture();
+      })
+      .catch(function () { showBubble('无法连接后端'); });
+  }
+
+  function startMicCapture() {
+    navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 16000 }
+    }).then(function (stream) {
+      rtStream = stream;
+      rtAudioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+      var source = rtAudioCtx.createMediaStreamSource(stream);
+      // ScriptProcessor 兼容性好，虽然已废弃但仍广泛支持
+      rtProcessor = rtAudioCtx.createScriptProcessor(4096, 1, 1);
+      rtProcessor.onaudioprocess = function (e) {
+        if (!rtWs || rtWs.readyState !== WebSocket.OPEN) return;
+        var float32 = e.inputBuffer.getChannelData(0);
+        // Float32 → Int16 PCM
+        var int16 = new Int16Array(float32.length);
+        for (var i = 0; i < float32.length; i++) {
+          var s = Math.max(-1, Math.min(1, float32[i]));
+          int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+        }
+        rtWs.send(int16.buffer);
+      };
+      source.connect(rtProcessor);
+      rtProcessor.connect(rtAudioCtx.destination);
+
+      // WebSocket 连接
+      var wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      rtWs = new WebSocket(wsProto + '//' + location.host + '/stream/pet/voice');
+      rtWs.binaryType = 'arraybuffer';
+      rtWs.onopen = function () {
+        rtActive = true;
+        updateMicBtn();
+        showBubble('麦克风已开启…');
+      };
+      rtWs.onmessage = function (ev) {
+        try {
+          var data = JSON.parse(ev.data);
+          handleVoiceMessage(data);
+        } catch (e) {}
+      };
+      rtWs.onclose = function () {
+        stopRealtimeVoice();
+      };
+      rtWs.onerror = function () {
+        stopRealtimeVoice();
+      };
+    }).catch(function (err) {
+      showBubble('麦克风权限被拒绝: ' + err.message);
+    });
+  }
+
+  function handleVoiceMessage(data) {
+    if (data.state === 'listening') {
+      showBubble('正在听…');
+    } else if (data.partial_text) {
+      showBubble('🎤 ' + data.partial_text);
+    } else if (data.final_text) {
+      showBubble('你说: ' + data.final_text);
+    } else if (data.tts_url) {
+      var audio = new Audio(data.tts_url);
+      audio.play().catch(function () {});
+    } else if (data.action === 'interrupt_tts') {
+      // 用户打断，停止当前播放
+      var audios = document.querySelectorAll('audio');
+      audios.forEach(function (a) { a.pause(); });
+    }
+  }
+
+  function stopRealtimeVoice() {
+    rtActive = false;
+    if (rtProcessor) { rtProcessor.disconnect(); rtProcessor = null; }
+    if (rtAudioCtx) { rtAudioCtx.close().catch(function(){}); rtAudioCtx = null; }
+    if (rtStream) { rtStream.getTracks().forEach(function(t) { t.stop(); }); rtStream = null; }
+    if (rtWs) { rtWs.close(); rtWs = null; }
+    updateMicBtn();
+  }
+
+  function updateMicBtn() {
+    var btn = document.getElementById('mic-btn');
+    if (btn) {
+      if (rtActive) {
+        btn.classList.add('active');
+      } else {
+        btn.classList.remove('active');
+      }
+    }
+  }
+
   /* ═══════════ 回复轮询（语音/排队中动作的回复显示；互动 SSE 直显 token） ═══════════ */
+  /* 只显示页面打开后产生的新回复：首次轮询仅同步基线不展示，避免每次打开都刷一次旧对话 */
   var lastReplyTime = 0;
   var lastPollText = '';
+  var pollInitialized = false;
+  var pageLoadTime = Date.now() / 1000;
   setInterval(function () {
     fetch('/stream/pet/last-reply', { headers: { 'Accept': 'application/json' } })
       .then(function (r) { return r.json(); })
       .then(function (d) {
         var data = d && d.data;
         if (!data || !data.time) return;
+        // 首次轮询只同步基线：页面加载之后才产生的时间戳才视为新对话
+        if (!pollInitialized) {
+          pollInitialized = true;
+          lastReplyTime = data.time;
+          if (data.time > pageLoadTime && data.text) {
+            lastPollText = data.text;
+            showBubble(data.text);
+          }
+          return;
+        }
         // ① 时间变化且文本非空 → 直接显示（语音/按键触发回复，页面未开 SSE 时也可见）
         if (data.time !== lastReplyTime && data.text) {
           lastReplyTime = data.time;
@@ -503,26 +660,8 @@
       .catch(function () {});
   }, 1500);
 
-  /* ═══════════ 打开时恢复最近对话（pet.db 历史，last-reply 是内存态重启即丢） ═══════════ */
-  function restoreHistory() {
-    fetch('/stream/pet/history?limit=2', { headers: { 'Accept': 'application/json' } })
-      .then(function (r) { return r.json(); })
-      .then(function (d) {
-        var items = (d && d.data && d.data.items) || [];
-        var lines = [];
-        for (var i = 0; i < items.length; i++) {
-          var m = items[i] || {};
-          var content = (m.content || '').trim();
-          if (!content) continue;
-          if (content.length > 120) content = content.slice(0, 120) + '…';
-          lines.push((m.role === 'user' ? '你：' : '') + content);
-        }
-        if (lines.length) showBubble(lines.join('\n'));
-      })
-      .catch(function () {});
-  }
-  restoreHistory();
-})();
+  })();
+
 </script>
 </body>
 </html>

@@ -129,8 +129,8 @@ def request_intermediate_response(
                             max_chars = max(max_length // 4, 50) * 2
                             intermediate_text = paragraphs[-1][:max_chars]
                             break
-        except Exception:
-            pass
+        except Exception as _swallowed_err:
+            logger.debug(f"[request_intermediate_response] ignored Exception: {_swallowed_err}")
 
         if not intermediate_text:
             return {
@@ -157,8 +157,8 @@ def request_intermediate_response(
             )
             try:
                 asyncio.get_running_loop().create_task(bus.send(msg))
-            except RuntimeError:
-                pass
+            except RuntimeError as _swallowed_err:
+                logger.debug(f"[request_intermediate_response] ignored RuntimeError: {_swallowed_err}")
         except Exception as e:
             logger.warning(f"[intermediate_response] MessageBus 发送失败: {e}")
 

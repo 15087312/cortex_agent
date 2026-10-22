@@ -1529,7 +1529,7 @@ _run_task/_think_loop）、`api_stream` 完整 WS 流、`output_system` 深路�
 
 ## 47. 纯对话人设无视编排 active 状态 → 强制套用已停用 agent 的人设（后端）
 
-**现象：** 用户在编排页把自定义 agent `123` 停用、`orchestrator` 激活，但纯对话模式仍被强制套用 `123` 的自定义人设（"芙宁娜"），改其它提示词也"不生效"。
+**现象：** 用户在编排页把自定义 agent `123` 停用、`orchestrator` 激活，但纯对话模式仍被强制套用 `123` 的自定义人设（"角色A"），改其它提示词也"不生效"。
 
 **根因：** `chat_light/prompt_composer.build_system` 硬编码选择纯对话人设：
 ```python
@@ -1548,7 +1548,7 @@ if not custom_persona:
 3. 否则 → 内置 `base.yaml` identity
 （`persona_override` 高级修改仍最高，用户显式设置）
 
-**验证：** 用户真实配置（`agent_active={'orchestrator': True, '123': False}`）下，`build_system` 从"芙宁娜人设"变为内置 "你的名字是 Cortex。"。新增 3 项测试覆盖（停用不套用/激活优先/高级修改最高）。
+**验证：** 用户真实配置（`agent_active={'orchestrator': True, '123': False}`）下，`build_system` 从"角色A人设"变为内置 "你的名字是 Cortex。"。新增 3 项测试覆盖（停用不套用/激活优先/高级修改最高）。
 
 **为什么之前没测到（测试盲区）：**
 1. 现有测试 mock 了 `get_persona`/`get_custom_agents`/`get_system_override`，但**从不 mock `get_agent_active`** → 走真实默认值 `True`（settings.py `active_map.get(role, True)`）→ mock 的 agent 全部"默认激活"

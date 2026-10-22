@@ -12,7 +12,7 @@ import re
 import time
 from typing import Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, WebSocket
 from pydantic import BaseModel
 
 from utils.logger import setup_logger
@@ -46,7 +46,9 @@ class PetConfigRequest(BaseModel):
     max_history: Optional[int] = None
     max_output_tokens: Optional[int] = None
     max_loop_rounds: Optional[int] = None
+    idle_backoff_max: Optional[float] = None
     voice_enabled: Optional[bool] = None
+    realtime_voice: Optional[bool] = None
 
 
 class PetMemoryRequest(BaseModel):
@@ -103,8 +105,8 @@ async def pet_move(body: PetMoveRequest):
         for q in list(_pet_move_queues):
             try:
                 q.put_nowait(m)
-            except Exception:
-                pass
+            except Exception as _swallowed_err:
+                logger.debug(f"[pet_move] ignored Exception: {_swallowed_err}")
     return {"success": True}
 
 
@@ -120,8 +122,8 @@ async def pet_move_stream():
             while True:
                 m = await queue.get()
                 yield {"event": "move", "data": json.dumps(m, ensure_ascii=False)}
-        except asyncio.CancelledError:
-            pass
+        except asyncio.CancelledError as _swallowed_err:
+            logger.debug(f"[gen] ignored asyncio.CancelledError: {_swallowed_err}")
         finally:
             _pet_move_queues.discard(queue)
 
@@ -149,6 +151,7 @@ async def pet_chat_stream(body: PetChatRequest):
             from modules.desktop_pet.pet_state import PetState
             from modules.desktop_pet.actions import get_action
             from modules.desktop_pet.pet_engine import PetEngine
+            from modules.desktop_pet.store import PetStore
 
             state = PetState.get_instance()
             action_id = (body.action_id or "").strip()
@@ -190,8 +193,8 @@ async def pet_chat_stream(body: PetChatRequest):
             def _on_reasoning(chunk: str):
                 try:
                     reason_q.put_nowait(chunk)
-                except Exception:
-                    pass
+                except Exception as _swallowed_err:
+                    logger.debug(f"[_on_reasoning] ignored Exception: {_swallowed_err}")
 
             stream_gen = engine.stream_chat(text, extra_system=extra_system, on_reasoning=_on_reasoning)
             # 语音播放开关（桌宠独立配置，设置页控制）：开启时流结束后合成音频，
@@ -349,3 +352,50 @@ async def pet_memory_delete(mid: int):
     if not ok:
         return {"success": False, "error": "not found"}
     return {"success": True}
+
+
+# ── 桌宠窗口进程（Qt 展示进程的拉起/停止/状态/崩溃看护）──
+
+@router.get("/window")
+async def pet_window_status():
+    """桌宠窗口进程状态（运行中/pid/重启次数/退出码）"""
+    from modules.desktop_pet.window_supervisor import get_pet_window_supervisor
+    return {"success": True, "data": get_pet_window_supervisor().status()}
+
+
+@router.post("/window/start")
+async def pet_window_start():
+    """拉起桌宠窗口进程（已在跑则直接返回；崩溃后自动重启看护同步生效）"""
+    from modules.desktop_pet.window_supervisor import get_pet_window_supervisor
+    r = get_pet_window_supervisor().start()
+    if not r.get("ok"):
+        return {"success": False, "error": r.get("reason", "start failed")}
+    return {"success": True, "data": r}
+
+
+@router.post("/window/stop")
+async def pet_window_stop():
+    """停止桌宠窗口进程（用户主动关闭，不再自动重启）"""
+    from modules.desktop_pet.window_supervisor import get_pet_window_supervisor
+    r = get_pet_window_supervisor().stop()
+    return {"success": True, "data": r}
+
+
+# ── 实时语音（全双工 WebSocket） ──
+
+@router.websocket("/voice")
+async def pet_voice_websocket(websocket: WebSocket):
+    """实时语音 WebSocket — 前端麦克风 PCM 音频流 → VAD → ASR → PetEngine → TTS
+
+    仅当 PERCEPTION_VOICE_REALTIME=true 时可用。
+    """
+    from config.settings import settings
+    from modules.desktop_pet.store import PetStore
+    pet_cfg = PetStore.get_instance().get_config()
+    if not pet_cfg.get("realtime_voice") and not getattr(settings, "PERCEPTION_VOICE_REALTIME", False):
+        await websocket.close(code=1008, reason="Realtime voice disabled")
+        return
+
+    from modules.desktop_pet.voice.ws_handler import VoiceWebSocketHandler
+    handler = VoiceWebSocketHandler(websocket)
+    await handler.handle()

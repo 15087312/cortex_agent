@@ -219,7 +219,7 @@ class ToolSecurityGate:
         # @link:block Gate_Emit = Emit
         return result
 
-    # @link:block GateChain = Guard
+    # @link:block GateChain = Guard · Think · Emit
     async def _check_impl(
         self,
         tool_name: str,
@@ -232,6 +232,19 @@ class ToolSecurityGate:
     ) -> Tuple[bool, str]:
         """审查工具调用请求（实际实现，不带缓存）"""
         exec_mode = self._execution_mode
+
+        # ── 完全不审查模式（nocheck）：所有工具直接放行，不做任何安全审查 ──
+        if exec_mode == "nocheck":
+            try:
+                self._audit.log(
+                    event_type="tool_approved", level="LOW",
+                    content=tool_name, result=True,
+                    metadata={"caller_model_id": caller_model_id, "caller_tier": caller_tier,
+                              "reason": "nocheck 模式：完全不审查，直接放行", "execution_mode": "nocheck"},
+                )
+            except Exception as _swallowed_err:
+                logger.debug(f"[_check_impl] ignored Exception: {_swallowed_err}")
+            return True, "nocheck 模式：完全不审查，直接放行"
 
         # ── 绝对危害性硬阻断 — 无论何种模式都拦截 ──
         extreme_reason = _check_extreme_danger(tool_name, tool_params)
@@ -262,8 +275,8 @@ class ToolSecurityGate:
                         content=tool_name, result=False,
                         metadata={"caller_model_id": caller_model_id, "reason": perm_reason},
                     )
-                except Exception:
-                    pass
+                except Exception as _swallowed_err:
+                    logger.debug(f"[_check_impl] ignored Exception: {_swallowed_err}")
                 return False, perm_reason
         except Exception as perm_err:
             # fail-closed：角色类别权限检查异常必须拒绝，不能让工具绕过安全拦截。
@@ -274,8 +287,8 @@ class ToolSecurityGate:
                     "权限检查异常", tool_name, caller_model_id, False,
                     f"权限检查异常，安全拒绝: {perm_err}",
                 )
-            except Exception:
-                pass
+            except Exception as _swallowed_err:
+                logger.debug(f"[_check_impl] ignored Exception: {_swallowed_err}")
             return False, f"权限检查异常，安全拒绝: {perm_err}"
 
         # ── 安全最高指示：Blackboard 有安全拦截信号时，拒绝所有写操作 ──
@@ -301,8 +314,8 @@ class ToolSecurityGate:
                         content=tool_name, result=False,
                         metadata={"caller_model_id": caller_model_id, "reason": f"安全拦截检查异常: {block_err}"},
                     )
-                except Exception:
-                    pass
+                except Exception as _swallowed_err:
+                    logger.debug(f"[_check_impl] ignored Exception: {_swallowed_err}")
                 return False, f"安全拦截检查异常，安全拒绝: {block_err}"
 
         # ── plan 模式：所有写操作直接拒绝 ──
@@ -348,8 +361,8 @@ class ToolSecurityGate:
                         metadata={"caller_model_id": caller_model_id, "caller_tier": caller_tier,
                                  "reason": reason, "execution_mode": "control"},
                     )
-                except Exception:
-                    pass
+                except Exception as _swallowed_err:
+                    logger.debug(f"[_check_impl] ignored Exception: {_swallowed_err}")
                 return allowed, reason
             else:
                 # LOW 风险工具直接放行
@@ -360,8 +373,8 @@ class ToolSecurityGate:
                         metadata={"caller_model_id": caller_model_id, "caller_tier": caller_tier,
                                  "reason": "LOW 风险工具，control 模式直接放行", "execution_mode": "control"},
                     )
-                except Exception:
-                    pass
+                except Exception as _swallowed_err:
+                    logger.debug(f"[_check_impl] ignored Exception: {_swallowed_err}")
                 return True, "LOW 风险工具，control 模式直接放行"
 
         if tool_name in _get_high_risk_tools():

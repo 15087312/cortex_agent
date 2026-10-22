@@ -28,7 +28,6 @@ _COUNTER_EXAMPLE_TEMPLATE = """
 {counter_text}"""
 
 
-# @link:block ResultFusion_FormatDeep = Emit
 def format_deep_recall_result(result: DeepRecallResult, max_events: int = 5) -> str:
     """将深度回忆结果格式化为可注入 prompt 的文本"""
     if not result.success or result.fallback:
@@ -73,7 +72,6 @@ def format_deep_recall_result(result: DeepRecallResult, max_events: int = 5) -> 
     return "\n".join(parts)
 
 
-# @link:block ResultFusion_FormatShallow = Emit
 def format_retrieve_result(events: List[MemoryEvent], max_events: int = 5) -> str:
     """格式化为浅层检索文本"""
     if not events:

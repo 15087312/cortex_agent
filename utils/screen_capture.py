@@ -18,7 +18,7 @@ logger = setup_logger("screen_capture")
 SCREENSHOT_ENABLED: bool = True
 
 
-# @link:block Screen_InitPermission = Guard
+# @link:block Screen_InitPermission = Guard · Tool
 def init_screen_permission():
     """进程启动时调用一次，检测屏幕录制权限并设置 SCREENSHOT_ENABLED
 
@@ -49,8 +49,8 @@ def init_screen_permission():
             ok = result.returncode == 0 and os.path.getsize(tmp) > 0
             try:
                 os.unlink(tmp)
-            except OSError:
-                pass
+            except OSError as _swallowed_err:
+                logger.debug(f"[init_screen_permission] ignored OSError: {_swallowed_err}")
             SCREENSHOT_ENABLED = ok
         except Exception:
             SCREENSHOT_ENABLED = False
@@ -219,7 +219,7 @@ def _try_screencapture():
         finally:
             try:
                 os.unlink(tmp_path)
-            except OSError:
-                pass
+            except OSError as _swallowed_err:
+                logger.debug(f"[_try_screencapture] ignored OSError: {_swallowed_err}")
     except Exception:
         return None

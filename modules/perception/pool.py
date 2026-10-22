@@ -69,7 +69,7 @@ class PerceptionPool:
                 priority=5,
             )
 
-        sections: Dict[str, List[str]] = {"windows": [], "text": [], "files": [], "changes": [], "speech": []}
+        sections: Dict[str, List[str]] = {"windows": [], "text": [], "files": [], "changes": [], "speech": [], "vision": []}
         for item in recent:
             et = item["event_type"]
             desc = item["description"]
@@ -86,12 +86,16 @@ class PerceptionPool:
                     sections["changes"].append(desc)
             elif "speech" in et:
                 sections["speech"].append(desc)
+            elif "vision" in et:
+                sections["vision"].append(desc)
 
         parts = []
         if sections["windows"]:
             parts.append("【窗口状态】\n" + "\n".join(sections["windows"]))
         if sections["text"]:
             parts.append("【屏幕文本】\n" + "\n".join(sections["text"]))
+        if sections["vision"]:
+            parts.append("【屏幕视觉】\n" + "\n".join(sections["vision"]))
         if sections["files"]:
             parts.append("【文件变化】\n" + "\n".join(sections["files"]))
         if sections["changes"]:

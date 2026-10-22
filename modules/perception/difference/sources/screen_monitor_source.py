@@ -128,8 +128,8 @@ class ScreenMonitorSource:
                 except Exception:
                     try:
                         self._proc.kill()
-                    except Exception:
-                        pass
+                    except Exception as _swallowed_err:
+                        logger.debug(f"[_close_process] ignored Exception: {_swallowed_err}")
                 self._proc = None
         # 等待旧 reader 线程退出，避免重启后新旧线程竞争读新进程 stdout
         if self._reader_thread:
@@ -273,7 +273,7 @@ class ScreenMonitorSource:
     # ── 事件发布 ──
 
     def _publish_to_event_bus(self, elements: list):
-        # @link:block ScreenMonitor_Emit = Emit
+        # @link:block ScreenMonitor_Emit = Guard · Emit
         if not elements:
             return
         new_elems, _ = self._filter_and_diff(elements)

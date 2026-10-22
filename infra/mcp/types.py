@@ -20,6 +20,12 @@ class MCPServerConfig:
     reconnect_interval: float = 5.0       # 断线检测轮询间隔（秒）
     reconnect_max_retries: int = 5        # 每次断线最多重试次数
     reconnect_base_delay: float = 0.5     # 指数退避基础延迟（秒）
+    # ── 传输方式（抄 Cherry：stdio | sse | streamableHttp）──
+    transport: str = "stdio"              # stdio（本地子进程）/ sse / streamableHttp（远程 HTTP）
+    url: str = ""                         # sse / streamableHttp 的服务端地址
+    headers: Dict[str, str] = field(default_factory=dict)  # 远程传输的 HTTP 头（含鉴权）
+    # ── 工具级开关（抄 Cherry disabledTools）──
+    disabled_tools: List[str] = field(default_factory=list)  # 禁用的工具名（其余全启用）
 
 
 @dataclass(frozen=True)

@@ -47,7 +47,7 @@ def save_blackboard(state: Dict[str, Any]) -> bool:
         return False
 
 
-# @link:block DbQuery
+# @link:block DbQuery = Retrieve
 def load_blackboard(session_id: str, blackboard_id: str) -> Optional[Dict[str, Any]]:
     """按 (session_id, blackboard_id) 读取黑板快照"""
     try:
@@ -110,13 +110,13 @@ def query_observations(
             if start:
                 try:
                     q = q.filter(BlackboardObservation.created_at >= datetime.fromisoformat(start))
-                except Exception:
-                    pass
+                except Exception as _swallowed_err:
+                    logger.debug(f"[query_observations] ignored Exception: {_swallowed_err}")
             if end:
                 try:
                     q = q.filter(BlackboardObservation.created_at <= datetime.fromisoformat(end))
-                except Exception:
-                    pass
+                except Exception as _swallowed_err:
+                    logger.debug(f"[query_observations] ignored Exception: {_swallowed_err}")
             if query:
                 q = q.filter(BlackboardObservation.content.like(f"%{query}%"))
             rows = q.order_by(BlackboardObservation.created_at.desc()).limit(limit).all()

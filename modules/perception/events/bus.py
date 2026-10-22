@@ -19,6 +19,18 @@ SyncHandler = Callable[[PerceptionEvent], None]
 AsyncHandler = Callable[[PerceptionEvent], Awaitable[None]]
 
 
+def _check_async_result(future, event_type: str, sub_id: str) -> None:
+    """异步 handler 执行结果回调，记录异常"""
+    try:
+        exc = future.exception()
+        if exc:
+            logger.error(f"[Bus] 异步handler异常: {event_type} sub={sub_id} err={exc}")
+    except asyncio.CancelledError:
+        logger.error(f"[Bus] 异步handler被取消: {event_type} sub={sub_id}")
+    except Exception as e:
+        logger.error(f"[Bus] 检查异步结果失败: {event_type} sub={sub_id} err={e}")
+
+
 class _Subscription:
     __slots__ = ("sub_id", "event_type", "sync_handler", "async_handler")
 
@@ -75,6 +87,7 @@ class PerceptionEventBus:
                 target=self._run_async_loop, daemon=True, name="event-bus-async"
             )
             self._async_thread.start()
+            logger.info(f"[Bus] 异步循环已启动: thread={self._async_thread.name}, alive={self._async_thread.is_alive()}")
 
     def _run_async_loop(self):
         asyncio.set_event_loop(self._async_loop)
@@ -128,6 +141,7 @@ class PerceptionEventBus:
             wildcard_subs = list(self._subscriptions.get(PerceptionEventType.ALL, []))
 
         all_subs = exact_subs + wildcard_subs
+        logger.debug(f"[Bus] publish {event.event_type}: {len(exact_subs)} exact + {len(wildcard_subs)} wildcard subscribers")
         if not all_subs:
             return
 
@@ -137,9 +151,14 @@ class PerceptionEventBus:
                     sub.sync_handler(event)
                 if sub.async_handler:
                     self._ensure_async_loop()
-                    asyncio.run_coroutine_threadsafe(
-                        sub.async_handler(event), self._async_loop  # type: ignore[arg-type]
+                    loop = self._async_loop
+                    if loop is None or not loop.is_running():
+                        logger.error(f"[Bus] 异步循环不可用: loop={loop}, running={loop.is_running() if loop else 'N/A'}, thread_alive={self._async_thread.is_alive() if self._async_thread else 'N/A'}")
+                        continue
+                    fut = asyncio.run_coroutine_threadsafe(
+                        sub.async_handler(event), loop
                     )
+                    fut.add_done_callback(lambda f, et=event.event_type, sid=sub.sub_id: _check_async_result(f, et, sid))
             except Exception as e:
                 logger.error(
                     f"事件处理异常: {event.event_type} sub={sub.sub_id} err={e}"

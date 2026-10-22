@@ -8,16 +8,16 @@ extensions = [".py", ".link"]
 forbid_eq_change = true
 
 [atoms.Think]
-calls = ["think_fn", "think_once", "think", "llm.invoke", "continuous_think", "_execute_multi_model_thinking", "_review_output", "_run_periodic_check", "_check_impl", "_client.chat", "initialize_system", "start_backend", "chat_stream", "run", "_think"]
+calls = ["think_fn", "think_once", "think", "llm.invoke", "continuous_think", "_execute_multi_model_thinking", "_review_output", "_run_periodic_check", "_check_impl", "_client.chat", "initialize_system", "start_backend", "chat_stream", "run", "_think", "model", "_model", "_check_llm_review", "_check_high_risk"]
 
 [atoms.Retrieve]
-calls = ["retrieve", "_build_prompt", "build_prompt", "get_event_retrieval", "recall", "_run_expert_pipeline", "_match_skill", "to_dict", "popleft", "receive", "embed", "_vector_search", "_causal_search", "_rank_and_filter", "_get_session_conversation", "fetchone", "fetchall", "get_recent_messages", "get_session_metadata", "_build_context", "get_instance", "_load_model", "s.query", "_collect_generic", "_get_caller_permissions", "is_tool_available", "urlopen", "parse_event", "list_tools", "call_tool", "initialize", "_port_in_use"]
+calls = ["retrieve", "_build_prompt", "build_prompt", "get_event_retrieval", "recall", "_run_expert_pipeline", "_match_skill", "to_dict", "popleft", "receive", "receive_text", "embed", "_vector_search", "_causal_search", "_rank_and_filter", "_get_session_conversation", "fetchone", "fetchall", "get_recent_messages", "get_session_metadata", "_build_context", "get_instance", "_load_model", "s.query", "_collect_generic", "_get_caller_permissions", "is_tool_available", "urlopen", "parse_event", "list_tools", "call_tool", "initialize", "_port_in_use", "post", "from_pretrained", "gather", "get", "slice", "collect", "wait_for", "get_url", "exists", "isdir", "run_coroutine_threadsafe", "result", "__aexit__"]
 
 [atoms.Throttle]
 calls = ["sleep"]
 
 [atoms.Tool]
-calls = ["_run_tool"]
+calls = ["_run_tool", "subprocess.run", "Popen", "click", "typewrite", "type_text", "press", "key_down", "key_up", "moveTo", "scroll"]
 
 [atoms.Observe]
 calls = ["_observe"]
@@ -26,10 +26,10 @@ calls = ["_observe"]
 requires_branch = true
 
 [atoms.Write]
-calls = ["set_working_memory", "record_step", "notebook.append", "write", "save", "_write_final_result", "_save_partial_result", "_dialog_entries.append", "commit", "_save_event_inner", "save_event", "_save_pair", "save_pair", "s.add", "setup_asyncio_handler", "create_engine", "_touch_edge", "add_history"]
+calls = ["set_working_memory", "record_step", "notebook.append", "write", "save", "_write_final_result", "_save_partial_result", "_dialog_entries.append", "commit", "_save_event_inner", "save_event", "_save_pair", "save_pair", "s.add", "setup_asyncio_handler", "create_engine", "_touch_edge", "add_history", "touch_event", "makedirs", "addHandler", "persist", "_persist_message"]
 
 [atoms.Emit]
-calls = ["_notify_thinking_complete", "_notify_return_target", "notify", "_emit_event", "notify_subscribers", "_try_outreach", "generate_and_push", "stream_output", "distribute", "_push_to_ws", "set_exception_handler", "send_json_from_thread", "send_json", "push_screen", "install_screen"]
+calls = ["_notify_thinking_complete", "_notify_return_target", "notify", "_emit_event", "notify_subscribers", "_try_outreach", "generate_and_push", "stream_output", "distribute", "_push_to_ws", "set_exception_handler", "send_json_from_thread", "send_json", "push_screen", "install_screen", "put_nowait", "put"]
 returns = true
 
 [ops.Loop]

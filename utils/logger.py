@@ -73,7 +73,7 @@ def _configure_third_party_loggers():
         logging.getLogger(logger_name).setLevel(logging.WARNING)
 
 
-# @link:block Logger_Setup = Emit
+# @link:block Logger_Setup = Write
 def setup_logger(
     name: str,
     log_level: str = None,
@@ -96,8 +96,8 @@ def setup_logger(
             try:
                 if hasattr(_h, "close"):
                     _h.close()
-            except Exception:
-                pass
+            except Exception as _swallowed_err:
+                logger.debug(f"[setup_logger] ignored Exception: {_swallowed_err}")
         logger.handlers.clear()
         logger.addHandler(logging.NullHandler())
         logger.propagate = False
@@ -112,8 +112,8 @@ def setup_logger(
         try:
             if hasattr(_h, "close"):
                 _h.close()
-        except Exception:
-            pass
+        except Exception as _swallowed_err:
+            logger.debug(f"[setup_logger] ignored Exception: {_swallowed_err}")
     logger.handlers.clear()
 
     use_json = os.environ.get("LOG_FORMAT", "").lower() == "json"
@@ -159,3 +159,5 @@ def get_default_logger():
     if _default_logger is None:
         _default_logger = get_logger("humanoid_agi")
     return _default_logger
+
+logger = setup_logger(__name__)

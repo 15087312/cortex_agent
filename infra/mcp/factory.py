@@ -33,7 +33,7 @@ def get_server_manager() -> MCPServerManager:
     return _manager
 
 
-# @link:block get_mcp_tool_service_Emit = Emit
+# @link:block get_mcp_tool_service_Emit = Emit · Think
 def get_mcp_tool_service() -> MCPToolService:
     """获取全局 MCPToolService 单例（连接本地 ToolRegistry + 远程 MCP server）"""
     global _service

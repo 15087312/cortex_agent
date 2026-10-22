@@ -221,8 +221,8 @@ class VoiceDetector(PerceptionDetector):
                     )
                     time.sleep(self._end_stop_cooldown)
 
-            except sr.WaitTimeoutError:
-                pass
+            except sr.WaitTimeoutError as _swallowed_err:
+                logger.debug(f"[_listen_loop] ignored sr.WaitTimeoutError: {_swallowed_err}")
             except OSError as e:
                 logger.warning(f"麦克风错误: {e}")
                 time.sleep(2)

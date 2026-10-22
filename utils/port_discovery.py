@@ -10,7 +10,10 @@ import json
 import os
 import socket
 import urllib.request
+from utils.logger import setup_logger
 
+
+logger = setup_logger(__name__)
 _PORT_FILE = os.path.join(os.path.expanduser("~"), ".cortex", "backend_port.json")
 _HEALTH_TIMEOUT = 0.6
 
@@ -46,8 +49,8 @@ def save_backend_port(port: int) -> None:
         os.makedirs(os.path.dirname(_PORT_FILE), exist_ok=True)
         with open(_PORT_FILE, "w", encoding="utf-8") as f:
             json.dump({"port": int(port)}, f)
-    except Exception:
-        pass
+    except Exception as _swallowed_err:
+        logger.debug(f"[save_backend_port] ignored Exception: {_swallowed_err}")
 
 
 def read_backend_port(default: int = 8080) -> int:

@@ -34,7 +34,7 @@ class TaskNotebook:
         self.is_finished = False
         self._updated_at = time.time()
 
-    # @link:block TaskNotebook_Update = Write
+    # @link:block TaskNotebook_Update = Guard · Write
     def update(self, new_content: str, is_finished: bool = False):
         """替换最后一条（不追加）"""
         if not self._entries:
@@ -44,7 +44,7 @@ class TaskNotebook:
         self.is_finished = is_finished
         self._updated_at = time.time()
 
-    # @link:block TaskNotebook_Append = Write
+    # @link:block TaskNotebook_Append = Guard · Write
     def append(self, new_content: str, is_finished: bool = False, max_entries: int = 20):
         """追加一条新进展，自动去重 + 限制条数"""
         clean = new_content.strip()

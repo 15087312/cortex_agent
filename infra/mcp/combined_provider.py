@@ -292,7 +292,7 @@ class CombinedToolExecutor(ToolExecutorPort):
                 latency_ms=latency,
             )
 
-    # @link:block CombinedToolExecutor_execute_mcp_Emit = Emit
+    # @link:block CombinedToolExecutor_execute_mcp_Emit = Emit · Retrieve
     def _execute_mcp(self, mcp_tool, request: ToolCallRequest, start: float) -> ToolCallResult:
         """执行 MCP 远程工具"""
         async def _call():

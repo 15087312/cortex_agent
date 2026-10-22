@@ -474,6 +474,9 @@ def _stub_skills(monkeypatch, skill=None):
     mgr.list_skills.return_value = [skill] if skill else []
     mgr.list_skills_for_role.return_value = [skill] if skill else []
     monkeypatch.setattr(sk_mod, "skill_manager", mgr)
+    # 用例与本机技能总开关隔离：默认启用（关闭分支由专门用例覆盖）
+    from config.settings import settings as cfg
+    monkeypatch.setattr(cfg, "SKILLS_ENABLED", True)
     return mgr
 
 
@@ -886,6 +889,27 @@ async def test_generate_with_tools_control_request_skill_denied(monkeypatch):
     assert "技能未找到" in out
 
 
+async def test_generate_with_tools_control_request_skill_disabled(monkeypatch):
+    """技能总开关关闭 → 拒绝激活（控制轮直接返回未找到口径，不激活技能）"""
+    skill = MagicMock()
+    skill.id = "code"
+    skill.name = "代码专家"
+    skill.enabled = True
+    skill.description = "负责写代码"
+    skill.tool_rules = None
+    _stub_skills(monkeypatch, skill)
+    from config.settings import settings as cfg
+    monkeypatch.setattr(cfg, "SKILLS_ENABLED", False)
+    r, mcp = _tool_runner(monkeypatch, tier="large")
+    client = _chat_client(_resp(
+        content=None,
+        calls=[_tc("request_skill", '{"skill_id": "code"}')],
+    ))
+    out = await r._generate_with_tools("system", "user", client)
+    assert "技能未找到" in out
+    assert r._active_skill is None
+
+
 async def test_generate_with_tools_control_stop_skill_active(monkeypatch):
     skill = MagicMock()
     skill.id = "code"
@@ -1015,6 +1039,7 @@ def _stub_delegation(monkeypatch, result=None, raise_delegate=False):
 
 
 async def test_generate_with_tools_delegate_success(monkeypatch):
+    _patch_cfg(monkeypatch, EXECUTION_MODE="edit")
     _stub_delegation(monkeypatch, result=type("R", (), {"success": True, "error": ""})())
     r, mcp = _tool_runner(monkeypatch, tier="large")
     client = _chat_client(_resp(
@@ -1027,6 +1052,7 @@ async def test_generate_with_tools_delegate_success(monkeypatch):
 
 
 async def test_generate_with_tools_delegate_failure(monkeypatch):
+    _patch_cfg(monkeypatch, EXECUTION_MODE="edit")
     import modules.thinking.identity as id_mod
     monkeypatch.setattr(id_mod, "get_identities", lambda: {
         "expert_implementer": {"role": "expert_implementer"},
@@ -1068,6 +1094,7 @@ async def test_generate_with_tools_delegate_exception(monkeypatch):
 
 
 async def test_generate_with_tools_delegate_identity_error(monkeypatch):
+    _patch_cfg(monkeypatch, EXECUTION_MODE="edit")
     import modules.thinking.identity as id_mod
     def boom():
         raise RuntimeError("no identities")
@@ -2330,6 +2357,7 @@ async def test_resume_delegation_not_found(monkeypatch):
 
 async def test_delegate_task_records_chain(monkeypatch):
     """delegate_task 分发成功时把委托链写入黑板"""
+    _patch_cfg(monkeypatch, EXECUTION_MODE="edit")
     import modules.thinking.core.delegation_port as dp_mod
     async def fake_delegate(self, request):
         return dp_mod.DelegationResult(

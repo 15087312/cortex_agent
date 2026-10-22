@@ -88,8 +88,8 @@ class ModelRunner:
         try:
             from config.settings import settings as _s
             self.THINK_TIMEOUT = float(getattr(_s, "MODEL_THINK_TIMEOUT", self.THINK_TIMEOUT))
-        except Exception:
-            pass
+        except Exception as _swallowed_err:
+            logger.debug(f"[__init__] ignored Exception: {_swallowed_err}")
 
         # RuntimeExpert 相关（由 start_runner / _run_runtime_expert 设置）
         self.identity_key: str = ""
@@ -123,6 +123,8 @@ class ModelRunner:
         self._thinker: Optional[Any] = None  # ContinuousThinker, 延迟创建
         self._active_skill: Any = None  # 当前激活的技能（Skill 实例）
         self._active_skill_tool_rules: Any = None  # 技能的工具范围规则
+        # AI 自限工具范围：None=未收窄（用户设置为准）；set=本轮只允许的子集（只能减不能加）
+        self._narrowed_tools: Optional[set] = None
         self._wakeup_event: Optional[threading.Event] = None  # 事件驱动唤醒
 
         logger.info(
@@ -201,16 +203,24 @@ class ModelRunner:
     async def stop(self) -> None:
         """停止思考循环"""
         if not self._running:
+            try:
+                self._clear_narrowing()
+            except Exception as e:
+                logger.warning(f"[ModelRunner] 自限清除失败: {e}")
             return
         self._running = False
+        try:
+            self._clear_narrowing()
+        except Exception as e:
+            logger.warning(f"[ModelRunner] 自限清除失败: {e}")
         if self._thinker:
             await self._thinker.close()
         if hasattr(self, '_task') and self._task and not self._task.done():
             self._task.cancel()
             try:
                 await asyncio.wait_for(asyncio.shield(self._task), timeout=5)
-            except (asyncio.CancelledError, asyncio.TimeoutError):
-                pass
+            except (asyncio.CancelledError, asyncio.TimeoutError) as e:
+                logger.debug(f"[ModelRunner] 停止等待任务取消（预期内）: {type(e).__name__}")
         logger.info(f"[ModelRunner] 停止: {self.model_id}")
 
     # ------------------------------------------------------------------
@@ -256,6 +266,10 @@ class ModelRunner:
         finally:
             self._running = False
             self._thinker = None
+            try:
+                self._clear_narrowing()
+            except Exception as _swallowed_err:
+                logger.debug(f"[_run_task] ignored Exception: {_swallowed_err}")
             # 正常结束或崩溃后都要清理：否则后续用户输入会认为 large 仍在运行
             if self.manager and self.model_id:
                 try:
@@ -513,8 +527,8 @@ class ModelRunner:
                     _ws = getattr(self._thinker._last_control_decision, "wait_seconds", None)
                     if _ws:
                         wait_timeout = float(_ws)
-            except Exception:
-                pass
+            except Exception as _swallowed_err:
+                logger.debug(f"[_think_loop] ignored Exception: {_swallowed_err}")
             progress_interval = self.PROGRESS_INTERVAL
             wakeup = await self._wait_for_wakeup_event(
                 timeout=wait_timeout,
@@ -577,8 +591,8 @@ class ModelRunner:
                 try:
                     loop = asyncio.get_running_loop()
                     loop.create_task(bus.broadcast(msg))
-                except RuntimeError:
-                    pass
+                except RuntimeError as _swallowed_err:
+                    logger.debug(f"[_emit_streaming_content] ignored RuntimeError: {_swallowed_err}")
         except Exception as e:
             logger.debug(f"[ModelRunner] 流式推送失败 (非致命): {e}")
 
@@ -851,8 +865,8 @@ class ModelRunner:
                                         )
                                         if hasattr(bb, "persist"):
                                             bb.persist()
-                                except Exception:
-                                    pass
+                                except Exception as _swallowed_err:
+                                    logger.debug(f"[_wait_for_wakeup_event] ignored Exception: {_swallowed_err}")
 
                             tier_label = {
                                 "supervisor": "主管",
@@ -1262,8 +1276,8 @@ class ModelRunner:
             try:
                 from config.settings import settings as _cfg
                 object.__setattr__(_cfg, "EXECUTION_MODE", target_mode)
-            except Exception:
-                pass
+            except Exception as _swallowed_err:
+                logger.debug(f"[_handle_mode_change_request] ignored Exception: {_swallowed_err}")
             return f"【模式切换】用户同意切换到 {target_mode} 模式。请继续执行任务。"
         return "【模式切换】用户拒绝切换模式。请在当前模式下继续。"
 
@@ -1359,8 +1373,8 @@ class ModelRunner:
             try:
                 identity = getattr(self.identity, "name", "") or getattr(self.identity, "role", "")
                 tier = getattr(self.identity, "tier", "") or self.tier
-            except Exception:
-                pass
+            except Exception as _swallowed_err:
+                logger.debug(f"[_push_reasoning] ignored Exception: {_swallowed_err}")
             event = _build_event(
                 session_id=self.session_id,
                 msg_type="thinking",
@@ -1371,8 +1385,8 @@ class ModelRunner:
             )
             for sid in list(connection_manager.active_connections.keys()):
                 connection_manager.send_json_from_thread(sid, event)
-        except Exception:
-            pass
+        except Exception as _swallowed_err:
+            logger.debug(f"[_push_reasoning] ignored Exception: {_swallowed_err}")
 
     def _push_todo_update(self) -> None:
         """todo 变更后推送前端（替代轮询）：前端收到 type='todo' 事件后按需拉取列表"""
@@ -1409,8 +1423,8 @@ class ModelRunner:
                                   tier=self.tier,
                                   metadata={"identity_name": self.identity.name or self.identity.role,
                                             "entry_type": "thinking"})
-        except Exception:
-            pass
+        except Exception as _swallowed_err:
+            logger.debug(f"[_push_expert_output] ignored Exception: {_swallowed_err}")
         try:
             from modules.thinking.api_stream import connection_manager, _build_event
             identity = getattr(self.identity, "name", "") or getattr(self.identity, "role", "")
@@ -1426,8 +1440,8 @@ class ModelRunner:
             )
             for sid in list(connection_manager.active_connections.keys()):
                 connection_manager.send_json_from_thread(sid, event)
-        except Exception:
-            pass
+        except Exception as _swallowed_err:
+            logger.debug(f"[_push_expert_output] ignored Exception: {_swallowed_err}")
 
     async def _generate(self, prompt: str) -> str:
         """调用底层模型 client 生成文本（含重试、超时保护，支持原生工具调用）
@@ -1589,8 +1603,8 @@ class ModelRunner:
                 try:
                     with bb._lock:
                         existing = list(bb.delegations.keys())
-                except Exception:
-                    pass
+                except Exception as _swallowed_err:
+                    logger.debug(f"[_handle_query_delegation] ignored Exception: {_swallowed_err}")
                 hint = "、".join(existing[:10]) if existing else "（无）"
                 return f"【未找到委托】delegation_id={did} 不存在。当前黑板委托：{hint}"
             if chain:
@@ -1636,7 +1650,7 @@ class ModelRunner:
             final_task = new_task or d.get("task") or ""
             request = DelegationRequest(
                 role=role,
-                task=final_task[:500],
+                task=final_task,
                 session_id=self.session_id,
                 caller_model_id=self.model_id,
                 caller_tier=self.tier,
@@ -1777,6 +1791,66 @@ class ModelRunner:
             logger.debug(f"[ModelRunner] read_context 异常 (非致命): {e}")
             return f"【读取异常】{e}"
 
+    def _handle_narrow_my_tools(self, args: Dict[str, Any]) -> str:
+        """narrow_my_tools：AI 自限本轮可见工具（只能减不能加）。"""
+        try:
+            keep = args.get("keep_only") or []
+            if not isinstance(keep, list) or not keep:
+                return "【收窄失败】keep_only 必须是非空工具名列表。"
+            requested = [str(t).strip() for t in keep if str(t).strip()]
+            if not requested:
+                return "【收窄失败】keep_only 为空，至少保留 1 个工具。"
+            # 用户设置为最高标准：取当前未收窄时的全量可见
+            prev = getattr(self, "_narrowed_tools", None)
+            self._narrowed_tools = None
+            try:
+                base = self._visible_tool_whitelist()
+            finally:
+                self._narrowed_tools = prev
+            base_set = set(base)
+            requested_set = set(requested)
+            ignored = sorted(requested_set - base_set)
+            effective = sorted(requested_set & base_set)
+            if not effective:
+                return (
+                    "【收窄失败】你申请的工具全部超出用户允许范围，已忽略。"
+                    f"超出部分：{', '.join(ignored) if ignored else '（无）'}。"
+                    f"当前用户允许：{', '.join(sorted(base_set))[:500]}"
+                )
+            self._narrowed_tools = set(effective)
+            try:
+                from modules.security_system.tool_permission_controller import (
+                    set_ai_narrowed_tools as _set_narrowed,
+                )
+                _set_narrowed(self.model_id, set(effective), self.session_id, self._task_id)
+            except Exception as e:
+                logger.warning(f"[ModelRunner] 自限登记失败: {e}")
+                return f"【收窄异常】登记失败: {e}"
+            msg = f"【已收窄】本轮可见工具 → {', '.join(effective)}。"
+            if ignored:
+                msg += f"超出用户范围已自动忽略：{', '.join(ignored)}（只能减不能加）。"
+            return msg
+        except Exception as e:
+            logger.debug(f"[ModelRunner] narrow_my_tools 异常 (非致命): {e}")
+            return f"【收窄异常】{e}"
+
+    def _handle_reset_my_tools(self) -> str:
+        """reset_my_tools：恢复到用户设置的默认值。"""
+        self._narrowed_tools = None
+        try:
+            from modules.security_system.tool_permission_controller import (
+                set_ai_narrowed_tools as _set_narrowed,
+            )
+            _set_narrowed(self.model_id, None, self.session_id, self._task_id)
+        except Exception as e:
+            logger.warning(f"[ModelRunner] 自限恢复失败: {e}")
+        try:
+            base = self._visible_tool_whitelist()
+            return f"【已恢复】可见工具回到用户设置默认值，共 {len(base)} 个。"
+        except Exception as e:
+            logger.warning(f"[ModelRunner] 可见工具读取失败: {e}")
+            return "【已恢复】可见工具回到用户设置默认值。"
+
     def _save_resume_context(self, messages: list) -> None:
         """保存当前工具循环的 messages 断点快照（供超时/中断后续思考恢复）
 
@@ -1810,14 +1884,16 @@ class ModelRunner:
             estimated = engine.estimate_tokens(text)
             window = int(self.context_window_size or 128000)
             # 使用配置阈值；未配置时回退至模型上下文的 90%
-            trigger = int(settings.CHAT_SUMMARY_TRIGGER_TOKENS) if settings.CHAT_SUMMARY_TRIGGER_TOKENS else window * 9 // 10
+            from config.settings import settings as _cfg
+            _trigger_cfg = getattr(_cfg, "CHAT_SUMMARY_TRIGGER_TOKENS", 0)
+            trigger = int(_trigger_cfg) if _trigger_cfg else window * 9 // 10
             threshold = min(window * 9 // 10, trigger)
             # 同步当前上下文占用到 thinker，供前端展示真实占用（含工具历史，非仅初始 prompt）
             try:
                 if self._thinker is not None:
                     self._thinker._context_tokens = estimated  # type: ignore[union-attr]
-            except Exception:
-                pass
+            except Exception as _swallowed_err:
+                logger.debug(f"[_maybe_summarize_context] ignored Exception: {_swallowed_err}")
             if estimated <= threshold:
                 return False
             logger.info(
@@ -1908,12 +1984,52 @@ class ModelRunner:
         )
         from config.settings import settings as _cfg
         ctrl = get_tool_permission_controller()
-        return ctrl.get_visible_tools(
+        base = ctrl.get_visible_tools(
             tier=getattr(self.identity, "tier", ""),
             mode=_cfg.effective_execution_mode,
             role=getattr(self.identity, "role", ""),
             skill_tool_rules=getattr(self, '_active_skill_tool_rules', None),
         )
+        # AI 自限：最终 = 用户允许 ∩ AI 申请，AI 只能做减法。
+        # 唯一来源是权限控制器的会话级登记（实例字段只做兼容回退），
+        # 显示与执行门控认同一份，避免两边不一致。
+        try:
+            from modules.security_system.tool_permission_controller import (
+                get_ai_narrowed_tools as _get_narrowed,
+            )
+            narrowed = _get_narrowed(
+                getattr(self, "model_id", ""),
+                getattr(self, "session_id", ""),
+                getattr(self, "_task_id", ""),
+            )
+        except Exception as e:
+            logger.warning(f"[ModelRunner] 自限范围读取失败: {e}")
+            narrowed = None
+        if narrowed is None:
+            narrowed = getattr(self, "_narrowed_tools", None)
+        if narrowed is not None:
+            narrowed_set = set(narrowed)
+            return [t for t in base if t in narrowed_set]
+        return base
+
+    def _narrow_scope(self) -> tuple:
+        """当前任务的自限作用域（模型编号，会话，任务）。"""
+        return (
+            getattr(self, "model_id", ""),
+            getattr(self, "session_id", ""),
+            getattr(self, "_task_id", ""),
+        )
+
+    def _clear_narrowing(self) -> None:
+        """任务结束时清除自限（会话隔离，防止串台）。"""
+        try:
+            self._narrowed_tools = None
+            from modules.security_system.tool_permission_controller import (
+                clear_ai_narrowed_tools as _clear,
+            )
+            _clear(*self._narrow_scope())
+        except Exception as e:
+            logger.warning(f"[ModelRunner] 自限清除失败: {e}")
 
     def _build_system_prompt_for_mode(self) -> str:
         """根据运行模式构建系统提示词 — 委托给 PromptComposer"""
@@ -1942,8 +2058,8 @@ class ModelRunner:
                                 self._active_skill_tool_rules = _fskill.tool_rules
                                 skill_id = _fskill.id
                                 logger.info(f"[ModelRunner] 强制技能动态注入: {_forced}")
-                except Exception:
-                    pass
+                except Exception as _swallowed_err:
+                    logger.debug(f"[_build_system_prompt_for_mode] ignored Exception: {_swallowed_err}")
 
             # 对话历史置于 system prompt 最前面，确保模型最先看到
             conversation_header = ""
@@ -1967,8 +2083,8 @@ class ModelRunner:
                 inner = guidance.get("inner_thoughts", "")
                 if inner:
                     conscience_guidance = inner
-            except Exception:
-                pass
+            except Exception as _swallowed_err:
+                logger.debug(f"[_build_system_prompt_for_mode] ignored Exception: {_swallowed_err}")
             result = composer.build_system(PromptRequest(
                 tier=self.tier,
                 role=self.identity.role,
@@ -1988,8 +2104,8 @@ class ModelRunner:
                         f"以下工具可用但未附带参数定义：{', '.join(names)}\n"
                         "调用前请先使用 query_tool_details(tool_name) 查询其参数和用法。"
                     )
-            except Exception:
-                pass
+            except Exception as _swallowed_err:
+                logger.debug(f"[_build_system_prompt_for_mode] ignored Exception: {_swallowed_err}")
 
             full = conversation_header + result + non_core_section
             logger.debug(f"[ModelRunner] 系统提示词: {len(full)} 字符 (对话历史 {len(conversation_header)} + 系统 {len(result)} + 非核心工具)")
@@ -2375,7 +2491,7 @@ class ModelRunner:
                     # continue_thinking / respond_to_user / set_memory_focus / request_mode_change /
                     # ask_user_intent / delegate_task / create_supervisor 不产生 tool 结果，
                     # 不写入 assistant.tool_calls（避免"未应答的 tool_calls"错误）。
-                    _CONTROL_RESULT_TOOLS = ("request_skill", "stop_skill", "list_skills", "stop_task", "query_delegation", "resume_delegation", "inspect_delegation", "read_context")
+                    _CONTROL_RESULT_TOOLS = ("request_skill", "stop_skill", "list_skills", "stop_task", "query_delegation", "resume_delegation", "inspect_delegation", "read_context", "narrow_my_tools", "reset_my_tools")
                     result_control_calls = [tc for tc in control_calls if tc.name in _CONTROL_RESULT_TOOLS]
                     all_result_calls = normal_calls + query_calls + result_control_calls
                     if all_result_calls:
@@ -2539,6 +2655,10 @@ class ModelRunner:
                                 result = await self._handle_inspect_delegation(args)
                             elif tc.name == "read_context":
                                 result = await self._handle_read_context(args)
+                            elif tc.name == "narrow_my_tools":
+                                result = self._handle_narrow_my_tools(args)
+                            elif tc.name == "reset_my_tools":
+                                result = self._handle_reset_my_tools()
                             if result:
                                 messages.append(ChatMessage(
                                     role="tool",
@@ -2602,7 +2722,7 @@ class ModelRunner:
                                     wait_seconds = None
                                 request = DelegationRequest(
                                     role=role,
-                                    task=task[:500],
+                                    task=task,
                                     session_id=self.session_id,
                                     caller_model_id=self.model_id,
                                     caller_tier=self.tier,
@@ -2644,7 +2764,7 @@ class ModelRunner:
                                 # 记录完整委托链到黑板（供 query_delegation / resume_delegation 使用）
                                 self._record_delegation_chain(
                                     role=role,
-                                    task=task[:500],
+                                    task=task,
                                     probe_id=dlg_result.metadata.get("probe_id", ""),
                                     target_tier=dlg_result.metadata.get("target_tier", ""),
                                     wait_seconds=wait_seconds,
@@ -2891,8 +3011,8 @@ class ModelRunner:
                                             import json as _json
                                             r = _json.loads(result) if result.startswith("{") else {}
                                             exit_code = r.get("exit_code", "?")
-                                        except Exception:
-                                            pass
+                                        except Exception as _swallowed_err:
+                                            logger.debug(f"[_on_token] ignored Exception: {_swallowed_err}")
                                         summary = f"{tc.name}: {cmd} → exit={exit_code}"
                                     elif tc.name == "git_status":
                                         summary = "git_status: ok"
@@ -3150,8 +3270,8 @@ class ModelRunnerManager:
                         f"[ModelRunnerManager] {identity_key} 已被禁用（编排页激活开关），拒绝启动"
                     )
                     return None
-            except Exception:
-                pass
+            except Exception as _swallowed_err:
+                logger.debug(f"[start_runner] ignored Exception: {_swallowed_err}")
 
             # ── 多实例支持：为 model_id 生成唯一后缀 ──
             # 剥离模板的 _001 后缀，按相同 base 计数分配
@@ -3437,8 +3557,8 @@ class ModelRunnerManager:
             self._listen_task.cancel()
             try:
                 await asyncio.wait_for(asyncio.shield(self._listen_task), timeout=2)
-            except (asyncio.CancelledError, asyncio.TimeoutError):
-                pass
+            except (asyncio.CancelledError, asyncio.TimeoutError) as _swallowed_err:
+                logger.debug(f"[stop_listening] ignored (asyncio.CancelledError, asyncio.TimeoutError): {_swallowed_err}")
         logger.info("[ModelRunnerManager] 停止监听 probe 命令")
 
     def _on_runner_message(self, _msg) -> None:
@@ -3454,8 +3574,8 @@ class ModelRunnerManager:
             try:
                 try:
                     await asyncio.wait_for(self._message_event.wait(), timeout=1.0)
-                except asyncio.TimeoutError:
-                    pass
+                except asyncio.TimeoutError as _swallowed_err:
+                    logger.debug(f"[_listen_loop] ignored asyncio.TimeoutError: {_swallowed_err}")
                 self._message_event.clear()
 
                 if self._running:

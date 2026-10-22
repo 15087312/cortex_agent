@@ -97,6 +97,7 @@ def test_execution_mode_exception(gate, monkeypatch):
 # ── check() 缓存命中 ─────────────────────────────────────────────────────
 
 async def test_check_cache_hit(gate):
+    _set_mode("edit")
     gate._check_cache["edit|read_file|{}"] = (True, "cached")
     allowed, reason = await gate.check("read_file", {}, "expert", "m1")
     assert allowed is True

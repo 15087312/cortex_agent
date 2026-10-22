@@ -139,6 +139,22 @@ def test_prompt_composer_persona_format_error(monkeypatch):
     assert "花括号" in out  # 原样使用
 
 
+def test_prompt_composer_persona_beats_stale_override(monkeypatch):
+    """回归：savePersona/apply_persona_preset 只写 personas、不清 system_overrides，
+    若 stale override 优先会完全屏蔽新人设。人设设置后必须覆盖 override。"""
+    from config.settings import Settings
+    # 陈旧 override 存在（用户之前设过高级修改，从未清掉）
+    monkeypatch.setattr(Settings, "get_system_override", lambda self, role: "旧的系统覆盖")
+    # 用户新设置的人设
+    monkeypatch.setattr(Settings, "get_persona", lambda self, role: "新人设文本")
+    monkeypatch.setattr(Settings, "get_custom_agents", lambda self: [])
+    monkeypatch.setattr(Settings, "get_agent_active", lambda self, role: True)
+    c = PromptComposer()
+    out = c.build_system()
+    assert "新人设文本" in out
+    assert "旧的系统覆盖" not in out
+
+
 # ── ContinuousThinker ──────────────────────────────────────────────────
 
 def test_thinker_session_lock():

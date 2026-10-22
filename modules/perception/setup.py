@@ -161,15 +161,23 @@ class PerceptionSystem:
         import time
         import numpy as np
         interval = 1.0
+        loop_count = 0
         while not self._window_stop_event.is_set():
             try:
                 if self.window_detector:
                     events = self.window_detector.detect(np.empty(0), "_system")
-                    for evt in events:
-                        if self.event_bus:
-                            self.event_bus.publish(evt)
-            except Exception:
-                pass
+                    if events:
+                        logger.debug(f"窗口检测器发现 {len(events)} 个事件")
+                        for evt in events:
+                            if self.event_bus:
+                                logger.debug(f"发布窗口事件: {evt.event_type}")
+                                self.event_bus.publish(evt)
+                    loop_count += 1
+                    if loop_count % 10 == 0:
+                        wd = self.window_detector
+                        logger.debug(f"窗口检测器循环: {loop_count} 次, 当前窗口={wd._last_window}, 当前应用={wd._last_app}")
+            except Exception as e:
+                logger.warning(f"窗口检测器异常: {e}")
             for _ in range(int(interval * 10)):
                 if self._window_stop_event.is_set():
                     return
@@ -191,7 +199,7 @@ class PerceptionSystem:
             logger.debug(f"OCR 检测器初始化失败 (非致命): {e}")
 
     def start(self) -> None:
-        # @link:block PerceptionSetup_Emit = Emit
+        # @link:block PerceptionSetup_Emit = Guard
         if self._started:
             return
         self._started = True

@@ -36,8 +36,11 @@ def _engine(monkeypatch):
     e._sub_id = ""
     e._running = False
     e._reply_listeners = []
+    e._perception_sub_ids = []  # 感知订阅 id（start/stop 增删，测试桩补齐）
     e.last_reply = None
     e._loop = None
+    # 输出前视觉采集不走真实网络（单测里固定为空，聚焦上下文组装逻辑）
+    monkeypatch.setattr(PetEngine, "_capture_screen_vision", AsyncMock(return_value=""))
     return e
 
 

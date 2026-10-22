@@ -137,8 +137,8 @@ class ProbePermissionManager:
             from modules.thinking.identity import get_identities
             if identity_key not in get_identities():
                 return f"未知的身份模板: {identity_key}，可用: {list(get_identities().keys())}"
-        except ImportError:
-            pass
+        except ImportError as _swallowed_err:
+            logger.debug(f"[validate_probe_start] ignored ImportError: {_swallowed_err}")
 
         return None
 
@@ -191,8 +191,8 @@ class ProbePermissionManager:
             from modules.thinking.identity import get_identities
             if identity_key not in get_identities():
                 return f"未知的身份模板: {identity_key}，可用: {list(get_identities().keys())}"
-        except ImportError:
-            pass
+        except ImportError as _swallowed_err:
+            logger.debug(f"[validate_probe_start_with_permissions] ignored ImportError: {_swallowed_err}")
 
         return None
 

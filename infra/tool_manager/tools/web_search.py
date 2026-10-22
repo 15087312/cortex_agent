@@ -2,6 +2,7 @@
 网页搜索工具 — 多引擎自动 fallback
 
 搜索链路（按优先级）：
+0. API 搜索（Tavily / Exa / Bocha，需配置 Key，质量最高）
 1. DuckDuckGo HTML 搜索（海外可访问时）
 2. DuckDuckGo lite 搜索
 3. DuckDuckGo 零点击 API
@@ -34,6 +35,115 @@ _HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9,zh-CN;q=0.8",
 }
+
+
+# ── API 搜索 providers（抄 Cherry Studio：Tavily / Exa / Bocha）──
+# Key 配置：环境变量或 settings，多个 Key 用逗号分隔自动轮换
+
+_API_KEY_INDEX: Dict[str, int] = {}  # provider -> 下一个 Key 下标（轮换）
+
+
+def _get_api_keys(provider: str) -> List[str]:
+    """取某 provider 的 Key 列表（逗号分隔，支持轮换）"""
+    import os
+    env_map = {
+        "tavily": "TAVILY_API_KEY",
+        "exa": "EXA_API_KEY",
+        "bocha": "BOCHA_API_KEY",
+    }
+    raw = os.environ.get(env_map.get(provider, ""), "")
+    if not raw:
+        try:
+            from config.settings import settings
+            raw = getattr(settings, f"SEARCH_{provider.upper()}_KEY", "") or ""
+        except Exception as _swallowed_err:
+            logger.debug(f"[_get_api_keys] ignored Exception: {_swallowed_err}")
+    return [k.strip() for k in raw.split(",") if k.strip()]
+
+
+def _next_api_key(provider: str) -> Optional[str]:
+    """轮换取 Key（多 Key 防限流，抄 Cherry ApiKeyRotationState 思路）"""
+    keys = _get_api_keys(provider)
+    if not keys:
+        return None
+    idx = _API_KEY_INDEX.get(provider, 0) % len(keys)
+    _API_KEY_INDEX[provider] = idx + 1
+    return keys[idx]
+
+
+def _search_tavily(query: str, limit: int) -> List[Dict[str, str]]:
+    """Tavily API 搜索（https://api.tavily.com/search）"""
+    key = _next_api_key("tavily")
+    if not key:
+        return []
+    resp = requests.post(
+        "https://api.tavily.com/search",
+        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+        json={"query": query, "max_results": limit},
+        timeout=SEARCH_TIMEOUT,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    out = []
+    for i, r in enumerate(data.get("results", [])[:limit]):
+        out.append({
+            "title": r.get("title", ""),
+            "url": r.get("url", ""),
+            "snippet": r.get("content", "")[:500],
+            "cite_id": f"[cite:{i + 1}]",
+        })
+    return out
+
+
+def _search_exa(query: str, limit: int) -> List[Dict[str, str]]:
+    """Exa API 搜索（https://api.exa.ai/search）"""
+    key = _next_api_key("exa")
+    if not key:
+        return []
+    resp = requests.post(
+        "https://api.exa.ai/search",
+        headers={"x-api-key": key, "Content-Type": "application/json"},
+        json={"query": query, "numResults": limit, "contents": {"text": True}},
+        timeout=SEARCH_TIMEOUT,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    out = []
+    for i, r in enumerate(data.get("results", [])[:limit]):
+        text = r.get("text", "") or ""
+        out.append({
+            "title": r.get("title", ""),
+            "url": r.get("url", ""),
+            "snippet": text[:500],
+            "cite_id": f"[cite:{i + 1}]",
+        })
+    return out
+
+
+def _search_bocha(query: str, limit: int) -> List[Dict[str, str]]:
+    """博查 Bocha API 搜索（https://api.bochaai.com/v1/web-search，国内中文质量好）"""
+    key = _next_api_key("bocha")
+    if not key:
+        return []
+    resp = requests.post(
+        "https://api.bochaai.com/v1/web-search",
+        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+        json={"query": query, "count": limit, "summary": True},
+        timeout=SEARCH_TIMEOUT,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    # Bocha 返回格式：{"data": {"webPages": {"value": [...]}}}
+    pages = data.get("data", {}).get("webPages", {}).get("value", []) or data.get("results", [])
+    out = []
+    for i, r in enumerate(pages[:limit]):
+        out.append({
+            "title": r.get("name", "") or r.get("title", ""),
+            "url": r.get("url", ""),
+            "snippet": (r.get("summary", "") or r.get("snippet", ""))[:500],
+            "cite_id": f"[cite:{i + 1}]",
+        })
+    return out
 
 
 # ── HTML 解析器（替代脆弱的正则） ──
@@ -768,7 +878,7 @@ def _fetch_results_content(results: List[Dict[str, str]], max_fetch: int = 3) ->
 
 # ── 主入口 ──
 
-# @link:block Web_Search_Emit = Emit
+# @link:block Web_Search_Emit = Emit · Throttle
 @ToolRegistry.register(
     "web_search",
     description=(
@@ -851,8 +961,12 @@ async def web_search(
             }
 
         # 引擎注册表：name -> (是否依赖 DDG 可达, 搜索函数)
+        # API 优先（质量高），scraping 兜底（免费）
         _ddg_ok = _check_ddg_reachable()
         engines = {
+            "tavily": (False, lambda: _search_tavily(query, _limit)),
+            "exa": (False, lambda: _search_exa(query, _limit)),
+            "bocha": (False, lambda: _search_bocha(query, _limit)),
             "searxng": (False, lambda: _search_searxng(query, _limit)),
             "ddg_html": (True, lambda: _search_ddg_html(query, _limit)),
             "ddg_lite": (True, lambda: _search_ddg_lite(query, _limit)),

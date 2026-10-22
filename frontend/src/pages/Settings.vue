@@ -236,11 +236,12 @@ const modelTiers = [
   { key: 'SMALL', labelKey: 'settings.modelTiers.small', hintKey: 'settings.modelTiers.smallHint' },
 ]
 const modelForm = ref({
-  LARGE: { API_KEY: '', API_URL: '', NAME: '', API_FORMAT: '', SUPPLIER: '' },
-  MEDIUM: { API_KEY: '', API_URL: '', NAME: '', SUPPLIER: '' },
-  SMALL: { API_KEY: '', API_URL: '', NAME: '', SUPPLIER: '' },
+  LARGE: { API_KEY: '', API_URL: '', NAME: '', API_FORMAT: '', SUPPLIER: '', ENABLE_THINKING: true, ENABLE_IMAGE: true },
+  MEDIUM: { API_KEY: '', API_URL: '', NAME: '', SUPPLIER: '', ENABLE_THINKING: true, ENABLE_IMAGE: true },
+  SMALL: { API_KEY: '', API_URL: '', NAME: '', SUPPLIER: '', ENABLE_THINKING: true, ENABLE_IMAGE: true },
 })
 const modelSaving = ref(false)
+const contextWindowSize = numCfg('CONTEXT_WINDOW_SIZE', 128000)
 
 function loadModelForm() {
   const c = configStore.config
@@ -250,6 +251,8 @@ function loadModelForm() {
     modelForm.value[t.key].NAME = _str(c[t.key + '_MODEL_NAME'], '')
     modelForm.value[t.key].SUPPLIER = _str(c[t.key + '_MODEL_OPENROUTER_SUPPLIER'], '')
     if (t.key === 'LARGE') modelForm.value[t.key].API_FORMAT = _str(c.LARGE_MODEL_API_FORMAT, '')
+    modelForm.value[t.key].ENABLE_THINKING = c[t.key + '_MODEL_ENABLE_THINKING'] !== false && c[t.key + '_MODEL_ENABLE_THINKING'] !== 'false'
+    modelForm.value[t.key].ENABLE_IMAGE = c[t.key + '_MODEL_ENABLE_IMAGE'] !== false && c[t.key + '_MODEL_ENABLE_IMAGE'] !== 'false'
   }
 }
 
@@ -280,6 +283,14 @@ async function saveModelForm() {
         const val = (modelForm.value[t.key][suffix] || '').trim()
         const old = _str(c[t.key + '_MODEL_' + cfgSuffix], '')
         if (val !== old) updates.push([key, val])
+      }
+      // 布尔字段：ENABLE_THINKING, ENABLE_IMAGE
+      for (const boolField of ['ENABLE_THINKING', 'ENABLE_IMAGE']) {
+        const key = t.key + '_MODEL_' + boolField
+        const val = modelForm.value[t.key][boolField]
+        const old = c[key]
+        const oldBool = old !== false && old !== 'false'
+        if (val !== oldBool) updates.push([key, val])
       }
     }
     if (updates.length === 0) { toast.show(t('settings.model.noChange'), 'info'); return }
@@ -471,6 +482,7 @@ onMounted(async () => {
                 <button :class="{ on: execMode === 'edit' }" @click="execMode = 'edit'" :title="$t('settings.chat.confirmTitle')">{{ $t('common.confirm') }}</button>
                 <button :class="{ on: execMode === 'yolo' }" @click="execMode = 'yolo'" :title="$t('settings.chat.yoloTitle')">{{ $t('settings.chat.yolo') }}</button>
                 <button :class="{ on: execMode === 'control' }" @click="execMode = 'control'" :title="$t('settings.chat.controlTitle')">{{ $t('settings.chat.control') }}</button>
+                <button :class="{ on: execMode === 'nocheck' }" @click="execMode = 'nocheck'" :title="$t('settings.chat.nocheckTitle')">{{ $t('settings.chat.nocheck') }}</button>
               </div>
             </div>
           </div>
@@ -514,6 +526,18 @@ onMounted(async () => {
               <div class="lbl"><div class="t">{{ $t('settings.model.apiFormat') }}</div><div class="d">{{ $t('settings.model.apiFormatDesc') }}</div></div>
               <div class="setting-ctl"><input class="input w-200" v-model="modelForm.LARGE.API_FORMAT" placeholder="openai" /></div>
             </div>
+            <div class="setting-row">
+              <div class="lbl"><div class="t">{{ $t('settings.model.enableThinking') }}</div><div class="d">{{ $t('settings.model.enableThinkingDesc') }}</div></div>
+              <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" v-model="modelForm[tier.key].ENABLE_THINKING" /><span class="toggle-slider"></span></label></div>
+            </div>
+            <div class="setting-row">
+              <div class="lbl"><div class="t">{{ $t('settings.model.enableImage') }}</div><div class="d">{{ $t('settings.model.enableImageDesc') }}</div></div>
+              <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" v-model="modelForm[tier.key].ENABLE_IMAGE" /><span class="toggle-slider"></span></label></div>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">{{ $t('settings.model.contextWindow') }}</div><div class="d">{{ $t('settings.model.contextWindowDesc') }}</div></div>
+            <div class="setting-ctl"><input class="input w-140" type="number" min="0" step="1000" v-model.number="contextWindowSize" /></div>
           </div>
           <div class="text-right">
             <button class="btn btn-sm btn-primary" :disabled="modelSaving" @click="saveModelForm">{{ modelSaving ? $t('settings.model.saving') : $t('settings.model.saveMain') }}</button>

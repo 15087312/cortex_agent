@@ -2,10 +2,16 @@
 export ThinkLoop
 input ThinkLoop: [Think]
 output ThinkLoop: [Write]
-eq ThinkLoop = Loop(Retrieve · Think · Guard · (Write | Emit))
+# 每轮 = 检索→思考→守卫→落盘→节流（写是必走路径，非可选）；Emit 在循环结束后一次性触发
+eq ThinkLoop = Loop(Retrieve · Think · Guard · Write · Throttle) · Emit
 
 export ThinkStep
 eq ThinkStep = Guard · Loop(Think) · (Write | Emit)
 
 export RunnerLoop
-eq RunnerLoop = Loop(Think · Guard · (Write | Emit))
+# 每轮 = 思考→落盘→守卫（专家/无待处理则退出）；Emit 在循环结束后一次性触发
+eq RunnerLoop = Loop(Think · Write · Guard) · Emit
+
+# L2 数据流：think(user_message) -> assistant_content；recall(query) -> memory_context
+eq ThinkFlow = Retrieve(user_message) · Guard(user_message) · Emit(assistant_content) · Write(assistant_content)
+eq RecallFlow = Retrieve(query) · Guard(query) · Emit(memory_context) · Write(memory_context)

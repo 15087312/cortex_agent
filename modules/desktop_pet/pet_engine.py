@@ -35,6 +35,11 @@ class PetEngine:
         self._reply_listeners = []  # (session_id, 回调) 前端/桌宠订阅回复
         self.last_reply = None       # {"time": epoch, "text": str} 桌宠窗口轮询取
         self._loop = None
+        # 输出前视觉注入的缓存/熔断（不做持续后台检测）：
+        #   _vision_cache 命中窗口内复用，避免连续问答重复花钱
+        #   _vision_fail_at 连续失败后短暂静默，避免每次回复被坏后端拖慢
+        self._vision_cache: Dict[str, Any] = {"time": 0.0, "text": ""}
+        self._vision_fail_at: float = 0.0
 
     @classmethod
     def get_instance(cls, event_bus=None):
@@ -74,7 +79,7 @@ class PetEngine:
                 PerceptionEventType.SPEECH_DETECTED,
                 async_handler=self._on_speech,
             )
-            logger.info("[Pet] 桌宠已启动（独立页面形态）")
+            logger.info("[Pet] 桌宠已启动（独立页面形态 + 语音订阅；视觉仅在输出前采集注入）")
         else:
             logger.warning("[Pet] 无事件总线，语音触发不可用")
 
@@ -85,8 +90,8 @@ class PetEngine:
         if self._event_bus and self._sub_id:
             try:
                 self._event_bus.unsubscribe(self._sub_id)
-            except Exception:
-                pass
+            except Exception as _swallowed_err:
+                logger.debug(f"[stop] ignored Exception: {_swallowed_err}")
             self._sub_id = ""
         logger.info("[Pet] 桌宠已停止")
 
@@ -118,16 +123,14 @@ class PetEngine:
     @staticmethod
     def _build_client(cfg: dict):
         from infra.model.large_model_client import LargeModelClient
+        from config.settings import settings
         return LargeModelClient(
             api_key=cfg.get("api_key") or None,
             api_url=cfg.get("api_url") or None,
             api_format=cfg.get("api_format") or "",
             model_name=cfg.get("api_model") or None,
             api_provider=cfg.get("api_provider") or "",
-            # 桌宠短对话：启用 thinking 以获取思考过程（SSE thinking 帧展示），
-            # 本地模型首 token 延迟不受 thinking 影响（实测 enabled/disabled 相近）
-            enable_thinking=True,
-            # 本地 8k 模型推理慢，放宽超时避免 30s 默认掐断
+            enable_thinking=settings.LARGE_MODEL_ENABLE_THINKING,
             timeout=180,
         )
 
@@ -162,7 +165,7 @@ class PetEngine:
         语音/按键等触发与页面聊天共用同一队列，保证同一时间桌宠只跑一个模型任务。
         """
         try:
-            # @link:block Pet_Think = Think
+            # @link:block Pet_Think = Think · Write
             fut = await self.task_queue.submit("chat", lambda: self.loop.run(self, text))
             if fut is None:
                 return ""
@@ -186,8 +189,8 @@ class PetEngine:
                 queue.put_nowait(t)
                 if t != ROUND_DONE:
                     collected.append(t)
-            except Exception:
-                pass
+            except Exception as _swallowed_err:
+                logger.debug(f"[on_token] ignored Exception: {_swallowed_err}")
 
         # 串行队列：流式对话作为任务入队，等待 worker 执行期间挂起（不占 SSE 连接），
         # 轮到本任务时才开始跑模型 —— 页面聊天/语音/定时思考统一串行。
@@ -236,7 +239,7 @@ class PetEngine:
         def on_message(m: str) -> None:
             nonlocal user_saved
             try:
-                # @link:block PetPersist = Write
+                # @link:block PetPersist = Retrieve · Write
                 from modules.desktop_pet.store import PetStore
                 store = PetStore.get_instance()
                 # 主动思考模式（text 为空）不存 user 历史，只存 assistant 自言自语
@@ -283,34 +286,85 @@ class PetEngine:
             from config.settings import settings as _cfg
             extras.append(f"【当前时间】{datetime.now().strftime('%Y-%m-%d %H:%M')}")
             extras.append(f"【对话对象】{getattr(_cfg, 'USER_NAME', '用户') or '用户'}")
-        except Exception:
-            pass
+        except Exception as _swallowed_err:
+            logger.debug(f"[build_context] ignored Exception: {_swallowed_err}")
         try:
             from modules.thinking.context.sources.perception_source import PerceptionSource
             frag = await PerceptionSource().collect()
             if frag and getattr(frag, "content", ""):  # type: ignore[arg-type]
                 extras.append(frag.content)
-        except Exception:
-            pass
+        except Exception as _swallowed_err:
+            logger.debug(f"[build_context] ignored Exception: {_swallowed_err}")
+        # 输出前视觉注入：不做持续后台检测，仅在每次即将产出前截屏 + VLM 概括。
+        # 命中缓存窗口（8s）直接复用；最近失败（60s）静默跳过，避免回复被坏后端拖慢。
+        vision = await self._capture_screen_vision()
+        if vision:
+            extras.append(f"【屏幕画面】\n{vision}")
         try:
             from modules.desktop_pet.memory import PetMemory
-            # 桌宠循环设计：记忆只返回 top2（最大两条），与 8k 上下文匹配
-            mems = await PetMemory.get_instance().retrieve(
-                query=query or "用户与桌宠互动", max_results=2
-            )
-            if mems:
-                lines = ["【桌宠记忆】（独立记忆库，仅作参考）"]
-                for i, ev in enumerate(mems, 1):
-                    try:
-                        from datetime import datetime
-                        date = datetime.fromtimestamp(float(ev.get("created_at", 0) or 0)).strftime("%Y-%m-%d")
-                    except Exception:
-                        date = "未知日期"
-                    lines.append(f"  [{i}] (日期={date}) {str(ev.get('text', ''))[:120]}")
-                extras.append("\n".join(lines))
-        except Exception:
-            pass
+            # memory_enabled 开关：关闭时跳过记忆检索
+            if self.config.get("memory_enabled", True):
+                # 桌宠循环设计：记忆只返回 top2（最大两条），与 8k 上下文匹配
+                mems = await PetMemory.get_instance().retrieve(
+                    query=query or "用户与桌宠互动", max_results=2
+                )
+                if mems:
+                    lines = ["【桌宠记忆】（独立记忆库，仅作参考）"]
+                    for i, ev in enumerate(mems, 1):
+                        try:
+                            from datetime import datetime
+                            date = datetime.fromtimestamp(float(ev.get("created_at", 0) or 0)).strftime("%Y-%m-%d")
+                        except Exception:
+                            date = "未知日期"
+                        lines.append(f"  [{i}] (日期={date}) {str(ev.get('text', ''))[:120]}")
+                    extras.append("\n".join(lines))
+        except Exception as _swallowed_err:
+            logger.debug(f"[build_context] ignored Exception: {_swallowed_err}")
         return "\n\n".join(extras)
+
+    # ── 输出前视觉采集（替代旧的持续 proactive 后台检测） ──
+
+    _VISION_CACHE_TTL = 8.0      # 命中窗口：连续问答在窗口内复用，避免重复花钱
+    _VISION_FAIL_COOLDOWN = 60.0  # 失败后静默期：坏后端不拖慢每次回复
+
+    async def _capture_screen_vision(self) -> str:
+        """截屏 + VLM 概括屏幕，返回描述（失败/超时/冷却期返回空串）。"""
+        now = time.time()
+        cache = getattr(self, "_vision_cache", None)
+        fail_at = getattr(self, "_vision_fail_at", 0.0)
+        if cache and (now - cache.get("time", 0) < self._VISION_CACHE_TTL):
+            return cache.get("text", "")
+        if now - fail_at < self._VISION_FAIL_COOLDOWN:
+            return ""
+        try:
+            import asyncio as _asyncio
+
+            async def _do():
+                from utils.screen_capture import capture_screen_bytes
+                from infra.data_process.core.image_analyzer import ImageAnalyzer
+
+                screen_bytes = capture_screen_bytes(max_width=768)
+                if not screen_bytes:
+                    return ""
+                # 共享单例：openai 后端初始化极轻，不 close()，避免把全局实例重置
+                analyzer = ImageAnalyzer()
+                await analyzer.initialize()
+                result = await analyzer.analyze(
+                    screen_bytes,
+                    prompt="用一两句话客观概括当前屏幕内容：什么应用、什么界面、正在做什么。",
+                )
+                return (result.get("description") or "").strip()[:300]
+
+            desc = await _asyncio.wait_for(_do(), timeout=20.0)
+            if not desc:
+                return ""
+            self._vision_cache = {"time": time.time(), "text": desc}
+            logger.info(f"[Pet] 输出前视觉注入: {desc[:80]}")
+            return desc
+        except Exception as e:
+            self._vision_fail_at = time.time()
+            logger.warning(f"[Pet] 输出前视觉采集失败 (非致命，{self._VISION_FAIL_COOLDOWN:.0f}s 内跳过): {e}")
+            return ""
 
     def build_messages(self, text: str, extra_system: str = ""):
         """独立历史（最近 max_history 条，默认 8）+ 配置化桌宠人设 + 用户消息。
@@ -332,8 +386,8 @@ class PetEngine:
                 content = m.get("content")
                 if role in ("user", "assistant") and content:
                     history.append(ChatMessage(role=role, content=content))
-        except Exception:
-            pass
+        except Exception as _swallowed_err:
+            logger.debug(f"[build_messages] ignored Exception: {_swallowed_err}")
 
         system = cfg.get("persona") or (
             "你是桌面上的 AI 桌宠助手，像 Siri 一样用语音和用户交流。"
@@ -362,8 +416,8 @@ class PetEngine:
             store = PetStore.get_instance()
             store.add_history("user", text)
             store.add_history("assistant", reply)
-        except Exception:
-            pass
+        except Exception as _swallowed_err:
+            logger.debug(f"[save_pair] ignored Exception: {_swallowed_err}")
 
     async def emit_reply(self, reply: str) -> None:
         """广播回复（统一推送出口；历史已由 save_pair 持久化，不重复落库）"""
@@ -450,5 +504,5 @@ def _play_audio(path: str) -> None:
             os.startfile(path)  # type: ignore[attr-defined]  # noqa: S606
         else:
             subprocess.run(["afplay", path], capture_output=True, timeout=60)
-    except Exception:
-        pass
+    except Exception as _swallowed_err:
+        logger.debug(f"[_play_audio] ignored Exception: {_swallowed_err}")

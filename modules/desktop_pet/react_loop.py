@@ -66,39 +66,26 @@ class DirectLoop(PetReactLoop):
         on_message: Optional[Callable[[str], None]] = None,
         extra_system: str = "",
     ) -> str:
+        """单轮 ReAct：一次完整 think→tool→observe→answer，不计时不循环"""
+        cfg = engine.config
+        max_tokens = max(1, int(cfg.get("max_output_tokens") or 512))
+        tools_enabled = bool(cfg.get("tools_enabled", True))
+
         context = await engine.build_context(text)
         combined = "\n\n".join(x for x in [context, extra_system] if x)
         messages = engine.build_messages(text, extra_system=combined)
+        native_tools = CustomLoop._native_tools() if tools_enabled else []
+        if tools_enabled:
+            listing = CustomLoop._tool_listing()
+            if listing:
+                messages.append(_tool_message(listing))
 
-        def _reply_of(resp, collected: list) -> str:
-            """取回复文本：content 优先；为空时用 reasoning_content 兜底
-            （spark 系 abliterated 推理模型把正式输出全放在 reasoning_content，content 恒空）。
-            """
-            if resp is None or not getattr(resp, "message", None):
-                return ""
-            msg = resp.message
-            reply = (msg.content or "").strip()
-            if not reply:
-                reply = (msg.reasoning_content or "").strip()
-            if not reply:
-                reply = "".join(collected).strip()
-            return reply
-
-        if on_token is None:
-            response = await engine.client.chat(messages=messages)
-            reply = _reply_of(response, [])
-        else:
-            collected: list = []
-            response = await engine.client.chat_stream(
-                messages=messages,
-                on_token=lambda t: (collected.append(t), on_token(t)),
-                on_reasoning=on_reasoning,
-                tools=CustomLoop._native_tools() or None,
-            )
-            reply = _reply_of(response, collected)
+        loop = CustomLoop()
+        reply = await loop._react_cycle(
+            engine, messages, max_tokens, native_tools, tools_enabled,
+            on_token, on_reasoning, None,
+        )
         if reply:
-            # 流式：on_message 负责持久化 + 轮次完成标记（PetPersist）；
-            # 非流式：engine.chat() 负责 save_pair —— 这里不重复落库
             if on_message is not None:
                 on_message(reply)
             logger.info(f"[Pet] 对话: {text[:40]} → {reply[:40]}")
@@ -126,11 +113,33 @@ class CustomLoop(PetReactLoop):
 
     name = "custom"
 
+    # 空拍退避默认倍率上限（参考 Cortico Heartbeat）：连续空拍间隔按 2^n 增长，到上限封顶。
+    # 可通过配置 idle_backoff_max 覆盖（≥1，设 1 = 关闭退避）；循环永不因空拍终止。
+    IDLE_BACKOFF_MAX_DEFAULT = 8
+
+    @staticmethod
+    def _idle_backoff_mult(empty_streak: int, cap: float = IDLE_BACKOFF_MAX_DEFAULT) -> float:
+        """空拍退避倍率：连续空输出 n 次 → 2^n（封顶 cap）。
+
+        任意真实产出（正文/工具调用）复位为 1；用户发消息会开新循环，同样复位。
+        cap <= 1 时恒为 1（退避关闭）。
+        """
+        cap = max(1.0, float(cap))
+        # 指数先钉顶再取幂：2.0**1024 会 OverflowError（先乘后 min 挡不住），
+        # 永不终止循环下空拍计数无上界，必须防溢出。2^60 已远超任何倍率上限。
+        exp = min(max(0, int(empty_streak)), 60)
+        return min(2.0 ** exp, cap)
     # 桌宠工具白名单（基础工具复用项目 ToolManager，只开放轻量查询/操作）
     PET_TOOL_WHITELIST = {
         "web_search", "web_fetch",
         "calc", "calc_advanced", "calc_sum", "calc_avg",
         "todo", "open_app", "list_directory",
+        # 感知工具（已注册在 infra/tool_manager/tools/perception_tools.py）
+        "understand_screen", "detect_ui_elements", "transcribe_audio",
+        # 环境查询
+        "list_windows", "get_mouse_position",
+        # 记忆回忆
+        "event_query",
     }
 
     _TOOL_JSON_RE = re.compile(r"\{\s*\"tool\"\s*:\s*\"([^\"}]+)\"", re.S)
@@ -140,6 +149,63 @@ class CustomLoop(PetReactLoop):
         self._last_think_start = 0.0  # 上次思考开始时刻（跨 chat 生效）
 
     # ── 主入口 ──
+
+    # @link:block PetReactCycle = Loop(Think · (Tool · Observe | Emit))
+    async def _react_cycle(
+        self,
+        engine: "PetEngine",
+        messages: list,
+        max_tokens: int,
+        native_tools: list,
+        tools_enabled: bool,
+        on_token: Optional[Callable[[str], None]] = None,
+        on_reasoning: Optional[Callable[[str], None]] = None,
+        on_message: Optional[Callable[[str], None]] = None,
+        max_steps: int = 10,
+    ) -> str:
+        """标准 ReAct 单轮：think → tool → observe → think → … → 纯文本答案返回。
+
+        工具轮之间不等待，快速连续；拿到纯文本（非工具调用）即返回本轮答案。
+        空输出直接继续（cycle 内不等，由外层轮间计时控制）。
+        返回本轮文本答案（空串表示本轮无产出）。
+        """
+        from infra.model.base_model import ChatMessage
+
+        obs = ""
+        for step in range(1, max_steps + 1):
+            # 上下文 8k 预算保护（首步必试，避免 mock/短上下文误杀）
+            if step > 1 and self._context_overflow(
+                messages,
+                extra_chars=len(json.dumps(native_tools, ensure_ascii=False)) if native_tools else 0,
+            ):
+                logger.info("[Pet] ReAct 内上下文接近 8k 上限，结束本轮")
+                break
+            # @link:block PetThink = Think
+            out = await self._think(
+                engine, messages, max_tokens, step, obs,
+                on_token, on_reasoning, tools=native_tools,
+            )
+            if out.get("tool"):
+                if tools_enabled and out["tool"] in self.PET_TOOL_WHITELIST:
+                    # @link:block PetTool = Tool
+                    obs = await self._run_tool(engine, out["tool"], out.get("params"))
+                else:
+                    obs = f"工具 {out.get('tool')} 不可用（未启用或不在桌宠白名单）"
+                # @link:block PetObserve = Observe
+                obs = self._observe(obs)
+                if out.get("tool_call_id"):
+                    messages.append(ChatMessage(role="tool", content=obs, tool_call_id=out["tool_call_id"]))
+                else:
+                    messages.append(_tool_message(f"【工具观察】{obs}"))
+                continue  # 工具轮：不等待，立即下一 think
+            text = (out.get("text") or "").strip()
+            if text:
+                messages.append(ChatMessage(role="assistant", content=text))
+                # 不在这里 on_message：由外层 run() 做重复检查后再上报，避免复述也被持久化
+                # @link:block PetReactEmit = Emit
+                return text
+            # 空输出：cycle 内直接继续
+        return ""
 
     # @link:block PetLoop
     async def run(
@@ -155,10 +221,15 @@ class CustomLoop(PetReactLoop):
 
         # @link:block PetThrottle = Throttle
         interval = float(cfg.get("min_think_interval") or 0)
+        # 空拍退避上限（倍率）：配置项 idle_backoff_max，≥1；1 = 关闭退避
+        try:
+            backoff_cap = max(1.0, float(cfg.get("idle_backoff_max") or 1))
+        except (TypeError, ValueError):
+            backoff_cap = float(self.IDLE_BACKOFF_MAX_DEFAULT)
         tools_enabled = bool(cfg.get("tools_enabled", True))
         # max_loop_rounds=0（默认）= 持续思考循环：每次思考之后再次思考，
         # 直到被外部停止（SSE 断开/取消）、上下文接近 8k 上限。
-        # 空输出不终止循环，触发双倍冷却后继续等待新想法。
+        # 空输出不终止循环，触发空拍退避（×2/×4/… 封顶 idle_backoff_max）后继续等待新想法。
         rounds = int(cfg.get("max_loop_rounds") or 0)
         max_tokens = max(1, int(cfg.get("max_output_tokens") or 512))
 
@@ -167,75 +238,60 @@ class CustomLoop(PetReactLoop):
         combined = "\n\n".join(x for x in [context, extra_system] if x)
         messages = engine.build_messages(text, extra_system=combined)
         # 工具描述：优先完整 OpenAI tools 数组（原生协议）；
-        # 拿不到 schema（工具库不可用/白名单全空）时才注入文本清单（兜底格式说明）
+        # 文本清单始终注入（兜底格式说明）：spark 等本地模型不支持原生 tool_calls，
+        # 必须靠文本格式 {"tool":"名","params":{}} 触发；支持原生的模型两边都能用。
         native_tools = self._native_tools() if tools_enabled else []
-        if tools_enabled and not native_tools:
+        if tools_enabled:
             listing = self._tool_listing()
             if listing:
                 messages.append(_tool_message(listing))
 
-        # 3. 持续思考循环：思考 → 工具？ → 观察 → 再思考；文本输出后仍继续下一轮
+        # 3. 整轮循环：一轮完整 ReAct → 轮间计时 → 下一轮 ReAct……
+        # max_loop_rounds=0（默认）= 无限轮，直到外部停止/上下文满/内容重复。
+        # 空轮（无产出）不终止，触发空拍退避后继续。
         parts: list = []
         empty_streak = 0
-        obs = ""
-        i = 0
+        cycle = 0
         while True:
-            i += 1
-            if rounds and i > rounds:
+            cycle += 1
+            if rounds and cycle > rounds:
                 logger.info(f"[Pet] 达到 max_loop_rounds={rounds}，停止思考循环")
                 break
-            # 上下文 8k 预算保护：对话 + tools schema 累计超出安全线则停止
-            # （每轮输出 ≤ max_output_tokens；schema 不随轮次增长）
             if self._context_overflow(messages, extra_chars=len(json.dumps(native_tools, ensure_ascii=False)) if native_tools else 0):
                 logger.info("[Pet] 上下文接近 8k 上限，停止思考循环")
                 break
-            # 思考间隔：从前一次思考开始时刻起算（两次思考开始之间至少间隔 min_think_interval）
-            # 空输出后触发双倍冷却，让桌宠安静一会儿再继续
-            if interval > 0:
-                effective_interval = interval * (2 if empty_streak > 0 else 1)
-                wait = self._last_think_start + effective_interval - time.time()
+            # 轮间计时：从上轮开始起算 min_think_interval（空拍 ×退避，封顶 idle_backoff_max）；
+            # interval=0 且已有空拍时用 1s 地板，避免空转热循环
+            if interval > 0 or empty_streak > 0:
+                base = interval if interval > 0 else 1.0
+                backoff = self._idle_backoff_mult(empty_streak, backoff_cap)
+                wait = self._last_think_start + base * backoff - time.time()
                 if wait > 0:
-                    label = "双倍" if empty_streak > 0 else "正常"
-                    logger.info(f"[Pet] 思考间隔冷却中（{label}），等待 {wait:.1f}s")
+                    label = f"空拍×{backoff:g}" if backoff > 1 else "正常"
+                    logger.info(f"[Pet] 轮间等待（{label}），{wait:.1f}s 后开始第{cycle}轮")
                     await asyncio.sleep(wait)
             self._last_think_start = time.time()
-            # @link:block PetThink = Think
-            out = await self._think(engine, messages, max_tokens, i, obs, on_token, on_reasoning, tools=native_tools)
-            if out.get("tool"):
-                if tools_enabled and out["tool"] in self.PET_TOOL_WHITELIST:
-                    # @link:block PetTool = Tool
-                    obs = await self._run_tool(engine, out["tool"], out.get("params"))
-                else:
-                    obs = f"工具 {out.get('tool')} 不可用（未启用或不在桌宠白名单）"
-                # @link:block PetObserve = Observe
-                obs = self._observe(obs)
-                # 观察回填：原生协议 tool 结果以 role=tool 关联 tool_call_id（OpenAI 格式）；
-                # 文本协议无 id，退回 user 角色观察消息
-                if out.get("tool_call_id"):
-                    from infra.model.base_model import ChatMessage
-                    messages.append(ChatMessage(role="tool", content=obs, tool_call_id=out["tool_call_id"]))
-                else:
-                    messages.append(_tool_message(f"【工具观察】{obs}"))
-                empty_streak = 0
-                continue
-            out_text = (out.get("text") or "").strip()
-            if not out_text:
+            # 一轮完整 ReAct（内含 think→tool→observe 微循环，无等待）
+            answer = await self._react_cycle(
+                engine, messages, max_tokens, native_tools, tools_enabled,
+                on_token, on_reasoning, on_message,
+            )
+            if not answer:
                 empty_streak += 1
-                # 空输出不终止循环，触发双倍冷却后继续等待新想法
-                logger.info(f"[Pet] 本轮无输出（空输出第{empty_streak}次），进入双倍冷却")
+                logger.info(
+                    f"[Pet] 第{cycle}轮无产出（空拍第{empty_streak}次），"
+                    f"下次间隔 ×{self._idle_backoff_mult(empty_streak, backoff_cap):g}"
+                )
                 continue
-            # 重复护栏：与上一轮产出完全相同 → 模型陷入复述，不再上报/落库，直接终止
-            if parts and out_text == parts[-1]:
-                logger.info("[Pet] 本轮输出与上一轮重复，停止思考循环")
+            # 重复护栏：与上一轮答案完全相同 → 模型陷入复述，终止
+            if parts and answer == parts[-1]:
+                logger.info("[Pet] 本轮答案与上一轮重复，停止思考循环")
                 break
             empty_streak = 0
-            # 文本产出：进入上下文供下一轮思考引用，并通知上层持久化/展示
-            parts.append(out_text)
-            from infra.model.base_model import ChatMessage
-            messages.append(ChatMessage(role="assistant", content=out_text))
+            parts.append(answer)
             if on_message:
-                on_message(out_text)
-        # 汇总本轮全部产出（落库由 engine 层 on_message 通道完成，见 PetPersist）
+                on_message(answer)
+        # 汇总全部轮次产出（落库由 engine 层 on_message 通道完成，见 PetPersist）
         reply = "\n".join(parts)
         if reply:
             logger.info(f"[Pet] Custom 循环完成: {text[:30]} → {reply[:60]}")
@@ -243,10 +299,11 @@ class CustomLoop(PetReactLoop):
         return reply
 
     @staticmethod
-    def _context_overflow(messages, budget_chars: int = 6000, extra_chars: int = 0) -> bool:
-        """8k 上下文预算：对话累计字符数 + 额外开销（tools schema）粗估超限即停
+    def _context_overflow(messages, budget_chars: int = 20000, extra_chars: int = 0) -> bool:
+        """上下文预算：对话累计字符数 + 额外开销（tools schema）粗估超限即停
 
-        中文约 1.5 token/字，6000 字符≈4000 token。schema 不随轮次增长，只计一次。
+        20000 字符≈13000 token（中文 1.5 token/字），适配 DeepSeek 等大上下文 API。
+        本地 8k 小模型场景可调小。schema 不随轮次增长，只计一次。
         """
         total = extra_chars
         for m in messages:
@@ -292,9 +349,12 @@ class CustomLoop(PetReactLoop):
                 content="（请根据当前对话历史自言自语地思考、自然延续话题、反思，或者什么都不说表示你想安静一会儿。）",
             )]
         if obs:
-            # 原生协议：观察已作为 role=tool 消息进入 messages；
-            # 文本协议：追加 user 观察消息
-            if not any(m.role == "tool" for m in messages[-2:] if hasattr(m, "role")):
+            # 观察已由 run() 回填进 messages（原生 role=tool / 文本 user【工具观察】）；
+            # 这里只在两者都缺失时补一条，避免重复
+            recent = messages[-2:] if len(messages) >= 2 else messages
+            has_tool = any(getattr(m, "role", "") == "tool" for m in recent)
+            has_obs_text = any("【工具观察】" in (getattr(m, "content", "") or "") for m in recent)
+            if not has_tool and not has_obs_text:
                 msgs.append(_tool_message(f"【工具观察】{obs}"))
         collected: list = []
         # 思考过程实时转发（过程性内容，无需等确认；正文 token 才延迟确认）
@@ -461,8 +521,8 @@ class CustomLoop(PetReactLoop):
             try:
                 obj = json.loads(raw[m.start():].strip())
                 params = obj.get("params") or {}
-            except Exception:
-                pass
+            except Exception as _swallowed_err:
+                logger.debug(f"[_parse_tool_call] ignored Exception: {_swallowed_err}")
             return {"tool": tool, "params": params, "text": raw}
         m = self._TOOL_BRACKET_RE.search(raw)
         if m:

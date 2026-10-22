@@ -47,7 +47,7 @@ class DatabaseManager:
         self._session_factory: Any = None
         self._tables_created = False
 
-    # @link:block DbInit
+    # @link:block DbInit = Guard · Retrieve · Write
     def initialize(self):
         """初始化数据库"""
         if self._engine is not None:

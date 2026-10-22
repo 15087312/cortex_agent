@@ -17,6 +17,8 @@ from utils.logger import setup_logger
 from .tool_registry import ToolRegistry
 
 
+
+logger = setup_logger(__name__)
 def extract_json(raw_output: str) -> Dict[str, Any]:
     """从模型输出里提取纯净JSON"""
     if not raw_output:
@@ -43,8 +45,8 @@ def extract_json(raw_output: str) -> Dict[str, Any]:
         if json_match:
             try:
                 return json.loads(json_match.group(0))
-            except json.JSONDecodeError:
-                pass
+            except json.JSONDecodeError as _swallowed_err:
+                logger.debug(f"[extract_json] ignored json.JSONDecodeError: {_swallowed_err}")
         return {"tool": "none", "params": {}}
 
 

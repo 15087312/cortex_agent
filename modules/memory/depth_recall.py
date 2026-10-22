@@ -1,4 +1,3 @@
-# @link:block DepthRecall_Retrieve = Retrieve
 """
 DepthRecall — 深度回忆调度模块
 
@@ -349,7 +348,7 @@ class DepthRecallScheduler:
         "default":          {"semantic": 0.30, "causal": 0.35, "importance": 0.20, "time": 0.15},
     }
 
-    # @link:block DepthRecall_RecallEvents = Retrieve
+    # @link:block DepthRecall_RecallEvents = Retrieve · Loop(Guard)
     async def _recall_events(
         self,
         query: str,
@@ -484,8 +483,8 @@ class DepthRecallScheduler:
                     if max_sim > 0:
                         # 同链关联：基础 0.4（与直接命中同档）+ 语义调节
                         return min(1.0, 0.4 + 0.6 * max_sim) if connected else min(1.0, max_sim)
-        except Exception:
-            pass
+        except Exception as _swallowed_err:
+            logger.debug(f"[_causal_relevance] ignored Exception: {_swallowed_err}")
 
         # 文本关键词匹配（兜底）
         text = f"{event.fact} {event.thought} {event.lesson} {' '.join(event.keywords)}".lower()
@@ -549,7 +548,7 @@ class DepthRecallScheduler:
 
     # ── 增量更新闭环 ──
 
-    # @link:block DepthRecall_IncrementalUpdate = Write
+    # @link:block DepthRecall_IncrementalUpdate = Loop(Guard · Write)
     def _incremental_update(self, result: DeepRecallResult, node_ids: set):
         """每次深度回忆成功后执行增量更新
 
