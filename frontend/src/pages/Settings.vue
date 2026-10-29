@@ -153,9 +153,47 @@ async function resetPetState() {
 let petPollTimer = null
 onMounted(() => {
   loadPetState()
+  loadDoctor()
   petPollTimer = setInterval(loadPetState, 5000)
 })
 onUnmounted(() => { if (petPollTimer) { clearInterval(petPollTimer); petPollTimer = null } })
+
+/* ── 系统体检（doctor 自检，/api/system/doctor）── */
+const doctor = ref(null)
+const doctorLoading = ref(false)
+async function loadDoctor() {
+  doctorLoading.value = true
+  try {
+    const r = await endpoints.doctor()
+    doctor.value = r?.data || null
+  } catch (e) { doctor.value = null }
+  finally { doctorLoading.value = false }
+}
+
+/* ── 第三方许可声明（GPL ffmpeg 源码获取告知）── */
+const showLicenses = ref(false)
+const licensesContent = ref('')
+async function showLicensesModal() {
+  try {
+    const r = await endpoints.licenses()
+    licensesContent.value = r?.data?.content || t('settings.general.licensesMissing')
+  } catch (e) {
+    licensesContent.value = t('settings.general.licensesMissing')
+  }
+  showLicenses.value = true
+}
+const doctorFailed = computed(() => (doctor.value?.checks || []).filter(c => !c.ok && c.severity === 'required' && c.name).map(c => c.name))
+const doctorItemKeys = {
+  ffmpeg: 'settings.doctor.items.ffmpeg',
+  llm_keys: 'settings.doctor.items.llmKeys',
+  vision_keys: 'settings.doctor.items.visionKeys',
+  embedding_models: 'settings.doctor.items.embeddingModels',
+  whisper: 'settings.doctor.items.whisper',
+  pyaudio: 'settings.doctor.items.pyaudio',
+  pyautogui: 'settings.doctor.items.pyautogui',
+  flac: 'settings.doctor.items.flac',
+  whisper_weights: 'settings.doctor.items.whisperWeights',
+}
 const debugEnabled = boolCfg('DEBUG', false)
 const loggingEnabled = boolCfg('LOGGING_ENABLED', true)
 const logLevel = segCfg('LOG_LEVEL', 'INFO')
@@ -171,6 +209,14 @@ const triggerThink = boolCfg('PERCEPTION_TRIGGER_THINK', true)
 const triggerCooldown = numCfg('PERCEPTION_TRIGGER_COOLDOWN', 60)
 const triggerMinIntensity = numCfg('PERCEPTION_TRIGGER_MIN_INTENSITY', 50)
 const spatialEnhancement = boolCfg('SPATIAL_ENHANCEMENT_ENABLED', false)
+
+/* ── 视频识别（ffmpeg 分段采样 → 图片视觉模型）── */
+const videoAnalysisEnabled = boolCfg('VIDEO_ANALYSIS_ENABLED', true)
+const videoSegmentSeconds = numCfg('VIDEO_SEGMENT_SECONDS', 30)
+const videoFramesPerSegment = numCfg('VIDEO_FRAMES_PER_SEGMENT', 4)
+const videoMaxDuration = numCfg('VIDEO_MAX_DURATION_SECONDS', 600)
+const videoMaxTotalFrames = numCfg('VIDEO_MAX_TOTAL_FRAMES', 60)
+const videoFrameWidth = numCfg('VIDEO_FRAME_WIDTH', 768)
 
 /* ── 技能系统 ── */
 const skillsEnabled = boolCfg('SKILLS_ENABLED', true)
@@ -779,6 +825,37 @@ onMounted(async () => {
         <div class="settings-divider"></div>
 
         <div class="settings-group">
+          <div class="settings-group-title">{{ $t('settings.videoAnalysis.title') }}</div>
+          <p class="settings-hint">{{ $t('settings.videoAnalysis.hint') }}</p>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">{{ $t('settings.videoAnalysis.enabled') }}</div><div class="d">{{ $t('settings.videoAnalysis.enabledDesc') }}</div></div>
+            <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="videoAnalysisEnabled" @change="videoAnalysisEnabled = !videoAnalysisEnabled" /><span class="toggle-slider"></span></label></div>
+          </div>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">{{ $t('settings.videoAnalysis.segmentSeconds') }}</div><div class="d">{{ $t('settings.videoAnalysis.segmentSecondsDesc') }}</div></div>
+            <div class="setting-ctl"><input class="input w-110" type="number" min="5" v-model.number="videoSegmentSeconds" /></div>
+          </div>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">{{ $t('settings.videoAnalysis.framesPerSegment') }}</div><div class="d">{{ $t('settings.videoAnalysis.framesPerSegmentDesc') }}</div></div>
+            <div class="setting-ctl"><input class="input w-110" type="number" min="1" max="12" v-model.number="videoFramesPerSegment" /></div>
+          </div>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">{{ $t('settings.videoAnalysis.maxDuration') }}</div><div class="d">{{ $t('settings.videoAnalysis.maxDurationDesc') }}</div></div>
+            <div class="setting-ctl"><input class="input w-110" type="number" min="10" v-model.number="videoMaxDuration" /></div>
+          </div>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">{{ $t('settings.videoAnalysis.maxTotalFrames') }}</div><div class="d">{{ $t('settings.videoAnalysis.maxTotalFramesDesc') }}</div></div>
+            <div class="setting-ctl"><input class="input w-110" type="number" min="10" v-model.number="videoMaxTotalFrames" /></div>
+          </div>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">{{ $t('settings.videoAnalysis.frameWidth') }}</div><div class="d">{{ $t('settings.videoAnalysis.frameWidthDesc') }}</div></div>
+            <div class="setting-ctl"><input class="input w-110" type="number" min="320" v-model.number="videoFrameWidth" /></div>
+          </div>
+        </div>
+
+        <div class="settings-divider"></div>
+
+        <div class="settings-group">
           <div class="settings-group-title">{{ $t('settings.pet.title') }}</div>
           <div class="setting-row">
             <div class="lbl"><div class="t">{{ $t('settings.pet.enabled') }}</div><div class="d">{{ $t('settings.pet.enabledDesc') }}</div></div>
@@ -839,6 +916,24 @@ onMounted(async () => {
 
       <!-- ═══════════════ 系统 ═══════════════ -->
       <div v-if="activeTab === 'system'" class="settings-section">
+        <div class="settings-group">
+          <div class="settings-group-title">{{ $t('settings.doctor.title') }}</div>
+          <p class="settings-hint">{{ $t('settings.doctor.hint') }}</p>
+          <div class="setting-row" v-for="c in (doctor?.checks || [])" :key="c.name">
+            <div class="lbl">
+              <div class="t"><span :style="{ color: c.ok ? '#3ba55d' : (c.severity === 'required' ? '#ed4245' : '#faa61a') }" >●</span> {{ $t(doctorItemKeys[c.name] || c.name) }}<span v-if="c.severity === 'optional'" class="d">（{{ $t('settings.doctor.optional') }}）</span></div>
+              <div class="d">{{ c.detail }}</div>
+              <div class="d" v-if="!c.ok && c.fix" style="opacity:0.85"><b>{{ $t('settings.doctor.fix') }}:</b> {{ c.fix }}</div>
+            </div>
+            <div class="setting-ctl"></div>
+          </div>
+          <div class="setting-row">
+            <div class="lbl"><div class="d">{{ doctorFailed.length ? $t('settings.doctor.summaryFail', { n: doctorFailed.length }) : $t('settings.doctor.summaryOk') }}</div></div>
+            <div class="setting-ctl">
+              <button class="btn btn-sm" :disabled="doctorLoading" @click="loadDoctor">{{ $t('settings.doctor.rerun') }}</button>
+            </div>
+          </div>
+        </div>
         <div class="settings-group">
           <div class="settings-group-title">{{ $t('settings.system.voiceOutput') }}</div>
           <div class="setting-row">
@@ -1022,11 +1117,25 @@ onMounted(async () => {
             <a class="settings-link" href="#" @click.prevent="openLink('https://cortexagent.com/terms')">{{ $t('settings.general.terms') }} <span class="link-arrow">↗</span></a>
             <a class="settings-link" href="#" @click.prevent="openLink('https://cortexagent.com/privacy')">{{ $t('settings.general.privacy') }} <span class="link-arrow">↗</span></a>
             <a class="settings-link" href="#" @click.prevent="openLink('https://cortexagent.com')">{{ $t('settings.general.website') }} <span class="link-arrow">↗</span></a>
+            <a class="settings-link" href="#" @click.prevent="showLicensesModal">{{ $t('settings.general.licenses') }} <span class="link-arrow">↗</span></a>
           </div>
         </div>
         <div class="settings-copyright">Copyright 1998 – 2026 Tencent. All Rights Reserved</div>
       </div>
 
+    </div>
+  </div>
+
+  <!-- Third-Party Licenses Modal -->
+  <div v-if="showLicenses" class="modal-overlay" @click.self="showLicenses = false">
+    <div class="modal diag-modal">
+      <div class="modal-header">
+        <span>{{ $t('settings.general.licenses') }}</span>
+        <button class="btn btn-sm" @click="showLicenses = false">✕</button>
+      </div>
+      <div class="modal-body">
+        <pre class="licenses-pre">{{ licensesContent }}</pre>
+      </div>
     </div>
   </div>
 
@@ -1071,6 +1180,7 @@ onMounted(async () => {
 .ml-2 { margin-left: 8px; }
 .flex-1-muted { flex: 1; font-size: 12px; color: var(--text-muted); }
 .key-input { flex: 1; }
+.licenses-pre { white-space: pre-wrap; word-break: break-word; font-family: var(--font-mono); font-size: 12px; line-height: 1.6; color: var(--text-primary); margin: 0; }
 .key-status { margin-top: 8px; font-size: 12px; }
 .key-unconfigured { color: var(--text-muted); }
 

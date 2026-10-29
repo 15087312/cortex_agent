@@ -52,6 +52,36 @@ jobs:
           npm ci
           npm run build
 
+      # 内置 ffmpeg/ffprobe 到 vendor/ffmpeg（pyinstaller.spec 自动收集为 _MEIPASS/ffmpeg）。
+      # 失败不阻断发布：缺了则退回用户自装 ffmpeg（doctor 会提示）。
+      - name: Vendor ffmpeg
+        shell: bash
+        run: |
+          mkdir -p vendor/ffmpeg
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            curl -fsSL -o ffbin.zip "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip" || echo SKIP
+          else
+            brew install ffmpeg || echo SKIP
+          fi
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            if [ -s ffbin.zip ]; then
+              unzip -p ffbin.zip "*bin/ffmpeg.exe" > vendor/ffmpeg/ffmpeg.exe
+              unzip -p ffbin.zip "*bin/ffprobe.exe" > vendor/ffmpeg/ffprobe.exe
+              rm -f ffbin.zip
+              echo "Vendored Windows ffmpeg"
+            else
+              rmdir vendor/ffmpeg
+            fi
+          else
+            PREFIX=$(brew --prefix 2>/dev/null)
+            if [ -x "$PREFIX/bin/ffmpeg" ] && [ -x "$PREFIX/bin/ffprobe" ]; then
+              cp "$PREFIX/bin/ffmpeg" "$PREFIX/bin/ffprobe" vendor/ffmpeg/
+              echo "Vendored macOS ffmpeg"
+            else
+              rmdir vendor/ffmpeg
+            fi
+          fi
+
       - name: PyInstaller
         shell: bash
         run: |

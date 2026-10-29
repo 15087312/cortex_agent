@@ -122,6 +122,8 @@ export const endpoints = {
 
   health: (signal) => request('GET', '/health', undefined, signal),
   latestVersion: (signal) => request('GET', '/system/latest-version', undefined, signal),
+  doctor: (signal) => request('GET', '/system/doctor', undefined, signal),
+  licenses: (signal) => request('GET', '/system/licenses', undefined, signal),
   dashboard: (signal) => request('GET', '/management/dashboard', undefined, signal),
   modules: (signal) => request('GET', '/management/modules', undefined, signal),
   refreshModule: (n, signal) => request('POST', '/management/modules/' + encodeURIComponent(n) + '/refresh', undefined, signal),

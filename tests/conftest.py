@@ -12,6 +12,11 @@ os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 # 测试用按需加载即可，不需要后台异步向量化。
 os.environ.setdefault("EMBEDDING_BACKGROUND_WORKER", "false")
 
+# 测试关闭知识库启动预热：TestClient 会执行 lifespan，预热线程会向真实
+# data/knowledge.db 增量摄取 docs/（且测试里 embedding 未就绪，只会写入无向量片段）。
+# 预热逻辑本身由 tests/unit/test_knowledge_warmup.py 直接驱动，不依赖真实启动。
+os.environ.setdefault("KNOWLEDGE_AUTO_INGEST", "false")
+
 import pytest
 import sys
 

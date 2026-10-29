@@ -44,6 +44,8 @@ function mockApi(cfg = {}) {
     { match: '/api/management/open-folder', data: (u, init) => { writes.push({ url: String(u), method: init?.method, body: JSON.parse(init.body) }); return { success: true } } },
     { match: '/api/stream/pet/state/reset', data: (u, init) => { writes.push({ url: String(u), method: init?.method }); return { success: true, data: { values: { mood: 80 } } } } },
     { match: '/api/stream/pet/state', data: { success: true, data: { values: { mood: 50, satiety: 60 }, text: '心情不错' } } },
+    // ── 第三方许可（默认走 /api/ 冗余 → content 为空 → licensesMissing 兑底）──
+    { match: '/api/system/licenses', data: (u, init) => (cfg.licenses !== undefined ? cfg.licenses : { success: true, data: {} }) },
     { match: '/api/health', data: { success: true, data: { version: __APP_VERSION__ } } },
     { match: '/api/', data: { success: true, data: { version: '9.9.9', storage_path: '/tmp/cortex' } } },
   ])
@@ -89,6 +91,32 @@ describe('Settings.vue', () => {
     await new Promise((r) => setTimeout(r, 30))
     expect(w.text()).toContain('lib_a')
     expect(w.text()).toContain('lib_b')
+  })
+
+  it('视觉模型列表加载渲染（切至 local → 扫描目录 → 下拉/消息栏刷新副作用断言）', async () => {
+    mockApi({
+      visionModels: { success: true, data: { models: [
+        { name: 'model_a', path: '/tmp/vision/model_a', model_type: 'bert' },
+        { name: 'model_b', path: '/tmp/vision/model_b' },
+      ], dir: '/tmp/vision' } },
+    })
+    const w = await mountSettings()
+    await w.findAll('.settings-tab').find((t) => t.text() === '感知').trigger('click')
+    await new Promise((r) => setTimeout(r, 30))
+    // 默认 visionBackend 为 'api' → 不渲染本地模式区块
+    expect(w.findAll('.input.w-280 option').filter(o => /model_a|model_b/.test(o.text())).length).toBe(0)
+    // 切换 visionBackend = local → loadVisionModels 被调用
+    await w.findAll('.input.w-280 option').finally(resolve => resolve(!resolve.any))
+    // toggle visionBackend 为 local
+    await w.findAll('.seg .toggle-switch').find((t) => t.text() === 'API').trigger('click')
+    await new Promise((r) => setTimeout(r, 10))
+    const visionRegions = w.findAll('.input.w-280 option').filter(o => /model_a|model_b/.test(o.text()))
+    expect(visionRegions.length).toBe(2)
+    // 断言检测到的模型数量消息栏被保留
+    await w.vm.loadVisionModels()
+    await new Promise((r) => setTimeout(r, 10))
+    const modelCountMsg = w.findAll('.setting-row .t').find((t) => t.text().startsWith('检测到的视觉模型') || t.text().startsWith('检测到'))
+    expect(modelCountMsg).toBeTruthy()
   })
 
   it('switchLib 切换记忆库', async () => {
@@ -209,6 +237,23 @@ describe('Settings.vue', () => {
     await w.vm.resetPetState()
     await new Promise((r) => setTimeout(r, 20))
     expect(w.vm.petState.mood).toBe(80)
+  })
+
+  it('桌宠状态板数值渲染文本（mood/satiety/energy/cleanliness 展示值断言）', async () => {
+    mockApi({
+      visionModels: { success: true, data: { models: [], dir: '' } },
+    })
+    const w = await mountSettings()
+    await new Promise((r) => setTimeout(r, 30))
+    // 断言四项 badge 展示值为 mood 50, satiety 60, energy 70, cleanliness 80
+    const badges = w.findAll('.badge')
+    expect(badges.length).toBe(4)
+    expect(badges[0].text()).toContain('心情 50')
+    expect(badges[1].text()).toContain('饱食 60')
+    expect(badges[2].text()).toContain('精力 70')
+    expect(badges[3].text()).toContain('清洁 80')
+    // stateText 展示
+    expect(w.find('.setting-hint-inline').text()).toBe('心情不错')
   })
 
   it('卸载时清理桌宠轮询定时器（防泄漏）', async () => {
@@ -729,6 +774,38 @@ describe('Settings.vue', () => {
     await w.find('.modal-overlay').trigger('click')
     expect(w.vm.showDiag).toBe(false)
     vi.restoreAllMocks()
+  })
+
+  it('关于页 → 第三方许可 Modal：展示声明内容 + 关闭', async () => {
+    mockApi({ licenses: { success: true, data: { content: 'GPL-3.0 ffmpeg 源码获取告知' } } })
+    const w = await mountSettings()
+    await w.findAll('.settings-tab').find((t) => t.text() === '关于').trigger('click')
+    const link = w.findAll('.settings-link').find((a) => a.text().includes('第三方许可'))
+    expect(link).toBeTruthy()
+    await link.trigger('click')
+    await new Promise((r) => setTimeout(r, 10))
+    expect(w.vm.showLicenses).toBe(true)
+    expect(w.find('.diag-modal .licenses-pre').text()).toContain('GPL-3.0 ffmpeg 源码获取告知')
+    // header ✕ 关闭
+    await w.find('.diag-modal .modal-header button').trigger('click')
+    expect(w.vm.showLicenses).toBe(false)
+  })
+
+  it('第三方许可：接口失败与空内容 → 未找到兑底提示', async () => {
+    // 请求失败（ok:false → request 报错 → catch 分支）
+    mockApi({ licenses: { ok: false, status: 500 } })
+    let w = await mountSettings()
+    await w.vm.showLicensesModal()
+    await new Promise((r) => setTimeout(r, 10))
+    expect(w.vm.showLicenses).toBe(true)
+    expect(w.find('.licenses-pre').text()).toContain('未找到许可声明文件')
+    w.unmount()
+    // 请求成功但 content 为空（默认 mockApi 走 /api/ 冗余）
+    mockApi()
+    w = await mountSettings()
+    await w.vm.showLicensesModal()
+    await new Promise((r) => setTimeout(r, 10))
+    expect(w.find('.licenses-pre').text()).toContain('未找到许可声明文件')
   })
 
   it('通用设置：切换界面语言后渲染随之变化', async () => {

@@ -25,6 +25,11 @@ _IMPORTANCE_MAP = {
     "trivial": 0.03,
 }
 
+# ── 置信度每日上限常量 ──
+# 防止置信度因频繁事件处理而无限膨胀
+# 每日最多增强 0.2 个置信度单位，超限后不再增强（静默回退）
+MAX_DAILY_BOOST: float = 0.2
+
 
 def _parse_importance(value) -> float:
     """解析 importance 字段：兼容离散等级和旧浮点数"""
@@ -286,7 +291,16 @@ class EventReducer:
                 existing = graph.find_nodes_by_label(label)
                 if existing:
                     node = existing[0]
-                    node.confidence = min(0.99, node.confidence + 0.02)
+                    # --- 置信度每日上限检查开始 ---
+                    from datetime import datetime
+                    today = datetime.now().date().isoformat()
+                    if node.confidence_last_reset != today:
+                        node.confidence_daily_count = 0
+                        node.confidence_last_reset = today
+                    if node.confidence_daily_count < MAX_DAILY_BOOST:
+                        node.confidence = min(0.99, node.confidence + 0.02)
+                        node.confidence_daily_count += 1
+                    # --- 置信度每日上限检查结束 ---
                     node.event_count += 1
                     graph.save_node(node)
                 else:
@@ -323,7 +337,16 @@ class EventReducer:
                 if existing_edges:
                     # 已存在，提升置信度
                     edge = CausalEdge.from_dict(dict(existing_edges[0]))
-                    edge.confidence = min(0.99, edge.confidence + 0.03)
+                    # --- 置信度每日上限检查开始 ---
+                    from datetime import datetime
+                    today = datetime.now().date().isoformat()
+                    if edge.confidence_last_reset != today:
+                        edge.confidence_daily_count = 0
+                        edge.confidence_last_reset = today
+                    if edge.confidence_daily_count < MAX_DAILY_BOOST:
+                        edge.confidence = min(0.99, edge.confidence + 0.03)
+                        edge.confidence_daily_count += 1
+                    # --- 置信度每日上限检查结束 ---
                     graph.save_edge(edge)
                 else:
                     edge = CausalEdge(

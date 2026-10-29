@@ -157,5 +157,18 @@ describe('api.js', () => {
       await endpoints.updateMessage('s1', 'm1', 'new')
       expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({ content: 'new' })
     })
+
+    it('doctor/licenses 命中 /system/* 并传递 signal', async () => {
+      // /system/* 不在鉴权白名单 → 必须走 request 封装自动附 X-API-Key（带 Key 部署下裸 fetch 会 401）
+      setApiKey('secret')
+      const fetchMock = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({}) }))
+      vi.stubGlobal('fetch', fetchMock)
+      await endpoints.doctor()
+      expect(fetchMock.mock.calls[0][0]).toBe('/api/system/doctor')
+      expect(fetchMock.mock.calls[0][1].headers['X-API-Key']).toBe('secret')
+      await endpoints.licenses()
+      expect(fetchMock.mock.calls[1][0]).toBe('/api/system/licenses')
+      expect(fetchMock.mock.calls[1][1].headers['X-API-Key']).toBe('secret')
+    })
   })
 })

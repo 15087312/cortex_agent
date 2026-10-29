@@ -1507,11 +1507,11 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
                             enable_image = getattr(settings, "LARGE_MODEL_ENABLE_IMAGE", True)
                             if image_mode == "direct" and enable_image:
                                 att_images = extract_images(attachments)
-                                att_text = summarize_attachments(attachments)
+                                att_text = await summarize_attachments(attachments)
                             elif not enable_image:
                                 # 图片功能被关闭，跳过所有图片处理
                                 att_images = []
-                                att_text = summarize_attachments([a for a in attachments if not getattr(a, "is_image", False)]) if attachments else ""
+                                att_text = await summarize_attachments([a for a in attachments if not getattr(a, "is_image", False)]) if attachments else ""
                             else:
                                 att_images = []
                                 att_text = await parse_attachments(attachments)

@@ -9,10 +9,12 @@ from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
 import os
+import sys
 import time
 import uuid
 import hmac
 import asyncio
+from pathlib import Path
 from typing import Optional
 
 from infra.errors import (
@@ -105,6 +107,15 @@ async def lifespan(app: FastAPI):
     print(f"[DEBUG] Embedding 模型加载完成，dim={eng.dim}", flush=True)
     logger.info(f"✓ Embedding 模型已预加载 (dim={eng.dim})")
     print("[DEBUG] 继续后续初始化...", flush=True)
+
+    # 知识库启动预热：Embedding 就绪后后台按哈希增量摄取 KNOWLEDGE_ROOTS，
+    # 保证模型第一次调用 knowledge_search 就有内容可引用；不阻塞启动。
+    try:
+        from modules.knowledge.warmup import start_background_ingest
+        if start_background_ingest() is not None:
+            logger.info("✓ 知识库后台增量摄取已启动")
+    except Exception as e:
+        logger.warning(f"知识库后台增量摄取启动失败 (非致命): {e}")
 
     # 预加载视觉模型（同步加载，先加载再启动，避免运行中首次调用才加载）
     # auto/mlx/transformers/api 均为真实视觉后端；mock 为模拟，无需加载
@@ -856,6 +867,30 @@ def _fetch_latest_release_version(timeout: float = 8.0) -> dict:
     raise RuntimeError("无法获取最新版本（GitHub 不可达或无发布）")
 
 
+@app.get("/system/doctor")
+async def system_doctor():
+    """前置自检 — ffmpeg/原生依赖/密钥/权重逐项体检（附修复建议）"""
+    from api.doctor import run_doctor
+    return run_doctor()
+
+
+@app.get("/system/licenses")
+async def system_licenses():
+    """第三方许可声明（含 GPL ffmpeg 源码获取告知）— SVG 打包态从 _MEIPASS 读，开发态从项目根读"""
+    candidates = []
+    base = getattr(sys, "_MEIPASS", "")
+    if base:
+        candidates.append(Path(base) / "THIRD_PARTY_LICENSES.md")
+    candidates.append(Path(__file__).resolve().parents[1] / "THIRD_PARTY_LICENSES.md")
+    for p in candidates:
+        if p.is_file():
+            return {"success": True, "data": {"content": p.read_text(encoding="utf-8")}}
+    return JSONResponse(status_code=404, content={
+        "success": False,
+        "error": {"code": "LICENSES_NOT_FOUND", "message": "未找到许可声明文件"},
+    })
+
+
 @app.get("/system/latest-version")
 async def latest_version():
     """检查更新 — 比较 GitHub 最新 release 与当前版本"""
@@ -1001,6 +1036,103 @@ async def delete_memory_lib(name: str):
         logger.error(f"记忆库删除失败: {name} - {e}")
         return JSONResponse(status_code=500, content=error_response(ErrorCode.INTERNAL_ERROR, f"删除失败: {e}").model_dump())
     return {"success": True, "data": {"deleted": name}}
+
+
+# ── 知识库（文档 RAG，独立于事件记忆）──
+
+class KnowledgeIngestRequest(BaseModel):
+    path: str = ""                      # 空 = 按 KNOWLEDGE_ROOTS 白名单全量增量摄取
+
+
+class KnowledgeSearchRequest(BaseModel):
+    query: str = ""
+    top_k: int = 5
+    path_prefix: str = ""
+
+
+class KnowledgeReindexRequest(BaseModel):
+    full: bool = False
+
+
+def _kb_service():
+    """知识库门面（惰性导入：请求到来时才引入 knowledge 依赖链）"""
+    from modules.knowledge.service import get_knowledge_service
+    return get_knowledge_service()
+
+
+@app.get("/knowledge/docs")
+async def list_knowledge_docs(limit: int = 50, offset: int = 0):
+    """列出已入库的知识文档（标题/路径/块数/更新时间）"""
+    try:
+        docs = await asyncio.to_thread(_kb_service().list_docs, max(1, min(200, limit)), max(0, offset))
+    except Exception as e:
+        logger.error(f"知识库文档列表读取失败: {e}")
+        return JSONResponse(status_code=500, content=error_response(ErrorCode.INTERNAL_ERROR, f"读取失败: {e}").model_dump())
+    return {"success": True, "data": {"documents": docs, "count": len(docs)}}
+
+
+@app.post("/knowledge/ingest")
+async def ingest_knowledge(body: KnowledgeIngestRequest = None):
+    """摄取文件或目录（路径必须在 KNOWLEDGE_ROOTS 白名单内；空则全量增量）"""
+    path = ((body.path if body else "") or "").strip()
+    try:
+        result = await asyncio.to_thread(_kb_service().ingest, path)
+    except Exception as e:
+        logger.error(f"知识库摄取失败: {path} - {e}")
+        return JSONResponse(status_code=500, content=error_response(ErrorCode.INTERNAL_ERROR, f"摄取失败: {e}").model_dump())
+    if result.get("error"):
+        return JSONResponse(status_code=422, content=error_response(ErrorCode.VALIDATION_ERROR, result["error"]).model_dump())
+    return {"success": True, "data": result}
+
+
+@app.delete("/knowledge/docs/{doc_id}")
+async def delete_knowledge_doc(doc_id: str):
+    """删除知识文档（连带片段与向量）"""
+    try:
+        result = await asyncio.to_thread(_kb_service().delete, doc_id)
+    except Exception as e:
+        logger.error(f"知识库删除失败: {doc_id} - {e}")
+        return JSONResponse(status_code=500, content=error_response(ErrorCode.INTERNAL_ERROR, f"删除失败: {e}").model_dump())
+    if not result.get("deleted"):
+        return JSONResponse(status_code=404, content=error_response(ErrorCode.NOT_FOUND, result.get("reason", "文档不存在")).model_dump())
+    return {"success": True, "data": result}
+
+
+@app.post("/knowledge/search")
+async def search_knowledge(body: KnowledgeSearchRequest):
+    """知识检索（调试/前端用；模型侧走 knowledge_search 工具）"""
+    query = (body.query or "").strip()
+    if not query:
+        return JSONResponse(status_code=422, content=error_response(ErrorCode.VALIDATION_ERROR, "query 不能为空").model_dump())
+    try:
+        hits = await asyncio.to_thread(_kb_service().search, query, body.top_k, body.path_prefix.strip())
+    except Exception as e:
+        logger.error(f"知识库检索失败: {e}")
+        return JSONResponse(status_code=500, content=error_response(ErrorCode.INTERNAL_ERROR, f"检索失败: {e}").model_dump())
+    return {"success": True, "data": {"hits": hits, "count": len(hits)}}
+
+
+@app.post("/knowledge/reindex")
+async def reindex_knowledge(body: KnowledgeReindexRequest = None):
+    """重建索引：full=false 按哈希增量；full=true 清空向量整库重嵌"""
+    full = bool(body.full) if body else False
+    try:
+        result = await asyncio.to_thread(_kb_service().reindex, full)
+    except Exception as e:
+        logger.error(f"知识库重建失败: {e}")
+        return JSONResponse(status_code=500, content=error_response(ErrorCode.INTERNAL_ERROR, f"重建失败: {e}").model_dump())
+    return {"success": True, "data": result}
+
+
+@app.get("/knowledge/stats")
+async def knowledge_stats():
+    """知识库统计：文档数 / 片段数 / 索引大小 / 维度 / 白名单根"""
+    try:
+        stats = await asyncio.to_thread(_kb_service().stats)
+    except Exception as e:
+        logger.error(f"知识库统计失败: {e}")
+        return JSONResponse(status_code=500, content=error_response(ErrorCode.INTERNAL_ERROR, f"统计失败: {e}").model_dump())
+    return {"success": True, "data": stats}
 
 
 @app.put("/config/persona/{role}")

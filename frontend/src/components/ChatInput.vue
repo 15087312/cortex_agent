@@ -118,13 +118,16 @@ function handleFiles(fileList) {
   const files = fileList || []
   for (const file of files) {
     const isImage = file.type.startsWith('image/')
-    if (!isImage && file.size >= 1024 * 1024) {
+    const isVideo = file.type.startsWith('video/')
+    // 图片 >1MB、文本/pdf >1MB 拒收；视频放行到 50MB（后端 VIDEO_MAX_SIZE_MB 同值守卫）
+    const tooLarge = isVideo ? file.size >= 1024 * 1024 * 50 : (!isImage && file.size >= 1024 * 1024)
+    if (tooLarge) {
       emit('toast', { message: t('chatInput.fileTooLarge'), type: 'error' })
       continue
     }
     const reader = new FileReader()
     reader.onload = (e) => {
-      attachments.value.push({ type: file.type || (isImage ? 'image/*' : 'application/octet-stream'), data: e.target.result, name: file.name })
+      attachments.value.push({ type: file.type || (isImage ? 'image/*' : isVideo ? 'video/*' : 'application/octet-stream'), data: e.target.result, name: file.name })
     }
     reader.readAsDataURL(file)
   }
@@ -186,7 +189,7 @@ function removeAttachment(i) {
       <div class="chat-input-toolbar">
         <button class="chat-btn-icon" @click="$refs.fileInput.click()" :title="$t('chatInput.uploadFile')"><Icon name="paperclip" :size="16" /></button>
         <button class="chat-btn-icon" :class="{ 'chat-btn-recording': recording }" @click="toggleRecording" :title="recording ? $t('chatInput.stopRecording') : $t('chatInput.startRecording')"><Icon name="mic" :size="16" /></button>
-        <input ref="fileInput" type="file" multiple accept="image/*,.pdf,.txt" hidden @change="handleFiles($event.target.files)" />
+        <input ref="fileInput" type="file" multiple accept="image/*,.pdf,.txt,video/*" hidden @change="handleFiles($event.target.files)" />
       </div>
       <textarea
         ref="fieldRef"

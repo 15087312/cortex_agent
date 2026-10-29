@@ -386,3 +386,5 @@ PyInstaller 产出**单个启动文件**（`pyinstaller pyinstaller.spec --clean
 ## 协议
 
 [Apache License 2.0](LICENSE)
+
+随发布包分发的 ffmpeg/ffprobe 为 GPL-3.0 构建（Windows 见 [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds)，macOS 为 Homebrew GPL 构建），对应源码获取告知见 [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)（应用内入口：设置 → 关于 → 第三方许可）。

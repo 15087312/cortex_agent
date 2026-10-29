@@ -1413,3 +1413,69 @@ def test_fetch_latest_release_api_fallback(monkeypatch):
     info = m._fetch_latest_release_version()
     assert info["latest"] == "8.8.8"
     assert info["source"] == "api"
+
+
+# ---------------------------------------------------------------------------
+# GET /system/doctor + /system/licenses — 自检与第三方许可
+# 注意：/system/* 不在鉴权白名单 —— 配置了 API Key 必须带头（前端 api.js 封装自动附头）
+# ---------------------------------------------------------------------------
+
+def test_system_doctor_delegates_to_run_doctor(client, auth_key, reset_rate_limit, monkeypatch):
+    monkeypatch.setattr("api.doctor.run_doctor", lambda: {
+        "success": True,
+        "data": {"healthy": True, "checks": [
+            {"name": "ffmpeg", "ok": True, "severity": "required", "detail": "", "fix": ""},
+        ]},
+    })
+    resp = client.get("/system/doctor", headers=_auth_headers())
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["success"] is True
+    assert body["data"]["healthy"] is True
+    assert body["data"]["checks"][0]["name"] == "ffmpeg"
+
+
+def test_system_doctor_endpoint_never_raises(client, auth_key, reset_rate_limit, monkeypatch):
+    """doctor 内部兜底 → 端点不该 500；即便返回失败体也原样透传"""
+    monkeypatch.setattr("api.doctor.run_doctor", lambda: {
+        "success": False, "data": {"healthy": False, "checks": []},
+    })
+    resp = client.get("/system/doctor", headers=_auth_headers())
+    assert resp.status_code == 200
+    assert resp.json()["data"]["healthy"] is False
+
+
+def test_system_endpoints_require_key_when_configured(client, auth_key, reset_rate_limit):
+    """回归：/system/* 无头 → 401（曾因此前端裸 fetch 在带 Key 部署拿到 401）"""
+    for path in ("/system/doctor", "/system/licenses"):
+        resp = client.get(path)
+        assert resp.status_code == 401, path
+        assert resp.json()["error"]["code"] == "UNAUTHORIZED"
+
+
+def test_system_licenses_serves_meipass_package_copy(client, auth_key, reset_rate_limit, monkeypatch, tmp_path):
+    """打包态：_MEIPASS 下的声明文件优先于项目根副本"""
+    import sys as _sys
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "THIRD_PARTY_LICENSES.md").write_text("pkg-copy GPL-3.0", encoding="utf-8")
+    monkeypatch.setattr(_sys, "_MEIPASS", str(pkg), raising=False)
+    resp = client.get("/system/licenses", headers=_auth_headers())
+    assert resp.status_code == 200
+    assert resp.json() == {"success": True, "data": {"content": "pkg-copy GPL-3.0"}}
+
+
+def test_system_licenses_missing_returns_404(client, auth_key, reset_rate_limit, monkeypatch, tmp_path):
+    """_MEIPASS 与根目录都找不到声明文件 → 404 LICENSES_NOT_FOUND"""
+    import sys as _sys
+    import api.main as m
+    real_path = m.Path
+    monkeypatch.setattr(_sys, "_MEIPASS", str(tmp_path / "empty"), raising=False)
+    # 开发态根目录回退 → 重定向到 tmp_path（无声明文件）。代码里对 Path 的调用
+    # 仅构造候选路径，不依赖磁盘真实 __file__，lambda 重定向即可精确控制。
+    monkeypatch.setattr(m, "Path", lambda *_a: real_path(tmp_path))
+    resp = client.get("/system/licenses", headers=_auth_headers())
+    assert resp.status_code == 404
+    body = resp.json()
+    assert body["success"] is False
+    assert body["error"]["code"] == "LICENSES_NOT_FOUND"

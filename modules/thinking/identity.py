@@ -91,6 +91,8 @@ def load_external_identities(directory: str = None) -> Dict[str, dict]:
 DEFAULT_TOOL_WHITELISTS: Dict[str, List[str]] = {
     "large": [
         "web_search", "web_fetch", "memory_match", "event_query", "deep_recall",
+        "knowledge_search", "knowledge_list", "knowledge_ingest", "knowledge_delete",
+        "knowledge_reindex",
         "causal_graph_edit", "exec_command",
         "transcribe_audio", "understand_screen", "detect_ui_elements", "calc", "todo",
         "tools_search", "open_app",
@@ -100,23 +102,24 @@ DEFAULT_TOOL_WHITELISTS: Dict[str, List[str]] = {
         "create_tool", "list_my_tools", "delete_tool", "edit_tool",
         "create_skill", "*",
     ],
-    "orchestrator": ["web_search", "web_fetch", "memory_match", "event_query", "deep_recall", "exec_command", "*"],
+    "orchestrator": ["web_search", "web_fetch", "memory_match", "event_query", "deep_recall", "knowledge_search", "knowledge_list", "exec_command", "*"],
     "supervisor": [
         "web_search", "web_fetch", "memory_match", "event_query", "deep_recall",
+        "knowledge_search", "knowledge_list",
         "causal_graph_edit",
         "directory_tree", "list_directory", "read_text_file", "todo",
     ],
-    "expert_code_reviewer": ["memory_match", "event_query", "directory_tree", "list_directory", "read_text_file", "todo"],
-    "code_reviewer": ["memory_match", "event_query", "directory_tree", "list_directory", "read_text_file", "todo"],
-    "expert_code_writer": ["run_command", "write_text_file", "event_query", "directory_tree", "list_directory", "read_text_file", "todo"],
-    "code_writer": ["run_command", "write_text_file", "event_query", "directory_tree", "list_directory", "read_text_file", "todo"],
-    "expert_test_writer": ["run_pytest", "run_command", "write_text_file", "event_query", "directory_tree", "list_directory", "read_text_file", "todo"],
-    "tester": ["run_pytest", "run_command", "write_text_file", "event_query", "directory_tree", "list_directory", "read_text_file", "todo"],
-    "expert_data_analyzer": ["web_search", "memory_match", "event_query", "directory_tree", "list_directory", "read_text_file", "todo"],
+    "expert_code_reviewer": ["memory_match", "event_query", "knowledge_search", "knowledge_list", "directory_tree", "list_directory", "read_text_file", "todo"],
+    "code_reviewer": ["memory_match", "event_query", "knowledge_search", "knowledge_list", "directory_tree", "list_directory", "read_text_file", "todo"],
+    "expert_code_writer": ["run_command", "write_text_file", "event_query", "knowledge_search", "knowledge_list", "directory_tree", "list_directory", "read_text_file", "todo"],
+    "code_writer": ["run_command", "write_text_file", "event_query", "knowledge_search", "knowledge_list", "directory_tree", "list_directory", "read_text_file", "todo"],
+    "expert_test_writer": ["run_pytest", "run_command", "write_text_file", "event_query", "knowledge_search", "knowledge_list", "directory_tree", "list_directory", "read_text_file", "todo"],
+    "tester": ["run_pytest", "run_command", "write_text_file", "event_query", "knowledge_search", "knowledge_list", "directory_tree", "list_directory", "read_text_file", "todo"],
+    "expert_data_analyzer": ["web_search", "memory_match", "event_query", "knowledge_search", "knowledge_list", "directory_tree", "list_directory", "read_text_file", "todo"],
     "expert_customer": ["event_query", "todo"],
     "expert_emotion": ["event_query", "todo"],
     "expert_creative_writer": ["event_query", "todo"],
-    "expert_ui_designer": ["event_query", "web_fetch", "write_text_file", "directory_tree", "list_directory", "read_text_file", "todo"],
+    "expert_ui_designer": ["event_query", "knowledge_search", "knowledge_list", "web_fetch", "write_text_file", "directory_tree", "list_directory", "read_text_file", "todo"],
 }
 
 

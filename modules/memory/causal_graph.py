@@ -37,6 +37,8 @@ class CausalNode:
     keywords: List[str] = field(default_factory=list)
     importance: float = 0.5      # 节点重要性
     confidence: float = 0.5      # 因果置信度 0-1
+    confidence_daily_count: int = 0  # 今日置信度增强计数（用于防止膨胀）
+    confidence_last_reset: str = ""  # 最后重置日期标识（ISO 格式，用于每日重置）
     event_count: int = 0         # 挂载的事件数
     version: int = 0             # 版本号（用于缓存失效）
     updated_at: str = ""         # 更新时间（ISO）
@@ -50,6 +52,8 @@ class CausalNode:
             "keywords": json.dumps(self.keywords, ensure_ascii=False),
             "importance": self.importance,
             "confidence": self.confidence,
+            "confidence_daily_count": self.confidence_daily_count,
+            "confidence_last_reset": self.confidence_last_reset,
             "event_count": self.event_count,
             "version": self.version,
             "updated_at": self.updated_at,
@@ -65,6 +69,8 @@ class CausalNode:
             keywords=json.loads(d.get("keywords", "[]")),
             importance=d.get("importance", 0.5),
             confidence=d.get("confidence", 0.5),
+            confidence_daily_count=d.get("confidence_daily_count", 0),
+            confidence_last_reset=d.get("confidence_last_reset", ""),
             event_count=d.get("event_count", 0),
             version=d.get("version", 0),
             updated_at=d.get("updated_at", ""),
@@ -161,6 +167,8 @@ class CausalGraph:
                 keywords TEXT DEFAULT '[]',
                 importance REAL DEFAULT 0.5,
                 confidence REAL DEFAULT 0.5,
+                confidence_daily_count INTEGER DEFAULT 0,
+                confidence_last_reset TEXT DEFAULT '',
                 event_count INTEGER DEFAULT 0,
                 version INTEGER DEFAULT 0,
                 updated_at TEXT DEFAULT ''
@@ -224,6 +232,72 @@ class CausalGraph:
             self._metrics["query_time_samples"].pop(0)
         if self._metrics["query_time_samples"]:
             self._metrics["avg_query_time"] = sum(self._metrics["query_time_samples"]) / len(self._metrics["query_time_samples"])
+
+
+    # AI Confidence Control ---
+
+
+    def set_node_confidence(self, node_id: str, confidence: float, reason: str = "ai_adjustment") -> bool:
+        """AI 显式设置节点置信度
+
+        Args:
+            node_id: 节点 ID
+            confidence: 目标置信度 (0-1)
+            reason: 调整原因（用于日志审计）
+        """
+        from datetime import datetime
+
+        node = self.get_node(node_id)
+        if not node:
+            logger.warning(f"[Confidence] 节点 {node_id} 不存在，无法设置置信度")
+            return False
+
+        # 重置日计数（AI 显式调整视为新的“日”）
+        today = datetime.now().date().isoformat()
+        node.confidence_daily_count = 0
+        node.confidence_last_reset = today
+
+        # 设置置信度（有上下限保护，确保永远在有效范围内）
+        node.confidence = min(0.99, max(0.01, confidence))
+        node.updated_at = datetime.now().isoformat()
+
+        self.save_node(node)
+        logger.info(
+            f"[Confidence] AI 显式设置节点 {node.id}({node.label}): "
+            f"{node.confidence:.2f} (原因: {reason})"
+        )
+        return True
+
+    def set_edge_confidence(self, edge_id: str, confidence: float, reason: str = "ai_adjustment") -> bool:
+        """AI 显式设置边置信度
+
+        Args:
+            edge_id: 边 ID
+            confidence: 目标置信度 (0-1)
+            reason: 调整原因（用于日志审计）
+        """
+        from datetime import datetime
+
+        edge = self.get_edge(edge_id)
+        if not edge:
+            logger.warning(f"[Confidence] 边 {edge_id} 不存在，无法设置置信度")
+            return False
+
+        # 重置日计数
+        today = datetime.now().date().isoformat()
+        # 辫子结构也有 confidence_daily_count 等字段（通过 from_dict 兼容）
+        edge.confidence_daily_count = 0
+        edge.confidence_last_reset = today
+
+        # 设置置信度（有上下限保护）
+        edge.confidence = min(0.99, max(0.01, confidence))
+
+        self.save_edge(edge)
+        logger.info(
+            f"[Confidence] AI 显式设置边 {edge.id}: {edge.confidence:.2f} (原因: {reason})"
+        )
+        return True
+
 
     def get_metrics_prometheus(self) -> str:
         """获取 Prometheus 格式的指标输出"""

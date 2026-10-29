@@ -109,6 +109,11 @@ def register_business_capabilities() -> None:
         from modules.memory.causal_graph import CausalGraph
         return CausalGraph.get_instance
 
+    # ── 知识库（文档 RAG，独立于事件记忆）──
+    def _knowledge_base():
+        from modules.knowledge.service import get_knowledge_service
+        return get_knowledge_service
+
     _safe_register("blackboard_query", _blackboard_query)
     _safe_register("skill_manager", _skill_manager)
     _safe_register("event_retrieval", _event_retrieval)
@@ -121,12 +126,13 @@ def register_business_capabilities() -> None:
     _safe_register("context_controller", _context_controller)
     _safe_register("event_store", _event_store)
     _safe_register("causal_graph", _causal_graph)
+    _safe_register("knowledge_base", _knowledge_base)
 
     _report_capability_status([
         "blackboard_query", "skill_manager", "event_retrieval", "file_history",
         "touchpoint_detector", "detector_router", "value_formatter",
         "tool_security_gate", "turn_images",
-        "context_controller", "event_store", "causal_graph",
+        "context_controller", "event_store", "causal_graph", "knowledge_base",
     ])
 
     # 触发探针工具注册（原在 infra/tool_manager/tools/__init__.py 随工具集加载；

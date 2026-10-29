@@ -81,6 +81,8 @@ datas += [
     (os.path.join(ROOT, ".env.example"), ".env.example"),
     # VERSION 落在包根（_MEIPASS/VERSION），供 cortex/version.py 读取（否则健康检查显示 0.0.0-unknown）
     (os.path.join(ROOT, "VERSION"), "."),
+    # 第三方许可声明（含 GPL ffmpeg 源码获取告知）——随包分发，GPL 分发义务
+    (os.path.join(ROOT, "THIRD_PARTY_LICENSES.md"), "."),
 ]
 
 # ── Embedding 模型（打入 exe，避免冷启动联网下载；见 main.py _setup_runtime_data）──
@@ -88,6 +90,16 @@ _embed_models = os.path.join(ROOT, "data", "memory", "embeddings", "models")
 if os.path.isdir(_embed_models):
     datas.append((_embed_models, "data/memory/embeddings/models"))
     print(f"[spec] 打包 Embedding 模型: {_embed_models}")
+
+# ── 应用内 ffmpeg（CI 在 vendor/ffmpeg 放置 ffmpeg+ffprobe；本地开发可手动放同目录）──
+# 作为 datas 收集 → _MEIPASS/ffmpeg/，由 video_analyzer.bundled_tool_dirs() 发现。
+# 缺失时不阻断打包：运行时 doctor 会提示用户自装。
+_ffmpeg_vendor = os.path.join(ROOT, "vendor", "ffmpeg")
+if os.path.isdir(_ffmpeg_vendor) and any(os.scandir(_ffmpeg_vendor)):
+    datas.append((_ffmpeg_vendor, "ffmpeg"))
+    print(f"[spec] 打包应用内 ffmpeg: {_ffmpeg_vendor}")
+else:
+    print("[spec] 无 vendor/ffmpeg，跳过应用内 ffmpeg（终端用户需自装）")
 
 # ── Windows VC 运行库 ─────────────────────────────────────
 if sys.platform == "win32":

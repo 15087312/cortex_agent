@@ -68,8 +68,13 @@ class ContinuousThinker:
         # 每会话串行：防止打断时旧 think 异步收尾与新一轮 think 并发写回会话导致乱序
         async with self._session_lock(session_id):
             try:
-                # 1. Retrieve memories
+                # 1. Retrieve memories（事件记忆 + 知识库；知识库仅在知识型意图命中时注入）
                 memory_context = await self._recall_memories(user_message, session_id)
+                knowledge_context = await asyncio.to_thread(self._recall_knowledge, user_message)
+                if knowledge_context:
+                    memory_context = "\n\n".join(
+                        p for p in (memory_context, knowledge_context) if p
+                    )
 
                 # 2. Build context — DB 为唯一真源直读（用户消息已由调用方入库）
                 context_messages = await self._slicer.slice(
@@ -159,6 +164,23 @@ class ContinuousThinker:
             except Exception as e:
                 logger.error(f"Thinking failed: {e}")
                 await message_queue.put({"type": "error", "content": str(e)})
+
+    def _recall_knowledge(self, query: str) -> str:
+        """知识库自动召回（M6）— 仅知识型意图命中时返回【参考资料】块。
+
+        与事件记忆互补：知识库查「文档里怎么写」，事件记忆查「经历过什么」。
+        不依赖会话历史（新会话第一条消息也能用），也不与【曾经发生的事】混排，
+        避免模型把文档当成自己的经历。
+        """
+        try:
+            from modules.knowledge.retrieval import should_retrieve
+            if not should_retrieve(query):
+                return ""
+            from modules.knowledge.service import get_knowledge_service
+            return (get_knowledge_service().search_text(query) or "").strip()
+        except Exception as e:
+            logger.debug(f"[ChatLight] 知识库召回失败（非致命）: {e}")
+            return ""
 
     # @link:block LightThink_Retrieve = Guard · Retrieve
     async def _recall_memories(self, query: str, session_id: str) -> str:

@@ -2107,7 +2107,7 @@ class ModelRunner:
             except Exception as _swallowed_err:
                 logger.debug(f"[_build_system_prompt_for_mode] ignored Exception: {_swallowed_err}")
 
-            full = conversation_header + result + non_core_section
+            full = conversation_header + result + self._build_knowledge_prompt_section() + non_core_section
             logger.debug(f"[ModelRunner] 系统提示词: {len(full)} 字符 (对话历史 {len(conversation_header)} + 系统 {len(result)} + 非核心工具)")
             return full
         except Exception as e:
@@ -2157,6 +2157,27 @@ class ModelRunner:
             logger.debug(f"[ModelRunner] 时间上下文构建失败 (非致命): {e}")
 
         return "\n".join(parts)
+
+    def _build_knowledge_prompt_section(self) -> str:
+        """知识库使用指引 — 仅在本模型可见 knowledge_search 时注入。
+
+        可见性来自 ToolPermissionController（身份白名单），因此客户/情绪等
+        未分配知识库工具的角色不会被提示调用不存在的工具。
+        """
+        try:
+            if "knowledge_search" not in self._visible_tool_whitelist():
+                return ""
+        except Exception as e:
+            logger.debug(f"[ModelRunner] 知识库指引跳过: {e}")
+            return ""
+
+        return (
+            "\n\n【知识库】\n"
+            "- 回答涉及项目文档、规范、接口参数、配置项、架构设计的问题时，"
+            "先调用 knowledge_search 检索，再基于返回片段作答，并标注来源文档与章节。\n"
+            "- 知识库只存文档原文，不含对话历史；查过往经历/经验请用 event_query。\n"
+            "- 检索结果为空时如实说明「知识库中没有相关文档」，不要凭印象编造内容或出处。"
+        )
 
     def _build_tool_guard_prompt(self) -> str:
         """构建工具调用约束，根据工具数量和角色优化详细程度。

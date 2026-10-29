@@ -104,6 +104,12 @@ class Settings(BaseSettings):
         # ── 通用/桌面端设置（持久化到 settings.json，供桌面端消费）──
         "LAUNCH_AT_STARTUP", "PREVENT_SLEEP", "SHOW_FILENAME_IN_GALLERY",
         "ALLOW_GEOLOCATION", "SHORTCUT_KEYS", "STORAGE_PATH",
+
+        # ── 视频识别（图片视觉模型 + ffmpeg 分段采样）──
+        "VIDEO_ANALYSIS_ENABLED", "VIDEO_SEGMENT_SECONDS", "VIDEO_FRAMES_PER_SEGMENT",
+        "VIDEO_MAX_DURATION_SECONDS", "VIDEO_MAX_SIZE_MB", "VIDEO_MAX_TOTAL_FRAMES",
+        "VIDEO_FRAME_WIDTH", "VIDEO_JPEG_QUALITY", "VIDEO_DESC_MAX_CHARS",
+        "VIDEO_FFMPEG_PATH",
     }
 
     # 用户身份
@@ -259,6 +265,31 @@ class Settings(BaseSettings):
     MEMORY_DB_PATH: str = str(Path(__file__).resolve().parents[1] / "data" / "memory.db")
     MEMORY_FAISS_INDEX: str = str(Path(__file__).resolve().parents[1] / "data" / "events_faiss.index")
     MEMORY_ID_MAP: str = str(Path(__file__).resolve().parents[1] / "data" / "events_id_map.json")
+    # ── 知识库（文档 RAG，独立于事件记忆；见 docs/KNOWLEDGE_BASE_DESIGN.md）──
+    # 定位：只存稳定知识（规范/文档/说明），原文保真、带出处、不衰减。
+    # 与事件记忆完全分离：独立 SQLite + 独立 FAISS 索引，不随 memory_libs 切库。
+    KNOWLEDGE_ENABLED: bool = True
+    KNOWLEDGE_DB_PATH: str = str(Path(__file__).resolve().parents[1] / "data" / "knowledge.db")
+    KNOWLEDGE_FAISS_INDEX: str = str(Path(__file__).resolve().parents[1] / "data" / "knowledge_faiss.index")
+    KNOWLEDGE_ID_MAP: str = str(Path(__file__).resolve().parents[1] / "data" / "knowledge_id_map.json")
+    # 摄取根目录白名单（可配置多根）：换行/逗号/分号/系统路径分隔符分隔。
+    # 相对路径按项目根解析；也允许写单个文件实现精确白名单。
+    # ingest 只接受解析后落在这些根之下的路径，防路径穿越与误摄取。
+    KNOWLEDGE_ROOTS: str = "docs"
+    KNOWLEDGE_CHUNK_TOKENS: int = 400        # 单块目标 token 数
+    KNOWLEDGE_CHUNK_OVERLAP: int = 80        # 相邻块重叠 token 数（按句边界对齐）
+    KNOWLEDGE_MIN_CHUNK_TOKENS: int = 20     # 低于此值的碎片并入相邻块
+    KNOWLEDGE_MAX_FILE_BYTES: int = 5_000_000
+    KNOWLEDGE_MAX_CHUNKS_PER_FILE: int = 5000
+    KNOWLEDGE_TOP_K: int = 5
+    KNOWLEDGE_MIN_SEMANTIC: float = 0.30     # 向量路绝对相关性门槛（与记忆检索同口径）
+    KNOWLEDGE_MAX_CHUNKS_PER_DOC: int = 3    # 单文档最多返回块数（防单文档刷屏）
+    KNOWLEDGE_MAX_INJECT_TOKENS: int = 1200  # 注入 token 预算
+    KNOWLEDGE_AUTO_INJECT: bool = True       # False 时仅允许显式工具调用
+    # 启动时后台按哈希增量摄取 KNOWLEDGE_ROOTS（未变文件跳过，不阻塞启动）。
+    # 关闭后库不会自动填充，需显式调用 knowledge_ingest 或 POST /knowledge/ingest。
+    KNOWLEDGE_AUTO_INGEST: bool = True
+
     # 后台向量化 worker：保存事件后延迟 2s 在后台线程加载 embedding 模型并向量化。
     # 与主线程并发加载/推理 torch 有竞态（macOS 段错误），测试置 false 关闭。
     EMBEDDING_BACKGROUND_WORKER: bool = True
@@ -968,6 +999,20 @@ class Settings(BaseSettings):
     CAUSAL_MIN_ANCHOR_CONFIDENCE: float = 0.50  # 锚点置信度下限：低于此值视为无关查询，深度回忆回退
     #   （语义纯匹配实测：真实≥0.53，闲聊噪声≤0.37，0.50 可干净分离）
     CAUSAL_MIN_EVENT_RELEVANCE: float = 0.35   # 佐证事件最低因果关联度：低于此值不入佐证、不挂链
+
+    # ── 视频识别（ffmpeg 分段采样 → 图片视觉模型逐段识别 → 时间轴聚合）──
+    # 用户在聊天框直接传视频时，后端自动抽帳并复用已配置的图片视觉模型，前端无需改。
+    # 前提：系统可用 ffmpeg/ffprobe（PATH 或配置 VIDEO_FFMPEG_PATH）；图片识别模型已配置（VISION_*）。
+    VIDEO_ANALYSIS_ENABLED: bool = True
+    VIDEO_SEGMENT_SECONDS: int = 30      # 每段时长（秒）：采样帧按此归组分段
+    VIDEO_FRAMES_PER_SEGMENT: int = 4    # 每段采样帧数（= 段内均匀采样率）：4 帧约 2x2 拼图一笔视觉调用
+    VIDEO_MAX_DURATION_SECONDS: int = 600  # 单视频最长处理时长（秒），超出部分截断
+    VIDEO_MAX_SIZE_MB: int = 50          # 单视频最大体积（WS 附件并行限制）
+    VIDEO_MAX_TOTAL_FRAMES: int = 60     # 单视频总帧数上限（成本保护：60 帧 ≈ 15 次视觉调用）
+    VIDEO_FRAME_WIDTH: int = 768         # 抽帳缩放宽度（等比缩，高度自动）
+    VIDEO_JPEG_QUALITY: int = 3          # 抽帳质量（-q:v，1最好~5最省）
+    VIDEO_DESC_MAX_CHARS: int = 4000     # 注入对话上下文的最大描述长度
+    VIDEO_FFMPEG_PATH: str = ""         # ffmpeg 所在目录（如 /opt/homebrew/bin）；留空=自动探测
 
     model_config = SettingsConfigDict(
         env_file=str(Path(__file__).resolve().parents[1] / ".env"),

@@ -29,11 +29,12 @@ def test_text_attachment_content():
 
 
 def test_empty_attachments():
+    # summarize_attachments 为 async（视频附件需逐段识别），统一经 _run 调用
     assert _run(parse_attachments([])) == ""
     assert _run(parse_attachments(None)) == ""
     assert extract_images([]) == []
     assert extract_images(None) == []
-    assert summarize_attachments([]) == ""
+    assert _run(summarize_attachments([])) == ""
 
 
 def test_bad_image_no_crash():
@@ -90,7 +91,7 @@ def test_summarize_attachments_image_marker_only(monkeypatch):
 
     monkeypatch.setattr(ia, "ImageAnalyzer", lambda *a, **k: FakeAnalyzer())
     png = f"data:image/png;base64,{_png_b64()}"
-    r = summarize_attachments([{"type": "image/png", "name": "t.png", "data": png}])
+    r = _run(summarize_attachments([{"type": "image/png", "name": "t.png", "data": png}]))
     assert "t.png" in r
     assert "图片内容" not in r
     assert calls == []  # 没有调用视觉模型
@@ -98,5 +99,5 @@ def test_summarize_attachments_image_marker_only(monkeypatch):
 
 def test_summarize_attachments_text_content():
     b64 = base64.b64encode(b"file body").decode()
-    r = summarize_attachments([{"type": "text/plain", "name": "a.txt", "data": f"data:text/plain;base64,{b64}"}])
+    r = _run(summarize_attachments([{"type": "text/plain", "name": "a.txt", "data": f"data:text/plain;base64,{b64}"}]))
     assert "file body" in r

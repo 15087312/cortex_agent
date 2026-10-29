@@ -32,6 +32,10 @@ ALLOWED_IMAGE_MIME = {
     "image/png", "image/jpeg", "image/jpg",
     "image/gif", "image/webp", "image/bmp",
 }
+ALLOWED_VIDEO_MIME = {
+    "video/mp4", "video/quicktime", "video/webm", "video/x-matroska",
+    "video/x-msvideo", "video/mpeg", "video/x-flv", "video/mp2t", "video/3gpp",
+}
 
 
 # @link:block Validate_Guard = Guard
@@ -318,6 +322,46 @@ async def analyze_image_base64(
         raise AppError(ErrorCode.INTERNAL_ERROR, "服务暂时不可用，请稍后重试")
 
 
+# @link:block Video_Analyze = Emit
+@router.post("/video/analyze")
+async def analyze_video(
+    video_file: UploadFile = File(...),
+    prompt: str = Form("")
+):
+    """视频识别：ffmpeg 分段采样 → 图片视觉模型逐段识别 → 时间轴聚合
+
+    参数:
+        video_file: 视频文件（mp4/mov/webm/mkv…）
+        prompt: 可选自定义视觉提示词（默认内置好提时间轴节奏的提示）
+    返回:
+        {success, data: {ok, description, duration, frame_count, segment_count, segments, truncated}}
+    """
+    try:
+        _validate_upload(video_file, ALLOWED_VIDEO_MIME)
+        video_data = await video_file.read()
+        from config.settings import settings
+        max_mb = max(1, int(getattr(settings, "VIDEO_MAX_SIZE_MB", 50) or 50))
+        if len(video_data) > max_mb * 1024 * 1024:
+            return JSONResponse(
+                status_code=413,
+                content={"success": False, "error": f"视频过大（>{max_mb}MB），不支持识别"},
+            )
+        from infra.data_process.core.video_analyzer import get_video_analyzer
+        result = await get_video_analyzer().analyze_video_bytes(video_data, video_file.filename, prompt)
+        if not result.get("ok"):
+            return JSONResponse(
+                status_code=422,
+                content={"success": False, "error": result.get("error", "视频识别失败")},
+            )
+        return JSONResponse(content={"success": True, "data": result})
+    except Exception as e:
+        logger.debug(f"[data_process] 视频识别失败: {type(e).__name__}")
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "error": "服务暂时不可用，请稍后重试"},
+        )
+
+
 @router.get("/status")
 async def get_status():
     """获取信息处理模块状态"""
@@ -342,6 +386,11 @@ async def get_status():
                     "model": "resemblyzer",
                     "embedding_dim": 256,
                     "features": ["identify", "register", "list", "delete"]
+                },
+                "video_analysis": {
+                    "enabled": bool(__import__("config.settings", fromlist=["settings"]).settings.VIDEO_ANALYSIS_ENABLED),
+                    "backend": "ffmpeg_sampling + vision_model",
+                    "features": ["segment_sampling", "global_timeline_description"]
                 }
             }
         }

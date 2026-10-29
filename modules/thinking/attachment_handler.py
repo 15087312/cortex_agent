@@ -26,6 +26,61 @@ class ChatAttachment(BaseModel):
     data: str = ""
 
 
+ALLOWED_VIDEO_EXT = {
+    ".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi", ".wmv", ".flv", ".ts", ".mpg", ".mpeg",
+}
+
+
+def _is_video(att: dict) -> bool:
+    """判断附件是否为视频（MIME video/* 或扩展名白名单[某些客户端不传 video MIME]）"""
+    atype = str(att.get("type") or "")
+    if atype.startswith("video/"):
+        return True
+    name = str(att.get("name") or "")
+    dot = name.lower().rfind(".")
+    return dot > 0 and name[dot:].lower() in ALLOWED_VIDEO_EXT
+
+
+async def _analyze_video_attachment(att: dict) -> str:
+    """视频附件 → 分段采样识别 → 一行时间轴描述文本（供任一注入路径复用）
+
+    三种图片模式都走这里（视频从来不该直连给大模型，肉眼可见的成本/长度不可控）：
+    - describe：作为附件描述注入
+    - direct  ：同样转成文字（大模型只需要知道视频内容，不用看图）
+    - 图片关闭：视频识别仍可用（独立于 LARGE_MODEL_ENABLE_IMAGE，受 VIDEO_ANALYSIS_ENABLED 控制）
+    """
+    from config.settings import settings
+    name = str(att.get("name") or "")
+    atype = str(att.get("type") or "")
+    label = f"[用户上传视频: {name or atype}]"
+    if not getattr(settings, "VIDEO_ANALYSIS_ENABLED", True):
+        return f"{label}（视频识别未启用）"
+    data = str(att.get("data") or "")
+    if not data:
+        return f"{label}（视频内容为空）"
+    try:
+        m = re.match(r"data:[^;]+;base64,(.*)", data, re.S)
+        raw = m.group(1) if m else data
+        video_bytes = base64.b64decode(raw)
+        # 体积守卫：超限直接返回提示，不解码不清 GPU
+        max_mb = max(1, int(getattr(settings, "VIDEO_MAX_SIZE_MB", 50) or 50))
+        if len(video_bytes) > max_mb * 1024 * 1024:
+            return f"{label}（视频超过 {max_mb}MB 识别上限，未处理）"
+        from infra.data_process.core.video_analyzer import get_video_analyzer
+        res = await get_video_analyzer().analyze_video_bytes(video_bytes, name)
+        if not res.get("ok"):
+            return f"{label}（{res.get('error', '视频识别失败')}）"
+        desc = str(res.get("description") or "(无描述)")
+        extra = []
+        if res.get("truncated"):
+            extra.append("视频超出处理时长上限已截断")
+        extra.append(f"时长 {res.get('duration')}s / 采样 {res.get('frame_count')} 帧 / {res.get('segment_count')} 段")
+        return f"{label}（{', '.join(extra)}）视频内容：\n{desc}"
+    except Exception as e:
+        logger.warning(f"[视频附件解析失败] {e}")
+        return f"{label}（视频解析失败: {e}）"
+
+
 def validate_attachments(value) -> str:
     """校验 WS input.attachments 形状，返回错误描述（空字符串表示合法）。
 
@@ -73,6 +128,8 @@ async def parse_attachments(attachments) -> str:
                 parts.append(f"[用户上传图片: {name or atype}] 图片内容：{desc[:500]}")
             except Exception as e:
                 parts.append(f"[用户上传图片: {name or atype}]（图片解析失败: {e}）")
+        elif _is_video(att):
+            parts.append(await _analyze_video_attachment(att))
         else:
             # 非图片文件：尝试当文本读取，否则仅标注文件名
             try:
@@ -103,10 +160,11 @@ def extract_images(attachments) -> List[str]:
     return images
 
 
-def summarize_attachments(attachments) -> str:
+async def summarize_attachments(attachments) -> str:
     """不调视觉模型的轻量标注（直连多模态模式用）
 
     图片只标文件名（原图由 extract_images 直接附给大模型）；文本文件读内容。
+    例外：视频附件走分段采样识别（视频无法直连，必须转文字才能被大模型理解）。
     """
     if not attachments:
         return ""
@@ -119,6 +177,9 @@ def summarize_attachments(attachments) -> str:
         atype = str(att.get("type") or "")
         if atype.startswith("image/"):
             parts.append(f"[用户上传图片: {name or atype}]")
+        elif _is_video(att):
+            # 视频：无论直连/关闭模式都转文字（大模型看不了视频，识别结果即上下文）
+            parts.append(await _analyze_video_attachment(att))
         else:
             try:
                 if data.startswith("data:text/"):
