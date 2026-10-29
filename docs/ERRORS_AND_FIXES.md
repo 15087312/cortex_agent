@@ -2323,3 +2323,22 @@ help: `pyaudio` (v0.2.14) was included because `cortex-agent` depends on `pyaudi
 **影响范围：** 思考步骤丢失（概率低但确实存在）。
 
 **修复建议：** 改为 `Set` 存储已输出的行（精确匹配），或用 `line.trim() === existing.trim()` 比较。
+
+
+## 95. 思考超时按“整轮墙钟”计时 —— 工具执行吃掉预算、界面长时间无回复（后端）
+
+**现象：** 一个开放式任务（例如让 AI 改自己的代码）连续 10 多分钟没有任何回复，界面只有思考过程；日志里出现两次 `单次思考超时（>300.0s）`，随后会话被停止，数据库里该会话 0 条 assistant 消息。
+
+**根因：**
+1. `ContinuousThinker.think_once` / `ModelRunner._generate` 用 `pausable_wait_for(..., timeout=THINK_TIMEOUT)` 给**整轮**（模型调用 + 工具执行 + 多轮工具循环）固定 300s。`exec_command` 跑一次测试就 2 分钟，两轮工具循环必然超时。
+2. 模型 HTTP 卡住（首 token 迟迟不返回）时没有独立的静默超时，只能干等 300/600s。
+3. 工具执行没有独立超时：`asyncio.to_thread(mcp.execute, ...)` 无上限。
+4. 取消时读取部分输出存在竞态：`remove_runner_manager()` 先 pop manager，`api_stream` 再去 `_runner_managers` 取黑板 → 取不到，中断残稿既不落库也不显示。
+
+**修复：**
+1. 新增 `utils/activity.py::ActivityClock`：AI 每次产出（流式 token / 模型响应 / 工具调用）都 `touch()`，`pausable_wait_for(..., activity=clock)` 语义变为**静默超时**（有产出就重新计时）。
+2. 工具执行期间 `clock.pause()/resume()`，工具耗时不计入 AI 静默时间；等待审批（`Suspension`）同样冻结计时。
+3. 工具调用独立计时：`TOOL_CALL_TIMEOUT`（默认 600s），超时只结束本次工具调用、把错误回传给模型，不影响整轮思考预算。
+4. 思考轮次保留整体墙钟上限 `MODEL_THINK_MAX_WALL`（默认 3600s，0=不限），防止无限工具循环。
+5. 超时重试时向黑板写一条可见提示（“模型静默超过 Ns，正在从断点继续”）；重试耗尽时写入可见的 `result_summary`，不再出现“只有过程、没有回复”。
+6. `api_stream` 取消分支新增快照兜底：manager 已被移除时，从 `blackboard_snapshots` 捞回 `[思考被中断 ...]` 残稿并落库/下发。

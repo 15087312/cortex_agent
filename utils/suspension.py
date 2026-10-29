@@ -69,23 +69,42 @@ def effective_elapsed_since(mono_start: float, susp_start: float) -> float:
 
 
 # @link:block Suspension_PausableWait = Guard
-async def pausable_wait_for(awaitable: Awaitable, timeout: float) -> Any:
+async def pausable_wait_for(
+    awaitable: Awaitable,
+    timeout: float,
+    activity: Any = None,
+    max_wall: Optional[float] = None,
+) -> Any:
     """asyncio.wait_for 的挂起感知版本 — 挂起期间不计入超时。
 
     在等待审批（挂起）时，倒计时冻结；恢复后继续计时。
+
+    Args:
+        timeout: 超时秒数。传了 ``activity`` 时语义变为**静默超时**：
+            距上次活动超过 timeout 秒才判定超时（有进展会自动重新计时）。
+        activity: ``utils.activity.ActivityClock``，由被等待的任务在产出时 touch()。
+            为 None 时退回原来的“整体墙钟”语义。
+        max_wall: 可选的整体墙钟上限（秒），无论是否有活动，超过即超时。
+            为 None 表示不限制。
     """
     task = asyncio.ensure_future(awaitable)
     start = time.monotonic()
     suspended_before = Suspension.suspended_duration()
     try:
         while True:
-            elapsed = time.monotonic() - start - (
+            wall = time.monotonic() - start - (
                 Suspension.suspended_duration() - suspended_before
             )
-            remaining = timeout - elapsed
+            if activity is not None:
+                remaining = timeout - activity.idle()
+            else:
+                remaining = timeout - wall
+            if max_wall is not None:
+                remaining = min(remaining, max_wall - wall)
             if remaining <= 0:
                 raise asyncio.TimeoutError()
-            done, _ = await asyncio.wait({task}, timeout=remaining)
+            # 轮询而非一次等到底：活动时钟会在等待期间被 touch()，需要及时重新计时
+            done, _ = await asyncio.wait({task}, timeout=min(remaining, 0.5))
             if task in done:
                 return task.result()
     finally:

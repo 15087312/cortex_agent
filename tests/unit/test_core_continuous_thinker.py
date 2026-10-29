@@ -23,7 +23,7 @@ def _make_ct(monkeypatch):
     ct._model_id = "test_large"
     ct._tier = "large"
     ct.memory = MagicMock()
-    monkeypatch.setattr(ctc, "pausable_wait_for", lambda coro, timeout: coro)
+    monkeypatch.setattr(ctc, "pausable_wait_for", lambda coro, timeout, **kwargs: coro)
     return ct
 
 

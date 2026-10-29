@@ -45,7 +45,7 @@ def _ct(monkeypatch):
     ct.notebook = MagicMock()
     ct.notebook.content = "任务刚开始，请制定初步计划。"
     ct.notebook.append = MagicMock()
-    monkeypatch.setattr(ctc, "pausable_wait_for", lambda coro, timeout: coro)
+    monkeypatch.setattr(ctc, "pausable_wait_for", lambda coro, timeout, **kwargs: coro)
     return ct
 
 

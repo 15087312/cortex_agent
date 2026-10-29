@@ -437,7 +437,7 @@ async def test_generate_timeout_raises(monkeypatch):
     monkeypatch.setattr("modules.thinking.frontend_channel.confirm_frontend_connection", lambda sid: True)
     r.instance.client = MagicMock()
 
-    def _boom(awaitable, timeout):
+    def _boom(awaitable, timeout, **kwargs):
         awaitable.close()  # 避免未 await 协程告警
         return _raising()
 
@@ -677,6 +677,28 @@ async def test_generate_with_tools_streaming_mode_change(monkeypatch):
     r._thinker.record_control_decision.assert_called_once_with(
         {"continue": False, "result_summary": "最终回复"})
     assert r._emit_streaming_content.call_count >= 1
+
+
+async def test_generate_with_tools_tool_timeout(monkeypatch):
+    """工具独立计时：工具卡住超时 → 错误回传给模型，不拖垮整轮思考"""
+    import time as _time
+    r, mcp = _tool_runner(monkeypatch, tier="large")
+    r.TOOL_CALL_TIMEOUT = 0.05
+
+    def _slow_execute(_req):
+        _time.sleep(0.5)
+        return MagicMock(success=True, result="太慢了", error=None)
+
+    mcp.execute = MagicMock(side_effect=_slow_execute)
+    client = _chat_client(
+        _resp(content="", calls=[_tc("calc", '{"a":1,"op":"+","b":1}')]),
+        _resp(content="工具超时后正常收尾"),
+    )
+    out = await r._generate_with_tools("system", "user", client)
+    assert out == "工具超时后正常收尾"
+    # 第二轮请求里应能看到超时错误回传（模型据此换方案）
+    second_messages = client.chat.call_args_list[1].kwargs["messages"]
+    assert any("执行超时" in str(getattr(m, "content", "") or "") for m in second_messages)
 
 
 async def test_generate_with_tools_mode_check_error(monkeypatch):

@@ -963,6 +963,23 @@ class StreamThinkingSystem:
                 except Exception as e:
                     logger.debug("获取取消后的部分响应失败: %s", e)
 
+                if not partial_response:
+                    # 竞态兜底：runner manager 可能在取消时已被 remove_runner_manager() 移除，
+                    # 此时内存黑板读不到；从最近落库的黑板快照里捞回中断残稿，
+                    # 避免出现“思考被中断但一条回复都没有”的情况。
+                    try:
+                        from modules.database.blackboard_repo import load_latest_blackboard
+                        snap = load_latest_blackboard(session_id) or {}
+                        candidate = str(snap.get("final_response") or "")
+                        if candidate.startswith("[思考被中断"):
+                            partial_response = candidate
+                            logger.info(
+                                f"[api_stream] 从黑板快照恢复中断残稿 ({len(candidate)} 字符): "
+                                f"session={session_id[:8]}"
+                            )
+                    except Exception as e:
+                        logger.debug(f"读取中断残稿失败: {e}")
+
                 if partial_response:
                     try:
                         await self._append_message(session_id, "assistant", partial_response)

@@ -61,7 +61,9 @@ class ModelRunner:
     MAX_IDLE_ROUNDS = 5   # 连续无消息最大空闲轮次
     THINK_INTERVAL = 2.0  # 轮间间隔
 
-    THINK_TIMEOUT = 300.0  # 单次思考轮次超时（含重试），超时强制结束思考循环；可被 settings.MODEL_THINK_TIMEOUT / 上级委托覆盖
+    THINK_TIMEOUT = 300.0  # 单次思考轮次的“静默”超时（秒）：AI 无产出超过该时长才判定卡死，有产出自动重新计时；可被 settings.MODEL_THINK_TIMEOUT / 上级委托覆盖
+    THINK_MAX_WALL = 0.0   # 单次思考轮次的整体墙钟上限（秒），0=不限制；可被 settings.MODEL_THINK_MAX_WALL 覆盖
+    TOOL_CALL_TIMEOUT = 600.0  # 单个工具调用超时（秒），独立计时，不计入 AI 静默时间；可被 settings.TOOL_CALL_TIMEOUT 覆盖
 
     PROGRESS_INTERVAL = 300.0  # 主管/大模型等待时，每隔N秒自动收集进度并唤醒
 
@@ -88,6 +90,8 @@ class ModelRunner:
         try:
             from config.settings import settings as _s
             self.THINK_TIMEOUT = float(getattr(_s, "MODEL_THINK_TIMEOUT", self.THINK_TIMEOUT))
+            self.THINK_MAX_WALL = float(getattr(_s, "MODEL_THINK_MAX_WALL", self.THINK_MAX_WALL) or 0)
+            self.TOOL_CALL_TIMEOUT = float(getattr(_s, "TOOL_CALL_TIMEOUT", self.TOOL_CALL_TIMEOUT))
         except Exception as _swallowed_err:
             logger.debug(f"[__init__] ignored Exception: {_swallowed_err}")
 
@@ -131,6 +135,16 @@ class ModelRunner:
             f"[ModelRunner] 创建: {self.model_id} (tier={self.tier}) "
             f"session={self.session_id[:8]} turn={turn_context.turn_id[:8] if turn_context else '?'}"
         )
+
+    @property
+    def activity(self):
+        """共享的活动时钟（按 session 复用）：AI 有产出就重新计时（见 utils.activity）"""
+        clock = getattr(self, "_activity_clock", None)
+        if clock is None:
+            from utils.activity import get_activity_clock
+            clock = get_activity_clock(self.session_id)
+            self._activity_clock = clock
+        return clock
 
     @property
     def context_tokens(self) -> int:
@@ -1539,15 +1553,22 @@ class ModelRunner:
             return f"[模型调用失败: {last_error}]"
 
         try:
-            return await pausable_wait_for(_do_generate(), timeout=self.THINK_TIMEOUT)
+            # 一次新的模型调用开始 = 一次活动，避免复用旧时钟时带着上一轮的静默时间
+            self.activity.touch("generate_start")
+            return await pausable_wait_for(
+                _do_generate(),
+                timeout=self.THINK_TIMEOUT,
+                activity=self.activity,
+                max_wall=getattr(self, "THINK_MAX_WALL", 0) or None,
+            )
         except asyncio.TimeoutError:
             logger.error(
-                f"[ModelRunner] {self.model_id} 模型调用超时 "
-                f"(>{self.THINK_TIMEOUT}s)，终止思考循环"
+                f"[ModelRunner] {self.model_id} 模型调用静默超时 "
+                f"(>{self.THINK_TIMEOUT}s 无任何产出)，终止思考循环"
             )
             # 超时是严重错误，让 think_once 感知到
             raise asyncio.TimeoutError(
-                f"模型调用超时 {self.THINK_TIMEOUT}s"
+                f"模型调用静默超时 {self.THINK_TIMEOUT}s（期间无任何 AI 产出）"
             )
 
     def _record_delegation_chain(self, role: str, task: str, probe_id: str, target_tier: str, wait_seconds: Optional[int] = None) -> None:
@@ -1952,7 +1973,9 @@ class ModelRunner:
                 )
             msg = getattr(resp, "message", None)
             if msg is not None:
+                self.activity.touch("summarize")
                 return getattr(msg, "content", "") or ""
+            self.activity.touch("summarize")
             return ""
         except Exception as e:
             logger.warning(f"[ModelRunner] {self.model_id} 总结调用失败: {e}")
@@ -2396,6 +2419,8 @@ class ModelRunner:
 
                     def _on_token(chunk: str):
                         nonlocal last_emit_len, last_emitted_text
+                        # 有 token 产出 → AI 仍在工作，静默计时重新开始
+                        self.activity.touch("stream")
                         partial_content_parts.append(chunk)
                         # 存到实例上，供取消时读取
                         self._current_streaming_content = "".join(partial_content_parts)
@@ -2416,6 +2441,8 @@ class ModelRunner:
                         response = await client.chat(**kwargs)
                     content = response.message.content or ""
                     tool_calls = response.message.tool_calls
+                    # 模型本轮响应到达 → 活动计时重新开始
+                    self.activity.touch("response")
                     # 推送 deepseek 思考过程（reasoning_content）到前端
                     self._push_reasoning(getattr(response.message, "reasoning_content", ""))
                     # 主管/专家的每轮循环输出 → 过程流（非气泡，entry_type='thinking'）
@@ -2997,7 +3024,44 @@ class ModelRunner:
                                         )
                                         # 同步 MCP execute 会阻塞事件循环（工具可能耗时 20-30s），
                                         # 导致 WebSocket 无法处理 ping 而断开。用 to_thread 避免阻塞。
-                                        mcp_result = await asyncio.to_thread(mcp.execute, tool_request)
+                                        #
+                                        # 工具独立计时：执行期间冻结 AI 的静默计时（activity.pause），
+                                        # 工具超时只结束本次调用并把错误回传给模型，不占用整轮思考预算。
+                                        self.activity.pause()
+                                        try:
+                                            mcp_result = await asyncio.wait_for(
+                                                asyncio.to_thread(mcp.execute, tool_request),
+                                                timeout=self.TOOL_CALL_TIMEOUT,
+                                            )
+                                        except asyncio.TimeoutError:
+                                            # 注意：to_thread 的底层线程无法被强杀，这里只是不再等待它，
+                                            # 把超时结果回传给模型，让 AI 自己换方案。
+                                            from types import SimpleNamespace
+                                            logger.warning(
+                                                f"[ModelRunner] 工具执行超时: model={self.model_id} "
+                                                f"tool={tc.name} timeout={self.TOOL_CALL_TIMEOUT:.0f}s"
+                                            )
+                                            if self.blackboard:
+                                                try:
+                                                    self.blackboard.add_observation(
+                                                        "system",
+                                                        f"工具 {tc.name} 执行超过 "
+                                                        f"{self.TOOL_CALL_TIMEOUT:.0f}s，已中止等待",
+                                                    )
+                                                except Exception as _swallowed_err:
+                                                    logger.debug(
+                                                        f"[tool_timeout] 黑板写入失败 (非致命): {_swallowed_err}"
+                                                    )
+                                            mcp_result = SimpleNamespace(
+                                                success=False,
+                                                result=None,
+                                                error=(
+                                                    f"执行超时（>{self.TOOL_CALL_TIMEOUT:.0f}s），已中止等待。"
+                                                    "请缩小范围/减少输出后重试，或换用其他工具。"
+                                                ),
+                                            )
+                                        finally:
+                                            self.activity.resume()
                                         if mcp_result.success:
                                             result = str(mcp_result.result) if mcp_result.result is not None else "(无返回值)"
                                             # todo 变更 → 推送前端（替代前端轮询），按需刷新 todo 面板
@@ -3849,6 +3913,12 @@ async def remove_runner_manager(session_id: str) -> None:
         mgr = _runner_managers.pop(session_id, None)
         # 会话结束：清理事件记忆上下文缓存，防多会话无界增长
         _session_memory_context.pop(session_id, None)
+    # 会话结束：清理活动时钟（仍有引用的地方继续可用，只是不再被复用）
+    try:
+        from utils.activity import drop_activity_clock
+        drop_activity_clock(session_id)
+    except Exception as _swallowed_err:
+        logger.debug(f"[remove_runner_manager] 清理活动时钟失败 (非致命): {_swallowed_err}")
     if mgr:
         try:
             await mgr.shutdown()

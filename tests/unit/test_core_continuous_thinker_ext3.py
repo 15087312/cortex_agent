@@ -870,7 +870,9 @@ async def test_think_once_timeout_write_success(monkeypatch):
     t._blackboard = bb
     record = await t.think_once("ctx")
     assert "超时" in record["thought"]
-    bb.write_thought.assert_called_once()
+    # 每次重试会留一条可见提示，最终再写一条 [思考超时]
+    assert bb.write_thought.call_count >= 1
+    assert any("思考超时" in str(c.kwargs.get("content", "")) for c in bb.write_thought.call_args_list)
 
 
 def test_think_with_existing_think_fn(monkeypatch):

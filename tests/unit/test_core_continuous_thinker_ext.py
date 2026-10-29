@@ -46,7 +46,7 @@ def _make_ct(monkeypatch):
     ct.notebook.content = "任务刚开始，请制定初步计划。"
     ct.notebook.append = MagicMock()
     ct.notebook.clear = MagicMock()
-    monkeypatch.setattr(ctc, "pausable_wait_for", lambda coro, timeout: coro)
+    monkeypatch.setattr(ctc, "pausable_wait_for", lambda coro, timeout, **kwargs: coro)
     return ct
 
 
@@ -365,7 +365,7 @@ async def test_think_once_timeout_all(monkeypatch):
         raise asyncio.TimeoutError()
 
     ct.think_fn = never
-    monkeypatch.setattr(ctc, "pausable_wait_for", lambda coro, timeout: coro)
+    monkeypatch.setattr(ctc, "pausable_wait_for", lambda coro, timeout, **kwargs: coro)
     result = await ct.think_once("ctx")
     assert result["is_finished"] is True
     assert "超时" in result["thought"]

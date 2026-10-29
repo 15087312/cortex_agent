@@ -64,6 +64,25 @@ def load_blackboard(session_id: str, blackboard_id: str) -> Optional[Dict[str, A
         return None
 
 
+def load_latest_blackboard(session_id: str) -> Optional[Dict[str, Any]]:
+    """读取指定会话最近更新的黑板快照（用于中断时兜底捞回 final_response）"""
+    try:
+        db = get_db_manager()
+        with db.get_session() as s:
+            row = (
+                s.query(BlackboardSnapshotRecord)
+                .filter_by(session_id=session_id)
+                .order_by(BlackboardSnapshotRecord.updated_at.desc())
+                .first()
+            )
+            if not row:
+                return None
+            return json.loads(row.snapshot_json or "{}")
+    except Exception as e:
+        logger.debug(f"[blackboard_repo] 读取最新黑板快照失败: {e}")
+        return None
+
+
 def save_observation(session_id: str, obs) -> bool:
     """将一条黑板 Observation 落库（失败不阻塞，仅记录）"""
     try:

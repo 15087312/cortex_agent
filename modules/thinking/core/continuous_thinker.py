@@ -865,24 +865,34 @@ class ContinuousThinker:
 
         thought = ""
         duration_ms = 0.0
-        # 单次思考超时：优先用 runner 的 THINK_TIMEOUT（上级委托时指定），否则默认
+        # 单次思考超时：优先用 runner 的 THINK_TIMEOUT（上级委托时指定），否则默认。
+        # 语义是“静默超时”：AI 有产出（token/工具/控制指令）就重新计时，
+        # 工具执行期间冻结计时（工具有独立的 TOOL_CALL_TIMEOUT）。
         _timeout = getattr(getattr(self, "_runner_ref", None), "THINK_TIMEOUT", None) or SINGLE_THINK_TIMEOUT
+        _max_wall = self._think_max_wall()
+        clock = self._activity_clock()
         # @link:block ThinkStep_Think = Think
         for attempt in range(1, MAX_THINK_RETRIES + 1):  # pragma: no cover  # 循环必然以 break(成功)/return(超时或异常) 退出，无自然落出路径
             try:
                 start_time = time.time()
-                raw_thought = await pausable_wait_for(self.think_fn(context), timeout=_timeout)
+                clock.touch("think_once_start")
+                raw_thought = await pausable_wait_for(
+                    self.think_fn(context),
+                    timeout=_timeout,
+                    activity=clock,
+                    max_wall=_max_wall,
+                )
                 duration_ms = (time.time() - start_time) * 1000
                 thought = str(raw_thought or "")
                 break
             except asyncio.TimeoutError:
                 if attempt == MAX_THINK_RETRIES:
                     self.logger.warning(
-                        f"单次思考超时（>{_timeout}s），已达最大重试次数 {MAX_THINK_RETRIES}"
+                        f"单次思考静默超时（>{_timeout}s 无任何产出），已达最大重试次数 {MAX_THINK_RETRIES}"
                     )
                     error_bus.report_error(
                         asyncio.TimeoutError(
-                            f"单次思考超时（>{_timeout}s），已达最大重试次数 {MAX_THINK_RETRIES}"
+                            f"单次思考静默超时（>{_timeout}s 无任何产出），已达最大重试次数 {MAX_THINK_RETRIES}"
                         ),
                         ErrorContext(
                             module="continuous_thinker",
@@ -893,6 +903,19 @@ class ContinuousThinker:
                     # 持久化超时结果 — 让下一轮模型能看到发生了什么
                     timeout_thought = "[思考超时]"
                     self.history_thoughts.append(timeout_thought)
+                    # 给用户一个可见的收尾，避免"只有思考过程、没有回复"
+                    try:
+                        self.record_control_decision({
+                            "continue": False,
+                            "result_summary": (
+                                f"[思考超时] 模型连续 {_timeout:.0f} 秒没有任何新输出，本轮已中止。\n"
+                                "已完成的思考/工具结果见上方过程；可以让我重试，或把任务拆小一点再发一次。"
+                            ),
+                        })
+                    except Exception as _swallowed_err:
+                        self.logger.debug(
+                            f"[ContinuousThinker] 超时收尾写入失败 (非致命): {_swallowed_err}"
+                        )
                     if self._get_dialog and self._model_id:
                         try:
                             self._get_dialog.write_thought(
@@ -906,16 +929,18 @@ class ContinuousThinker:
                     return {
                         "thought": timeout_thought,
                         "duration_ms": _timeout * 1000,
-                        "error": f"单次思考超时（>{_timeout}s，已达最大重试次数 {MAX_THINK_RETRIES}）",
+                        "error": f"单次思考静默超时（>{_timeout}s 无任何产出，已达最大重试次数 {MAX_THINK_RETRIES}）",
                         "is_finished": True,
                     }
                 self.logger.warning(
-                    f"单次思考超时（>{_timeout}s），第 {attempt} 次重试..."
+                    f"单次思考静默超时（>{_timeout}s 无任何产出），第 {attempt} 次重试..."
                 )
+                self._notify_timeout_retry(attempt, _timeout)
                 # 断点续思考：设置 runner 从上次中断处继续（保留已完成的思考/工具结果），而非从头重试
                 self._request_resume()
+                clock.touch("timeout_retry")
                 error_bus.report_error(
-                    asyncio.TimeoutError(f"单次思考超时（>{_timeout}s），第 {attempt} 次"),
+                    asyncio.TimeoutError(f"单次思考静默超时（>{_timeout}s），第 {attempt} 次"),
                     ErrorContext(
                         module="continuous_thinker",
                         function="think_once",
@@ -986,6 +1011,45 @@ class ContinuousThinker:
         )
         # @link:block ThinkStep_Emit = Emit
         return record
+
+    def _activity_clock(self):
+        """取本次思考共享的活动时钟：优先用 runner 的（同一 session 复用），否则按会话创建。"""
+        clock = getattr(self, "_clock_ref", None)
+        if clock is None:
+            runner = getattr(self, "_runner_ref", None)
+            clock = getattr(runner, "activity", None)
+            if clock is None:
+                from utils.activity import get_activity_clock
+                clock = get_activity_clock(getattr(self, "_session_id", "") or "")
+            self._clock_ref = clock
+        return clock
+
+    def _think_max_wall(self) -> Optional[float]:
+        """整体墙钟上限（防止无限循环），0/未配置表示不限制。"""
+        try:
+            from config.settings import settings as _s
+            value = float(getattr(_s, "MODEL_THINK_MAX_WALL", 0) or 0)
+            return value or None
+        except Exception:
+            return None
+
+    def _notify_timeout_retry(self, attempt: int, timeout: float) -> None:
+        """超时重试时给用户一条可见提示，避免界面看起来像卡死。"""
+        text = (
+            f"[系统] 模型静默超过 {timeout:.0f}s，正在从断点继续"
+            f"（重试 {attempt + 1}/{MAX_THINK_RETRIES}）"
+        )
+        self.logger.warning(text)
+        try:
+            if self._get_dialog and self._model_id:
+                self._get_dialog.write_thought(
+                    model_id=self._model_id,
+                    tier=self._tier,
+                    content=text,
+                    round_num=len(self.history_thoughts),
+                )
+        except Exception as e:
+            self.logger.debug(f"[Blackboard] 超时提示写入失败 (非致命): {e}")
 
     def _request_resume(self) -> None:
         """请求 runner 从断点续思考（保留已完成的思考/工具结果，而非从头重试）"""

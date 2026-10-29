@@ -2321,3 +2321,22 @@ Verified-correct paths (no data loss):
 **Scope:** Thinking steps occasionally lost (low probability but real).
 
 **Recommended fix:** Store already-output lines in a `Set` (exact matching), or compare via `line.trim() === existing.trim()`.
+
+
+## 95. Thinking timeout charged the whole round — tool execution ate the budget, UI silent for minutes (backend)
+
+**Symptom:** An open-ended task (e.g. "upgrade your own codebase") produced no reply for 10+ minutes; the UI showed only thinking steps. Logs contained two `single thinking timeout (>300.0s)` entries, then the run was stopped and the session had **0 assistant messages**.
+
+**Root cause:**
+1. `ContinuousThinker.think_once` / `ModelRunner._generate` wrapped the **entire round** (model call + tool execution + multi-turn tool loop) in a fixed 300s `pausable_wait_for(..., timeout=THINK_TIMEOUT)`. A single `exec_command` running tests takes 2 minutes, so two tool-loop rounds always blew the budget.
+2. No stall timeout for the model HTTP call — a request that never returns the first token just waited for 300/600s.
+3. Tool execution had no timeout at all: `asyncio.to_thread(mcp.execute, ...)` was unbounded.
+4. Race when reading partial output on cancel: `remove_runner_manager()` popped the manager first, then `api_stream` looked up `_runner_managers` for the blackboard → miss, so the partial reply was neither persisted nor shown.
+
+**Fix:**
+1. New `utils/activity.py::ActivityClock`: every AI output (stream token / model response / tool call) calls `touch()`, and `pausable_wait_for(..., activity=clock)` becomes an **idle timeout** (activity resets the countdown).
+2. `clock.pause()/resume()` around tool execution so tool time is excluded from the AI idle budget; approval waits (`Suspension`) freeze the same timer.
+3. Independent per-tool timeout: `TOOL_CALL_TIMEOUT` (default 600s); on timeout only that tool call ends and the error is returned to the model.
+4. Overall wall-clock cap per round kept as `MODEL_THINK_MAX_WALL` (default 3600s, 0 = unlimited) to stop infinite tool loops.
+5. Visible retry notice in the blackboard while retrying, and a visible `result_summary` once retries are exhausted — no more "process but no reply".
+6. `api_stream` cancel path now falls back to the latest `blackboard_snapshots` row when the manager is already gone, recovering the `[thinking interrupted ...]` partial text.

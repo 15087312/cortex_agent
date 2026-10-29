@@ -898,7 +898,9 @@ class Settings(BaseSettings):
     MODEL_TIMEOUT: int = 600  # 模型 HTTP 请求超时（秒），可被各模型配置覆盖
     # 推理型大模型（如 moonshotai/kimi-k3）首个 token 前有长达 1~3 分钟的静默思考期，
     # 需给足总超时与静默读取超时，否则会报 "Timeout on reading data from socket"。
-    MODEL_THINK_TIMEOUT: float = 300  # 单次思考轮次超时（秒），上一级大模型可自主设置
+    MODEL_THINK_TIMEOUT: float = 300  # 单次思考的“静默”超时（秒）：AI 无任何产出超过该时长才中止/重试，有产出（token/工具/控制指令）自动重新计时；上一级大模型可自主设置
+    MODEL_THINK_MAX_WALL: float = 3600  # 单次思考轮次的整体墙钟上限（秒），0=不限制；防止无限工具循环
+    TOOL_CALL_TIMEOUT: float = 600  # 单个工具调用超时（秒），独立计时，不计入 AI 的静默时间
 
     # ── 搜索配置 ──────────────────────────────────────────
     # 搜索引擎优先级（逗号分隔），按序尝试，首个成功的返回。
