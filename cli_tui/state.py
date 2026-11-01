@@ -5,6 +5,33 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 
+def merge_tool_record(
+    records: List[Dict[str, Any]], record: Dict[str, Any]
+) -> Optional[Dict[str, Any]]:
+    """按 call_id 合并工具记录：调用建行、结果补齐同一行。
+
+    结构化事件（`type=tool`）一个调用发两帧（`tool_call` / `tool_result`），
+    面板要的是“一次调用一行”，所以结果帧只更新已有行，不新增也不重复计数。
+    返回被更新的旧记录；没有同 call_id 的行时返回 None（调用方新建一行）。
+    """
+    call_id = str(record.get("call_id") or "")
+    if not call_id:
+        return None
+    for existing in reversed(records):
+        if existing.get("call_id") != call_id:
+            continue
+        # 只在有新值时覆盖：结果帧不带参数，不能把 call 帧的参数抹掉
+        for key in ("status", "success", "result", "error"):
+            if key in record and record[key] not in (None, ""):
+                existing[key] = record[key]
+        if record.get("latency_ms"):
+            existing["latency_ms"] = record["latency_ms"]
+        if record.get("action"):
+            existing["action"] = record["action"]
+        return existing
+    return None
+
+
 # @link:block AppState_Guard = Guard
 @dataclass
 class AppState:
@@ -131,7 +158,9 @@ class AppState:
             self.dialog_entries = self.dialog_entries[-self.max_entries:]
 
     def add_tool_call(self, record: Dict[str, Any]):
-        """添加工具调用记录"""
+        """添加工具调用记录（结构化事件的 call/result 按 call_id 合并成一行）"""
+        if merge_tool_record(self.tool_calls, record) is not None:
+            return
         self.tool_calls.append(record)
         if len(self.tool_calls) > 100:
             self.tool_calls = self.tool_calls[-100:]

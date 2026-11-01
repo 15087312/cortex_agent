@@ -7,6 +7,8 @@ import { useI18n } from '@/i18n/init.js'
 
 let _uid = 0
 function uid() { return 'm' + (++_uid) }
+let _traceSeq = 0
+let _streamSeq = 0
 
 // 工具调用记录识别（借鉴 dsh 轨迹：工具/委托等中间步骤从对话流分离到轨迹面板）
 function _isToolTrace(text) {
@@ -20,6 +22,19 @@ function _cleanThinking(text) {
     .replace(/^[\s\u{2600}-\u{27BF}\u{1F000}-\u{1FAFF}\u{2B00}-\u{2BFF}]+/u, '')
     .replace(/^(\[[^\]]*\]\s*)+/, '')
     .replace(/[ \t\n\r]+$/, '')
+}
+
+// 事件时间（秒）统一解析：数字直接可用；字符串兼容 ISO / 本地时间（NAIVE UTC → 补 Z）。
+// `chat_messages.created_at` 与 `session_events.created_at` 同存 naive UTC，可直接比较。
+function _tsSec(v) {
+  if (typeof v === 'number' && isFinite(v)) return v
+  const s = String(v || '').trim()
+  if (!s) return 0
+  // JS 只认 3 位小数秒：毫秒之后的部分截断
+  const norm = s.replace(/(\.\d{3})\d+/, '$1')
+  const iso = /([zZ]|[+-]\d{2}:?\d{2})$/.test(norm) ? norm : norm + 'Z'
+  const ms = Date.parse(iso)
+  return isFinite(ms) ? ms / 1000 : 0
 }
 
 function _avatarCls(role) {
@@ -63,17 +78,40 @@ export const useChatStore = defineStore('chat', () => {
   const processingSid = computed(() => processing.value ? session.sessionId : null)
   // 思考循环在线模型状态（由 thinking_progress 解析）：[{model_id, tier, name, status, status_detail, round, max_turns, supervisor, last_thought}]
   const runners = ref([])
+  // ── 会话投影（Phase 4） ──
+  // 服务端把派生状态（todos/runners/tokenUsage/contextPressure）作为整值快照推来，
+  // 每帧带 seq（与事件日志同一计数器）：前端按 key 覆盖，seq 不大于已应用值就丢弃。
+  // 这样重连补发/回放读到的旧快照不会盖掉更新的状态。
+  const projections = ref({})      // key → value（最近一次应用的快照）
+  const todos = ref([])            // todos 投影
+  const tokenUsage = ref(null)     // tokenUsage 投影 {prompt, completion, total, by_tier}
+  const contextTokens = ref(0)     // contextPressure 投影（当前上下文占用 token）
+  const contextWindowSize = ref(0) // contextPressure 投影（上下文窗口大小）
+  const _projSeq = {}              // key → 已应用的最大 seq（非响应式）
+  // ── 可应答请求（Phase 4.b） ──
+  // 待审批/待回答的整快照（服务端 `session_request` 帧）：刷新/重连后据此重建横幅，
+  // 用户在横幅里作答即可继续（以前刷新后横幅直接消失，回合永久挂住）。
+  const pendingRequests = ref([])
+  const hasPendingRequest = computed(() => pendingRequests.value.length > 0)
   // 过程流：本轮连续思考 + 调度语言（无身份标签），持久化到 DB，会话恢复后重建
   const processFlow = ref([])
   // 过程流面板的模型状态快照（显示"当时"情况，非实时）
   const processSnapshot = ref(null)
   // 运行轨迹：工具调用/委托等中间步骤（借鉴 dsh，从对话流分离）
   const traces = ref([])
+  // 流式正文尾巴（Phase 3）：`chunk` 帧边收边显示，最终 `message` 到达时替换
+  const streamTail = ref(null)
   // 主管/专家气泡：按 "tier:identity" 关联其思考过程（_thinking）与工具调用（_tools）
   // 仅按 tier 会导致同 tier 不同身份（identity_name）互相覆盖——后出现者替换前者
   const _expertBubbles = new Map()
   const _pendingByTier = {}
   const _pendingTools = {}
+
+  // 思考文本按行精确去重：cur 是 "\n\n" 连接的累积文本
+  function _hasThinkingLine(cur, line) {
+    if (!cur) return false
+    return cur.split('\n\n').some((l) => l.trim() === line.trim())
+  }
   const _thinkingSeen = new Set()
 
   function _tierOf(d) {
@@ -104,19 +142,19 @@ export const useChatStore = defineStore('chat', () => {
     const bubble = _expertBubbles.get(key)
     if (bubble) {
       const cur = bubble._thinking || ''
-      if (!cur.includes(line)) bubble._thinking = cur ? cur + '\n\n' + line : line
+      // 精确匹配（按行）：避免 "分析需求" 被 "分析需求并制定方案" 子串误杀（§94）
+      if (!_hasThinkingLine(cur, line)) bubble._thinking = cur ? cur + '\n\n' + line : line
     } else {
       const cur = _pendingByTier[key] || ''
-      if (!cur.includes(line)) _pendingByTier[key] = cur ? cur + '\n\n' + line : line
+      if (!_hasThinkingLine(cur, line)) _pendingByTier[key] = cur ? cur + '\n\n' + line : line
     }
   }
 
-  // 主管/专家的工具调用 → 轨迹面板 + 该身份气泡工具列表
+  // 主管/专家的工具调用 → 该身份气泡的工具列表（结构化轨迹走 addToolCall/Result）
   function addExpertTool(d, traceText) {
     const tier = _tierOf(d)
     if (tier !== 'supervisor' && tier !== 'expert') return
     const text = (traceText || _stripReplyText(_cleanThinking(d.content))).slice(0, 200)
-    if (text) traces.value.push({ text, time: Date.now() })
     const ident = d.data?.identity_name || ''
     const key = _bubbleKey(tier, ident)
     const bubble = _expertBubbles.get(key)
@@ -171,8 +209,11 @@ export const useChatStore = defineStore('chat', () => {
     _connectedSids.value = new Set()
     runners.value = []
     traces.value = []
+    streamTail.value = null
     processFlow.value = []
     processSnapshot.value = null
+    resetProjections()
+    resetPending()
     _clearExpertState()
     ws.reset()
   }
@@ -183,6 +224,8 @@ export const useChatStore = defineStore('chat', () => {
     _clearExpertState()
     // 清空模型状态：避免显示旧会话的思考循环（新会话的 thinking_progress 会重新填充）
     runners.value = []
+    resetProjections()
+    resetPending()
     // 处理状态按会话隔离（_processingSids 集合），切换会话不重置其他会话的处理状态
     _stopped.value = false
     // 双源加载：优先 /stream 消息，空则回退 /management dialog
@@ -204,12 +247,15 @@ export const useChatStore = defineStore('chat', () => {
     // ── 统一重放：持久化消息用同一 classifyThinking 分类（保证与运行时规则唯一） ──
     messages.value = []
     traces.value = []
+    streamTail.value = null
     processFlow.value = []
     processSnapshot.value = null
     // 若会话中已有 role=process 聚合记录（新格式），则跳过逐条 thought 折叠（避免重复）
     const hasProcessAgg = msgs.some(m => m.role === 'process')
     // 恢复专用的 expert 聚合：每次输出独立气泡，思考增量计算（非累积）
     const expertAgg = {}  // "tier:identity" -> { lastThinking: '', tools: [], contents: [], name: '' }
+    // 用户消息 = 回放定位锚点（老会话没有 user_message 事件时按时间回退）
+    const userAnchors = []  // [{ key, ts }]
     let pendingLargeThinking = ''
     for (const d of msgs) {
       const tier = d.tier || ''
@@ -290,6 +336,7 @@ export const useChatStore = defineStore('chat', () => {
         id: d.id || '',
         identity_name: d.metadata?.identity_name || '',
       }
+      if (role === 'user') userAnchors.push({ key: msg.id || msg._id, ts: _tsSec(d.created_at) })
       // 大模型回复：把累积的思考挂到该回复的思考区（与运行时 addMessage thinking 一致）
       if ((role === 'large' || role === 'assistant') && pendingLargeThinking) {
         msg.thinking = pendingLargeThinking
@@ -316,6 +363,10 @@ export const useChatStore = defineStore('chat', () => {
     // 末尾仍未挂出的思考 → 丢弃（与运行时 consumeThinking 未消费一致）
     const found = session.sessions.find(x => x.session_id === sid)
     session.currentTitle = found?.title || found?.name || (sid.slice(0, 12) + '...')
+    // 工具轨迹从事件日志回放（与运行时同一套 addToolCall/addToolResult）
+    await replayToolEvents(sid, 500, userAnchors)
+    // 派生状态从投影读回（todos/上下文占用/token 用量）；实时帧到达后按 seq 覆盖
+    await loadProjections(sid)
     ws.reset()
     streamingIdx.value = -1
     // 多会话并行：始终连接目标会话（处理中的其他会话连接保留，互不干扰）
@@ -360,11 +411,9 @@ export const useChatStore = defineStore('chat', () => {
   function addThinkingStep(d) {
     const treeRaw = String(d?.content || '')
     const isTrace = _isToolTrace(treeRaw)
-    // 工具/委托等中间步骤 → 轨迹 + 过程流
+    // 工具/委托等中间步骤 → 过程流（结构化轨迹由 addToolCall/addToolResult 提供）
     if (isTrace) {
-      const text = treeRaw.slice(0, 200)
-      traces.value.push({ text, time: Date.now() })
-      addProcessStep(text)
+      addProcessStep(treeRaw.slice(0, 200))
       return
     }
     const text = _cleanThinkingText(d)
@@ -401,7 +450,35 @@ export const useChatStore = defineStore('chat', () => {
     return t
   }
 
+  function clearStream() {
+    streamTail.value = null
+  }
+
+  // 流式正文增量：同一次生成（turn 相同）累加到同一个尾巴；换轮/新任务则重置
+  function appendStreamChunk(d) {
+    const delta = d?.content || ''
+    if (!delta) return
+    const tier = _tierOf(d)
+    const turn = Number(d?.data?.turn ?? 0)
+    const tail = streamTail.value
+    if (!tail || (turn && tail.turn !== turn)) {
+      streamTail.value = {
+        _id: 'sk' + (++_streamSeq),
+        role: 'assistant',
+        content: '',
+        tier: tier || 'large',
+        identityName: d?.data?.identity_name || '',
+        turn,
+      }
+    }
+    streamTail.value.content += delta
+    if (!streamTail.value.identityName && d?.data?.identity_name) {
+      streamTail.value.identityName = d.data.identity_name
+    }
+  }
+
   function finalizeStream(content) {
+    clearStream()
     const idx = streamingIdx.value
     if (idx >= 0 && messages.value[idx]) {
       const final = content || messages.value[idx].content
@@ -422,6 +499,7 @@ export const useChatStore = defineStore('chat', () => {
     if (!sid) return
     _processingSids.value.delete(sid)
     if (sid === session.sessionId) {
+      clearStream()
       _persistLiveProcess()
       streamingIdx.value = -1
       hint.value = ''
@@ -509,8 +587,13 @@ export const useChatStore = defineStore('chat', () => {
     _stopped.value = false
     _processingSids.value.delete(session.sessionId)
     runners.value = []
+    traces.value = []
+    streamTail.value = null
     processFlow.value = []
     processSnapshot.value = null
+    // 后端清空对话时同步删除投影与待办（chat_gateway.clear_session_messages）→ 本地也清掉
+    resetProjections()
+    resetPending()
   }
 
   function setProcessSnapshot(snap) {
@@ -603,12 +686,247 @@ export const useChatStore = defineStore('chat', () => {
     if (m) { m.answered = true; m.answer = String(answer) }
   }
 
+  // ── 工具轨迹（结构化事件；Phase 0 由 model_runner 推送） ──
+  // 一次调用 = 一条记录：call 建“运行中”行，result 原地补齐状态/耗时/预览，
+  // 不再靠 _isToolTrace 正则从中文摘要里猜工具名。
+
+  // 轨迹锚点：记下调用发生时“最后一条消息”，前端据此把工具卡片插进对话流
+  // （Phase 3 交错）；历史回放拿不到可靠位置，置空 → 落回轨迹面板。
+  function _lastMessageKey() {
+    const list = messages.value || []
+    for (let i = list.length - 1; i >= 0; i--) {
+      const m = list[i]
+      if (!m) continue
+      const key = m.id || m._id
+      if (key) return key
+    }
+    return ''
+  }
+
+  function addToolCall(d) {
+    const p = d.data || {}
+    // 同一 call_id 只建一行（重连补发/历史回放可能与实时事件重叠）
+    if (p.call_id) {
+      const existing = traces.value.find(it => it.kind === 'tool' && it.callId === p.call_id)
+      if (existing) {
+        if (p.args && Object.keys(p.args).length && !Object.keys(existing.args || {}).length) {
+          existing.args = p.args
+        }
+        return existing
+      }
+    }
+    const item = {
+      _id: 'tr' + (++_traceSeq),
+      kind: 'tool',
+      callId: p.call_id || '',
+      name: p.name || 'tool',
+      args: p.args || {},
+      status: p.status || 'running',
+      durationMs: 0,
+      preview: '',
+      error: '',
+      resultChars: 0,
+      // 卡片渲染意图（服务端 tool_view 计算，实时与回放同源）
+      view: p.view || null,
+      tier: p.tier || '',
+      identityName: p.identity_name || '',
+      // 插入位置：最后一条消息的 id（回放传空字符串 → 走轨迹面板）
+      afterKey: p.afterKey !== undefined ? p.afterKey : _lastMessageKey(),
+      time: Date.now(),
+    }
+    traces.value.push(item)
+    return item
+  }
+
+  function addToolResult(d) {
+    const p = d.data || {}
+    // 找最近一条同 callId 的运行中记录（缺 callId 时退回最后一条未完成）
+    let item = null
+    for (let i = traces.value.length - 1; i >= 0; i--) {
+      const it = traces.value[i]
+      if (it.kind !== 'tool') continue
+      const same = p.call_id ? it.callId === p.call_id : it.status === 'running'
+      if (same) { item = it; break }
+    }
+    if (!item) {
+      // 漏收 call（如运行期断线）→ 用 result 补一条已落定的记录
+      item = addToolCall({ data: { ...p, status: p.status || 'ok' } })
+    }
+    item.status = p.status || 'ok'
+    item.durationMs = p.duration_ms || 0
+    item.preview = p.result_preview || ''
+    item.error = p.error || ''
+    item.resultChars = p.result_chars || 0
+    // 结果卡片覆盖调用骨架（无 view 时清空 → 前端回退 generic）
+    if (p.view) item.view = p.view
+    else if (p.status && p.status !== 'running') item.view = null
+    return item
+  }
+
+  // ── 事件日志回放（Phase 1/3） ──
+  // 刷新/重开会话时按 seq 读取持久事件，用与实时相同的方法重建工具轨迹。
+  // 正文气泡与过程流仍由 chat_messages 重建；事件表只用来补工具轨迹与“位置”。
+  // 按 seq 分页读取（长会话事件远超一页；最多 10 页 = 5000 条，避免卡死首屏）
+  async function replayToolEvents(sid, pageSize = 500, userAnchors = []) {
+    let after = 0
+    // 当前轮用户消息 → 本轮的工具卡片插在它后面（对应实时侧的 _lastMessageKey）
+    let anchor = ''
+    // 事件日志是否属于新格式（出现过 user_message 事件）。决定能不能用助手终稿
+    // 事件推进锚点：老会话没有用户消息事件，一推进就会把工具挂到上一轮回复下面。
+    let sawUserEvent = false
+    // 本次重建出的消息 id 集合：终稿事件只认确定存在的那条
+    const knownIds = new Set()
+    for (const m of messages.value || []) {
+      if (m?.id) knownIds.add(m.id)
+      if (m?._id) knownIds.add(m._id)
+    }
+    // 老会话（本次改动之前）没有 user_message 事件：按时间回退到“此前最近一条
+    // 用户消息”。两侧时间同为 UTC，容忍 1s 内的同秒抖动；仍找不到就留空（折叠面板）。
+    const byTime = (ev) => {
+      const ts = _tsSec(ev.timestamp)
+      if (!ts || !userAnchors.length) return ''
+      let key = ''
+      for (const a of userAnchors) {
+        if (a.ts && a.ts <= ts + 1) key = a.key
+      }
+      return key
+    }
+    for (let page = 0; page < 10; page++) {
+      let events = []
+      try {
+        const r = await endpoints.sessionEvents(sid, after, pageSize)
+        events = (r.data?.events) || []
+      } catch {
+        return
+      }
+      if (!events.length) return
+      for (const ev of events) {
+        // 用户消息开新一轮：气泡本身由 chat_messages 重建，这里只推进锚点。
+        if (ev.type === 'user_message') {
+          sawUserEvent = true
+          anchor = ev.data?.message_id || anchor
+          continue
+        }
+        // 助手终稿也推进锚点，同一轮内才是“说一句 → 调工具 → 接着说”的交错。
+        // 仅限新格式会话（老会话没 user_message 事件，推进会全错一轮），
+        // 且只认确定落库的那条消息（终稿未落库/被截断时保留上一锚点，
+        // 宁可不定位（落折叠面板）也不错位）。
+        if (ev.type === 'message' && sawUserEvent) {
+          const mid = ev.data?.message_id || ''
+          if (mid && knownIds.has(mid)) anchor = mid
+          continue
+        }
+        if (ev.type !== 'tool') continue
+        const ev2 = { ...ev, data: { ...(ev.data || {}), afterKey: anchor || byTime(ev) } }
+        if (ev.event === 'tool_call') addToolCall(ev2)
+        else if (ev.event === 'tool_result') addToolResult(ev2)
+      }
+      const lastSeq = events[events.length - 1]._seq || 0
+      if (events.length < pageSize || !lastSeq || lastSeq <= after) return
+      after = lastSeq
+    }
+  }
+
+  // ── 会话投影的应用与恢复（Phase 4） ──
+
+  // 模型状态快照 → 扁平列表：与 status/thinking_progress 帧同一套形状，
+  // 实时帧与投影恢复共用同一函数，避免两处各写一份层级映射。
+  function _flattenRunners(data) {
+    const list = []
+    const add = (r, tier, sup) => { if (r && r.model_id) list.push({ ...r, tier, supervisor: sup || '' }) }
+    if (data?.large_model) add(data.large_model, 'large', '')
+    ;(data?.active_supervisors || []).forEach(s => add(s, 'supervisor', ''))
+    ;(data?.active_experts || []).forEach(e => add(e, 'expert', e?.supervisor || ''))
+    return list
+  }
+
+  // 应用实时模型状态（无 seq：最新即真理）。上下文数只在有值时覆盖——
+  // 心跳里的 0 不代表“上下文清空了”，直接盖会让上下文条闪一下。
+  function applyRunnerSnapshot(data) {
+    if (!data || typeof data !== 'object') return
+    runners.value = _flattenRunners(data)
+    if (data.context_tokens) contextTokens.value = data.context_tokens
+    if (data.context_window_size) contextWindowSize.value = data.context_window_size
+  }
+
+  function _applyProjectionValue(key, value) {
+    if (key === 'runners') { applyRunnerSnapshot(value); return }
+    if (key === 'todos') { todos.value = Array.isArray(value?.todos) ? value.todos : []; return }
+    if (key === 'tokenUsage') { tokenUsage.value = (value && typeof value === 'object') ? value : null; return }
+    if (key === 'contextPressure') {
+      // 投影是权威快照：0 也要应用（与实时心跳的“保持非零”不同）
+      const tokens = Number(value?.tokens)
+      const window = Number(value?.window)
+      if (Number.isFinite(tokens) && tokens >= 0) contextTokens.value = tokens
+      if (Number.isFinite(window) && window >= 0) contextWindowSize.value = window
+    }
+  }
+
+  // 应用一帧投影；返回是否真的应用（旧 seq → false，便于测试与调试）
+  function applyProjection(frame) {
+    const key = String(frame?.key || '')
+    if (!key) return false
+    const seq = Number(frame?.seq || 0)
+    const prev = _projSeq[key] || 0
+    if (seq > 0 && seq <= prev) return false
+    if (seq > 0) _projSeq[key] = seq
+    projections.value = { ...projections.value, [key]: frame.value }
+    _applyProjectionValue(key, frame.value)
+    return true
+  }
+
+  function resetProjections() {
+    Object.keys(_projSeq).forEach(k => { delete _projSeq[k] })
+    projections.value = {}
+    todos.value = []
+    tokenUsage.value = null
+    contextTokens.value = 0
+    contextWindowSize.value = 0
+  }
+
+  // 切换/重开会话时读回当前快照（失败静默：投影只是加速恢复，不影响主流程）
+  async function loadProjections(sid) {
+    if (!sid) return
+    let list = []
+    try {
+      const r = await endpoints.sessionProjections(sid)
+      list = r?.data?.projections || []
+    } catch { return }
+    for (const p of list) applyProjection(p)
+  }
+
+  // ── 可应答请求的应用（Phase 4.b） ──
+  // 快照是权威的：有的要求横幅存在，没有的说明服务端已结束（响应/自动拒绝/断线清理）
+  // → 横幅置为失效，避免留下按钮却点了没反应。
+  function applyPendingRequests(list) {
+    const reqs = (Array.isArray(list) ? list : []).filter(r => r && r.request_id)
+    pendingRequests.value = reqs
+    const ids = new Set(reqs.map(r => r.request_id))
+    for (const r of reqs) {
+      if (String(r.kind) === 'question') addIntent({ data: { payload: r } })
+      else addApproval({ data: { payload: r, stage_event: { target: r.target } } })
+    }
+    for (const m of messages.value) {
+      if (m.kind !== 'approval' && m.kind !== 'intent') continue
+      if (!m.requestId || ids.has(m.requestId)) continue
+      if (m.kind === 'approval') {
+        if (!m.resolved) { m.resolved = true; m.approved = null; m.stale = true }
+      } else if (!m.answered) { m.answered = true; m.stale = true }
+    }
+  }
+
+  function resetPending() {
+    pendingRequests.value = []
+  }
+
   // ── 统一思考事件分类（运行时 WS 与 loadHistory 恢复共用，保证展示规则唯一） ──
   // 返回: { kind: 'approval'|'intent'|'tool_trace'|'thinking'|'expert'|'skip', tier, text }
   function classifyThinking(d) {
     const tier = _tierOf(d)
     // 广播条目类型（thought/response/thinking）：response=最终回复气泡；其余=过程流
     const entryType = String(d.data?.entry_type || '').toLowerCase()
+    // 流式正文增量：已由 chunk 帧渲染进流式气泡，不再重复写过程流
+    if (entryType === 'streaming_delta' && (tier === 'large' || tier === '')) return { kind: 'skip', tier }
     // 安全审查/审批/提问 → 跳过（瞬态交互，不重建横幅、不折叠进思考区）
     if (tier === 'security') return { kind: 'skip', tier }
     // 安全审批 / 模型提问（实时才有 request_id；恢复时后端标 tier='security' 已在上方跳过）
@@ -639,8 +957,8 @@ export const useChatStore = defineStore('chat', () => {
       case 'approval': addApproval(d); return 'approval'
       case 'intent': addIntent(d); return 'intent'
       case 'tool_trace':
+        // 旧文本摘要只进过程流；结构化轨迹由 tool 事件（addToolCall/Result）负责
         addProcessStep(c.text)
-        traces.value.push({ text: c.text, time: Date.now() })
         return 'tool_trace'
       case 'expert': {
         // 仅 entry_type='response' 的最终回复创建气泡；过程推理走过程流
@@ -656,9 +974,13 @@ export const useChatStore = defineStore('chat', () => {
 
   return {
     messages, processing, currentModel, streamingIdx, hint, elapsed,
-    stopped: _stopped, processingSid, runners, traces, processFlow, processSnapshot,
-    init, switchToSession, addMessage, addThinkingStep, addProcessStep, addExpertThinking, addExpertTool,
-    addExpertMessage, consumeThinking, dispatchThinking, classifyThinking,
+    stopped: _stopped, processingSid, runners, traces, streamTail, processFlow, processSnapshot,
+    projections, todos, tokenUsage, contextTokens, contextWindowSize,
+    applyProjection, applyRunnerSnapshot, loadProjections, resetProjections,
+    pendingRequests, hasPendingRequest, applyPendingRequests, resetPending,
+    init, switchToSession,    addMessage, addThinkingStep, addProcessStep, addExpertThinking, addExpertTool,
+    addExpertMessage, addToolCall, addToolResult, replayToolEvents, consumeThinking, dispatchThinking, classifyThinking,
+    appendStreamChunk, clearStream,
     finalizeStream, finalizeSession, sendMessage, retryLastInput, stop, clearMessages,
     setProcessSnapshot,
     deleteMessageAt, editMessageAt,

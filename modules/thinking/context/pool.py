@@ -88,14 +88,29 @@ class TurnContext:
         }
 
     def add(self, fragment: ContextFragment) -> None:
-        """添加 context fragment。同 source 的后续 fragment 会覆盖先前的（设计约定：每个 source 唯一）"""
+        """添加 context fragment。
+
+        同 source 的多个 fragment 共存（不再后者覆盖前者，见 ERRORS_AND_FIXES §93）：
+        不同模块可能复用同一 source 名（如 "memory"），旧实现直接覆盖会导致
+        先加入的上下文被静默丢弃。现改为复合 key：首个用 source，
+        后续追加 source#2、source#3…，全部保留并参与 view() 排序输出。
+
+        内容级去重仍然生效：完全相同的 content 只保留一份。
+        """
         if not fragment.content:
             return
         h = hashlib.md5(fragment.content.encode()).hexdigest()[:16]
         if h in self._hashes:
             return
         self._hashes.add(h)
-        self.fragments[fragment.source] = fragment
+
+        key = fragment.source
+        if key in self.fragments:
+            n = 2
+            while f"{fragment.source}#{n}" in self.fragments:
+                n += 1
+            key = f"{fragment.source}#{n}"
+        self.fragments[key] = fragment
 
     def view(self, role: str, max_tokens: int = 0) -> str:
         parts = []

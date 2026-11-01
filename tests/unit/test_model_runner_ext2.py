@@ -679,6 +679,85 @@ async def test_generate_with_tools_streaming_mode_change(monkeypatch):
     assert r._emit_streaming_content.call_count >= 1
 
 
+async def test_generate_with_tools_emits_structured_tool_events(monkeypatch):
+    """正常工具调用 → tool_call/tool_result 各一条（Phase 0 可视化事件）"""
+    r, mcp = _tool_runner(monkeypatch, tier="large")
+    events = []
+    r._push_tool_call = lambda tc, args: events.append(("call", tc.name, dict(args)))
+    r._push_tool_result = lambda tc, result, **kw: events.append(("result", tc.name, result, kw))
+    client = _chat_client(
+        _resp(content="", calls=[_tc("calc", '{"a":1,"op":"+","b":1}')]),
+        _resp(content="计算完成"),
+    )
+    out = await r._generate_with_tools("system", "user", client)
+    assert out == "计算完成"
+    mcp.execute.assert_called_once()
+    assert [e[0] for e in events] == ["call", "result"]
+    assert events[0][1] == "calc"
+    assert events[0][2] == {"a": 1, "op": "+", "b": 1}
+    assert events[1][1] == "calc"
+    assert events[1][3]["status"] == "ok"
+    assert events[1][3]["duration_ms"] >= 0
+    assert "error" in events[1][3]
+    # Phase 2：结果事件带上原始参数，供卡片投影（命令/路径/查询词）
+    assert events[1][3]["args"] == {"a": 1, "op": "+", "b": 1}
+
+
+# ── 流式正文 chunk 帧（Phase 3） ──────────────────────────────────────────
+
+def test_push_stream_chunk_envelope(monkeypatch):
+    """大模型正文增量 → chunk 帧：只推本会话、带 turn/tier、不写事件表"""
+    sent = []
+    import modules.thinking.api_stream as ap
+    cm = MagicMock()
+    cm.send_json_from_thread = lambda sid, ev: sent.append((sid, ev))
+    monkeypatch.setattr(ap, "connection_manager", cm)
+    recorded = []
+    monkeypatch.setattr(ap, "_record_event", lambda sid, ev: recorded.append(ev))
+    r = _runner(tier="large")
+    r.session_id = "s1"
+    r._push_stream_chunk("半句正文", 2)
+    assert len(sent) == 1
+    sid, ev = sent[0]
+    assert sid == "s1"
+    assert ev["type"] == "chunk"
+    assert ev["event"] == "chunk_delta"
+    assert ev["content"] == "半句正文"
+    assert ev["data"]["turn"] == 2
+    assert ev["data"]["tier"] == "large"
+    # 瞬时事件：不占 seq、不落库（刷新后以最终 message 为准）
+    assert recorded == []
+
+
+def test_push_stream_chunk_only_large(monkeypatch):
+    """主管/专家正文走每轮 thinking 事件，不重复推 chunk"""
+    sent = []
+    import modules.thinking.api_stream as ap
+    cm = MagicMock()
+    cm.send_json_from_thread = lambda sid, ev: sent.append((sid, ev))
+    monkeypatch.setattr(ap, "connection_manager", cm)
+    r = _runner(tier="expert")
+    r.session_id = "s1"
+    r._push_stream_chunk("专家正文", 0)
+    assert sent == []
+    # 空增量不推
+    r_large = _runner(tier="large")
+    r_large.session_id = "s1"
+    r_large._push_stream_chunk("", 0)
+    assert sent == []
+
+
+async def test_generate_with_tools_streams_chunk_frames(monkeypatch):
+    """流式 client 的 token → 逐段 chunk 帧，拼起来等于完整正文"""
+    r, _ = _tool_runner(monkeypatch, tier="large")
+    pieces = []
+    r._push_stream_chunk = lambda delta, turn: pieces.append(delta)
+    client = _stream_client(_resp(content="回复"))
+    out = await r._generate_with_tools("system", "user", client)
+    assert out == "回复"
+    assert "".join(pieces) == "x" * 100 + "余量\n下一行"
+
+
 async def test_generate_with_tools_tool_timeout(monkeypatch):
     """工具独立计时：工具卡住超时 → 错误回传给模型，不拖垮整轮思考"""
     import time as _time
@@ -1102,6 +1181,23 @@ async def test_generate_with_tools_delegate_plan_blocked(monkeypatch):
     ))
     out = await r._generate_with_tools("system", "user", client)
     assert "安全门控拦截" in out
+
+
+async def test_generate_with_tools_delegate_plan_allows_readonly_task(monkeypatch):
+    """plan 模式只拦截含写操作关键词的委派；只读任务照常委托（不被误拦）"""
+    _patch_cfg(monkeypatch, EXECUTION_MODE="plan")
+    adapter = _stub_delegation(monkeypatch, result=type(
+        "R", (), {"success": True, "error": "", "metadata": {}})())
+    r, mcp = _tool_runner(monkeypatch, tier="large")
+    r._thinker = MagicMock()
+    client = _chat_client(_resp(
+        content=None,
+        calls=[_tc("delegate_task", '{"role": "expert_1", "task": "计算 1+1"}')],
+    ))
+    out = await r._generate_with_tools("system", "user", client)
+    assert "安全门控拦截" not in out
+    adapter.delegate.assert_awaited_once()
+    assert r._status == "waiting_delegation"
 
 
 async def test_generate_with_tools_delegate_exception(monkeypatch):
@@ -2715,7 +2811,7 @@ async def test_maybe_summarize_syncs_context_tokens(monkeypatch):
 
 
 async def test_push_todo_update(monkeypatch):
-    """todo 变更 → 推送 type='todo' 事件给前端（替代轮询）"""
+    """todo 变更 → 推送投影快照 + 旧 type='todo' 事件（后者保留兼容）"""
     import modules.thinking.api_stream as api
     sent = []
     class _CM:
@@ -2725,11 +2821,19 @@ async def test_push_todo_update(monkeypatch):
             sent.append((sid, event))
     monkeypatch.setattr(api, "connection_manager", _CM)
     monkeypatch.setattr(api, "_build_event", lambda **kw: kw)
+    monkeypatch.setattr("infra.tool_manager.tools.todo._load_todos",
+                        lambda sid: [{"id": "t1", "content": "a", "status": "pending"}])
     r, mcp = _tool_runner(monkeypatch, tier="expert")
     r.session_id = "s1"
     r._push_todo_update()
-    assert len(sent) == 1
-    sid, ev = sent[0]
+    assert len(sent) == 2
+    # 1) Phase 4 投影：整值快照自带列表，前端不需要再拉一次
+    proj = sent[0][1]
+    assert proj["msg_type"] == "session_projection"
+    assert proj["data"]["key"] == "todos"
+    assert proj["data"]["value"]["total"] == 1
+    # 2) 旧 todo 事件保留（前端按需拉取路径未删）
+    sid, ev = sent[1]
     assert sid == "s1"
     assert ev["msg_type"] == "todo"
     assert ev["event"] == "todo_changed"

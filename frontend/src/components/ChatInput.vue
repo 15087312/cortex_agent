@@ -6,6 +6,8 @@ import { endpoints } from '@/api.js'
 
 const props = defineProps({
   processing: { type: Boolean, default: false },
+  // 有待审批/待回答请求时输入区被接管（Phase 4.b）：先处理上方横幅，不能直接发新消息
+  blocked: { type: Boolean, default: false },
   hint: { type: String, default: '' },
 })
 
@@ -97,7 +99,7 @@ onMounted(() => {
 onUnmounted(() => window.removeEventListener('cortex-focus-input', _onFocusRequest))
 
 function handleSend() {
-  if (props.processing) return
+  if (props.processing || props.blocked) return
   const text = input.value.trim()
   const atts = attachments.value
   if (!text && atts.length === 0) return
@@ -195,7 +197,7 @@ function removeAttachment(i) {
         ref="fieldRef"
         class="chat-input-field"
         v-model="input"
-        :placeholder="processing ? $t('chatInput.thinkingPlaceholder') : $t('chatInput.inputPlaceholder')"
+        :placeholder="blocked ? $t('chatInput.pendingPlaceholder') : (processing ? $t('chatInput.thinkingPlaceholder') : $t('chatInput.inputPlaceholder'))"
         rows="1"
         style="resize: none; overflow-y: hidden; line-height: 1.5; box-sizing: border-box;"
         @input="autoResize"
@@ -205,7 +207,7 @@ function removeAttachment(i) {
       <div class="chat-input-actions">
         <span class="chat-input-hint">{{ hint || $t('chatInput.enterHint') }}</span>
         <slot name="actions" />
-        <button class="chat-send-btn" :disabled="processing" @click="handleSend"><Icon name="send" :size="16" /></button>
+        <button class="chat-send-btn" :disabled="processing || blocked" @click="handleSend"><Icon name="send" :size="16" /></button>
       </div>
     </div>
   </div>

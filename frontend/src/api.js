@@ -185,6 +185,10 @@ export const endpoints = {
   deleteMessage: (sid, mid, signal) => request('DELETE', '/stream/sessions/' + encodeURIComponent(sid) + '/messages/' + encodeURIComponent(mid), undefined, signal),
   updateMessage: (sid, mid, content, signal) => request('PUT', '/stream/sessions/' + encodeURIComponent(sid) + '/messages/' + encodeURIComponent(mid), { content }, signal),
   sessionMessages: (id, limit, signal) => request('GET', '/stream/sessions/' + encodeURIComponent(id) + '/messages?limit=' + (limit || 100), undefined, signal),
+  // 会话事件日志（Phase 1）：与 WS 帧同构，用于刷新/重开会话时重建过程视图
+  sessionEvents: (id, afterSeq, limit, signal) => request('GET', '/stream/sessions/' + encodeURIComponent(id) + '/events?after_seq=' + (afterSeq || 0) + '&limit=' + (limit || 500), undefined, signal),
+  // 会话投影（Phase 4）：{key, value, seq} 整值快照，刷新/切换会话时一次读回
+  sessionProjections: (id, signal) => request('GET', '/stream/sessions/' + encodeURIComponent(id) + '/projections', undefined, signal),
   managementSessions: (signal) => request('GET', '/management/sessions', undefined, signal),
   sessionDialog: (id, limit, signal) => request('GET', '/management/sessions/' + encodeURIComponent(id) + '/dialog?limit=' + (limit || 100), undefined, signal),
 

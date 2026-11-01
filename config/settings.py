@@ -774,10 +774,21 @@ class Settings(BaseSettings):
             RuntimeError: 文件存在但无法读取（_load_personas_yaml 抛出）
         """
         with _PERSONAS_YAML_LOCK:
-            data = self._load_personas_yaml()
-            result = mutator(data)
-            self._save_personas_yaml(data)
-            return result
+            # 进程内锁之外再加跨进程文件锁（多进程并发写 ~/.cortex 见 docs/ERRORS_AND_FIXES.md §96）。
+            # 锁文件 = personas.yaml 路径 + ".lock"，由 faiss_lock 自动追加，不触碰数据文件本身。
+            # 导入失败（如 utils 不可用）时降级为仅线程锁，绝不因加锁失败而中断写入。
+            import contextlib
+            try:
+                from utils.faiss_lock import faiss_file_lock
+                _file_lock = faiss_file_lock(self._personas_yaml_path)
+            except Exception as _lock_err:
+                logger.debug(f"[_modify_personas_yaml] faiss_file_lock 不可用，降级为仅线程锁: {_lock_err}")
+                _file_lock = contextlib.nullcontext()
+            with _file_lock:
+                data = self._load_personas_yaml()
+                result = mutator(data)
+                self._save_personas_yaml(data)
+                return result
 
     def _save_personas_yaml(self, data: dict) -> bool:
         """写入 ~/.cortex/personas.yaml（原子写，调用方需持有 _PERSONAS_YAML_LOCK）"""
@@ -1131,20 +1142,30 @@ class Settings(BaseSettings):
                 keys = ["PERSONA_PROMPTS", "SYSTEM_PROMPT_OVERRIDES"]
             path = self._USER_CONFIG_PATH
             with _SETTINGS_JSON_LOCK:
-                data = {}
-                if path.exists():
-                    try:
-                        data = json.loads(path.read_text(encoding="utf-8"))
-                    except Exception:
-                        data = {}
-                for key in keys:
-                    if hasattr(type(self), "model_fields") and key in type(self).model_fields:
-                        data[key] = getattr(self, key)
-                # 原子写：先写临时文件再替换，防读端读到半写
-                tmp = path.with_suffix(".tmp")
-                tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-                import os as _os
-                _os.replace(tmp, path)
+                # 跨进程文件锁（见 docs/ERRORS_AND_FIXES.md §96）：settings.json 也可能被
+                # 前端子进程启动的后端并发写。导入失败时降级为仅线程锁。
+                import contextlib
+                try:
+                    from utils.faiss_lock import faiss_file_lock
+                    _file_lock = faiss_file_lock(str(path))
+                except Exception as _lock_err:
+                    logger.debug(f"[save_user_config] faiss_file_lock 不可用，降级为仅线程锁: {_lock_err}")
+                    _file_lock = contextlib.nullcontext()
+                with _file_lock:
+                    data = {}
+                    if path.exists():
+                        try:
+                            data = json.loads(path.read_text(encoding="utf-8"))
+                        except Exception:
+                            data = {}
+                    for key in keys:
+                        if hasattr(type(self), "model_fields") and key in type(self).model_fields:
+                            data[key] = getattr(self, key)
+                    # 原子写：先写临时文件再替换，防读端读到半写
+                    tmp = path.with_suffix(".tmp")
+                    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+                    import os as _os
+                    _os.replace(tmp, path)
             return True
         except Exception as e:
             import sys

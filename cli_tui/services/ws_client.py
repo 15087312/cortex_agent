@@ -16,6 +16,7 @@ from typing import Any, Callable, Coroutine, Dict, List, Optional
 import aiohttp
 
 from utils.logger import get_logger
+from ..state import merge_tool_record
 
 
 async def _safe_wait_for(coro, timeout):
@@ -43,6 +44,14 @@ TIER_ICONS = {"large": "🧠", "supervisor": "📊", "expert": "🔧", "user": "
 TIER_LABELS = {"large": "总指挥", "supervisor": "主管", "expert": "专家", "user": "用户", "thinking": "思考", "system": "系统"}
 REFLECTION_ICONS = {"retry": "🔄", "rollback": "↩️", "terminate": "🛑", "ask_user": "❓"}
 
+# 工具状态（服务端 tool_events.STATUS_*）→ 面板成功标记。
+# running 视为“尚未失败”，结果帧到达后由实际状态覆盖。
+_TOOL_OK_STATUSES = {"ok", "running"}
+# 工具参数里最能说明“在干什么”的键（终端命令优先，其次路径/查询）
+_TOOL_ARG_KEYS = ("command", "cmd", "path", "file_path", "query", "pattern", "code", "url")
+# 卡片 view 里可直接当一行摘要的键（服务端 tool_view 计算）
+_TOOL_VIEW_KEYS = ("title", "command", "path", "query")
+
 
 class WSClient:
     """WebSocket 客户端，管理连接、发送、接收和事件分发"""
@@ -66,6 +75,7 @@ class WSClient:
         self._max_entries = 100
         self.tool_calls: List[Dict[str, Any]] = []
         self.tool_stats = {"total": 0, "success": 0, "failed": 0, "total_latency_ms": 0.0}
+        self.stream_chars = 0          # 本轮已流式到达的正文字数（chunk 帧累计）
         self.final_response = ""
         self.elapsed_ms = 0.0
         self.trace_id = ""
@@ -319,6 +329,45 @@ class WSClient:
             logger.debug("parse_event 解析异常: %s, event=%s", e, str(event)[:200])
             return None
 
+    @staticmethod
+    def _tool_action_label(data: Dict[str, Any]) -> str:
+        """工具的一行动作摘要：优先用服务端算好的卡片标题，其次常见参数键。"""
+        view = data.get("view")
+        if isinstance(view, dict):
+            for key in _TOOL_VIEW_KEYS:
+                value = view.get(key)
+                if value:
+                    return str(value)[:60]
+        args = data.get("args")
+        if isinstance(args, dict):
+            for key in _TOOL_ARG_KEYS:
+                value = args.get(key)
+                if value:
+                    return str(value)[:60]
+        return ""
+
+    def _parse_tool_frame(
+        self, event_name: str, data: Dict[str, Any], role: str
+    ) -> Dict[str, Any]:
+        """把 `type=tool` 帧转成工具面板记录（call/result 同 call_id 合并）。"""
+        status = str(data.get("status") or "running")
+        is_result = event_name == "tool_result" or data.get("phase") == "result"
+        return {
+            "kind": "tool",
+            "call_id": str(data.get("call_id") or ""),
+            "tool": str(data.get("name") or data.get("call_id") or "tool"),
+            "action": self._tool_action_label(data),
+            "status": status if is_result else "running",
+            "success": status in _TOOL_OK_STATUSES,
+            "latency_ms": float(data.get("duration_ms") or 0.0),
+            "params": data.get("args") or {},
+            "result": data.get("result_preview", "") if is_result else "",
+            "error": data.get("error", "") if is_result else "",
+            "tier": data.get("tier") or role or "",
+            "identity_name": data.get("identity_name") or "",
+            "timestamp": time.time(),
+        }
+
     def _parse_event_inner(self, event: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """内部解析逻辑"""
         msg_type = event.get("type", "")
@@ -328,6 +377,28 @@ class WSClient:
         data = event.get("data", {}) or {}
         stage_event = data.get("stage_event", {}) if isinstance(data, dict) else {}
         payload = stage_event.get("payload", {}) if isinstance(stage_event, dict) else {}
+
+        # ── 结构化工具事件（Phase 0）: type=tool, event=tool_call|tool_result ──
+        if msg_type == "tool":
+            return self._parse_tool_frame(event_name, data, role)
+
+        # ── 流式正文帧（Phase 3）: type=chunk, event=chunk_delta ──
+        if msg_type == "chunk":
+            delta = content or data.get("delta", "")
+            if not delta:
+                return None
+            tier = data.get("tier") or role or "large"
+            return {
+                "kind": "dialog",
+                "tier": tier,
+                "icon": TIER_ICONS.get(tier, "🧠"),
+                "label": TIER_LABELS.get(tier, tier),
+                "model_id": data.get("model_id") or role or tier,
+                "content": delta,
+                "entry_type": "streaming_delta",
+                "round_num": int(data.get("turn") or 0),
+                "timestamp": time.time(),
+            }
 
         # ── 富事件: broadcast 消息 (多模型通信) ──
         pld_msg_type = payload.get("msg_type", "")
@@ -567,6 +638,7 @@ class WSClient:
         self.dialog_entries = []
         self.tool_calls = []
         self.tool_stats = {"total": 0, "success": 0, "failed": 0, "total_latency_ms": 0.0}
+        self.stream_chars = 0
         self.final_response = ""
         self.trace_id = ""
         self.reflection_events = []
@@ -671,6 +743,16 @@ class WSClient:
                 content = event.get("content", "")
                 data = event.get("data", {}) or {}
 
+                # ── 流式正文帧：只统计进度、更新提示 ──
+                # 不把每个增量写进对话框——终稿的 assistant_message 会整段渲染，
+                # 逐帧写入会让正文在终端里出现两遍。
+                if msg_type == "chunk":
+                    self.stream_chars += len(content or "")
+                    if state:
+                        state.thinking_hint = f"生成中… {self.stream_chars} 字"
+                    await self._emit(event)
+                    continue
+
                 # 解析并添加条目
                 parsed = self.parse_event(event)
                 if parsed:
@@ -704,15 +786,17 @@ class WSClient:
                             self.dialog_entries = self.dialog_entries[-self._max_entries:]
 
                     elif parsed["kind"] == "tool":
-                        self.tool_calls.append(parsed)
-                        if len(self.tool_calls) > 100:
-                            self.tool_calls = self.tool_calls[-100:]
-                        self.tool_stats["total"] += 1
-                        if parsed["success"]:
-                            self.tool_stats["success"] += 1
-                        else:
-                            self.tool_stats["failed"] += 1
-                        self.tool_stats["total_latency_ms"] += parsed["latency_ms"]
+                        # 结构化事件一个调用发两帧：结果帧只补齐同一行，不重建也不重复计数
+                        if merge_tool_record(self.tool_calls, parsed) is None:
+                            self.tool_calls.append(parsed)
+                            if len(self.tool_calls) > 100:
+                                self.tool_calls = self.tool_calls[-100:]
+                            self.tool_stats["total"] += 1
+                            if parsed["success"]:
+                                self.tool_stats["success"] += 1
+                            else:
+                                self.tool_stats["failed"] += 1
+                            self.tool_stats["total_latency_ms"] += parsed["latency_ms"]
 
                     elif parsed["kind"] == "reflection":
                         self.reflection_events.append(parsed)

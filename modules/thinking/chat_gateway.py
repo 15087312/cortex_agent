@@ -144,6 +144,58 @@ def _get_chat_session_repo():
     return get_session_repo()
 
 
+def _clear_session_events(session_id: str) -> None:
+    """删除会话的事件日志（会话/消息被清空时同步清理，避免旧轨迹被回放）。"""
+    try:
+        from modules.database.session_events import get_session_event_repo
+        get_session_event_repo().clear(session_id)
+    except Exception as e:
+        logger.debug(f"[EventLog] 清理会话事件失败 (非致命): {e}")
+
+
+def _clear_session_projections(session_id: str) -> None:
+    """删除会话的投影快照与待办请求（Phase 4/4.b）——与事件日志同生命周期。
+
+    否则新建同名会话或清空后，前端一进来就会拿到上一轮的 todos/上下文占用，
+    甚至弹出早已失效的审批横幅。
+    """
+    try:
+        from modules.thinking import projections
+        projections.clear_projections(session_id)
+    except Exception as e:
+        logger.debug(f"[Projection] 清理会话投影失败 (非致命): {e}")
+    try:
+        from modules.thinking import pending_requests
+        pending_requests.clear(session_id)
+    except Exception as e:
+        logger.debug(f"[Pending] 清理会话待办失败 (非致命): {e}")
+
+
+def _record_user_message(session_id: str, message_id: Optional[str]) -> None:
+    """用户消息入事件表（durable，只存 id）——与 api_stream 同一语义。
+
+    简单路线自身没有工具，但事件日志对整个会话保持同一套锚点规则：换到 agent
+    路线继续聊时，回放仍能把工具卡片挂到正确的用户消息下。只落库、不推送
+    （前端没有 user_message 处理器，实时帧没有意义）。
+    """
+    if not message_id:
+        return
+    try:
+        from modules.database.session_events import get_session_event_repo
+        # 直写仓储（不造 envelope、不取 time()）：事件时间以落库时的 created_at 为准，
+        # 也不占用回合的超时/心跳计时。
+        get_session_event_repo().append(
+            session_id,
+            type="user_message",
+            event="user_message",
+            role="user",
+            content="",
+            data={"message_id": message_id},
+        )
+    except Exception as e:
+        logger.debug(f"[EventLog] 记录用户消息失败 (非致命): {e}")
+
+
 def _envelope(
     session_id: str,
     msg_type: str,
@@ -219,6 +271,23 @@ async def _consume_turn(
     last_event = turn_start      # 最后一次收到队列事件的时间（判断真超时）
     flush_buf: list = []         # token 聚合缓冲，避免逐 token 刷屏
 
+    async def _flush_reply_chunk() -> None:
+        """把回复缓冲推成一帧 `chunk`（流式正文预览，前端边收边渲染）。
+
+        `chunk` 是瞬时帧：不落库、不占 seq；刷新后以 `assistant_message` 为准。
+        """
+        if not flush_buf:
+            return
+        await _safe_ws_send(websocket, _envelope(
+            session_id, "chunk", "chunk_delta", "".join(flush_buf), "main",
+            data={"tier": "large"},
+        ))
+        flush_buf.clear()
+
+    # 回放锚点：用户消息入事件表，必须早于本轮任何工具事件（seq 更小）。
+    # 放在计时基线之后：它不取 time()，也不影响心跳/超时判定。
+    _record_user_message(session_id, user_msg_id)
+
     try:
         while True:
             try:
@@ -255,6 +324,9 @@ async def _consume_turn(
                 chunk = tok.get("content", "")
                 full_text.append(chunk)
                 flush_buf.append(chunk)
+                # 满 40 字符或遇到换行/句末就推一帧，避免逐 token 刷屏
+                if len("".join(flush_buf)) >= 40 or chunk.endswith(("\n", "。", "！", "？", ".", "!", "?")):
+                    await _flush_reply_chunk()
             elif tok.get("type") == "thinking":
                 # deepseek 思考过程（reasoning）单独推送，与回复区分。
                 # 持久化 role="thought"（与 agent 模式 _persist_thought 一致），
@@ -287,22 +359,12 @@ async def _consume_turn(
                     data={"label": "心理活动"},
                 )): pass
             elif tok.get("type") == "done":
-                # 思考过程一次性完整发送（不逐段流式，避免前端一小句一小句冒出来）
-                if flush_buf:
-                    if not await _safe_ws_send(websocket, _envelope(
-                        session_id, "thinking", "thinking_step",
-                        "".join(flush_buf), "thinking",
-                    )): pass
-                    flush_buf.clear()
+                # 剩余尾巴补一帧 chunk（正文已流式推过，不再当思考发一遍）
+                await _flush_reply_chunk()
                 done = True
                 break
             elif tok.get("type") == "error":
-                if flush_buf:
-                    if not await _safe_ws_send(websocket, _envelope(
-                        session_id, "thinking", "thinking_step",
-                        "".join(flush_buf), "thinking",
-                    )): pass
-                    flush_buf.clear()
+                await _flush_reply_chunk()
                 if not await _safe_ws_send(websocket, _envelope(
                     session_id, "error", "error",
                     tok.get("content", "内部错误"), "system",
@@ -509,9 +571,33 @@ async def _chatonly_sse(session_id: str, question: str):
     queue: asyncio.Queue = asyncio.Queue()
     task = asyncio.create_task(thinker.think(session_id, question, queue))
     full_text = []
+    flush_buf: list = []          # token 聚合缓冲（与 WS 分支同一节流策略）
     turn_start = time.time()
     last_progress = turn_start
     last_event = turn_start      # 最近一次收到事件的时间（判断真超时，与 WS 语义一致）
+
+    # 回放锚点：与 WS 分支一致，在计时基线之后、事件循环之前记录
+    _record_user_message(session_id, user_msg_id)
+
+    def _take_chunk() -> Optional[Dict[str, Any]]:
+        """聚合缓冲 → 一帧 `chunk`（流式正文预览）。
+
+        与 WS 分支（`_consume_turn._flush_reply_chunk`）同语义、同节流：
+        `chunk` 是瞬时帧，不落库、不占 seq，刷新后以 `assistant_message` 为准。
+        缓冲为空时返回 None（调用方跳过，不 yield 空帧）。
+        """
+        if not flush_buf:
+            return None
+        text = "".join(flush_buf)
+        flush_buf.clear()
+        return {
+            "event": "chunk",
+            "data": json.dumps(
+                _envelope(session_id, "chunk", "chunk_delta", text, "main",
+                          data={"tier": "large"}),
+                ensure_ascii=False,
+            ),
+        }
 
     errored = False
 
@@ -550,10 +636,23 @@ async def _chatonly_sse(session_id: str, question: str):
 
             last_event = time.time()
             if tok.get("type") == "message":
-                full_text.append(tok.get("content", ""))
+                chunk = tok.get("content", "")
+                full_text.append(chunk)
+                flush_buf.append(chunk)
+                # 与 WS 分支一致：满 40 字符或遇到换行/句末才推一帧，避免逐 token 刷屏
+                if len("".join(flush_buf)) >= 40 or chunk.endswith(("\n", "。", "！", "？", ".", "!", "?")):
+                    frame = _take_chunk()
+                    if frame:
+                        yield frame
             elif tok.get("type") == "done":
+                frame = _take_chunk()      # 尾巴补一帧
+                if frame:
+                    yield frame
                 break
             elif tok.get("type") == "error":
+                frame = _take_chunk()
+                if frame:
+                    yield frame
                 yield {
                     "event": "error",
                     "data": json.dumps(
@@ -681,8 +780,10 @@ async def get_context(session_id: str):
 
 @router.delete("/session/{session_id}")
 async def close_session(session_id: str):
-    # 1️⃣ 统一从 DB 删除会话及消息
+    # 1️⃣ 统一从 DB 删除会话及消息（事件日志一并清理）
     _get_chat_session_repo().delete_session(session_id)
+    _clear_session_events(session_id)
+    _clear_session_projections(session_id)
     # 2️⃣ 关键修复：清理跨模块的进程内存缓存，防止重新打开/请求时仍加载旧数据
     try:
         from modules.thinking.model_runner import _session_memory_context, _resume_context
@@ -715,6 +816,8 @@ async def batch_delete_sessions(body: dict = None):
             repo.delete_session(sid)
         except Exception as _swallowed_err:
             logger.debug(f"[batch_delete_sessions] ignored Exception: {_swallowed_err}")
+        _clear_session_events(sid)
+        _clear_session_projections(sid)
         deleted.append(sid)
     return {"success": True, "data": {"deleted": deleted, "count": len(deleted)}}
 
@@ -723,6 +826,8 @@ async def batch_delete_sessions(body: dict = None):
 async def clear_session_messages(session_id: str):
     """清空会话全部消息（保留会话本身），前端「清空对话」真实生效"""
     _get_chat_session_repo().clear_messages(session_id)
+    _clear_session_events(session_id)
+    _clear_session_projections(session_id)
     # chatonly：DB 为唯一真源，清空 DB 即生效，无需同步内存缓存
     if _resolve_mode() != "chatonly":
         try:
@@ -855,6 +960,39 @@ async def get_session_messages(session_id: str, limit: int = 100):
         return {"success": True, "data": messages}
     from modules.thinking import api_stream
     return await api_stream.get_session_messages(session_id, limit)
+
+
+@router.get("/sessions/{session_id}/events")
+async def get_session_events(session_id: str, after_seq: int = 0, limit: int = 500):
+    """会话事件日志（Phase 1）— 刷新/重开会话时按 seq 回放过程视图。
+
+    与 WS 帧同构（`{type, event, content, data, _seq}`），agent/chatonly
+    共用同一张表；chatonly 目前不写事件，因此返回空列表。
+    """
+    try:
+        from modules.database.session_events import get_session_event_repo
+        repo = get_session_event_repo()
+        events = repo.list_events(session_id, after_seq=after_seq, limit=limit)
+        last_seq = max(repo.last_seq(session_id), events[-1]["_seq"] if events else 0)
+        return {"success": True, "data": {"events": events, "last_seq": last_seq}}
+    except Exception as e:
+        logger.debug(f"[EventLog] 读取会话事件失败: {e}")
+        return {"success": True, "data": {"events": [], "last_seq": 0}}
+
+
+@router.get("/sessions/{session_id}/projections")
+async def get_session_projections(session_id: str):
+    """会话投影（Phase 4）— 一次读回派生状态整值快照。
+
+    返回 `{key, value, seq}` 列表（同 WS `session_projection` 帧的 data），
+    前端按 key 覆盖、按 seq 丢弃旧值；agent/chatonly 共用。
+    """
+    try:
+        from modules.thinking import projections
+        return {"success": True, "data": {"projections": projections.current_projections(session_id)}}
+    except Exception as e:
+        logger.debug(f"[Projection] 读取会话投影失败: {e}")
+        return {"success": True, "data": {"projections": []}}
 
 
 @router.post("/stop")

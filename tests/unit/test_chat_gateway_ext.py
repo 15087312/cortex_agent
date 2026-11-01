@@ -144,6 +144,56 @@ async def test_consume_turn_message_flow(monkeypatch):
     assert "done" in types
 
 
+# ── _record_user_message（事件日志锚点）──────────────────────────────
+
+def test_record_user_message_persists_event(monkeypatch):
+    rec = MagicMock()
+    monkeypatch.setattr("modules.database.session_events.get_session_event_repo", lambda: rec)
+    cg._record_user_message("s1", "m1")
+    assert rec.append.call_args.args[0] == "s1"
+    kw = rec.append.call_args.kwargs
+    # durable 类型 + 只存 id（正文以 chat_messages 为真源）
+    assert kw["type"] == "user_message"
+    assert kw["event"] == "user_message"
+    assert kw["role"] == "user"
+    assert kw["content"] == ""
+    assert kw["data"] == {"message_id": "m1"}
+
+
+def test_record_user_message_skips_missing_id(monkeypatch):
+    rec = MagicMock()
+    monkeypatch.setattr("modules.database.session_events.get_session_event_repo", lambda: rec)
+    cg._record_user_message("s1", "")
+    cg._record_user_message("s1", None)
+    rec.append.assert_not_called()
+
+
+def test_record_user_message_swallows_repo_error(monkeypatch):
+    rec = MagicMock()
+    rec.append.side_effect = RuntimeError("db down")
+    monkeypatch.setattr("modules.database.session_events.get_session_event_repo", lambda: rec)
+    # 事件日志不可用不能影响对话
+    cg._record_user_message("s1", "m1")
+
+
+async def test_consume_turn_records_user_message_after_ack(monkeypatch):
+    ws = FakeWS()
+    repo = MagicMock()
+    repo.save_message = MagicMock(return_value="m1")
+    thinker = MagicMock()
+
+    async def fake_think(sid, content, queue):
+        await queue.put({"type": "done"})
+
+    thinker.think = fake_think
+    monkeypatch.setattr("modules.thinking.frontend_channel.confirm_frontend_connection", lambda sid: True)
+    seen = []
+    monkeypatch.setattr(cg, "_record_user_message", lambda sid, mid: seen.append((sid, mid, ws.sent[-1]["event"])))
+    await cg._consume_turn(ws, "s1", repo, thinker, "你好")
+    # ack(received) 之后才记录 —— 回放时锚点必然排在工具事件之前
+    assert seen == [("s1", "m1", "received")]
+
+
 async def test_consume_turn_error_flow(monkeypatch):
     ws = FakeWS()
     repo = MagicMock()

@@ -340,3 +340,97 @@ class TestParseEventSecurity:
         assert result is not None
         assert result["kind"] == "security"
         assert result["action"] == "审批通过"
+
+
+# ------------------------------------------------------------------ #
+# parse_event — 结构化工具帧 / 流式正文字帧（Phase 0/3 新事件）
+# ------------------------------------------------------------------ #
+
+class TestParseEventToolFrame:
+    def test_tool_call_frame(self, client):
+        """type=tool / tool_call → 工具面板记录（卡片 title 作一行摘要）。"""
+        result = client.parse_event({
+            "type": "tool",
+            "event": "tool_call",
+            "role": "large",
+            "data": {
+                "call_id": "c1",
+                "name": "exec_command",
+                "tier": "large",
+                "status": "running",
+                "args": {"command": "ls -la"},
+                "view": {"card": "terminal", "title": "ls -la"},
+                "duration_ms": 0,
+            },
+        })
+        assert result["kind"] == "tool"
+        assert result["call_id"] == "c1"
+        assert result["tool"] == "exec_command"
+        assert result["action"] == "ls -la"
+        assert result["status"] == "running"
+        assert result["success"] is True
+        assert result["params"] == {"command": "ls -la"}
+        assert result["result"] == ""
+
+    def test_tool_result_frame_carries_status_and_preview(self, client):
+        result = client.parse_event({
+            "type": "tool",
+            "event": "tool_result",
+            "role": "expert",
+            "data": {
+                "call_id": "c1",
+                "name": "exec_command",
+                "phase": "result",
+                "status": "ok",
+                "duration_ms": 12.5,
+                "result_preview": "file.txt",
+                "error": "",
+            },
+        })
+        assert result["status"] == "ok"
+        assert result["latency_ms"] == 12.5
+        assert result["result"] == "file.txt"
+        assert result["tier"] == "expert"
+
+    def test_tool_result_failure_marks_unsuccessful(self, client):
+        result = client.parse_event({
+            "type": "tool",
+            "event": "tool_result",
+            "data": {"call_id": "c2", "name": "exec_command", "phase": "result",
+                     "status": "error", "error": "权限不足"},
+        })
+        assert result["success"] is False
+        assert result["error"] == "权限不足"
+
+    def test_action_falls_back_to_args_without_view(self, client):
+        result = client.parse_event({
+            "type": "tool",
+            "event": "tool_call",
+            "data": {"call_id": "c3", "name": "read_file", "args": {"path": "/tmp/a.py"}},
+        })
+        assert result["action"] == "/tmp/a.py"
+
+    def test_malformed_tool_frame_never_raises(self, client):
+        result = client.parse_event({"type": "tool", "event": "tool_call", "data": None})
+        assert result["kind"] == "tool"
+        assert result["tool"] == "tool"
+        assert result["params"] == {}
+
+
+class TestParseEventChunkFrame:
+    def test_chunk_is_streaming_delta(self, client):
+        result = client.parse_event({
+            "type": "chunk",
+            "event": "chunk_delta",
+            "content": "你好",
+            "role": "large",
+            "data": {"tier": "large", "turn": 2},
+        })
+        assert result["kind"] == "dialog"
+        assert result["entry_type"] == "streaming_delta"
+        assert result["content"] == "你好"
+        assert result["tier"] == "large"
+        assert result["round_num"] == 2
+
+    def test_empty_chunk_ignored(self, client):
+        assert client.parse_event({"type": "chunk", "event": "chunk_delta", "content": ""}) is None

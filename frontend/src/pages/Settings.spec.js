@@ -39,11 +39,11 @@ function mockApi(cfg = {}) {
     { match: '/api/config', data: { success: true, data: configData } },
     // ── 系统信息 / 健康 / 模型状态 ──
     { match: '/api/management/thinking', data: { success: true, data: { models: { LARGE: { status: 'ready' } } } } },
-    { match: '/api/management/vision-models', data: { success: true, data: { models: ['mlx'], dir: '/tmp/models' } } },
+    { match: '/api/management/vision-models', data: cfg.visionModels || { success: true, data: { models: ['mlx'], dir: '/tmp/models' } } },
     { match: '/api/management/install-voice-deps', data: { success: true, data: { message: '已安装' } } },
     { match: '/api/management/open-folder', data: (u, init) => { writes.push({ url: String(u), method: init?.method, body: JSON.parse(init.body) }); return { success: true } } },
     { match: '/api/stream/pet/state/reset', data: (u, init) => { writes.push({ url: String(u), method: init?.method }); return { success: true, data: { values: { mood: 80 } } } } },
-    { match: '/api/stream/pet/state', data: { success: true, data: { values: { mood: 50, satiety: 60 }, text: '心情不错' } } },
+    { match: '/api/stream/pet/state', data: { success: true, data: { values: { mood: 50, satiety: 60, energy: 70, cleanliness: 80 }, text: '心情不错' } } },
     // ── 第三方许可（默认走 /api/ 冗余 → content 为空 → licensesMissing 兑底）──
     { match: '/api/system/licenses', data: (u, init) => (cfg.licenses !== undefined ? cfg.licenses : { success: true, data: {} }) },
     { match: '/api/health', data: { success: true, data: { version: __APP_VERSION__ } } },
@@ -103,20 +103,24 @@ describe('Settings.vue', () => {
     const w = await mountSettings()
     await w.findAll('.settings-tab').find((t) => t.text() === '感知').trigger('click')
     await new Promise((r) => setTimeout(r, 30))
-    // 默认 visionBackend 为 'api' → 不渲染本地模式区块
-    expect(w.findAll('.input.w-280 option').filter(o => /model_a|model_b/.test(o.text())).length).toBe(0)
-    // 切换 visionBackend = local → loadVisionModels 被调用
-    await w.findAll('.input.w-280 option').finally(resolve => resolve(!resolve.any))
-    // toggle visionBackend 为 local
-    await w.findAll('.seg .toggle-switch').find((t) => t.text() === 'API').trigger('click')
+    // 未配置 VISION_BACKEND → segCfg 兜底 'local'，挂载时 loadVisionModels 已扫描目录
+    expect(w.vm.visionBackend).toBe('local')
+    const modelOpts = () => w.findAll('.input.w-280 option').filter((o) => /model_a|model_b/.test(o.text()))
+    expect(modelOpts().length).toBe(2)
+    expect(modelOpts()[0].text()).toBe('model_a (bert)')
+    // 消息栏：检测数量 + 扫描目录路径
+    expect(w.vm.visionModelDir).toBe('/tmp/vision')
+    expect(w.findAll('.setting-row .d').some((d) => d.text().includes('检测到 2 个模型'))).toBe(true)
+    // 切至 API → 本地模式区块（含模型下拉）消失
+    await w.findAll('button').find((b) => b.text().trim() === 'API').trigger('click')
     await new Promise((r) => setTimeout(r, 10))
-    const visionRegions = w.findAll('.input.w-280 option').filter(o => /model_a|model_b/.test(o.text()))
-    expect(visionRegions.length).toBe(2)
-    // 断言检测到的模型数量消息栏被保留
-    await w.vm.loadVisionModels()
+    expect(w.vm.visionBackend).toBe('api')
+    expect(modelOpts().length).toBe(0)
+    // 切回本地 → onVisionBackendChange 重新扫描，下拉恢复
+    await w.findAll('button').find((b) => b.attributes('title') === '本地模型（自动检测）').trigger('click')
     await new Promise((r) => setTimeout(r, 10))
-    const modelCountMsg = w.findAll('.setting-row .t').find((t) => t.text().startsWith('检测到的视觉模型') || t.text().startsWith('检测到'))
-    expect(modelCountMsg).toBeTruthy()
+    expect(w.vm.visionBackend).toBe('local')
+    expect(modelOpts().length).toBe(2)
   })
 
   it('switchLib 切换记忆库', async () => {
@@ -240,13 +244,13 @@ describe('Settings.vue', () => {
   })
 
   it('桌宠状态板数值渲染文本（mood/satiety/energy/cleanliness 展示值断言）', async () => {
-    mockApi({
-      visionModels: { success: true, data: { models: [], dir: '' } },
-    })
+    mockApi()
     const w = await mountSettings()
+    // 状态板在「感知」tab 的桌面宠物分组下
+    await w.findAll('.settings-tab').find((t) => t.text() === '感知').trigger('click')
     await new Promise((r) => setTimeout(r, 30))
     // 断言四项 badge 展示值为 mood 50, satiety 60, energy 70, cleanliness 80
-    const badges = w.findAll('.badge')
+    const badges = w.findAll('.setting-row .badge').filter((b) => /心情|饱食|精力|清洁/.test(b.text()))
     expect(badges.length).toBe(4)
     expect(badges[0].text()).toContain('心情 50')
     expect(badges[1].text()).toContain('饱食 60')

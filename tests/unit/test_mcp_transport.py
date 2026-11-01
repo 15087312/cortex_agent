@@ -610,14 +610,14 @@ class TestMCPStreamableHttpTransport:
         session.list_tools = AsyncMock(return_value=_tools_result("h1", "h2"))
         ctx = AsyncMock()
         ctx.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock(), AsyncMock()))
-        with patch("mcp.client.streamable_http.streamablehttp_client", return_value=ctx) as mock_http, \
+        with patch("infra.mcp.transport._open_streamable_http", return_value=(ctx, None)) as mock_http, \
              patch("mcp.ClientSession") as mock_cs:
             mock_cs.return_value.__aenter__ = AsyncMock(return_value=session)
             ok = await t.connect()
         assert ok is True
         assert t.is_connected is True
         assert [x.name for x in t._tools_cache] == ["h1", "h2"]
-        mock_http.assert_called_once_with(url=t._url, headers=None)
+        mock_http.assert_called_once_with(t._url, {})
 
     async def test_connect_with_headers(self):
         t = self.make(headers={"Authorization": "Bearer tok"})
@@ -626,11 +626,11 @@ class TestMCPStreamableHttpTransport:
         session.list_tools = AsyncMock(return_value=_tools_result("h1"))
         ctx = AsyncMock()
         ctx.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock(), AsyncMock()))
-        with patch("mcp.client.streamable_http.streamablehttp_client", return_value=ctx) as mock_http, \
+        with patch("infra.mcp.transport._open_streamable_http", return_value=(ctx, None)) as mock_http, \
              patch("mcp.ClientSession") as mock_cs:
             mock_cs.return_value.__aenter__ = AsyncMock(return_value=session)
             await t.connect()
-        mock_http.assert_called_once_with(url=t._url, headers={"Authorization": "Bearer tok"})
+        mock_http.assert_called_once_with(t._url, {"Authorization": "Bearer tok"})
 
     async def test_connect_fallback_to_sse(self):
         """streamableHttp 失败 → 自动降级 SSE（抄 Cherry getTransportCandidates）"""
@@ -639,7 +639,7 @@ class TestMCPStreamableHttpTransport:
         session.initialize = AsyncMock()
         session.list_tools = AsyncMock(return_value=_tools_result("s1"))
         sse_ctx = _fake_ctx()
-        with patch("mcp.client.streamable_http.streamablehttp_client",
+        with patch("infra.mcp.transport._open_streamable_http",
                    side_effect=RuntimeError("405 Method Not Allowed")), \
              patch("mcp.client.sse.sse_client", return_value=sse_ctx) as mock_sse, \
              patch("mcp.ClientSession") as mock_cs:
@@ -652,7 +652,7 @@ class TestMCPStreamableHttpTransport:
 
     async def test_connect_both_fail(self):
         t = self.make(timeout=10)
-        with patch("mcp.client.streamable_http.streamablehttp_client",
+        with patch("infra.mcp.transport._open_streamable_http",
                    side_effect=RuntimeError("http down")), \
              patch("mcp.client.sse.sse_client",
                    side_effect=RuntimeError("sse down")):
@@ -674,3 +674,49 @@ class TestMCPStreamableHttpTransport:
         await t.close()
         assert t.is_connected is False
         assert t._tools_cache == []
+
+
+class TestStreamableHttpCompat:
+    """mcp 1.x / 2.x API 差异（2.x 改名 + 去掉 headers 形参 + 只返回 2 元组）"""
+
+    def test_helper_without_headers_returns_ctx_only(self):
+        from infra.mcp.transport import _open_streamable_http
+        ctx, client = _open_streamable_http("http://localhost/mcp")
+        assert ctx is not None
+        assert client is None
+
+    async def test_helper_with_headers_builds_client(self):
+        import mcp.client.streamable_http as mod
+        if not hasattr(mod, "streamable_http_client"):
+            pytest.skip("mcp 1.x 由 headers= 形参处理")
+        from infra.mcp.transport import _open_streamable_http
+        ctx, client = _open_streamable_http("http://localhost/mcp", {"Authorization": "Bearer t"})
+        assert ctx is not None
+        assert client is not None          # 2.x：头部挂在 HTTP 客户端上
+        await client.aclose()
+
+    async def test_connect_accepts_two_tuple_streams(self):
+        """mcp 2.x 的 __aenter__ 只返回 (read, write)，不能按 3 元组解包"""
+        from infra.mcp.transport import MCPStreamableHttpTransport
+        t = MCPStreamableHttpTransport(server_name="http_srv", url="http://x/mcp")
+        session = AsyncMock()
+        session.list_tools = AsyncMock(return_value=_tools_result("only"))
+        ctx = AsyncMock()
+        ctx.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
+        with patch("infra.mcp.transport._open_streamable_http", return_value=(ctx, None)), \
+             patch("mcp.ClientSession") as mock_cs:
+            mock_cs.return_value.__aenter__ = AsyncMock(return_value=session)
+            assert await t.connect() is True
+        assert [x.name for x in t._tools_cache] == ["only"]
+
+    async def test_close_closes_http_client(self):
+        """2.x 不会关闭外部传入的客户端 → 自己关，避免连接泄漏"""
+        from infra.mcp.transport import MCPStreamableHttpTransport
+        t = MCPStreamableHttpTransport(server_name="http_srv", url="http://x/mcp")
+        http_client = AsyncMock()
+        t._http_client = http_client
+        t._ctx = AsyncMock()
+        t._connected = True
+        await t.close()
+        http_client.aclose.assert_awaited_once()
+        assert t._http_client is None

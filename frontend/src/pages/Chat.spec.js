@@ -61,6 +61,209 @@ describe('Chat 页面', () => {
     expect(approvals[0].target).toBe('exec_command')
   })
 
+  it('WS tool 事件 → 结构化轨迹（名称/状态/耗时/结果预览）', async () => {
+    const w = await mountChat()
+    const chat = useChatStore()
+    wsClient._emit('tool', {
+      type: 'tool', event: 'tool_call', session_id: 's1',
+      data: { call_id: 'c1', name: 'read_file', args: { path: 'a.py' }, status: 'running' },
+    })
+    expect(chat.traces).toHaveLength(1)
+    wsClient._emit('tool', {
+      type: 'tool', event: 'tool_result', session_id: 's1',
+      data: { call_id: 'c1', status: 'ok', duration_ms: 42, result_preview: 'print(1)', result_chars: 8 },
+    })
+    expect(chat.traces[0]).toMatchObject({ status: 'ok', durationMs: 42, preview: 'print(1)' })
+    await w.vm.$nextTick()
+    await w.find('.chat-traces-header').trigger('click')
+    expect(w.text()).toContain('read_file')
+    expect(w.text()).toContain('42ms')
+    expect(w.text()).toContain('print(1)')
+  })
+
+  it('tool 事件带 view → 轨迹区渲染对应工具卡片（Phase 2）', async () => {
+    const w = await mountChat()
+    const chat = useChatStore()
+    wsClient._emit('tool', {
+      type: 'tool', event: 'tool_call', session_id: 's1',
+      data: {
+        call_id: 'c3', name: 'exec_command', args: { command: 'pytest -q' },
+        view: { card: 'terminal', title: 'pytest -q', command: 'pytest -q', cwd: '/repo', exit_code: null, output: '' },
+      },
+    })
+    wsClient._emit('tool', {
+      type: 'tool', event: 'tool_result', session_id: 's1',
+      data: {
+        call_id: 'c3', status: 'ok', duration_ms: 30,
+        view: { card: 'terminal', title: 'pytest -q', command: 'pytest -q', cwd: '/repo', exit_code: 0, output: '3 passed' },
+      },
+    })
+    expect(chat.traces[0].view.card).toBe('terminal')
+    await w.vm.$nextTick()
+    await w.find('.chat-traces-header').trigger('click')
+    expect(w.find('.tool-card-terminal').exists()).toBe(true)
+    expect(w.text()).toContain('exit 0')
+    expect(w.find('.tool-card-output').text()).toContain('3 passed')
+  })
+
+  it('WS chunk 事件 → 流式尾巴气泡，最终 message 到达后替换（Phase 3）', async () => {
+    const w = await mountChat()
+    const chat = useChatStore()
+    wsClient._emit('chunk', {
+      type: 'chunk', event: 'chunk_delta', session_id: 's1', content: '你好',
+      data: { tier: 'large', identity_name: '总指挥' },
+    })
+    await w.vm.$nextTick()
+    expect(chat.streamTail.content).toBe('你好')
+    expect(w.text()).toContain('你好')
+    // 尾巴气泡不带操作按钮（未落定不可复制/删除）
+    expect(w.findAll('.message-actions')).toHaveLength(0)
+
+    wsClient._emit('chunk', {
+      type: 'chunk', event: 'chunk_delta', session_id: 's1', content: '，世界',
+      data: { tier: 'large', identity_name: '总指挥' },
+    })
+    await w.vm.$nextTick()
+    expect(chat.streamTail.content).toBe('你好，世界')
+
+    // 其它会话的 chunk 不混入当前流
+    wsClient._emit('chunk', { type: 'chunk', session_id: 'other', content: '噪声', data: { tier: 'large' } })
+    expect(chat.streamTail.content).toBe('你好，世界')
+
+    // 最终 message 落定 → 尾巴清空，改为正式气泡
+    wsClient._emit('message', {
+      type: 'message', event: 'assistant_message', session_id: 's1',
+      content: '你好，世界', data: { message_id: 'm1' },
+    })
+    await w.vm.$nextTick()
+    expect(chat.streamTail).toBe(null)
+    expect(chat.messages.at(-1)).toMatchObject({ role: 'assistant', content: '你好，世界' })
+  })
+
+  it('工具调用开始 → 流式尾巴收起（不冒充最终回答）', async () => {
+    await mountChat()
+    const chat = useChatStore()
+    wsClient._emit('chunk', {
+      type: 'chunk', session_id: 's1', content: '先看看文件', data: { tier: 'large', turn: 0 },
+    })
+    expect(chat.streamTail).not.toBe(null)
+    wsClient._emit('tool', {
+      type: 'tool', event: 'tool_call', session_id: 's1',
+      data: { call_id: 'c1', name: 'read_file', args: { path: 'a.py' } },
+    })
+    expect(chat.streamTail).toBe(null)
+    expect(chat.traces).toHaveLength(1)
+  })
+
+  it('工具卡片插进对话流：卡片在用户气泡下方、回复在卡片之后（Phase 3 交错）', async () => {
+    const w = await mountChat()
+    const chat = useChatStore()
+    chat.addMessage({ role: 'user', content: '查一下目录' })
+    wsClient._emit('tool', {
+      type: 'tool', event: 'tool_call', session_id: 's1',
+      data: {
+        call_id: 'c1', name: 'exec_command', args: { command: 'ls' },
+        view: { card: 'terminal', title: 'ls', command: 'ls', cwd: '', exit_code: null, output: '' },
+      },
+    })
+    await w.vm.$nextTick()
+    // 记下调用时的消息→卡片可定位到那一条
+    expect(chat.traces[0].afterKey).toBeTruthy()
+    const inline = w.find('.chat-traces-inline')
+    expect(inline.exists()).toBe(true)
+    expect(inline.find('.tool-card-terminal').exists()).toBe(true)
+    // 已定位的不再重复进折叠面板
+    expect(w.find('.chat-traces').exists()).toBe(false)
+
+    wsClient._emit('message', {
+      type: 'message', session_id: 's1', content: '目录已列出', data: { message_id: 'm1' },
+    })
+    await w.vm.$nextTick()
+    expect(chat.messages.at(-1).content).toBe('目录已列出')
+    // DOM 顺序：用户气泡 → 工具卡片 → 回复气泡
+    const order = Array.from(w.element.querySelectorAll('.message, .chat-traces-inline'))
+      .map(el => (el.classList.contains('chat-traces-inline') ? 'traces' : 'msg'))
+    expect(order).toEqual(['msg', 'traces', 'msg'])
+  })
+
+  it('历史回放的工具事件不插进对话流（无可靠位置 → 折叠面板）', async () => {
+    const w = await mountChat()
+    const chat = useChatStore()
+    chat.addMessage({ role: 'user', content: '旧问题' })
+    vi.spyOn(endpoints, 'sessionEvents').mockResolvedValue({
+      data: {
+        events: [{
+          _seq: 1, type: 'tool', event: 'tool_call', session_id: 's1',
+          data: { call_id: 'h1', name: 'read_file', args: { path: 'a.py' } },
+        }],
+        last_seq: 1,
+      },
+    })
+    await chat.replayToolEvents('s1')
+    expect(chat.traces[0].afterKey).toBe('')
+    await w.vm.$nextTick()
+    expect(w.find('.chat-traces-inline').exists()).toBe(false)
+    expect(w.find('.chat-traces').exists()).toBe(true)
+  })
+
+  it('刷新后工具卡片回到原位（user_message 事件提供锚点）', async () => {
+    const w = await mountChat()
+    const chat = useChatStore()
+    // 模拟 switchToSession 从 DB 加载的历史消息（带服务端 id）
+    chat.messages = [
+      { _id: 'm1', id: 'u1', role: 'user', content: '旧问题' },
+      { _id: 'm2', id: 'a1', role: 'assistant', content: '旧回答' },
+    ]
+    vi.spyOn(endpoints, 'sessionEvents').mockResolvedValue({ data: {
+      events: [
+        { _seq: 1, type: 'user_message', event: 'user_message', data: { message_id: 'u1' } },
+        { _seq: 2, type: 'tool', event: 'tool_call', data: { call_id: 'c1', name: 'read_file', args: { path: 'a.py' } } },
+      ],
+      last_seq: 2,
+    } })
+    await chat.replayToolEvents('s1')
+    await w.vm.$nextTick()
+    expect(chat.traces[0].afterKey).toBe('u1')
+    // 回到对话流里（用户消息之后、回复之前），不再进折叠面板
+    expect(w.find('.chat-traces').exists()).toBe(false)
+    const order = Array.from(w.element.querySelectorAll('.message, .chat-traces-inline'))
+      .map(el => (el.classList.contains('chat-traces-inline') ? 'traces' : 'msg'))
+    expect(order).toEqual(['msg', 'traces', 'msg'])
+  })
+
+  it('刷新后老会话（无 user_message 事件）的工具卡片也回到原位', async () => {
+    const w = await mountChat()
+    const chat = useChatStore()
+    chat.messages = [
+      { _id: 'm1', id: 'u1', role: 'user', content: '旧问题' },
+      { _id: 'm2', id: 'a1', role: 'assistant', content: '旧回答' },
+    ]
+    vi.spyOn(endpoints, 'sessionEvents').mockResolvedValue({ data: {
+      events: [
+        { _seq: 1, timestamp: 1100, type: 'tool', event: 'tool_call', data: { call_id: 'c1', name: 'read_file', args: { path: 'a.py' } } },
+      ],
+      last_seq: 1,
+    } })
+    // 无 user_message 事件 → 由消息时间回退定位
+    await chat.replayToolEvents('s1', 500, [{ key: 'u1', ts: 1000 }])
+    await w.vm.$nextTick()
+    expect(chat.traces[0].afterKey).toBe('u1')
+    expect(w.find('.chat-traces').exists()).toBe(false)
+    const order = Array.from(w.element.querySelectorAll('.message, .chat-traces-inline'))
+      .map(el => (el.classList.contains('chat-traces-inline') ? 'traces' : 'msg'))
+    expect(order).toEqual(['msg', 'traces', 'msg'])
+  })
+
+  it('非当前会话的 tool 事件不混入轨迹', async () => {
+    await mountChat()
+    const chat = useChatStore()
+    wsClient._emit('tool', {
+      type: 'tool', event: 'tool_call', session_id: 'other',
+      data: { call_id: 'c2', name: 'exec_command', args: {} },
+    })
+    expect(chat.traces).toHaveLength(0)
+  })
+
   it('WS thinking user_intent_request 事件 → chat.addIntent', async () => {
     await mountChat()
     const chat = useChatStore()
@@ -822,6 +1025,77 @@ it('todo 推送事件属于其他会话 → 不刷新当前会话 todo', async (
   await flushPromises()
   expect(w.vm.todos).toHaveLength(1)
   expect(w.vm.todos[0].text).toBe('保留')
+})
+
+// ── 会话投影（Phase 4）：整值快照直接更新 UI，不再额外请求 ──
+
+it('收到 session_projection 帧 → todo 列表与上下文占用按快照更新（不额外拉取）', async () => {
+  const w = await mountChat()
+  const fetchSpy = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ data: { todos: [] } }), text: async () => '' }))
+  vi.stubGlobal('fetch', fetchSpy)
+  w.vm._onProjection({
+    type: 'session_projection', session_id: 's1', _seq: 12,
+    data: { key: 'todos', seq: 12, value: { todos: [{ id: 't1', content: '投影任务', status: 'pending' }], done: 0, total: 1 } },
+  })
+  w.vm._onProjection({
+    type: 'session_projection', session_id: 's1', _seq: 13,
+    data: { key: 'contextPressure', seq: 13, value: { tokens: 640, window: 6400, ratio: 0.1 } },
+  })
+  await flushPromises()
+  expect(w.vm.todos).toHaveLength(1)
+  expect(w.vm.todos[0].content).toBe('投影任务')
+  expect(w.vm.todoDone).toBe(0)
+  expect(w.vm.contextTokens).toBe(640)
+  expect(w.vm.contextWindowSize).toBe(6400)
+  // 快照自带列表 → 不需要再请求 /management/todos
+  expect(fetchSpy.mock.calls.some(([u]) => String(u).includes('/api/management/todos'))).toBe(false)
+})
+
+// ── 可应答请求（Phase 4.b）：快照重建横幅 + 输入区接管 ──
+
+it('收到 session_request 帧 → 重建审批横幅并接管输入区', async () => {
+  const w = await mountChat()
+  const chat = useChatStore()
+  expect(chat.hasPendingRequest).toBe(false)
+  w.vm._onRequest({
+    type: 'session_request', session_id: 's1',
+    data: { requests: [{ request_id: 'r1', kind: 'approval', target: 'exec_command', detail: '执行 rm' }] },
+  })
+  await flushPromises()
+  expect(chat.hasPendingRequest).toBe(true)
+  expect(w.findAll('.approval-banner')).toHaveLength(1)
+  // 输入区被接管：占位符提示先处理横幅，发送按钮禁用
+  expect(w.find('.chat-input-field').attributes('placeholder')).toContain('请先在上方处理')
+  expect(w.find('.chat-send-btn').attributes('disabled')).toBeDefined()
+})
+
+it('session_request：其他会话忽略；空快照→横幅失效且输入区恢复', async () => {
+  const w = await mountChat()
+  const chat = useChatStore()
+  w.vm._onRequest({ session_id: 'other', data: { requests: [{ request_id: 'x', kind: 'approval' }] } })
+  expect(chat.hasPendingRequest).toBe(false)
+  w.vm._onRequest({
+    session_id: 's1',
+    data: { requests: [{ request_id: 'r1', kind: 'approval', target: 'exec_command' }] },
+  })
+  await flushPromises()
+  expect(chat.hasPendingRequest).toBe(true)
+  w.vm._onRequest({ session_id: 's1', data: { requests: [] } })
+  await flushPromises()
+  expect(chat.hasPendingRequest).toBe(false)
+  // 横幅保留（不凭空消失）但显示失效文案，按钮不可点
+  expect(w.findAll('.approval-banner')).toHaveLength(1)
+  expect(w.text()).toContain('该请求已失效')
+  expect(w.find('.chat-send-btn').attributes('disabled')).toBeUndefined()
+})
+
+it('session_projection：其他会话 / 旧 seq 的帧被忽略', async () => {
+  const w = await mountChat()
+  w.vm._onProjection({ session_id: 'other', data: { key: 'todos', seq: 5, value: { todos: [{ id: 'x' }], total: 1 } } })
+  expect(w.vm.todos).toHaveLength(0)
+  w.vm._onProjection({ session_id: 's1', data: { key: 'todos', seq: 9, value: { todos: [{ id: 'a' }], total: 1 } } })
+  w.vm._onProjection({ session_id: 's1', data: { key: 'todos', seq: 8, value: { todos: [{ id: 'b' }], total: 1 } } })
+  expect(w.vm.todos[0].id).toBe('a')
 })
 
 

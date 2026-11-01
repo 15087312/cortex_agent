@@ -150,6 +150,44 @@ class TestToolCallStats:
         assert s.tool_stats["total"] == 110
 
 
+class TestToolRecordMerge:
+    """结构化事件一个调用发两帧（call/result）→ 面板合并成一行。"""
+
+    def test_result_merges_into_call_row(self):
+        s = AppState()
+        s.add_tool_call({"kind": "tool", "call_id": "c1", "tool": "exec_command",
+                         "status": "running", "success": True, "latency_ms": 0.0,
+                         "params": {"command": "ls"}, "result": "", "error": ""})
+        s.add_tool_call({"kind": "tool", "call_id": "c1", "tool": "exec_command",
+                         "status": "ok", "success": True, "latency_ms": 12.5,
+                         "params": {}, "result": "file.txt", "error": ""})
+        assert len(s.tool_calls) == 1              # 不重复建行
+        assert s.tool_stats["total"] == 1          # 不重复计数
+        row = s.tool_calls[0]
+        assert row["status"] == "ok"
+        assert row["latency_ms"] == 12.5
+        assert row["result"] == "file.txt"
+        assert row["params"] == {"command": "ls"}  # 结果帧不抹掉调用帧的参数
+
+    def test_failed_result_overrides_success(self):
+        s = AppState()
+        s.add_tool_call({"kind": "tool", "call_id": "c1", "tool": "t",
+                         "status": "running", "success": True, "latency_ms": 0.0})
+        s.add_tool_call({"kind": "tool", "call_id": "c1", "tool": "t",
+                         "status": "error", "success": False, "latency_ms": 3.0,
+                         "result": "", "error": "权限不足"})
+        row = s.tool_calls[0]
+        assert row["success"] is False
+        assert row["error"] == "权限不足"
+
+    def test_records_without_call_id_stay_separate(self):
+        s = AppState()
+        s.add_tool_call({"name": "a", "success": True, "latency_ms": 1})
+        s.add_tool_call({"name": "a", "success": True, "latency_ms": 1})
+        assert len(s.tool_calls) == 2
+        assert s.tool_stats["total"] == 2
+
+
 # ---------------------------------------------------------------------------
 # add_input_history — max_history cap
 # ---------------------------------------------------------------------------

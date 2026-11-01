@@ -2,7 +2,7 @@
 Chat Gateway 协议级端到端测试。
 
 覆盖 chatonly 路线的完整 envelope 协议：
-  - WS 全流程: session_ready → received → thinking_step(聚合) → assistant_message → done
+  - WS 全流程: session_ready → received → chunk(流式正文) → assistant_message → done
   - WS 错误路径: error 事件，且不再发「处理完成」done
   - WS stop: 取消运行中的思考任务、收到 stopped 事件、连接保持可复用
   - WS 心跳: 静默期收到 thinking_progress（TUI 防超时）
@@ -188,10 +188,11 @@ def test_ws_full_flow(gw_app):
 
             events = _drain_ws(ws, "done")
 
-    # 事件序列: received → thinking_step* → assistant_message → done
+    # 事件序列: received → chunk* → assistant_message → done
     first = events[0]
     assert first["event"] == "received"
-    assert any(e["event"] == "thinking_step" for e in events)
+    chunks = [e for e in events if e.get("type") == "chunk"]
+    assert "".join(e["content"] for e in chunks) == "你好，世界"
     assert any(e["event"] == "assistant_message" for e in events)
     assert events[-1]["event"] == "done"
 
@@ -291,7 +292,9 @@ def test_ws_heartbeat_during_silence(gw_app, monkeypatch):
 
     # 首个 token 到达前应有 thinking_progress 心跳
     assert any(e["event"] == "thinking_progress" for e in events)
-    assert any(e["event"] == "thinking_step" for e in events)
+    # 正文以 chunk 流式下发（不再当作 thinking_step）
+    chunks = [e for e in events if e.get("type") == "chunk"]
+    assert "".join(e["content"] for e in chunks) == "你好，世界"
     assert events[-1]["event"] == "done"
 
 

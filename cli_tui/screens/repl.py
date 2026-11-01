@@ -227,6 +227,50 @@ class REPL(Screen):
             self.notify("无法连接到后端服务", severity="error", timeout=5)
 
     # @link:block WsDispatch
+    def _apply_runner_snapshot(self, data: dict):
+        """应用模型状态快照（status/thinking_progress 与 runners 投影同构）。
+
+        解析活跃专家/主管/大模型身份（顶栏 Header 显示）与上下文占用。
+        """
+        data = data if isinstance(data, dict) else {}
+        active_experts = data.get("active_experts", [])
+        if active_experts:
+            self.state.active_experts = active_experts
+        active_supervisors = data.get("active_supervisors", [])
+        if active_supervisors:
+            self.state.active_supervisors = active_supervisors
+        large_model = data.get("large_model", {})
+        if large_model:
+            self.state.large_model_identity = large_model
+            # 大模型有激活的 skill 时同步显示
+            if large_model.get("active_skill"):
+                self.state.active_skill = large_model["active_skill"]
+            else:
+                self.state.active_skill = ""
+        # 上下文窗口占用（始终更新，即使为 0）
+        if "context_tokens" in data:
+            self.state.context_tokens = data["context_tokens"]
+        if "context_window_size" in data:
+            self.state.context_window_size = data["context_window_size"]
+
+    def _apply_projection(self, data: dict):
+        """应用 session_projection 帧（Phase 4）。
+
+        只处理 TUI 真会展示的键：`contextPressure`（上下文条）与 `runners`
+        （顶栏模型身份）。`todos` 在终端里没有面板，不凭空造一个；
+        `tokenUsage` 也未展示。
+        """
+        data = data if isinstance(data, dict) else {}
+        key = data.get("key", "")
+        value = data.get("value", {})
+        if not isinstance(value, dict):
+            return
+        if key == "contextPressure":
+            self.state.context_tokens = int(value.get("tokens") or 0)
+            self.state.context_window_size = int(value.get("window") or 0)
+        elif key == "runners":
+            self._apply_runner_snapshot(value)
+
     async def _persistent_ws_callback(self, event):
         """持久 WebSocket 事件回调 — 只注册一次，所有请求共享"""
         # 更新最后事件时间
@@ -247,6 +291,9 @@ class REPL(Screen):
             return
         if msg_type == "cancelled":
             return
+        if msg_type == "session_projection":
+            self._apply_projection(data)
+            return
         if msg_type == "status" and event_name == "thinking_progress":
             self.state.thinking_hint = content or "思考中…"
             self.state.debug_phase = data.get("phase", "thinking")
@@ -260,26 +307,8 @@ class REPL(Screen):
             if len(self.state.debug_events) > self.state.max_debug_events:
                 self.state.debug_events = self.state.debug_events[-self.state.max_debug_events:]
 
-            # 解析活跃专家/主管/大模型身份（更新状态，顶栏 Header 会显示）
-            active_experts = data.get("active_experts", [])
-            if active_experts:
-                self.state.active_experts = active_experts
-            active_supervisors = data.get("active_supervisors", [])
-            if active_supervisors:
-                self.state.active_supervisors = active_supervisors
-            large_model = data.get("large_model", {})
-            if large_model:
-                self.state.large_model_identity = large_model
-                # 如果大模型有激活的 skill，同步显示
-                if large_model.get("active_skill"):
-                    self.state.active_skill = large_model["active_skill"]
-                else:
-                    self.state.active_skill = ""
-            # 上下文窗口占用（始终更新，即使为 0）
-            if "context_tokens" in data:
-                self.state.context_tokens = data["context_tokens"]
-            if "context_window_size" in data:
-                self.state.context_window_size = data["context_window_size"]
+            # 解析活跃专家/主管/大模型身份与上下文占用（顶栏 Header 会显示）
+            self._apply_runner_snapshot(data)
             return
 
         # 原有逻辑

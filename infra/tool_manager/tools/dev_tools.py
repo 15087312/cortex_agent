@@ -460,6 +460,38 @@ def read_text_file(path: str, max_length: int = 50000, **kwargs) -> Dict[str, An
     return {"success": True, "path": str(target), "content": text, "truncated": truncated, "size": len(content)}
 
 
+# diff 展示上限：工具自述展示（docs/VISUALIZATION_DESIGN.md §4.4），
+# 前端 DiffCard 直接渲染这些行；同时让模型自己确认改了什么。
+_DIFF_MAX_LINES = 80
+_DIFF_MAX_LINE_CHARS = 200
+_DIFF_MAX_CHARS = 4000
+
+
+def _file_diff(path: Path, before: str, after: str) -> List[str]:
+    """行级 unified diff（有界）。无差异或失败时返回空列表。"""
+    if before == after:
+        return []
+    try:
+        import difflib
+        name = path.name
+        lines = list(difflib.unified_diff(
+            before.splitlines(), after.splitlines(),
+            fromfile=f"a/{name}", tofile=f"b/{name}", lineterm="", n=2,
+        ))
+    except Exception:
+        return []
+    out: List[str] = []
+    total = 0
+    for line in lines:
+        line = line[:_DIFF_MAX_LINE_CHARS]
+        total += len(line) + 1
+        if len(out) >= _DIFF_MAX_LINES or total > _DIFF_MAX_CHARS:
+            out.append(f"… (diff 已截断，共 {len(lines)} 行)")
+            break
+        out.append(line)
+    return out
+
+
 @ToolRegistry.register(
     "write_text_file",
     description="写入/创建文本文件（覆盖已有内容）。用于创建源码、配置、文档等。父目录不存在会自动创建。",
@@ -480,14 +512,26 @@ def write_text_file(path: str, content: str = "", overwrite: bool = True, **kwar
     target = Path(path).expanduser()
     if target.exists() and not overwrite:
         return {"error": f"文件已存在且 overwrite=False: {target}"}
+    existed = target.exists()
+    before = ""
+    if existed:
+        try:
+            before = target.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            before = ""  # 读不到旧内容时只影响 diff 展示，不阻塞写入
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content or "", encoding="utf-8")
     except Exception as e:
         return {"error": f"写入失败: {e}"}
-    return {
+    result: Dict[str, Any] = {
         "success": True,
         "path": str(target),
         "size": len(content or ""),
-        "action": "updated" if target.exists() else "created",
+        "action": "updated" if existed else "created",
     }
+    diff = _file_diff(target, before, content or "")
+    if diff:
+        result["diff"] = diff
+    return result
+

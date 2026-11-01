@@ -129,6 +129,10 @@ describe('api.js', () => {
       expect(fetchMock.mock.calls[3][0]).toBe('/api/tools/call')
       const [, opts] = fetchMock.mock.calls[3]
       expect(JSON.parse(opts.body)).toEqual({ tool_name: 'exec_command', params: { command: 'ls' } })
+      await endpoints.sessionEvents('s1', 5, 50)
+      expect(fetchMock.mock.calls[4][0]).toBe('/api/stream/sessions/s1/events?after_seq=5&limit=50')
+      await endpoints.sessionEvents('s1')
+      expect(fetchMock.mock.calls[5][0]).toBe('/api/stream/sessions/s1/events?after_seq=0&limit=500')
     })
 
     it('updateConfig 构造 value 载荷', async () => {

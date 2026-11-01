@@ -53,6 +53,10 @@ def _setup_thinker(monkeypatch, blackboard=None):
 
 def _noop(monkeypatch, repo=None):
     cg._schema_checked = True
+    # 事件日志同样不进真实 DB（时辰测试靠 monkeypatch(cg.time) 控制时间，
+    # 日志/建表会偷走 fake clock 的取值）
+    events = MagicMock()
+    monkeypatch.setattr("modules.database.session_events.get_session_event_repo", lambda: events)
     return _setup_repo(monkeypatch) if repo is None else repo
 
 
@@ -122,7 +126,7 @@ async def test_consume_turn_real_timeout(monkeypatch):
 
 
 async def test_consume_turn_flush_and_token_heartbeat(monkeypatch):
-    """done 时 flush 缓冲 + token 流进度心跳"""
+    """done 时把残余正文补成 chunk 帧 + token 流进度心跳"""
     ws = FakeWS()
     repo = MagicMock()
     repo.save_message = MagicMock(side_effect=lambda sid, role, c: f"id_{role}")
@@ -137,13 +141,37 @@ async def test_consume_turn_flush_and_token_heartbeat(monkeypatch):
     times = iter(itertools.chain([0.0, 0.0], itertools.repeat(100.0)))
     monkeypatch.setattr(cg.time, "time", lambda: next(times))
     await cg._consume_turn(ws, "s1", repo, thinker, "hi")
-    thinking = [s for s in ws.sent if s["type"] == "thinking"]
-    assert any(s["content"] == "部" for s in thinking)
+    chunks = [s for s in ws.sent if s["type"] == "chunk"]
+    assert any(s["content"] == "部" for s in chunks)
     assert any(s["event"] == "thinking_progress" for s in ws.sent)
+    # 正文不再当思考发：done 后仍只有一帧 chunk + 落定 message
+    assert not any(s["type"] == "thinking" for s in ws.sent)
+
+
+async def test_consume_turn_streams_chunks_incrementally(monkeypatch):
+    """正文满 40 字符即推一帧 chunk（不等 done），尾部在 done 补齐"""
+    ws = FakeWS()
+    repo = MagicMock()
+    repo.save_message = MagicMock(side_effect=lambda sid, role, c: f"id_{role}")
+    thinker = MagicMock()
+
+    async def fake_think(sid, content, queue):
+        for _ in range(3):
+            await queue.put({"type": "message", "content": "x" * 20})
+        await queue.put({"type": "done"})
+
+    thinker.think = fake_think
+    monkeypatch.setattr("modules.thinking.frontend_channel.confirm_frontend_connection", lambda sid: True)
+    await cg._consume_turn(ws, "s1", repo, thinker, "hi")
+    chunks = [s for s in ws.sent if s["type"] == "chunk"]
+    assert [len(s["content"]) for s in chunks] == [40, 20]
+    assert "".join(s["content"] for s in chunks) == "x" * 60
+    # 落定消息仍是完整正文
+    assert any(s.get("content") == "x" * 60 for s in ws.sent if s["type"] == "message")
 
 
 async def test_consume_turn_error_flush_and_cancel(monkeypatch):
-    """error 前 flush 缓冲 + finally 取消未完成 think 任务"""
+    """error 前补发残余 chunk + finally 取消未完成 think 任务"""
     ws = FakeWS()
     repo = MagicMock()
     repo.save_message = MagicMock(return_value="m1")
@@ -157,8 +185,8 @@ async def test_consume_turn_error_flush_and_cancel(monkeypatch):
     thinker.think = fake_think
     monkeypatch.setattr("modules.thinking.frontend_channel.confirm_frontend_connection", lambda sid: True)
     await cg._consume_turn(ws, "s1", repo, thinker, "hi")
-    thinking = [s for s in ws.sent if s["type"] == "thinking"]
-    assert any(s["content"] == "部" for s in thinking)
+    chunks = [s for s in ws.sent if s["type"] == "chunk"]
+    assert any(s["content"] == "部" for s in chunks)
     assert any(s["type"] == "error" for s in ws.sent)
 
 
@@ -751,6 +779,68 @@ async def test_chatonly_sse_message_done_flow(monkeypatch):
     events = [e async for e in cg._chatonly_sse("s1", "问题")]
     assert any(e["event"] == "assistant_message" for e in events)
     assert any(e["event"] == "done" for e in events)
+
+
+async def test_chatonly_sse_streams_chunk_frames(monkeypatch):
+    """SSE 路线也要边生成边推 `chunk`——整段憋到结束等于没有流式。
+
+    与 WS 分支（`_consume_turn._flush_reply_chunk`）同语义：句末即推，
+    终稿仍整段落库为 `assistant_message`（chunk 只是预览）。
+    """
+    repo = _noop(monkeypatch)
+    thinker = MagicMock()
+
+    async def fake_think(sid, content, queue):
+        await queue.put({"type": "message", "content": "第一句话。"})
+        await queue.put({"type": "message", "content": "第二句话！"})
+        await queue.put({"type": "done"})
+
+    thinker.think = fake_think
+    monkeypatch.setattr(cg, "_get_chat_thinker", lambda: thinker)
+    events = [e async for e in cg._chatonly_sse("s1", "问题")]
+
+    chunks = [json.loads(e["data"])["content"] for e in events if e["event"] == "chunk"]
+    assert chunks == ["第一句话。", "第二句话！"]
+    finals = [json.loads(e["data"]) for e in events if e["event"] == "assistant_message"]
+    assert finals and finals[0]["content"] == "第一句话。第二句话！"
+    assert events[-1]["event"] == "done"
+
+
+async def test_chatonly_sse_chunk_buffers_below_threshold(monkeypatch):
+    """不到 40 字且无句末 → 先攒着，不逐 token 推帧（避免刷屏）。"""
+    repo = _noop(monkeypatch)
+    thinker = MagicMock()
+
+    async def fake_think(sid, content, queue):
+        await queue.put({"type": "message", "content": "abc"})
+        await queue.put({"type": "message", "content": "def"})
+        await queue.put({"type": "done"})
+
+    thinker.think = fake_think
+    monkeypatch.setattr(cg, "_get_chat_thinker", lambda: thinker)
+    events = [e async for e in cg._chatonly_sse("s1", "问题")]
+
+    chunks = [json.loads(e["data"])["content"] for e in events if e["event"] == "chunk"]
+    assert chunks == ["abcdef"]          # done 时补一帧，不丢尾巴
+
+
+async def test_chatonly_sse_flushes_chunk_before_error(monkeypatch):
+    """出错前先把已生成的正文推出去（否则用户看不到已经生成的部分）。"""
+    repo = _noop(monkeypatch)
+    thinker = MagicMock()
+
+    async def fake_think(sid, content, queue):
+        await queue.put({"type": "message", "content": "半句话"})
+        await queue.put({"type": "error", "content": "失败"})
+
+    thinker.think = fake_think
+    monkeypatch.setattr(cg, "_get_chat_thinker", lambda: thinker)
+    events = [e async for e in cg._chatonly_sse("s1", "问题")]
+
+    names = [e["event"] for e in events]
+    assert "chunk" in names and "error" in names
+    assert names.index("chunk") < names.index("error")
+    assert json.loads(events[names.index("chunk")]["data"])["content"] == "半句话"
 
 
 async def test_chatonly_sse_error_token(monkeypatch):

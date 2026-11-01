@@ -121,7 +121,7 @@ function submitIntent() {
           <button class="btn btn-sm btn-primary" @click="emit('approve', message.requestId, true)">{{ $t('chatMessage.approve') }}</button>
         </div>
       </template>
-      <div v-else style="opacity:.7">{{ message.approved ? $t('chatMessage.approvedResult') : $t('chatMessage.rejectedResult') }}</div>
+      <div v-else style="opacity:.7">{{ message.stale ? $t('chatMessage.requestExpired') : (message.approved ? $t('chatMessage.approvedResult') : $t('chatMessage.rejectedResult')) }}</div>
     </div>
 
     <!-- 模型提问面板 -->
@@ -147,7 +147,7 @@ function submitIntent() {
           <button class="btn btn-sm btn-primary" @click="submitIntent">{{ $t('common.submit') }}</button>
         </div>
       </template>
-      <div v-else style="opacity:.7">{{ $t('chatMessage.answeredLabel') }}：{{ message.answer }}</div>
+      <div v-else style="opacity:.7">{{ message.stale ? $t('chatMessage.requestExpired') : ($t('chatMessage.answeredLabel') + '：' + (message.answer || '')) }}</div>
     </div>
 
     <!-- 思考步骤：淡化文本 + 点击展开/收起 -->
@@ -247,9 +247,11 @@ function submitIntent() {
                 :highlighted-html="seg.highlightedHtml"
               />
             </template>
+            <!-- 流式中：光标提示“还在写” -->
+            <span v-if="isStreaming" class="streaming-cursor">▊</span>
           </template>
         </div>
-        <div v-if="!typing" class="message-actions">
+        <div v-if="!typing && !isStreaming" class="message-actions">
           <button class="msg-action" @click="emit('copy', index)" :title="$t('common.copy')"><Icon name="copy" :size="13" /></button>
           <button v-if="message.id" class="msg-action" @click="emit('edit', index)" :title="$t('common.edit')"><Icon name="pencil" :size="13" /></button>
           <button class="msg-action danger" @click="emit('delete', index)" :title="$t('common.delete')"><Icon name="trash" :size="13" /></button>
@@ -257,7 +259,7 @@ function submitIntent() {
         </div>
 
         <!-- 思考详情展开栏（内心独白 + 相关事件记忆 + 会话记忆） -->
-        <div v-if="!isUser && message.meta && !typing" class="meta-collapse">
+        <div v-if="!isUser && message.meta && !typing && !isStreaming" class="meta-collapse">
           <button class="meta-collapse-btn" @click="metaOpen = !metaOpen">
             <Icon :name="metaOpen ? 'down' : 'right'" :size="12" /> {{ $t('chatMessage.thinkingDetails') }}
           </button>

@@ -28,6 +28,46 @@ class MCPToolDef:
     server_name: str = ""
 
 
+def _new_http_client(headers: Dict[str, str]):
+    """构造带默认头的 HTTP 客户端（mcp 2.x 用 httpx2，老环境退回标准 httpx）"""
+    import importlib
+    for module_name in ("httpx2", "httpx"):
+        try:
+            module = importlib.import_module(module_name)
+        except Exception:
+            continue
+        try:
+            return module.AsyncClient(headers=dict(headers))
+        except Exception as e:
+            logger.debug(f"[MCP-HTTP] 构造 {module_name} 客户端失败: {e}")
+    return None
+
+
+def _open_streamable_http(url: str, headers: Optional[Dict[str, str]] = None):
+    """打开 StreamableHTTP 传输上下文（兼容 mcp 1.x / 2.x 两套 API）。
+
+    - mcp 1.x：`streamablehttp_client(url, headers=...)`，__aenter__ 返回 3 元组
+      `(read, write, get_session_id)`；
+    - mcp 2.x：改名 `streamable_http_client(url, http_client=...)`，不再有 headers
+      形参（头部要挂在自带的 HTTP 客户端上），__aenter__ 只返回 `(read, write)`。
+
+    返回 `(ctx, http_client)`：2.x 不会替我们关闭传入的客户端，需调用方在 close 时关。
+    """
+    try:
+        from mcp.client.streamable_http import streamable_http_client
+    except ImportError:  # mcp 1.x
+        from mcp.client.streamable_http import streamablehttp_client
+        return streamablehttp_client(url=url, headers=headers or None), None
+
+    if not headers:
+        return streamable_http_client(url=url), None
+    client = _new_http_client(headers)
+    if client is None:
+        logger.warning("[MCP-HTTP] 未找到 httpx/httpx2，headers 无法附加（鉴权将缺失）")
+        return streamable_http_client(url=url), None
+    return streamable_http_client(url=url, http_client=client), client
+
+
 class MCPStdioTransport:
     """通过 stdio 连接 MCP server（本地子进程）"""
 
@@ -355,6 +395,7 @@ class MCPStreamableHttpTransport:
         self._session: Any = None
         self._ctx: Any = None
         self._session_ctx: Any = None
+        self._http_client: Any = None   # mcp 2.x：headers 挂在自带 httpx 客户端上，close 时要关
         self._tools_cache: List[MCPToolDef] = []
         self._connected = False
         self._loop: Optional[asyncio.AbstractEventLoop] = None
@@ -370,12 +411,12 @@ class MCPStreamableHttpTransport:
     async def connect(self) -> bool:
         """连接 StreamableHTTP MCP server，失败时尝试 SSE 降级"""
         try:
-            from mcp.client.streamable_http import streamablehttp_client
             from mcp import ClientSession
 
             self._loop = asyncio.get_running_loop()
-            self._ctx = streamablehttp_client(url=self._url, headers=self._headers or None)
-            self._read, self._write, _ = await self._ctx.__aenter__()
+            self._ctx, self._http_client = _open_streamable_http(self._url, self._headers)
+            # 1.x 返回 3 元组（带 get_session_id），2.x 只有 2 元组
+            self._read, self._write, *_ = await self._ctx.__aenter__()
 
             self._session_ctx = ClientSession(self._read, self._write)
             self._session = await self._session_ctx.__aenter__()
@@ -470,8 +511,15 @@ class MCPStreamableHttpTransport:
                 await self._ctx.__aexit__(None, None, None)
         except Exception as _swallowed_err:
             logger.debug(f"[close] ignored Exception: {_swallowed_err}")
+        try:
+            # mcp 2.x 不会关闭外部传入的 http_client → 自己关，避免连接泄漏
+            if self._http_client is not None:
+                await self._http_client.aclose()
+        except Exception as _swallowed_err:
+            logger.debug(f"[close] 关闭 http client 失败: {_swallowed_err}")
         self._session_ctx = None
         self._ctx = None
+        self._http_client = None
 
     @property
     def is_connected(self) -> bool:

@@ -90,13 +90,17 @@ class TestTurnContext:
         tc.add(ContextFragment("empty", "", ("large",), "空"))
         assert len(tc.fragments) == 0
 
-    def test_same_source_overwrites(self):
+    def test_same_source_coexists(self):
+        """同 source 的多个 fragment 共存，不再覆盖（§93 修复）"""
         from modules.thinking.context.pool import TurnContext, ContextFragment
         tc = TurnContext()
         tc.add(ContextFragment("memory", "旧事件", ("large",), "记忆"))
         tc.add(ContextFragment("memory", "新事件", ("large",), "记忆"))
-        assert tc.fragments["memory"].content == "新事件"
-        assert len(tc.fragments) == 1
+        assert len(tc.fragments) == 2
+        assert tc.fragments["memory"].content == "旧事件"
+        assert tc.fragments["memory#2"].content == "新事件"
+        view = tc.view("large")
+        assert "旧事件" in view and "新事件" in view
 
     def test_section_title_format(self):
         from modules.thinking.context.pool import TurnContext, ContextFragment

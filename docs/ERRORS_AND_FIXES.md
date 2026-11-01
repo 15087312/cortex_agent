@@ -2342,3 +2342,101 @@ help: `pyaudio` (v0.2.14) was included because `cortex-agent` depends on `pyaudi
 4. 思考轮次保留整体墙钟上限 `MODEL_THINK_MAX_WALL`（默认 3600s，0=不限），防止无限工具循环。
 5. 超时重试时向黑板写一条可见提示（“模型静默超过 Ns，正在从断点继续”）；重试耗尽时写入可见的 `result_summary`，不再出现“只有过程、没有回复”。
 6. `api_stream` 取消分支新增快照兜底：manager 已被移除时，从 `blackboard_snapshots` 捞回 `[思考被中断 ...]` 残稿并落库/下发。
+
+
+## 96. 配置文件跨进程写竞态 —— 仅线程锁挡不住多进程（后端）
+
+**现象：** `~/.cortex/personas.yaml` 偶发内容丢失（用户自定义人设写完后过一段时间变回旧值/被清空）；`~/.cortex/settings.json` 重启后部分字段回到默认。单进程内反复操作无法复现。
+
+**根因：**
+1. `config/settings.py` 第 26-27 行只有**进程内**锁：`_PERSONAS_YAML_LOCK = threading.Lock()`、`_SETTINGS_JSON_LOCK = threading.Lock()`。`threading.Lock` 只对同一进程内的线程互斥，**没有跨进程语义**。
+2. `_modify_personas_yaml()`（约 770 行）与 `save_user_config()`（约 1132 行）都是 read-modify-write：读文件 → 改 → 原子替换。两个**进程**同时进入时，各自的进程内锁互不可见，后写者用自己读到的旧快照覆盖前写者的结果 → 丢失更新（§86/§87/§88 记载的现象）。
+3. `frontend/main.py:535` 用 `subprocess.Popen` 以 uvicorn 启动后端，前端与后端、或多次启动的后端实例可能**并发写同一份 `~/.cortex` 配置**，构成真实的跨进程竞态场景。
+
+**修复：** 复用项目已有的跨进程锁工具 `utils/faiss_lock.py::faiss_file_lock`（进程内可重入 RLock + 跨进程 `fcntl.flock`，无 fcntl 平台自动退化为线程锁；锁文件 = 数据路径 + `.lock`，不打开/截断数据文件本身）。
+1. `_modify_personas_yaml`：在 `with _PERSONAS_YAML_LOCK:` 内**再嵌套** `with faiss_file_lock(self._personas_yaml_path):`，锁文件由工具自动追加 `.lock`。保留原线程锁，嵌套顺序为外层线程锁、内层文件锁。
+2. `save_user_config`：同样在 `_SETTINGS_JSON_LOCK` 内嵌套 `faiss_file_lock(str(self._USER_CONFIG_PATH))`。
+3. 导入用**函数内延迟导入**（`from utils.faiss_lock import faiss_file_lock`），避免模块级循环依赖；导入失败时 `try/except` 降级为 `contextlib.nullcontext()`（仅线程锁）并打 `logger.debug`，**绝不因加锁不可用而中断写入或崩溃**。
+4. `_load_personas_yaml` / `_save_personas_yaml` 的既有行为与签名不变。
+
+**测试：** 新增 `tests/unit/test_settings_file_lock.py`（5 例，全部通过）：
+- `_modify_personas_yaml` 写入期间锁文件存在、写后释放（`_depth==0`、`_fd is None`）；
+- mutator 内部重入同一路径锁不死锁；
+- `utils.faiss_lock` 导入失败时降级为仅线程锁、写入成功且不产生锁文件；
+- `save_user_config` 同路径验证锁持有/降级。
+测试全部用 `tmp_path` + monkeypatch 重定向 `_personas_yaml_path` / `_USER_CONFIG_PATH`，不触碰真实 `~/.cortex`。
+
+**回归：** `tests/unit/test_settings_ext.py` + `test_faiss_lock.py` + 新增用例 共 109 例全部通过。
+
+
+## 97. plan 模式把只读委派也拦掉 —— 关键词为空仍返回拦截（后端）
+
+**现象：** plan 模式下 large 模型调用 `delegate_task(role=代码实现专家, task=计算 1+1)`，日志只有 `[直通委托] 失败: ... error=plan 模式拦截`，**没有** `[ModelRunner] plan 模式拦截写操作委派` 那一行；委派未发出、委托链未记录，runner 直接以「大模型无 result_summary」结束，用户什么也拿不到。
+
+**根因：** `modules/thinking/core/model_runner.py` 的 `_generate_with_tools` 中，plan 模式检查写成：
+```python
+if exec_mode == "plan":
+    matched = [kw for kw in DELEGATE_WRITE_KEYWORDS if kw in task_lower]
+    if matched:
+        logger.warning(...)              # 只有命中关键词才打日志
+    if self._thinker:
+        self._thinker.record_delegation(... error="plan 模式拦截")
+    return "[安全门控拦截] ..."          # ← return 落在 if matched 之外
+```
+`return` 与「记录拦截」缩在 `if exec_mode == "plan"` 里而不是 `if matched` 里 → **只要处于 plan 模式，任何委派（含纯只读/计算任务）都被当成写操作拦下**，`', '.join(matched)` 还会输出空关键词。
+
+**修复：** 把记录拦截 + `return` 一起移入 `if matched:` 分支。plan 模式仍拦截含写操作关键词（`写入`/`部署`/`git push` 等）的委派，只读任务照常下发。
+
+**测试：**
+- 新增 `tests/unit/test_model_runner_ext2.py::test_generate_with_tools_delegate_plan_allows_readonly_task`：plan 模式 + `task=计算 1+1` → 不出现 `安全门控拦截`、`adapter.delegate` 被 await 一次、状态进入 `waiting_delegation`。
+- 既有 `test_generate_with_tools_delegate_plan_blocked`（task 含写关键词）继续断言被拦截。
+- `tests/integration/test_thinking_e2e.py` 的 2 例（`test_delegation_chain_full_flow`、`test_query_delegation_e2e`）此前在 HEAD 上即失败（并发 fixture 把 `EXECUTION_MODE` 固定为 plan 后暴露此 bug），修复后 5 例全通。
+
+**回归：** `test_model_runner_ext2.py` 178 例、`tests/integration` 432 例全部通过。
+
+
+## 98. 新事件只在浏览器里生效 —— TUI 看不到工具、SSE 整段憋到结束、回放同轮错位（跨端）
+
+可视化事件（Phase 0–4）落地时，消费端只有 Web 前端接全了。三处缺口共用一个后果：**同一场对话在不同入口看到的东西不一样**。
+
+### 98.1 `cli_tui` 完全不认新事件
+
+**现象：** 终端里跑一个用工具的任务，工具面板一直空着；回答要等整段生成完才出现；上下文占用条不更新。而 Web 端同一会话正常。
+
+**根因：** `cli_tui/services/ws_client.py::_parse_event_inner` 只认旧 envelope（`stage_event` 富事件 + `thinking`/`status` 简单事件）。后端已改成推 `type=tool` / `type=chunk` / `type=session_projection`，TUI 对这三种帧一律返回 `None`，直接丢弃。`cli_tui/screens/repl.py` 里的 `entry_type=streaming_delta` 分支因此成了死代码（从没有人产出这种条目）。
+
+**修复：**
+1. `parse_event` 新增三处解析：`type=tool` → `_parse_tool_frame`（`call_id` / `name` / 一行动作摘要 / 状态 / 耗时 / 结果预览），`type=chunk` → `entry_type=streaming_delta` 的 dialog 条目，`type=session_projection` 由 `repl` 直接处理。
+2. 一行动作摘要取服务端算好的卡片字段（`view.title/command/path/query`），回退参数里的命令/路径/查询词——不在 TUI 里重新猜工具语义。
+3. 结构化事件一个调用发两帧（`tool_call` 建行、`tool_result` 补齐），新增 `cli_tui.state.merge_tool_record` 按 `call_id` 合并：不新建行、不重复计数，且结果帧不覆盖掉调用帧的参数。`AppState.add_tool_call` 与 `WSClient._process_input_impl` 共用它。
+4. `chunk` 帧只累计本轮流式字数并更新 `thinking_hint`（`生成中… N 字`），**不逐帧写进对话框**：终稿的 `assistant_message` 会整段渲染，逐帧写入会让正文在终端里出现两遍。
+5. `session_projection` 只处理 TUI 真会展示的键：`contextPressure`（上下文条）、`runners`（顶栏模型身份）。`todos`/`tokenUsage` 没有面板，不凭空造。
+6. 顺带把 `thinking_progress` 里的模型状态解析抽成 `_apply_runner_snapshot`，与 `runners` 投影复用同一段层级映射。
+
+**测试：** `tests/unit/test_ws_client.py` 新增 `TestParseEventToolFrame`（5 例：调用帧、结果帧、失败状态、无 `view` 时回退参数、`data=None` 不抛）与 `TestParseEventChunkFrame`（2 例）；`tests/unit/test_tui_state.py` 新增 `TestToolRecordMerge`（3 例：合并成一行且保留参数、失败结果覆盖成功、无 `call_id` 不误合并）。
+
+**遗留：** `session_request`（可应答帧）未接。TUI 的审批走旧的 `security` 事件（双发仍在），接新协议会与现有审批组件重复弹窗，等旧帧撤除时一并迁移。
+
+### 98.2 SSE 路线没有流式
+
+**现象：** 用 SSE（`GET /stream/sse/{sid}`）而非 WebSocket 时，回答是一次性蹦出来的；WS 端同一问题边生成边显示。
+
+**根因：** `chat_gateway._chatonly_sse` 把每个 `message` token 只 append 进 `full_text`，循环里不 yield 任何正文帧，最后一次性发 `assistant_message`。WS 分支（`_consume_turn._flush_reply_chunk`）早就按 40 字符/句末节流推 `chunk` 了，两条路线行为分叉。
+
+**修复：** `_chatonly_sse` 引入同样的 `flush_buf` + `_take_chunk()`：满 40 字或遇到 `\n。！？.!?` 推一帧，`done` 与 `error` 前都把尾巴补出去。`chunk` 仍是瞬时帧（不落库、不占 seq），终稿以 `assistant_message` 为准。
+
+**测试：** `tests/unit/test_chat_gateway_ext2.py` 新增 3 例：句末即推（两帧内容精确比对 + 终稿仍整段）、不到 40 字先攒着（`done` 补一帧 `abcdef`）、出错前先 flush（`chunk` 在 `error` 之前且内容为已生成部分）。
+
+### 98.3 回放时同轮工具全挤在用户消息下
+
+**现象：** 刷新页面后，一轮里“说一句 → 调工具 → 接着说”的工具卡片全部堆在用户消息下面，看着像先调了一堆工具再说话；实时看着的顺序是对的。
+
+**根因：** `chat.js::replayToolEvents` 只用 `user_message` 事件推进锚点，且明确跳过助手 `message` 事件（当初的顾虑是老会话没有用户消息事件时会把工具错挂到上一轮回复下）。结果是**所有**工具只能挂到用户消息，同轮内的相对顺序丢失。
+
+**修复：** 助手终稿也推进锚点，但加两道闸：
+1. 只在**新格式会话**里生效（本会话事件流出现过 `user_message`）——老会话仍走“只认用户消息 + 时间回退”，行为不变；
+2. 只认**确定落库的那条**（`data.message_id` 必须命中本次重建出的消息 id 集合）——中断残稿没有 `message_id`、终稿未落库时 id 对不上，此时保留上一锚点，宁可不定位（落折叠面板）也不错位。
+
+**测试：** `frontend/src/stores/chat.spec.js`：原「同一轮都挂在用户消息下」一例改为断言 `['u1','a1']`（`说一句 → 调工具 → 接着说` 的交错），新增「终稿没落库时保留上一锚点」一例；「老会话无 `user_message` 事件时保持无锚点」一例继续通过。
+
+**回归：** `tests/unit` 6417 例（1 skipped，含本次新增 13 例）、`tests/integration` 432 例（1 skipped）全部通过；`tests/unit/test_ws_client.py` + `test_tui_state.py` 64 例、`test_chat_gateway*.py` 83 例；前端 vitest 51 文件 582 例全通。

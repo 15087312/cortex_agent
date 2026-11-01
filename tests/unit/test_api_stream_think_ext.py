@@ -98,6 +98,26 @@ async def test_think_with_module_thinking_history(monkeypatch):
     assert thinking_events
 
 
+async def test_think_records_user_message_event(monkeypatch):
+    """用户消息入事件表（durable，带 message_id）：回放时用它给工具卡片定位“发生在哪条消息之后”"""
+    s = _system()
+    await _base_setup(s, monkeypatch)
+    s._orchestrator.process = AsyncMock(return_value={
+        "module_results": [], "decisions": {"probe_signals": []},
+        "response": "回复", "trace_id": "t", "elapsed_ms": 1,
+        "active_modules": [], "focus": "x",
+    })
+    await s.think("s1", "你好")
+    user_events = [c.args[1] for c in s._emit.call_args_list if c.args[1].get("type") == "user_message"]
+    assert len(user_events) == 1
+    assert user_events[0]["data"]["message_id"] == "uid"
+    # 发在 ack 之后、正文之前（工具事件才有可用的锚点）
+    types = [c.args[1].get("type") for c in s._emit.call_args_list]
+    assert types.index("ack") < types.index("user_message")
+    if "message" in types:
+        assert types.index("user_message") < types.index("message")
+
+
 async def test_think_silent_mode(monkeypatch):
     s = _system()
     await _base_setup(s, monkeypatch)

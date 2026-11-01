@@ -204,20 +204,33 @@ def _resolve_identity_name(model_id: str) -> str:
     return ""
 
 
-# ── 事件缓冲区（供断线重连增量同步） ──
+# ── 事件缓冲区（进程内，供断线重连补发瞬态事件） ──
+# 持久事件另写 session_events 表（Phase 1）；缓冲只解决“同一个连接断一下”的补发，
+# 刷新/重开会话由事件表重建。seq 统一由 SessionEventRepository 分配。
 import collections as _collections
 _event_buffers: Dict[str, _collections.deque] = {}  # session_id → deque(maxlen=200)
-_event_seq: Dict[str, int] = {}  # session_id → 单调递增序号
-def _record_event(session_id: str, envelope: Dict[str, Any]):
-    """记录事件到环形缓冲区，供前端断线重连后增量拉取"""
-    seq = _event_seq.get(session_id, 0) + 1
-    _event_seq[session_id] = seq
-    envelope["_seq"] = seq
+_event_seq: Dict[str, int] = {}  # session_id → 单调递增序号（仓储不可用时的兜底）
+def _record_event(session_id: str, envelope: Dict[str, Any]) -> int:
+    """分配 seq（并落库持久事件），再进环形缓冲。返回 seq。
+
+    任何异常都不能阻断实时推送：落库失败时退回进程内计数，前端仍能实时看到。
+    """
+    seq = None
+    try:
+        from modules.database.session_events import get_session_event_repo
+        seq = get_session_event_repo().append_envelope(session_id, envelope)
+    except Exception as e:
+        logger.debug(f"[EventLog] 事件落库失败 (非致命): {e}")
+    if seq is None:
+        seq = _event_seq.get(session_id, 0) + 1
+        envelope["_seq"] = seq
+    _event_seq[session_id] = max(_event_seq.get(session_id, 0), int(seq))
     buf = _event_buffers.get(session_id)
     if buf is None:
         buf = _collections.deque(maxlen=200)
         _event_buffers[session_id] = buf
     buf.append(envelope)
+    return int(seq)
 
 
 def _resolve_context_window(tier: str = "large") -> int:
@@ -422,41 +435,13 @@ class StreamThinkingSystem:
             logger.debug(f"[SessionRepo] 保存过程流失败: {e}")
 
     def _collect_process_snapshot(self, session_id: str) -> dict:
-        """收集本轮运行的模型状态快照（含每模型上下文占用），供前端重建面板。"""
-        large_window = _resolve_context_window("large")
-        snapshot: dict[str, Any] = {"large_model": None, "active_supervisors": [], "active_experts": [],
-                    "context_tokens": 0, "context_window_size": large_window}
-        try:
-            from modules.thinking.core.model_runner import _runner_managers, _runner_managers_lock
-            with _runner_managers_lock:
-                rm = _runner_managers.get(session_id)
-            if not rm:
-                return snapshot
-            for info in rm.list_runners():
-                tier = info.get("tier", "")
-                entry = {
-                    "name": info.get("name") or info.get("role", ""),
-                    "role": info.get("role", ""),
-                    "model_id": info.get("model_id", ""),
-                    "status": info.get("status", ""),
-                    "status_detail": info.get("status_detail", ""),
-                    "round": info.get("round", 0),
-                    "supervisor": info.get("supervisor", ""),
-                    "context_tokens": info.get("context_tokens", 0),
-                    "context_window_size": info.get("context_window_size", 0),
-                }
-                if tier == "large":
-                    snapshot["large_model"] = entry
-                    if entry["context_tokens"]:
-                        snapshot["context_tokens"] = entry["context_tokens"]
-                        snapshot["context_window_size"] = entry["context_window_size"] or large_window
-                elif tier == "supervisor":
-                    snapshot["active_supervisors"].append(entry)
-                elif tier == "expert":
-                    snapshot["active_experts"].append(entry)
-        except Exception as _swallowed_err:
-            logger.debug(f"[_collect_process_snapshot] ignored Exception: {_swallowed_err}")
-        return snapshot
+        """收集本轮运行的模型状态快照（含每模型上下文占用），供前端重建面板。
+
+        Phase 4 起构建逻辑收敛到 `projections.build_runners`：同一个快照既用于
+        持久化过程流，也作为 `runners` 投影推送，避免两处各维护一份形状。
+        """
+        from modules.thinking.projections import build_runners
+        return build_runners(session_id)
 
     def _budget_trim(self, messages: List[Dict[str, Any]], ratio: float = 0.8) -> List[Dict[str, Any]]:
         """按 token 预算从最新往回保留消息（委托公共层，纯函数不修改存储）"""
@@ -674,6 +659,22 @@ class StreamThinkingSystem:
                 ),
                 callback,
             )
+            # 用户消息入事件表（durable，只存 id）：回放时用它给工具事件定位
+            # “发生在哪条消息之后”，刷新后工具卡片才能回到原来的位置。
+            # 前端没有 user_message 处理器，实时帧会被忽略（只为落库），开销可忽略。
+            if user_msg_id:
+                await self._emit(
+                    session_id,
+                    _build_event(
+                        session_id=session_id,
+                        msg_type="user_message",
+                        event="user_message",
+                        content="",
+                        role="user",
+                        data={"message_id": user_msg_id},
+                    ),
+                    callback,
+                )
 
             # DB 为唯一真源；注入模型的上下文按 token 预算截断（纯读取视图，
             # 不裁剪内存/DB，超窗口的旧消息前端仍可见，只是不注入模型）
@@ -871,6 +872,12 @@ class StreamThinkingSystem:
                     formatted = self._format_scheduler_event(stage_event)
                     if formatted is None:
                         continue  # 空内容轮次，跳过展示
+                    # Phase 4.b：审批/提问登记进待办表并推整快照（刷新后仍可作答）
+                    try:
+                        from modules.thinking import pending_requests as _pending
+                        _pending.register_from_stage_event(session_id, formatted)
+                    except Exception as _swallowed_err:
+                        logger.debug(f"[Pending] 登记可应答请求失败 (非致命): {_swallowed_err}")
                     # ── 连续同角色广播合并：同一 identity 连续输出时，去掉重复标签 ──
                     _cur_identity = (formatted.get("data") or {}).get("identity_name", "")
                     _cur_tier = (formatted.get("data") or {}).get("dialog_tier", "")
@@ -1177,6 +1184,13 @@ class StreamThinkingSystem:
             except Exception as e:
                 logger.debug(f"[Process] 持久化过程流失败: {e}")
 
+            # Phase 4：模型状态 + 上下文占用作为整值快照推送（刷新/重连一次读回）
+            try:
+                from modules.thinking import projections
+                projections.emit_runner_state(session_id)
+            except Exception as e:
+                logger.debug(f"[Projection] 发射模型状态失败 (非致命): {e}")
+
             await self._emit(
                 session_id,
                 _build_event(
@@ -1482,6 +1496,21 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
         ),
     )
 
+    # Phase 4：补发已持久化的投影（todos/runners/tokenUsage/contextPressure），
+    # 重连（页面未刷新）时也能立刻拿到当前状态，不必等下一次状态变化。
+    try:
+        from modules.thinking import projections
+        projections.push_current(session_id)
+    except Exception as e:
+        logger.debug(f"[Projection] 补发投影失败 (非致命): {e}")
+
+    # Phase 4.b：待审批/待回答请求也补发一次——刷新后用快照重建横幅，用户才能继续作答
+    try:
+        from modules.thinking import pending_requests
+        pending_requests.broadcast(session_id)
+    except Exception as e:
+        logger.debug(f"[Pending] 补发待办快照失败 (非致命): {e}")
+
     try:
         while True:
             data = await websocket.receive_text()
@@ -1563,32 +1592,37 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
                 # 不 break — 保持 WebSocket 连接，允许后续发送新消息
 
             elif msg_type == "sync":
-                # 断线重连后增量补偿：前端发送 last_seq，服务端推送缺失事件
-                last_seq = msg_data.get("last_seq", 0)
+                # 断线/刷新后增量补偿：前端发送 last_seq，服务端补发缺失事件。
+                # 持久事件以事件表为准（跨进程重启有效），瞬态事件（progress 等）
+                # 只在环形缓冲里，两者按 seq 合并去重。
+                last_seq = int(msg_data.get("last_seq", 0) or 0)
+                merged: Dict[int, Dict[str, Any]] = {}
+                try:
+                    from modules.database.session_events import get_session_event_repo
+                    for ev in get_session_event_repo().list_events(
+                            session_id, after_seq=last_seq, limit=1000):
+                        merged[int(ev.get("_seq", 0) or 0)] = ev
+                except Exception as e:
+                    logger.debug(f"[EventLog] 读取待补发事件失败 (非致命): {e}")
                 buf = _event_buffers.get(session_id)
                 if buf:
-                    missed = [ev for ev in buf if ev.get("_seq", 0) > last_seq]
-                    for ev in missed:
-                        await connection_manager.send_json(session_id, ev)
-                    await connection_manager.send_json(
-                        session_id,
-                        _build_event(
-                            session_id=session_id, msg_type="ack",
-                            event="sync_complete",
-                            content=f"已补发 {len(missed)} 条事件",
-                            role="system",
-                        ),
-                    )
-                else:
-                    await connection_manager.send_json(
-                        session_id,
-                        _build_event(
-                            session_id=session_id, msg_type="ack",
-                            event="sync_complete",
-                            content="无缓冲事件",
-                            role="system",
-                        ),
-                    )
+                    for ev in buf:
+                        seq = int(ev.get("_seq", 0) or 0)
+                        if seq > last_seq:
+                            merged.setdefault(seq, ev)
+                missed = [merged[k] for k in sorted(merged) if k > last_seq]
+                for ev in missed:
+                    await connection_manager.send_json(session_id, ev)
+                await connection_manager.send_json(
+                    session_id,
+                    _build_event(
+                        session_id=session_id, msg_type="ack",
+                        event="sync_complete",
+                        content=f"已补发 {len(missed)} 条事件",
+                        role="system",
+                        data={"last_seq": missed[-1].get("_seq", last_seq) if missed else last_seq},
+                    ),
+                )
 
             elif msg_type == "ping":
                 await connection_manager.send_json(
@@ -1612,6 +1646,13 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
                         ToolSecurityGate.resolve_review(request_id, approved, reason)
                     except Exception as e:
                         logger.warning(f"[安全审查] 响应处理失败: {e}")
+                    try:
+                        from modules.thinking import pending_requests as _pending
+                        _pending.resolve_and_broadcast(
+                            session_id, request_id, {"approved": bool(approved)}
+                        )
+                    except Exception as e:
+                        logger.debug(f"[Pending] 结束审批失败 (非致命): {e}")
 
             elif msg_type == "interactive_response":
                 request_id = msg_data.get("request_id", "")
@@ -1631,6 +1672,15 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
                             logger.warning(f"[交互响应] 未找到等待中的 request_id={request_id}")
                     except Exception as e:
                         logger.warning(f"[交互响应] 处理失败: {e}", exc_info=True)
+                    # Phase 4.b：不论 Future 是否找到，都从待办表移除（避免前端留下死按钮）
+                    try:
+                        from modules.thinking import pending_requests as _pending
+                        _pending.resolve_and_broadcast(
+                            session_id, request_id,
+                            {"answer": str(msg_data.get("answer", ""))},
+                        )
+                    except Exception as e:
+                        logger.debug(f"[Pending] 结束提问失败 (非致命): {e}")
             else:
                 await connection_manager.send_json(
                     session_id,
@@ -1659,6 +1709,11 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
             reject_session_user_responses(session_id)
         except Exception as e:
             logger.debug(f"[WS] 清理待交互失败 (非致命): {e}")
+        try:
+            from modules.thinking import pending_requests as _pending
+            _pending.clear(session_id)
+        except Exception as e:
+            logger.debug(f"[WS] 清理待办失败 (非致命): {e}")
 
 
 async def _stream_sse(session_id: str, question: str):
@@ -1734,6 +1789,14 @@ async def close_session(session_id: str):
             repo.delete_session(session_id)
         except Exception as e:
             logger.debug(f"[SessionRepo] 删除会话失败: {e}")
+    # 事件日志随会话一起删除（否则重建同名会话会读到旧轨迹）
+    try:
+        from modules.database.session_events import get_session_event_repo
+        get_session_event_repo().clear(session_id)
+    except Exception as e:
+        logger.debug(f"[EventLog] 清理会话事件失败: {e}")
+    _event_buffers.pop(session_id, None)
+    _event_seq.pop(session_id, None)
     # 关键修复：清理跨模块的进程内存缓存，防止重新打开/请求时仍加载旧数据
     try:
         from modules.thinking.model_runner import _session_memory_context, _resume_context
@@ -1882,6 +1945,23 @@ async def get_session_messages(session_id: str, limit: int = 100):
         return {"success": True, "data": data}
     except Exception:
         return {"success": True, "data": []}
+
+
+@router.get("/sessions/{session_id}/events")
+async def get_session_events(session_id: str, after_seq: int = 0, limit: int = 500):
+    """按 seq 读取会话事件（刷新/重开会话时重建过程视图）。
+
+    与 WS 帧同构：`{type, event, content, data, _seq}`，前端用同一套处理函数回放。
+    """
+    try:
+        from modules.database.session_events import get_session_event_repo
+        repo = get_session_event_repo()
+        events = repo.list_events(session_id, after_seq=after_seq, limit=limit)
+        last_seq = max(repo.last_seq(session_id), events[-1]["_seq"] if events else 0)
+        return {"success": True, "data": {"events": events, "last_seq": last_seq}}
+    except Exception as e:
+        logger.debug(f"[EventLog] 读取会话事件失败: {e}")
+        return {"success": True, "data": {"events": [], "last_seq": 0}}
 
 
 @router.post("/stop")

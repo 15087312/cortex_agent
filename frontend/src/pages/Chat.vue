@@ -15,6 +15,7 @@ import ModelSelector from '@/components/ModelSelector.vue'
 import ThinkingIndicator from '@/components/ThinkingIndicator.vue'
 import ThinkingStatusPanel from '@/components/ThinkingStatusPanel.vue'
 import ProcessPanel from '@/components/ProcessPanel.vue'
+import ToolCard from '@/components/tools/ToolCard.vue'
 import SessionSettings from '@/components/SessionSettings.vue'
 import Icon from '@/components/Icon.vue'
 import { useI18n } from 'vue-i18n'
@@ -29,13 +30,15 @@ const prompt = usePrompt()
 const { t } = useI18n()
 const sessionListCollapsed = ref(false)
 const showSettings = ref(false)
-const todos = ref([])
+// todo 列表由 session_projection(todos) 推送；保留可写 computed，本地勾选/刷新仍可直接赋值
+const todos = computed({ get: () => chat.todos, set: (v) => { chat.todos = v } })
 const showTodos = ref(false)
 const tracesOpen = ref(false)
 const todoDone = computed(() => todos.value.filter((t) => t.status === 'completed').length)
-// 上下文窗口占用（估算 token，由 thinking_progress 状态事件填充）
-const contextTokens = ref(0)
-const contextWindowSize = ref(0)
+// 上下文窗口占用（估算 token）：实时由 thinking_progress 填充，刷新后由
+// session_projection(contextPressure) 恢复——两路都写 store，这里只读
+const contextTokens = computed(() => chat.contextTokens)
+const contextWindowSize = computed(() => chat.contextWindowSize)
 
 // 当前激活技能：从 thinking_progress 的 large 模型 runner 提取（后端 active_skill 字段）
 const activeSkill = computed(() => {
@@ -79,8 +82,10 @@ const msgOffset = computed(() => chat.messages.length - visibleMessages.value.le
 const hasMoreMessages = computed(() => chat.messages.length > visibleMessages.value.length)
 
 // 正在等待 AI 回复：最后一条消息是 user（或消息为空）→ 在用户消息下方显示“正在思考”
+// 已经开始流式输出正文时不显示（避免“思考中”与正在写的答案同时出现）
 const showThinkingWaiting = computed(() =>
   chat.processing &&
+  !chat.streamTail?.content &&
   (chat.messages.length === 0 || chat.messages[chat.messages.length - 1].role === 'user')
 )
 
@@ -166,6 +171,8 @@ const _onMessage = (d) => {
     scrollBottom()
     return
   }
+  // 最终正文到达 → 流式尾巴让位给落定的消息气泡
+  chat.clearStream()
   // 用户已主动停止：忽略后端补发的 message，避免"按了停止又冒出回复"
   if (chat.stopped) return
   const content = d.content || ''
@@ -224,18 +231,9 @@ const _onError = (d) => {
 const _onStatus = (d) => {
   if (!_isCurrent(d)) return
   chat.elapsed = d.data?.elapsed_s || 0
-  // 上下文窗口占用（估算 token，用于显示上下文占比）。
-  // 保持最近一次非零值：后端仅在大模型构建 prompt 时更新 tokens，
-  // 中间的心跳可能带 0，直接覆盖会让上下文条闪烁/消失。
-  if (d.data?.context_tokens) contextTokens.value = d.data.context_tokens
-  if (d.data?.context_window_size) contextWindowSize.value = d.data.context_window_size
-  // 解析 thinking_progress → 在线模型状态（大循环 指挥/主管/专家 层级）
-  const list = []
-  const add = (r, tier, sup) => { if (r && r.model_id) list.push({ ...r, tier, supervisor: sup || '' }) }
-  if (d.data?.large_model) add(d.data.large_model, 'large', '')
-  ;(d.data?.active_supervisors || []).forEach(s => add(s, 'supervisor', ''))
-  ;(d.data?.active_experts || []).forEach(e => add(e, 'expert', e.supervisor || ''))
-  chat.runners = list
+  // 解析 thinking_progress → 在线模型状态（大循环 指挥/主管/专家 层级）+ 上下文占用。
+  // store 侧保持“最近一次非零 token”语义：心跳带 0 时不清空上下文条。
+  chat.applyRunnerSnapshot(d.data)
   // 过程流面板的模型状态沿用本次快照（显示"当时"运行的模型，非实时刷新）
   chat.setProcessSnapshot({
     large_model: d.data?.large_model || null,
@@ -273,11 +271,78 @@ const _onProactive = (d) => {
   scrollBottom()
 }
 
+// ── 轨迹入流（Phase 3）：工具卡片插到“调用发生时最后一条消息”下方 ──
+const _tracesByKey = computed(() => {
+  const map = new Map()
+  for (const tr of chat.traces) {
+    const key = tr.afterKey
+    if (!key) continue
+    const list = map.get(key)
+    if (list) list.push(tr)
+    else map.set(key, [tr])
+  }
+  return map
+})
+
+function tracesAfter(item) {
+  const out = []
+  for (const key of [item._id, item.id]) {
+    if (!key) continue
+    const list = _tracesByKey.value.get(key)
+    if (list) out.push(...list)
+  }
+  return out
+}
+
+// 无法定位到消息的轨迹（历史回放 / 尚无消息时的调用）→ 仍走折叠面板
+const detachedTraces = computed(() => {
+  const keys = new Set()
+  for (const m of chat.messages) {
+    if (m._id) keys.add(m._id)
+    if (m.id) keys.add(m.id)
+  }
+  return chat.traces.filter(tr => !tr.afterKey || !keys.has(tr.afterKey))
+})
+
+// 流式正文增量（Phase 3）：边收边写进尾巴气泡，最终 message 到达时替换
+const _onChunk = (d) => {
+  if (!_isCurrent(d)) return
+  chat.appendStreamChunk(d)
+  scrollBottom()
+}
+
+// 结构化工具轨迹：tool_call 建“运行中”行，tool_result 原地补齐状态/耗时/预览
+const _onTool = (d) => {
+  if (!_isCurrent(d)) return
+  if (d.event === 'tool_call') {
+    // 工具调用开始 → 上一轮正文尾巴已说完，收起来（内容仍在过程流里），
+    // 避免它留在气泡位置冒充“最终回答”
+    chat.clearStream()
+    chat.addToolCall(d)
+  } else if (d.event === 'tool_result') {
+    chat.addToolResult(d)
+  }
+  scrollBottom()
+}
+
 // todo 变更推送：后端 todo 工具执行后推送，收到即按需拉取（替代 3s 轮询）
 const _onTodo = (d) => {
   // 只刷新当前会话的 todo（后端按 session 隔离推送）
   if (d.session_id && d.session_id !== session.sessionId) return
   loadTodos()
+}
+
+// Phase 4：服务端投影整值快照（todos / runners / 上下文占用 / token 用量）。
+// 按 key 覆盖、按 seq 丢旧帧；实时帧与回放重复时以更新的 seq 为准。
+const _onProjection = (d) => {
+  if (!_isCurrent(d)) return
+  chat.applyProjection(d.data)
+}
+
+// Phase 4.b：待审批/待回答的整快照——刷新/重连后据此重建横幅（否则回合会挂死）
+const _onRequest = (d) => {
+  if (!_isCurrent(d)) return
+  chat.applyPendingRequests(d.data?.requests)
 }
 
 function scrollBottom(force = false) {
@@ -314,6 +379,10 @@ onMounted(async () => {
   ws.wsClient.on('status', _onStatus)
   ws.wsClient.on('proactive', _onProactive)
   ws.wsClient.on('todo', _onTodo)
+  ws.wsClient.on('session_projection', _onProjection)
+  ws.wsClient.on('session_request', _onRequest)
+  ws.wsClient.on('tool', _onTool)
+  ws.wsClient.on('chunk', _onChunk)
   // 连接看门狗：处理中断开 → 复位加载态并提示，避免"一直加载"
   watchTimer = setInterval(() => {
     if (chat.processing && !ws.wsClient.isConnected(session.sessionId)) {
@@ -340,11 +409,16 @@ onUnmounted(() => {
   ws.wsClient.off('status', _onStatus)
   ws.wsClient.off('proactive', _onProactive)
   ws.wsClient.off('todo', _onTodo)
+  ws.wsClient.off('session_projection', _onProjection)
+  ws.wsClient.off('session_request', _onRequest)
+  ws.wsClient.off('tool', _onTool)
+  ws.wsClient.off('chunk', _onChunk)
   if (watchTimer) clearInterval(watchTimer)
 })
 
 function handleSend({ text, attachments }) {
-  if (chat.processing) return
+  // 有待审批/待回答时输入区被接管：先处理横幅，避免消息插到等待中间
+  if (chat.processing || chat.hasPendingRequest) return
   chat.sendMessage(text, attachments)
   const images = (attachments || [])
     .filter(a => a && String(a.type || '').startsWith('image/'))
@@ -355,16 +429,13 @@ function handleSend({ text, attachments }) {
 }
 
 async function handleNewSession() {
+  // init() 内部 resetProjections()：上下文占用/todo 随之清零
   await chat.init()
-  contextTokens.value = 0
-  contextWindowSize.value = 0
 }
 
 async function handleSessionSelect(sid) {
+  // switchToSession 内部先 resetProjections() 再按 seq 读回该会话的投影
   await chat.switchToSession(sid)
-  // 上下文占用按会话隔离：切换会话后清空，等待新会话的 thinking_progress 重新填充
-  contextTokens.value = 0
-  contextWindowSize.value = 0
   // 进入会话默认定位到最新消息（强制，不受"接近底部才滚"守卫限制）
   renderLimit.value = RENDER_LIMIT
   scrollBottom(true)
@@ -534,16 +605,21 @@ function handleAnswerIntent(requestId, answer) {
           :open="true"
         />
 
-        <!-- 运行轨迹：工具调用/委托等中间步骤（借鉴 dsh，从对话流分离） -->
-        <div v-if="chat.traces.length" class="chat-traces">
+        <!-- 运行轨迹（未落位）：历史回放的工具/委托等中间步骤 -->
+        <div v-if="detachedTraces.length" class="chat-traces">
           <div class="chat-traces-header" @click="tracesOpen = !tracesOpen">
-            <span>{{ $t('chat.tracesTitle', { count: chat.traces.length }) }}</span>
+            <span>{{ $t('chat.tracesTitle', { count: detachedTraces.length }) }}</span>
             <span class="chevron">{{ tracesOpen ? $t('chat.tracesCollapse') : $t('chat.tracesExpand') }}</span>
           </div>
           <div v-if="tracesOpen" class="chat-traces-body">
-            <div v-for="(tr, i) in chat.traces" :key="i" class="trace-item">
-              <span class="trace-dot"></span>{{ tr.text }}
-            </div>
+            <template v-for="tr in detachedTraces" :key="tr._id || tr.time">
+              <!-- 结构化工具轨迹（Phase 0）+ 工具卡片（Phase 2）：按 view.card 分派 -->
+              <ToolCard v-if="tr.kind === 'tool'" :trace="tr" />
+              <!-- 旧会话只有文本摘要（traces 不持久化，仅历史重建时出现） -->
+              <div v-else class="trace-item">
+                <span class="trace-dot"></span>{{ tr.text }}
+              </div>
+            </template>
           </div>
         </div>
 
@@ -551,16 +627,34 @@ function handleAnswerIntent(requestId, answer) {
           {{ loadingOlder ? $t('common.loading') : $t('chat.loadEarlier', { count: chat.messages.length - visibleMessages.length }) }}
         </div>
 
+        <template v-for="(item, i) in visibleMessages" :key="item._id">
+          <ChatMessage
+            :message="item"
+            :index="msgOffset + i"
+            @copy="handleCopyMessage"
+            @delete="handleDeleteMessage"
+            @edit="handleEditMessage"
+            @approve="handleApprove"
+            @answer-intent="handleAnswerIntent"
+          />
+          <!-- 本步骤调用的工具卡片：跟在这条消息下面，形成“说一句 → 调工具 → 接着说”的顺序 -->
+          <div v-if="tracesAfter(item).length" class="chat-traces-inline">
+            <template v-for="tr in tracesAfter(item)" :key="tr._id || tr.time">
+              <ToolCard v-if="tr.kind === 'tool'" :trace="tr" />
+              <div v-else class="trace-item">
+                <span class="trace-dot"></span>{{ tr.text }}
+              </div>
+            </template>
+          </div>
+        </template>
+
+        <!-- 流式正文尾巴（未落定的正文）：边生成边显示，最终 message 到达后被替换 -->
         <ChatMessage
-          v-for="(item, i) in visibleMessages"
-          :key="item._id"
-          :message="item"
-          :index="msgOffset + i"
-          @copy="handleCopyMessage"
-          @delete="handleDeleteMessage"
-          @edit="handleEditMessage"
-          @approve="handleApprove"
-          @answer-intent="handleAnswerIntent"
+          v-if="chat.streamTail && chat.streamTail.content"
+          :key="chat.streamTail._id"
+          :message="{ role: 'assistant', content: chat.streamTail.content, identity_name: chat.streamTail.identityName }"
+          :index="msgOffset + visibleMessages.length"
+          :is-streaming="true"
         />
 
         <!-- 正在等待 AI 回复：显示在最后一条用户消息下方 -->
@@ -580,7 +674,7 @@ function handleAnswerIntent(requestId, answer) {
         </button>
       </transition>
 
-      <ChatInput :processing="chat.processing" :hint="chat.hint" @send="handleSend" @toast="(t) => toast.show(t.message, t.type)">
+      <ChatInput :processing="chat.processing" :blocked="chat.hasPendingRequest" :hint="chat.hint" @send="handleSend" @toast="(t) => toast.show(t.message, t.type)">
         <template #actions>
           <button v-if="chat.processing" class="btn btn-sm btn-stop" @click="chat.stop()"><Icon name="stop" :size="14" /> {{ $t('chat.stop') }}</button>
         </template>

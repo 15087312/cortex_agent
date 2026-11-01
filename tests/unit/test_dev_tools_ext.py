@@ -492,13 +492,23 @@ class TestReadWriteTextFile:
         r = dt.write_text_file(str(p), "new", overwrite=True)
         assert r["success"] is True
         assert p.read_text(encoding="utf-8") == "new"
-        assert r["action"] == "updated"
+        assert r["action"] == "created"
 
     def test_write_update(self, tmp_path):
         p = tmp_path / "a.py"
         p.write_text("old", encoding="utf-8")
         r = dt.write_text_file(str(p), "new")
         assert r["action"] == "updated"
+        # 工具自述展示：更新时带上行级 diff（DiffCard 数据源）
+        assert any(line.startswith("-") and "old" in line for line in r["diff"])
+        assert any(line.startswith("+") and "new" in line for line in r["diff"])
+
+    def test_write_diff_bounded(self, tmp_path):
+        p = tmp_path / "a.py"
+        p.write_text("\n".join(f"line{i}" for i in range(400)), encoding="utf-8")
+        r = dt.write_text_file(str(p), "\n".join(f"new{i}" for i in range(400)))
+        assert len(r["diff"]) <= dt._DIFF_MAX_LINES + 1
+        assert r["diff"][-1].startswith("…")
 
     def test_write_exception(self, tmp_path, monkeypatch):
         p = tmp_path / "a.py"

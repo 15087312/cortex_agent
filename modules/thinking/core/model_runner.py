@@ -610,6 +610,34 @@ class ModelRunner:
         except Exception as e:
             logger.debug(f"[ModelRunner] 流式推送失败 (非致命): {e}")
 
+    def _push_stream_chunk(self, delta: str, turn: int) -> None:
+        """流式正文增量 → 前端边收边渲染（Phase 3）。
+
+        只是“预览”：不落库（`chunk` 不在 DURABLE_TYPES 里），刷新后以最终
+        `message` 事件为准。只推大模型的本会话连接，主管/专家的正文仍走
+        每轮结束的 thinking 事件，避免同一段话推两遍。
+        """
+        if self.tier != "large" or not delta:
+            return
+        try:
+            from modules.thinking.api_stream import connection_manager, _build_event
+            envelope = _build_event(
+                session_id=self.session_id,
+                msg_type="chunk",
+                event="chunk_delta",
+                content=delta,
+                role="large",
+                data={
+                    "turn": turn,
+                    "tier": self.tier,
+                    "model_id": self.model_id,
+                    "identity_name": self._tool_identity_name(),
+                },
+            )
+            connection_manager.send_json_from_thread(self.session_id, envelope)
+        except Exception as _swallowed_err:
+            logger.debug(f"[_push_stream_chunk] ignored Exception: {_swallowed_err}")
+
     async def _save_partial_result(self):
         """取消时保存已有的部分思考输出"""
         try:
@@ -1402,8 +1430,30 @@ class ModelRunner:
         except Exception as _swallowed_err:
             logger.debug(f"[_push_reasoning] ignored Exception: {_swallowed_err}")
 
+    def _record_usage(self, usage: Any) -> None:
+        """累计一次响应的 token 用量并推送 `tokenUsage` 投影（Phase 4）。
+
+        计数落在会话级投影里而不是 runner 实例上：主管/专家 runner 任务结束即销毁，
+        记在实例上会丢失；投影读改写，跨 tier 汇总到同一份快照。
+        """
+        if not isinstance(usage, dict) or not usage:
+            return
+        try:
+            from modules.thinking import projections
+            projections.record_token_usage(self.session_id, self.tier, usage)
+        except Exception as e:
+            logger.debug(f"[ModelRunner] 记录 token 用量失败 (非致命): {e}")
+
     def _push_todo_update(self) -> None:
         """todo 变更后推送前端（替代轮询）：前端收到 type='todo' 事件后按需拉取列表"""
+        # Phase 4：todo 列表本身就是一份投影快照（含 done/total），前端不必再请求一次
+        try:
+            from modules.thinking import projections
+            projections.emit_projection(
+                self.session_id, "todos", projections.build_todos(self.session_id)
+            )
+        except Exception as e:
+            logger.debug(f"[ModelRunner] todo 投影推送失败 (非致命): {e}")
         try:
             from modules.thinking.api_stream import connection_manager, _build_event
             event = _build_event(
@@ -1418,6 +1468,68 @@ class ModelRunner:
                 connection_manager.send_json_from_thread(sid, event)
         except Exception as e:
             logger.debug(f"[ModelRunner] todo 推送失败 (非致命): {e}")
+
+    def _push_tool_event(self, event: str, data: Dict[str, Any]) -> None:
+        """推送结构化工具事件到前端，并写入会话事件日志（Phase 1）。
+
+        `_record_event` 负责分配 seq、落入 session_events 表（tool 类型是持久
+        事件）并进环形缓冲；刷新/重开会话时前端按 seq 回放即可复原轨迹。
+        只发给本会话连接，避免多会话并行时串台。
+        """
+        try:
+            from modules.thinking.api_stream import connection_manager, _build_event, _record_event
+            envelope = _build_event(
+                session_id=self.session_id,
+                msg_type="tool",
+                event=event,
+                content="",
+                role=self.tier,
+                data=data,
+            )
+            _record_event(self.session_id, envelope)
+            connection_manager.send_json_from_thread(self.session_id, envelope)
+        except Exception as e:
+            logger.debug(f"[ModelRunner] 工具事件推送失败 (非致命): {e}")
+
+    def _tool_identity_name(self) -> str:
+        identity = getattr(self, "identity", None)
+        return getattr(identity, "name", "") or getattr(identity, "role", "") or ""
+
+    def _push_tool_call(self, tc: Any, args: Any) -> None:
+        """工具调用开始 → 前端立即出现“运行中”轨迹行。"""
+        from modules.thinking.tool_events import build_call_payload
+        name = getattr(tc, "name", "") or ""
+        call_id = getattr(tc, "id", "") or name
+        self._push_tool_event(
+            "tool_call",
+            build_call_payload(
+                call_id, name, args,
+                tier=self.tier, model_id=self.model_id,
+                identity_name=self._tool_identity_name(),
+            ),
+        )
+
+    def _push_tool_result(
+        self, tc: Any, result: Any, *, status: str = "ok",
+        duration_ms: float = 0.0, error: str = "", args: Any = None,
+    ) -> None:
+        """工具执行结束 → 状态、耗时、结果预览 + 卡片 meta/view。
+
+        `args` 只用于卡片投影（命令原文/路径/查询词），不进入模型上下文。
+        """
+        from modules.thinking.tool_events import build_result_payload
+        name = getattr(tc, "name", "") or ""
+        call_id = getattr(tc, "id", "") or name
+        self._push_tool_event(
+            "tool_result",
+            build_result_payload(
+                call_id, name, result,
+                status=status, duration_ms=duration_ms, error=error,
+                tier=self.tier, model_id=self.model_id,
+                identity_name=self._tool_identity_name(),
+                args=args,
+            ),
+        )
 
     def _push_expert_output(self, content: str) -> None:
         """推送主管/专家每轮循环输出到过程流（非气泡）。
@@ -2416,9 +2528,10 @@ class ModelRunner:
                     partial_content_parts: list = []
                     last_emit_len = 0
                     last_emitted_text = ""
+                    last_chunk_len = 0
 
                     def _on_token(chunk: str):
-                        nonlocal last_emit_len, last_emitted_text
+                        nonlocal last_emit_len, last_emitted_text, last_chunk_len
                         # 有 token 产出 → AI 仍在工作，静默计时重新开始
                         self.activity.touch("stream")
                         partial_content_parts.append(chunk)
@@ -2432,6 +2545,12 @@ class ModelRunner:
                                 self._emit_streaming_content(delta, turn)
                                 last_emitted_text = self._current_streaming_content
                             last_emit_len = total
+                        # 前端流式预览：40 字符或遇到换行/句末就推一帧（比 TUI 更细）
+                        if total - last_chunk_len >= 40 or "\n" in chunk or chunk.endswith(("。", "！", "？", ".", "!", "?")):
+                            piece = self._current_streaming_content[last_chunk_len:]
+                            if piece:
+                                self._push_stream_chunk(piece, turn)
+                                last_chunk_len = total
 
                     if hasattr(client, 'chat_stream'):
                         response = await client.chat_stream(
@@ -2439,6 +2558,8 @@ class ModelRunner:
                         )
                     else:
                         response = await client.chat(**kwargs)
+                    # Phase 4：累计本会话 token 用量 → session_projection(tokenUsage)
+                    self._record_usage(getattr(response, "usage", None))
                     content = response.message.content or ""
                     tool_calls = response.message.tool_calls
                     # 模型本轮响应到达 → 活动计时重新开始
@@ -2748,17 +2869,17 @@ class ModelRunner:
                                             f"[ModelRunner] plan 模式拦截写操作委派: "
                                             f"model={self.model_id} role={role} keywords={matched}"
                                         )
-                                    # 记录 plan 模式拦截的委托
-                                    if self._thinker:
-                                        from modules.thinking.core.delegation_port import DelegationResult
-                                        self._thinker.record_delegation(role, task, DelegationResult(
-                                            success=False, error="plan 模式拦截"
-                                        ))
-                                    return (
-                                        f"[安全门控拦截] 当前为 plan 模式（只读），检测到写操作关键词: {', '.join(matched)}。"
-                                        f"禁止委派写操作任务给「{role}」。\n"
-                                        "如需执行写操作，请切换到 edit 或 yolo 模式：输入 /mode edit 或 /mode yolo"
-                                    )
+                                        # 记录 plan 模式拦截的委托
+                                        if self._thinker:
+                                            from modules.thinking.core.delegation_port import DelegationResult
+                                            self._thinker.record_delegation(role, task, DelegationResult(
+                                                success=False, error="plan 模式拦截"
+                                            ))
+                                        return (
+                                            f"[安全门控拦截] 当前为 plan 模式（只读），检测到写操作关键词: {', '.join(matched)}。"
+                                            f"禁止委派写操作任务给「{role}」。\n"
+                                            "如需执行写操作，请切换到 edit 或 yolo 模式：输入 /mode edit 或 /mode yolo"
+                                        )
 
                                 from modules.thinking.core.delegation_port import (
                                     ProbeDelegationAdapter, DelegationRequest,
@@ -2953,11 +3074,20 @@ class ModelRunner:
                     if normal_calls:
                         from infra.mcp.types import ToolCallRequest
                         for tc in normal_calls:
+                            # ── 结构化工具轨迹（Phase 0）：开始/结束各发一条事件，
+                            #    前端据此渲染名称、参数、状态、耗时、结果预览 ──
+                            _tool_started = time.perf_counter()
+                            _tool_status = "ok"
+                            _tool_error = ""
+                            args: Dict[str, Any] = {}
                             try:
                                 self._status_detail = tc.name
                                 args = json.loads(tc.arguments) if isinstance(tc.arguments, str) and tc.arguments.strip() else {}
+                                self._push_tool_call(tc, args)
                                 missing = self._missing_required_tool_args(tc.name, args)
                                 if missing:
+                                    _tool_status = "invalid"
+                                    _tool_error = f"缺少必填参数: {', '.join(missing)}"
                                     # 生成友好提示，告诉模型正确的参数名
                                     hint = ""
                                     if tc.name == "keyboard_hotkey":
@@ -3002,6 +3132,8 @@ class ModelRunner:
                                         raise RuntimeError(error_msg) from gate_err
 
                                     if not allowed:
+                                        _tool_status = "denied"
+                                        _tool_error = str(reason or "安全门控拒绝")
                                         result = (
                                             f"[安全门控拦截] {reason}\n"
                                             f"请调整你的工具调用参数或选择其他工具来完成任务。"
@@ -3036,6 +3168,8 @@ class ModelRunner:
                                         except asyncio.TimeoutError:
                                             # 注意：to_thread 的底层线程无法被强杀，这里只是不再等待它，
                                             # 把超时结果回传给模型，让 AI 自己换方案。
+                                            _tool_status = "timeout"
+                                            _tool_error = f"执行超时（>{self.TOOL_CALL_TIMEOUT:.0f}s）"
                                             from types import SimpleNamespace
                                             logger.warning(
                                                 f"[ModelRunner] 工具执行超时: model={self.model_id} "
@@ -3070,6 +3204,9 @@ class ModelRunner:
                                         else:
                                             error_msg = mcp_result.error or f"MCP 执行失败（无错误信息）: {tc.name}"
                                             result = f"[错误: {error_msg}]"
+                                            if _tool_status == "ok":
+                                                _tool_status = "error"
+                                            _tool_error = error_msg
                                             if self.tier == "expert":
                                                 expert_errors.append(f"{tc.name}: {mcp_result.error}")
                                         # 审批结果回传：让模型明确知道该工具经过了用户审批
@@ -3077,10 +3214,19 @@ class ModelRunner:
                                         if reason and reason.startswith("用户批准"):
                                             result = f"[用户审批已通过] {reason}\n{result}"
                             except Exception as e:
+                                _tool_status = "error"
+                                _tool_error = str(e)
                                 result = f"[工具 {tc.name} 执行失败: {e}]"
                                 if self.tier == "expert":
                                     expert_errors.append(f"{tc.name}: {e}")
 
+                            self._push_tool_result(
+                                tc, result,
+                                status=_tool_status,
+                                duration_ms=(time.perf_counter() - _tool_started) * 1000,
+                                error=_tool_error,
+                                args=args,
+                            )
                             logger.info(f"[ModelRunner] {self.model_id} 第{turn}轮 {tc.name} → {result[:400]}")
                             # 写入 Blackboard — 简洁的一行摘要，让 TUI 直观显示
                             if self.blackboard and tc.name not in ("continue_thinking", "respond_to_user", "delegate_task", "create_supervisor", "request_skill", "list_skills"):
