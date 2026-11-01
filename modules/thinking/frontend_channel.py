@@ -38,6 +38,31 @@ def _main_event_loop():
     return _api_stream._main_event_loop
 
 
+def _stream_sessions(cm=None) -> list:
+    """SSE 订阅中的会话——与 WebSocket 并列的第二个前端出口。
+
+    纯 SSE 客户端从不 `connect` WebSocket，只看 `active_connections` 会把它们
+    当成“前端已断开”，于是握手失败、消息不推。测试桩没有这张表时按空处理。
+    """
+    try:
+        cm = cm or _connections()
+        fn = getattr(cm, "stream_sessions", None)
+        return list(fn() or ()) if callable(fn) else []
+    except Exception as e:
+        logger.debug(f"[连接确认] 读取 SSE 订阅失败: {e}")
+        return []
+
+
+def _channels(cm=None) -> list:
+    """所有可推送的会话出口（WebSocket 连接 ∪ SSE 订阅），去重保序。"""
+    cm = cm or _connections()
+    out = []
+    for sid in list(getattr(cm, "active_connections", {}) or {}) + _stream_sessions(cm):
+        if sid not in out:
+            out.append(sid)
+    return out
+
+
 def confirm_frontend_connection(session_id: str = None) -> bool:
     """LLM 调用前握手：确认前端 WS 推送链路可达。
 
@@ -49,7 +74,9 @@ def confirm_frontend_connection(session_id: str = None) -> bool:
     """
     try:
         cm = _connections()
-        if not cm.active_connections:
+        # SSE 订阅也算在线：纯 SSE 会话正在流式等本轮输出，不能握手失败跳过 LLM
+        channels = _channels(cm)
+        if not channels:
             return False
         event = _build_event(
             session_id="",
@@ -59,7 +86,7 @@ def confirm_frontend_connection(session_id: str = None) -> bool:
             role="system",
             data={"handshake": True},
         )
-        candidates = [session_id] if session_id else list(cm.active_connections.keys())
+        candidates = [session_id] if session_id else channels
         # 同步接口（供 daemon 线程调用）。若在事件循环内使用会与主 loop 冲突，
         # async 场景请用 generate_and_push（内部 async 确认）。
         for sid in candidates:
@@ -74,7 +101,8 @@ def confirm_frontend_connection(session_id: str = None) -> bool:
 async def _confirm_async(session_id: str = None) -> bool:
     """async 握手确认：在事件循环内 await 发送，避免 run_coroutine_threadsafe 自锁。"""
     cm = _connections()
-    if not cm.active_connections:
+    channels = _channels(cm)
+    if not channels:
         return False
     event = _build_event(
         session_id="",
@@ -84,7 +112,7 @@ async def _confirm_async(session_id: str = None) -> bool:
         role="system",
         data={"handshake": True},
     )
-    candidates = [session_id] if session_id else list(cm.active_connections.keys())
+    candidates = [session_id] if session_id else channels
     for sid in candidates:
         try:
             await cm.send_json(sid, event)
@@ -169,7 +197,8 @@ async def push_content(
     sent_any = False
     try:
         cm = _connections()
-        for sid in list(cm.active_connections.keys()):
+        # 逐个出口推：WebSocket 与 SSE 都在 send_json 内扇出，SSE 会话没连 WS 也要发
+        for sid in _channels(cm):
             try:
                 await cm.send_json(sid, event_obj)
                 sent_any = True

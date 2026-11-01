@@ -34,8 +34,59 @@ class ConnectionManager:
 
     def __init__(self):
         self.active_connections: Dict[str, WebSocket] = {}
+        # SSE 订阅者：session_id → asyncio.Queue 集合。
+        # 工具/流式正文/投影/待办这些帧由 model_runner、projections、pending_requests
+        # 直接投给 connection_manager（没有 callback 通道）；没有这张表，SSE 客户端
+        # 就只看得到调度事件，看不到工具与流式正文。
+        self._streams: Dict[str, set] = {}
         self._lock = asyncio.Lock()
         self._loop: Optional[asyncio.AbstractEventLoop] = None
+
+    # ── SSE 订阅（与 WebSocket 并行，互不影响） ──
+
+    def subscribe_stream(self, session_id: str) -> asyncio.Queue:
+        """注册一个 SSE 输出队列（同一会话可多个订阅者），返回队列本身。"""
+        q: asyncio.Queue = asyncio.Queue(maxsize=2000)
+        self._streams.setdefault(session_id, set()).add(q)
+        # 纯 SSE 会话从未 connect 过 WebSocket，_loop 会是 None →
+        # send_json_from_thread 的扇出会被提前 return 掉。订阅时就记下当前循环。
+        try:
+            self._loop = asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+        return q
+
+    def unsubscribe_stream(self, session_id: str, q: asyncio.Queue) -> None:
+        subs = self._streams.get(session_id)
+        if not subs:
+            return
+        subs.discard(q)
+        if not subs:
+            self._streams.pop(session_id, None)
+
+    def has_stream(self, session_id: str) -> bool:
+        return bool(self._streams.get(session_id))
+
+    def stream_sessions(self) -> list:
+        """当前有 SSE 订阅者的会话（与 active_connections 并列的第二个出口）。"""
+        return [sid for sid, subs in self._streams.items() if subs]
+
+    def push_sessions(self) -> list:
+        """所有可推送出口的会话：WebSocket 连接 ∪ SSE 订阅（去重保序）。"""
+        out = list(self.active_connections.keys())
+        for sid in self.stream_sessions():
+            if sid not in out:
+                out.append(sid)
+        return out
+
+    def _fanout_streams(self, session_id: str, data: dict) -> None:
+        """把一帧投给该会话的 SSE 订阅者（只能在事件循环线程上调用）。"""
+        for q in list(self._streams.get(session_id) or ()):
+            try:
+                q.put_nowait(data)
+            except asyncio.QueueFull:
+                # 客户端读得比生成慢：丢弃旧帧也没用，这里只记一笔，不阻塞思考
+                logger.debug(f"[ConnectionManager] SSE 队列满，丢弃一帧: {session_id[:8]}")
 
     async def connect(self, session_id: str, websocket: WebSocket):
         await websocket.accept()
@@ -69,6 +120,8 @@ class ConnectionManager:
                 del self.active_connections[session_id]
 
     async def send_json(self, session_id: str, data: dict):
+        # SSE 与 WebSocket 是两种出口，互不依赖：先扇出再发 WS
+        self._fanout_streams(session_id, data)
         async with self._lock:
             websocket = self.active_connections.get(session_id)
             if websocket:
@@ -87,11 +140,13 @@ class ConnectionManager:
         if not self._loop or self._loop.is_closed():
             logger.warning("[ConnectionManager] send_json_from_thread: 无可用事件循环")
             return False
-        if session_id not in self.active_connections:
+        # 纯 SSE 客户端没有 WebSocket 连接，但有流订阅者 → 仍算「有出口」
+        if session_id not in self.active_connections and not self.has_stream(session_id):
             logger.debug(f"[ConnectionManager] send_json_from_thread: session {session_id[:8]} 无活跃连接")
             return False
 
         async def _send():
+            self._fanout_streams(session_id, data)
             async with self._lock:
                 ws = self.active_connections.get(session_id)
                 if ws:
@@ -101,8 +156,8 @@ class ConnectionManager:
                     except Exception:
                         # 连接已关闭 → 移除残留连接
                         self.active_connections.pop(session_id, None)
-                        return False
-            return False
+                # WS 没有/已断：只要还有 SSE 订阅者，这帧就算没白推
+                return self.has_stream(session_id)
 
         # 已在事件循环线程上调用（如模型流式推理内 _push_reasoning）：不能再走
         # run_coroutine_threadsafe + future.result() 同步阻塞——否则会阻塞事件循环自身，
@@ -130,7 +185,7 @@ class ConnectionManager:
             return False
 
     async def broadcast(self, data: dict):
-        for session_id in list(self.active_connections.keys()):
+        for session_id in self.push_sessions():
             await self.send_json(session_id, data)
 
 
@@ -397,18 +452,27 @@ class StreamThinkingSystem:
         return msg_id
 
     async def _persist_thought(self, session_id: str, content: str, tier: str = "",
-                               identity_name: str = "") -> None:
+                               identity_name: str = "", entry_type: str = "") -> None:
         """持久化思考步骤到 DB（供前端切换会话后恢复展示）。
 
         只写 SQLite、不写入内存 messages —— 内存 messages 用于组装模型上下文
         （think() 的 context / 【对话历史】），思考步骤不应污染 AI 看到的对话。
+
+        entry_type 必须一起落库：恢复时靠它区分「过程推理」与「最终回复」，
+        否则主管/专家的最终回复会被当成思考吞进大模型回复的思考区
+        （见 docs/ERRORS_AND_FIXES.md §101）。
         """
         repo = self._get_session_repo()
         if not repo:
             return
+        metadata = {}
+        if identity_name:
+            metadata["identity_name"] = identity_name
+        if entry_type:
+            metadata["entry_type"] = entry_type
         try:
             repo.save_message(session_id, "thought", content, tier=tier,
-                              metadata={"identity_name": identity_name} if identity_name else None)
+                              metadata=metadata or None)
         except Exception as e:
             logger.debug(f"[SessionRepo] 保存思考步骤失败: {e}")
 
@@ -937,6 +1001,7 @@ class StreamThinkingSystem:
                         await self._persist_thought(
                             session_id, formatted["content"], tier=event_role,
                             identity_name=formatted.get("data", {}).get("identity_name", ""),
+                            entry_type=_inject_entry_type,
                         )
                     except Exception as _swallowed_err:
                         logger.debug(f"[scheduler_event_callback] ignored Exception: {_swallowed_err}")
@@ -1466,6 +1531,29 @@ async def _safe_think(system, session_id: str, user_input: str, callback=None) -
             logger.debug(f"[_safe_think] ignored Exception: {_swallowed_err}")
 
 
+def _cleanup_session_on_disconnect(session_id: str, tag: str = "WS") -> None:
+    """客户端断开后的会话清理（WebSocket / SSE 共用）。
+
+    前端断开 → 自动拒绝该会话所有待审批（工具审批/模式切换）与待交互
+    （ask_user_intent）：防止审批 future 永久挂起 + Suspension 全局计时冻结。
+    """
+    try:
+        from modules.security_system.tool_security_gate import ToolSecurityGate
+        ToolSecurityGate.reject_session_reviews(session_id)
+    except Exception as e:
+        logger.debug(f"[{tag}] 清理待审批失败 (非致命): {e}")
+    try:
+        from modules.thinking.core.model_runner import reject_session_user_responses
+        reject_session_user_responses(session_id)
+    except Exception as e:
+        logger.debug(f"[{tag}] 清理待交互失败 (非致命): {e}")
+    try:
+        from modules.thinking import pending_requests as _pending
+        _pending.clear(session_id)
+    except Exception as e:
+        logger.debug(f"[{tag}] 清理待办失败 (非致命): {e}")
+
+
 @router.websocket("/ws/{session_id}")
 async def websocket_chat(websocket: WebSocket, session_id: str):
     """
@@ -1697,23 +1785,7 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
         logger.info(f"WebSocket 断开: {session_id}")
     finally:
         await connection_manager.disconnect(session_id)
-        # 前端断开 → 自动拒绝该会话所有待审批（工具审批/模式切换）与待交互
-        # （ask_user_intent）：防止审批 future 永久挂起 + Suspension 全局计时冻结
-        try:
-            from modules.security_system.tool_security_gate import ToolSecurityGate
-            ToolSecurityGate.reject_session_reviews(session_id)
-        except Exception as e:
-            logger.debug(f"[WS] 清理待审批失败 (非致命): {e}")
-        try:
-            from modules.thinking.core.model_runner import reject_session_user_responses
-            reject_session_user_responses(session_id)
-        except Exception as e:
-            logger.debug(f"[WS] 清理待交互失败 (非致命): {e}")
-        try:
-            from modules.thinking import pending_requests as _pending
-            _pending.clear(session_id)
-        except Exception as e:
-            logger.debug(f"[WS] 清理待办失败 (非致命): {e}")
+        _cleanup_session_on_disconnect(session_id)
 
 
 async def _stream_sse(session_id: str, question: str):
@@ -1725,20 +1797,47 @@ async def _stream_sse(session_id: str, question: str):
     system = get_thinking_system()
     await system.start(session_id)
 
+    # 工具调用、流式正文、投影、可应答帧不经 `callback` —— model_runner._push_* /
+    # projections / pending_requests 都直接投给 connection_manager。把自己注册成
+    # 一个流订阅者，SSE 才能和 WebSocket 看到同样的东西（否则只有调度事件）。
+    stream_queue = connection_manager.subscribe_stream(session_id)
+    # 同一个 envelope 对象既经 callback 又经扇出到达（_emit 两条都走）→ 按对象
+    # 身份去重。deque 里存对象本身而不是 id()：只存 int 时对象释放后 id 会被复用，
+    # 新的一帧可能撞上刚释放的 id 而被误丢。
+    seen = _collections.deque(maxlen=256)
+
+    # 与 websocket_chat 对齐：连上就先补发已持久化的投影与待办快照，
+    # 否则 SSE 客户端在下一支状态变化前看不到 todos/上下文占用/审批项。
+    try:
+        from modules.thinking import pending_requests as _pending
+        from modules.thinking import projections as _projections
+        _projections.push_current(session_id)
+        _pending.broadcast(session_id)
+    except Exception as e:
+        logger.debug(f"[SSE] 补发投影/待办失败 (非致命): {e}")
+
     task = asyncio.create_task(_safe_think(system, session_id, question, callback=callback))
 
     try:
         while True:
-            if task.done() and queue.empty():
+            if task.done() and queue.empty() and stream_queue.empty():
                 break
+            event = None
             try:
-                event = await asyncio.wait_for(queue.get(), timeout=0.25)
-                yield {
-                    "event": event.get("event", event.get("type", "message")),
-                    "data": json.dumps(event, ensure_ascii=False),
-                }
-            except asyncio.TimeoutError:
+                event = queue.get_nowait()              # 调度事件优先，保序
+            except asyncio.QueueEmpty:
+                try:
+                    event = stream_queue.get_nowait()   # 工具/流式/投影/待办
+                except asyncio.QueueEmpty:
+                    await asyncio.sleep(0.05)
+                    continue
+            if any(e is event for e in seen):
                 continue
+            seen.append(event)
+            yield {
+                "event": event.get("event", event.get("type", "message")),
+                "data": json.dumps(event, ensure_ascii=False),
+            }
 
         await task
     except Exception as e:
@@ -1751,6 +1850,27 @@ async def _stream_sse(session_id: str, question: str):
             role="system",
         )
         yield {"event": "error", "data": json.dumps(err, ensure_ascii=False)}
+    finally:
+        # 客户端断开/正常结束都要注销，否则残留队列会让后续帧一直没人接
+        connection_manager.unsubscribe_stream(session_id, stream_queue)
+        # SSE 客户端断开后不会再有人应答审批/提问：与 WS 一样立刻清理，
+        # 否则 future 永久挂起 + Suspension 计时冻结，会话一直占着不起下一个回合
+        _cleanup_session_on_disconnect(session_id, tag="SSE")
+        if not task.done():
+            # SSE 不像 WS 有「重连后接着跑」：客户端走了就别再耗 token
+            task.cancel()
+            task.add_done_callback(
+                # 取走异常，避免 "Task exception was never retrieved" 噪声
+                lambda t: None if t.cancelled() else t.exception()
+            )
+            # 取消时 think() 的 finally 里那句 await _set_processing(False) 可能来不及
+            # 跑完（也回写不了）→ 会话会永远停在“处理中”，之后每个请求都回 busy
+            try:
+                session = getattr(system, "sessions", {}).get(session_id)
+                if session is not None:
+                    session["processing"] = False
+            except Exception as e:
+                logger.debug(f"[SSE] 重置处理中状态失败 (非致命): {e}")
 
 
 @router.get("/sse/{session_id}")
@@ -1891,8 +2011,8 @@ async def get_sessions():
     async with system._lock:
         live_ids = set(system.sessions.keys())
 
-    # 真正"正在使用"的会话 = 有活跃 WebSocket 连接的会话
-    active_ws = set(connection_manager.active_connections.keys())
+    # 真正“正在使用”的会话 = 有活跃前端出口（WebSocket ∪ SSE）的会话
+    active_sessions = set(connection_manager.push_sessions())
 
     # 从 DB 获取历史会话
     db_sessions = []
@@ -1901,7 +2021,7 @@ async def get_sessions():
             # 自动清理无消息的空会话：
             # 仅保留有活跃 WS 连接或最近活跃的空会话，其余（含内存里挂着的旧空会话）删除
             repo.delete_empty_sessions(
-                exclude_ids=list(active_ws),
+                exclude_ids=list(active_sessions),
                 min_idle_minutes=10,
             )
         except Exception as e:

@@ -355,7 +355,7 @@ class SessionRepository:
         """自动清理没有任何消息（0 对话）的空会话
 
         新建后从未发过消息的会话会残留占位，这里批量删除。
-        - exclude_ids: 明确需要保留的会话 ID（如当前有活跃 WebSocket 的会话）
+        - exclude_ids: 明确需要保留的会话 ID（如当前有活跃 WebSocket/SSE 出口的会话）
         - min_idle_minutes: 只删除超过该时长未活动的空会话（最近创建/使用中的保留）
 
         Returns:

@@ -941,7 +941,8 @@ async def get_sessions():
         try:
             from modules.thinking.api_stream import connection_manager
             _get_chat_session_repo().delete_empty_sessions(
-                exclude_ids=list(connection_manager.active_connections.keys()),
+                # 排除所有活跃前端出口（WebSocket ∪ SSE），否则纯 SSE 会话可能被当成空会话删掉
+                exclude_ids=connection_manager.push_sessions(),
                 min_idle_minutes=10,
             )
         except Exception as _swallowed_err:

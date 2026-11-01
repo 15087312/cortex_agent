@@ -688,9 +688,13 @@ async def test_stream_sse_flow(monkeypatch):
 
     monkeypatch.setattr(stream, "get_thinking_system", lambda: s)
     monkeypatch.setattr(stream, "_safe_think", fake_safe_think)
-    async for chunk in _stream_sse("s1", "问题"):
+    agen = _stream_sse("s1", "问题")
+    async for chunk in agen:
         events_seen.append(chunk)
         break
+    # 提前 break 的生成器必须显式关闭：否则它的 finally 不跑，
+    # SSE 订阅会残留在 connection_manager 里（真实断连时由 sse_starlette 关闭）
+    await agen.aclose()
     assert events_seen[0]["event"] == "assistant_message"
 
 

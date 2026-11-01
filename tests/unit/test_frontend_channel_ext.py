@@ -179,3 +179,80 @@ async def test_generate_and_push_empty_text(env):
         return "   "
     out = await fc.generate_and_push("sess-1", llm_fn, msg_type="message", event="proactive")
     assert out is None
+
+
+# ── SSE 出口：纯 SSE 会话也算「前端在线」 ──────────────────────────────
+# 纯 SSE 客户端从不 connect WebSocket，只看 active_connections 会把它们当成
+# 前端已断开：握手返回 False → think 直接跳过本轮 LLM；push_content 也不推。
+
+class FakeCMWithStreams(FakeCM):
+    def __init__(self, connections=None, streams=None, loop=None):
+        super().__init__(connections, loop)
+        self._streams = list(streams or [])
+        self.sent = []
+
+    def stream_sessions(self):
+        return list(self._streams)
+
+    def send_json_from_thread(self, sid, event):
+        self.sent.append(sid)
+        return sid in self._streams or sid in self.active_connections
+
+    async def send_json(self, sid, event):
+        self.sent.append(sid)
+        return True
+
+
+@pytest.fixture
+def env_sse(monkeypatch):
+    cm = FakeCMWithStreams()
+    system = FakeSystem()
+    monkeypatch.setattr(fc._api_stream, "connection_manager", cm)
+    monkeypatch.setattr(fc._api_stream, "_build_event", _build_event)
+    monkeypatch.setattr(fc._api_stream, "get_thinking_system", lambda: system)
+    monkeypatch.setattr(fc, "_main_event_loop", lambda: asyncio.get_running_loop())
+    return cm, system
+
+
+def test_confirm_stream_only_session(env_sse):
+    cm, _ = env_sse
+    cm._streams = ["s1"]
+    assert fc.confirm_frontend_connection("s1") is True
+    assert cm.sent == ["s1"]
+
+
+def test_confirm_broadcast_includes_streams(env_sse):
+    cm, _ = env_sse
+    cm._streams = ["s1"]
+    assert fc.confirm_frontend_connection() is True
+    assert "s1" in cm.sent
+
+
+def test_confirm_no_outlet_at_all(env_sse):
+    cm, _ = env_sse
+    assert fc.confirm_frontend_connection("s1") is False
+
+
+async def test_confirm_async_stream_only(env_sse):
+    cm, _ = env_sse
+    cm._streams = ["s1"]
+    assert await fc._confirm_async("s1") is True
+    assert cm.sent == ["s1"]
+
+
+async def test_push_content_stream_only(env_sse):
+    cm, _ = env_sse
+    cm._streams = ["s1"]
+    sent = await fc.push_content("sess-1", msg_type="message", event="proactive",
+                                 content="搭话", persist=False)
+    assert sent is True
+    assert cm.sent == ["s1"]
+
+
+async def test_push_content_dedupes_ws_and_stream(env_sse):
+    """同一会话既有 WS 又有 SSE：只发一次（send_json 内部自己扇出两份）。"""
+    cm, _ = env_sse
+    cm.active_connections = {"s1": object()}
+    cm._streams = ["s1"]
+    await fc.push_content("sess-1", msg_type="message", event="x", content="c", persist=False)
+    assert cm.sent == ["s1"]

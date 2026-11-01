@@ -1425,8 +1425,9 @@ class ModelRunner:
                 role="thinking",
                 data={"source": "reasoning", "identity_name": identity, "tier": tier},
             )
-            for sid in list(connection_manager.active_connections.keys()):
-                connection_manager.send_json_from_thread(sid, event)
+            # 只投本会话：WebSocket 与 SSE 都是出口，由 ConnectionManager 自己扇出
+            # （遍历 active_connections 会让纯 SSE 会话永远收不到推理帧，见 §100）
+            connection_manager.send_json_from_thread(self.session_id, event)
         except Exception as _swallowed_err:
             logger.debug(f"[_push_reasoning] ignored Exception: {_swallowed_err}")
 
@@ -1464,8 +1465,8 @@ class ModelRunner:
                 role=self.tier,
                 data={"session_id": self.session_id},
             )
-            for sid in list(connection_manager.active_connections.keys()):
-                connection_manager.send_json_from_thread(sid, event)
+            # 同上：本会话单点投递，WS/SSE 由 ConnectionManager 扇出
+            connection_manager.send_json_from_thread(self.session_id, event)
         except Exception as e:
             logger.debug(f"[ModelRunner] todo 推送失败 (非致命): {e}")
 
@@ -1564,8 +1565,8 @@ class ModelRunner:
                 data={"identity_name": identity, "tier": tier,
                       "entry_type": "thinking", "source": "loop"},
             )
-            for sid in list(connection_manager.active_connections.keys()):
-                connection_manager.send_json_from_thread(sid, event)
+            # 同上：只投本会话，纯 SSE 客户端也能看到主管/专家的循环输出
+            connection_manager.send_json_from_thread(self.session_id, event)
         except Exception as _swallowed_err:
             logger.debug(f"[_push_expert_output] ignored Exception: {_swallowed_err}")
 

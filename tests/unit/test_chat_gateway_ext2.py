@@ -1011,6 +1011,23 @@ async def test_route_get_sessions_chatonly(monkeypatch):
     assert len(out["data"]) == 1
 
 
+async def test_route_get_sessions_chatonly_keeps_sse_session(monkeypatch):
+    """§100.6：纯 SSE 活跃会话不能被空会话清理当成可删除"""
+    _set_chatonly(monkeypatch)
+    repo = _noop(monkeypatch)
+    repo.delete_empty_sessions = MagicMock()
+    repo.get_all_sessions = MagicMock(return_value=[])
+    from modules.thinking.api_stream import ConnectionManager
+    cm = ConnectionManager()
+    await cm.connect("s_ws", AsyncMock())
+    q = cm.subscribe_stream("s_sse")
+    monkeypatch.setattr("modules.thinking.api_stream.connection_manager", cm)
+    await cg.get_sessions()
+    exclude = repo.delete_empty_sessions.call_args.kwargs["exclude_ids"]
+    assert set(exclude) == {"s_ws", "s_sse"}
+    cm.unsubscribe_stream("s_sse", q)
+
+
 async def test_route_get_session_messages_chatonly(monkeypatch):
     _set_chatonly(monkeypatch)
     repo = _noop(monkeypatch)

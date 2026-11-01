@@ -107,6 +107,21 @@ async def test_persist_thought(monkeypatch):
     await s2._persist_thought("s1", "x")  # 无 repo 直接返回
 
 
+async def test_persist_thought_keeps_entry_type(monkeypatch):
+    """§101：entry_type 必须随思考落库，否则恢复时最终回复会被当成过程推理吞掉"""
+    s = _system()
+    repo = MagicMock()
+    monkeypatch.setattr(s, "_get_session_repo", lambda: repo)
+    await s._persist_thought("s1", "方案v1", tier="expert",
+                             identity_name="实现专家", entry_type="response")
+    kwargs = repo.save_message.call_args.kwargs
+    assert kwargs["metadata"] == {"identity_name": "实现专家", "entry_type": "response"}
+    # 无身份/无 entry_type 时不写空 metadata
+    repo.save_message.reset_mock()
+    await s._persist_thought("s1", "思考", tier="large")
+    assert repo.save_message.call_args.kwargs["metadata"] is None
+
+
 # ── token 预算截断（纯读取视图，不裁剪内存/DB） ─────────────────────────
 
 async def test_budget_trim_over_budget(monkeypatch):
@@ -454,6 +469,22 @@ async def test_route_get_sessions(monkeypatch):
     monkeypatch.setattr(stream.connection_manager, "active_connections", {"ws1": object()})
     out = await stream.get_sessions()
     assert len(out["data"]) == 2
+
+
+async def test_route_get_sessions_excludes_sse_sessions(monkeypatch):
+    """§100.6：纯 SSE 活跃会话同样不能被空会话清理删掉"""
+    s = _system()
+    repo = MagicMock()
+    repo.delete_empty_sessions = MagicMock()
+    repo.get_all_sessions = MagicMock(return_value=[])
+    monkeypatch.setattr(s, "_get_session_repo", lambda: repo)
+    monkeypatch.setattr(stream, "get_thinking_system", lambda: s)
+    cm = stream.ConnectionManager()
+    q = cm.subscribe_stream("s_sse")
+    monkeypatch.setattr(stream, "connection_manager", cm)
+    await stream.get_sessions()
+    assert repo.delete_empty_sessions.call_args.kwargs["exclude_ids"] == ["s_sse"]
+    cm.unsubscribe_stream("s_sse", q)
 
 
 async def test_route_get_session_messages(monkeypatch):

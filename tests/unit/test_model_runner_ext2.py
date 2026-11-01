@@ -1552,6 +1552,19 @@ def test_push_reasoning_send_error(monkeypatch):
     r._push_reasoning("思考内容")  # 不抛
 
 
+def test_push_reasoning_targets_own_session(monkeypatch):
+    """只投本会话：纯 SSE 订阅没有 WS 连接也要能收到推理帧（§100）"""
+    r = _runner()  # session_id = s1
+    import modules.thinking.api_stream as ap
+    sent = []
+    cm = MagicMock()
+    cm.active_connections = {"other": object()}  # 本会话没有 WS，只有别的会话
+    cm.send_json_from_thread = lambda sid, ev: sent.append((sid, ev))
+    monkeypatch.setattr(ap, "connection_manager", cm)
+    r._push_reasoning("思考内容")
+    assert [sid for sid, _ in sent] == ["s1"]
+
+
 # ── ModelRunnerManager 细节 ───────────────────────────────────────────────
 
 def _mk_manager(monkeypatch, identities=None):
@@ -2312,6 +2325,8 @@ def test_push_expert_output_expert():
         r._push_expert_output("已完成实现")
     assert len(sent) == 1
     assert sent[0][1]["role"] == "expert"
+    # 投递目标是本会话（WS/SSE 由 ConnectionManager 扇出，§100）
+    assert sent[0][0] == "s1"
 
 
 # ── 断点续思考（超时后从已保存上下文继续） ────────────────────────────────

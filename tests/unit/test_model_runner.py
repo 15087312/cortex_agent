@@ -110,6 +110,7 @@ def test_push_reasoning_sends_event(monkeypatch):
     sent = []
 
     class FakeCM:
+        # 别的会话的 WS 连接：不应被投递（§100.5：只投本会话，WS/SSE 由 CM 扇出）
         active_connections = {"ws1": object(), "ws2": object()}
         @staticmethod
         def send_json_from_thread(sid, event):
@@ -119,7 +120,8 @@ def test_push_reasoning_sends_event(monkeypatch):
     monkeypatch.setattr("modules.thinking.api_stream.connection_manager", FakeCM)
     monkeypatch.setattr("modules.thinking.api_stream._build_event", fake_build)
     runner._push_reasoning("思考内容")
-    assert len(sent) == 2
+    assert len(sent) == 1
+    assert sent[0][0] == "s_test"
     assert sent[0][1]["content"].startswith("【思考】")
 
 
