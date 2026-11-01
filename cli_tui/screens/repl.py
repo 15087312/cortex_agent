@@ -353,6 +353,14 @@ class REPL(Screen):
                 except Exception as e:
                     logger.error(f"[TUI] 安全审批组件显示失败: {e}", exc_info=True)
                 return
+            elif parsed["kind"] == "pending_clear":
+                # 待办已清空（请求被应答 / 断线清理）→ 收起审批面板，避免僵尸按钮
+                self.state.pending_security_review = None
+                try:
+                    self._approval_widget.remove_class("visible")
+                except Exception as e:
+                    logger.debug(f"[TUI] 收起审批面板失败: {e}")
+
             elif parsed["kind"] == "security":
                 action = parsed.get("action", "")
                 tool = parsed.get("tool", "")

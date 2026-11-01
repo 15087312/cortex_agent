@@ -368,6 +368,43 @@ class WSClient:
             "timestamp": time.time(),
         }
 
+    def _parse_session_request(self, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """`session_request` 整快照 → 复用现有的审批/提问渲染。
+
+        帧里是“当前所有待处理请求”的列表（幂等快照，刷新/重连后补发）。TUI 一次
+        只显示一个审批面板，所以取最早登记的那个；应答后后端会推新快照，下一个
+        自然接上。列表变空 → `pending_clear`，让面板收起，避免点击不动的僵尸按钮。
+        """
+        requests = data.get("requests")
+        if not isinstance(requests, list):
+            return None
+        if not requests:
+            return {"kind": "pending_clear", "timestamp": time.time()}
+        record = next(
+            (r for r in requests if isinstance(r, dict) and r.get("request_id")), None
+        )
+        if not record:
+            return None
+        request_id = str(record.get("request_id") or "")
+        if record.get("kind") == "question":
+            options = record.get("options")
+            return {
+                "kind": "user_intent_request",
+                "request_id": request_id,
+                "question": str(record.get("question") or ""),
+                "options": list(options) if isinstance(options, (list, tuple)) else [],
+                "context": str(record.get("context") or ""),
+                "timestamp": time.time(),
+            }
+        return {
+            "kind": "security_review",
+            "request_id": request_id,
+            "tool": str(record.get("target") or ""),
+            "caller": str(record.get("caller") or ""),
+            "detail": str(record.get("detail") or ""),
+            "timestamp": time.time(),
+        }
+
     def _parse_event_inner(self, event: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """内部解析逻辑"""
         msg_type = event.get("type", "")
@@ -399,6 +436,10 @@ class WSClient:
                 "round_num": int(data.get("turn") or 0),
                 "timestamp": time.time(),
             }
+
+        # ── 可应答帧（Phase 4.b）: type=session_request ──
+        if msg_type == "session_request":
+            return self._parse_session_request(data)
 
         # ── 富事件: broadcast 消息 (多模型通信) ──
         pld_msg_type = payload.get("msg_type", "")

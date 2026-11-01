@@ -417,6 +417,55 @@ class TestParseEventToolFrame:
         assert result["params"] == {}
 
 
+class TestParseEventSessionRequest:
+    """Phase 4.b 可应答帧：整快照 → 复用审批/提问的现有渲染。"""
+
+    def test_approval_snapshot_maps_to_security_review(self, client):
+        result = client.parse_event({
+            "type": "session_request",
+            "event": "requests_snapshot",
+            "data": {"requests": [
+                {"request_id": "r1", "kind": "approval", "target": "exec_command",
+                 "detail": "rm -rf /tmp/x"},
+            ]},
+        })
+        assert result["kind"] == "security_review"
+        assert result["request_id"] == "r1"
+        assert result["tool"] == "exec_command"
+        assert result["detail"] == "rm -rf /tmp/x"
+
+    def test_question_snapshot_maps_to_user_intent(self, client):
+        result = client.parse_event({
+            "type": "session_request",
+            "data": {"requests": [
+                {"request_id": "q1", "kind": "question", "question": "用哪个方案？",
+                 "options": ["A", "B"], "context": "背景"},
+            ]},
+        })
+        assert result["kind"] == "user_intent_request"
+        assert result["question"] == "用哪个方案？"
+        assert result["options"] == ["A", "B"]
+        assert result["context"] == "背景"
+
+    def test_first_pending_request_wins(self, client):
+        result = client.parse_event({
+            "type": "session_request",
+            "data": {"requests": [
+                {"request_id": "r1", "kind": "approval", "target": "a"},
+                {"request_id": "r2", "kind": "approval", "target": "b"},
+            ]},
+        })
+        assert result["request_id"] == "r1"
+
+    def test_empty_snapshot_asks_to_clear_banner(self, client):
+        result = client.parse_event({"type": "session_request", "data": {"requests": []}})
+        assert result["kind"] == "pending_clear"
+
+    def test_malformed_snapshot_ignored(self, client):
+        assert client.parse_event({"type": "session_request", "data": {}}) is None
+        assert client.parse_event({"type": "session_request", "data": {"requests": [{}]}}) is None
+
+
 class TestParseEventChunkFrame:
     def test_chunk_is_streaming_delta(self, client):
         result = client.parse_event({
