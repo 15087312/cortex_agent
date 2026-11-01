@@ -2415,7 +2415,7 @@ if exec_mode == "plan":
 
 **测试：** `tests/unit/test_ws_client.py` 新增 `TestParseEventToolFrame`（5 例：调用帧、结果帧、失败状态、无 `view` 时回退参数、`data=None` 不抛）与 `TestParseEventChunkFrame`（2 例）；`tests/unit/test_tui_state.py` 新增 `TestToolRecordMerge`（3 例：合并成一行且保留参数、失败结果覆盖成功、无 `call_id` 不误合并）。
 
-**遗留：** `session_request`（可应答帧）未接。TUI 的审批走旧的 `security` 事件（双发仍在），接新协议会与现有审批组件重复弹窗，等旧帧撤除时一并迁移。
+**后续：** `session_request`（可应答帧）当时未接，TUI 审批仍走旧的 `security` 事件；已在 §99.2 接上（`_parse_session_request` 复用现有审批组件，旧 `security` 帧保留双发）。
 
 ### 98.2 SSE 路线没有流式
 
@@ -2440,3 +2440,290 @@ if exec_mode == "plan":
 **测试：** `frontend/src/stores/chat.spec.js`：原「同一轮都挂在用户消息下」一例改为断言 `['u1','a1']`（`说一句 → 调工具 → 接着说` 的交错），新增「终稿没落库时保留上一锚点」一例；「老会话无 `user_message` 事件时保持无锚点」一例继续通过。
 
 **回归：** `tests/unit` 6417 例（1 skipped，含本次新增 13 例）、`tests/integration` 432 例（1 skipped）全部通过；`tests/unit/test_ws_client.py` + `test_tui_state.py` 64 例、`test_chat_gateway*.py` 83 例；前端 vitest 51 文件 582 例全通。
+
+
+## 99. SSE 出口看不到工具/流式帧；TUI 不认可应答帧（后端 + TUI）
+
+### 99.1 SSE 只收到调度事件
+
+**现象：** 用 agent 模式的 SSE（`GET /stream/sse/{sid}?question=`）接会话，正文整段蹦出、工具轨迹完全没有、todo 与上下文占用也不更新；用 WebSocket 接同一会话则一切正常。
+
+**根因：** 帧有两个来源：
+1. `_emit(...)` → `callback`（SSE 的 queue）+ `connection_manager.send_json`；
+2. `ModelRunner._push_tool_event` / `_push_stream_chunk`、`projections._push_frame`、
+   `pending_requests.broadcast` → **只调 `connection_manager`**（工具/流式/投影/待办）。
+
+`ConnectionManager` 只维护 `active_connections`（WebSocket），`send_json_from_thread` 在
+“无 WS 连接”时直接 `return False`；SSE 没有任何订阅入口。于是第 2 类帧对 SSE 客户端
+完全不存在——不是推送失败，而是根本没有收件人。
+
+**修复：** 给 `ConnectionManager` 加一条与 WebSocket 并列的出口：
+1. `subscribe_stream(session_id) / unsubscribe_stream(...) / has_stream(...)`：每会话一组
+   `asyncio.Queue`（多订阅者各自一份），订阅时顺手记下 `_loop`——纯 SSE 会话从未
+   `connect` 过 WS，`_loop` 为空会让 `send_json_from_thread` 提前返回；
+2. `send_json` 先 `_fanout_streams` 再发 WS；`send_json_from_thread` 把“有流订阅者”也算
+   一个出口，并在调度到事件循环的协程里扇出（`Queue.put_nowait` 不能跨线程调）；
+3. `_stream_sse` 订阅自己的队列，循环里两个队列都抽：调度事件优先（保序），工具/投影
+   走流队列；同一个 envelope 对象会同时经 `callback` 与扇出到达，因此按对象 `id` 做一个
+   有界 `deque(maxlen=256)` 去重；`finally` 注销订阅（客户端断开也必须清）；
+4. 与 `websocket_chat` 对齐：连上即 `projections.push_current` + `pending_requests.broadcast`，
+   不用等下一次状态变化才看到 todos/上下文占用/审批项。
+
+**测试：** 新增 `tests/unit/test_api_stream_sse_fanout.py`（5 例）：只有 SSE 订阅时
+`send_json` 能送达；`send_json_from_thread` 在无 WS、只有流订阅时返回 True 且帧到达；
+无任何出口时返回 False；多订阅者各得一份；`_stream_sse` 能收到只经扇出的 `tool_call`
+帧，且同一 envelope 不会重复下发，生成器结束后订阅已注销。
+
+### 99.2 TUI 不认 `session_request`
+
+**现象：** 网页里刷新后仍能看到“待审批”横幅并点确定；终端里刷新/重连后什么也没有，
+审批 Future 只能等超时。
+
+**根因：** Phase 4.b 把待办做成了 `session_request` 整快照帧（唯一能在刷新/重连后重建
+横幅的东西），Web 前端接上了，TUI 的 `parse_event` 对这四个字毫不认识。终端侧只能靠旧的
+`security` 一次性事件，而那条路径在刷新后就没有了。
+
+**修复：** `WSClient._parse_session_request` 把快照映射回 TUI 已有的两种条目：
+`approval` → `security_review`（`request_id`/`tool`/`detail`），`question` →
+`user_intent_request`（`question`/`options`/`context`），于是审批组件、`security_response` /
+`interactive_response` 上报全部复用，不用重写一套；快照为空 → `pending_clear`，`repl`
+收起审批面板并清 `pending_security_review`，避免应答后留下点不动的僵尸按钮。一帧多个
+待办时取最早登记的那个，应答后新快照自然接上下一个。
+
+**测试：** `tests/unit/test_ws_client.py::TestParseEventSessionRequest`（5 例）：审批映射、
+提问映射（含 options/context）、多请求取首个、空快照→`pending_clear`、缺字段的脏快照忽略。
+
+**回归：** `tests/unit/test_ws_client.py` + `test_tui_state.py` + `test_api_stream_sse_fanout.py`
+74 例全通；`test_api_stream_ext.py` + `test_api_stream_think_ext.py` + `test_pending_requests.py`
+71 例全通。
+
+
+## 100. SSE 会话被当成“前端已断开”：握手拦下本轮 LLM、推送只认 WS、断开不清理（后端）
+
+§99 打通了 SSE 的帧出口之后，SSE 路线还剩三处把“有没有 WebSocket 连接”当成
+“前端在不在线”的判断，任何一处都足以让 SSE 端看起来“接不上”或“卡死”。
+
+### 100.1 握手失败 → 本轮 LLM 直接被跳过
+
+**现象：** `GET /stream/sse/{sid}?question=` 连上去，只收到一条
+`connection_lost`（“前端连接已断开，本轮请求已跳过，可在重连后重试”），没有任何回答；
+同一会话换 WebSocket 一切正常。
+
+**根因：** `think()` 在调模型前会握手
+`frontend_channel.confirm_frontend_connection(session_id)`，而它第一行就是
+`if not cm.active_connections: return False`——`active_connections` 只装 WebSocket。
+纯 SSE 客户端从未 `connect` 过 WS，于是握手恒失败，本轮在 LLM 之前就 return。
+
+**修复：** 握手改看“所有可推送出口”：`ConnectionManager.stream_sessions()`（新增）与
+`active_connections` 的并集（`frontend_channel._channels`）。
+`confirm_frontend_connection` 与 `_confirm_async` 都用它判在线与挑选广播目标；
+SSE 会话靠 `send_json_from_thread` 的新语义（有流订阅者即算送达）确认可达。
+
+### 100.2 `push_content` 只遍历 WebSocket 会话
+
+**现象：** 主动搭话 / 定时任务 / 后台补推的消息，SSE 客户端收不到（消息确实落库，
+刷新后历史里有，但当时不弹）。
+
+**根因：** `push_content` 的发送循环写死 `for sid in cm.active_connections`。
+
+**修复：** 改为遍历并集；同一会话既有 WS 又有 SSE 时只发一次（`send_json` 内部自己
+扇出两份），不会重复。
+
+### 100.3 SSE 断开不清理待审批 / 不取消任务
+
+**现象：** SSE 客户端在工具审批（或 `ask_user_intent` 提问）时关掉页面/断网：会话
+一直“卡在处理中”，后续请求全是 busy；日志里审批既没批准也没拒绝；模型还在继续
+生成（白烧 token）。
+
+**根因：** `websocket_chat` 的 `finally` 会 `reject_session_reviews` +
+`reject_session_user_responses` + `pending_requests.clear`，`_stream_sse` 的 `finally`
+只注销了自己的订阅队列。`sse_starlette` 在客户端断开时关闭生成器，于是那一轮
+`_safe_think` 任务成了没人管的孤儿：审批 future 永久挂起（Suspension 全局计时随之
+冻结），任务的异常也没人取走。
+
+**修复：** 把 WS 的三步清理抽成 `_cleanup_session_on_disconnect(session_id, tag)`，
+WS 与 SSE 的 `finally` 共用；SSE 额外 `task.cancel()`（SSE 没有“重连后接着跑”的语义，
+客户端走了就别再生成），并挂 `add_done_callback` 取走异常，避免
+“Task exception was never retrieved” 噪声。取消后还要把 `sessions[sid]["processing"]`
+手动置回 False：`think()` 的 `finally` 里那句 `await _set_processing(False)` 在任务被
+取消时未必跑得完，漏了就会留下一个永远是 busy 的会话。
+
+### 100.4 附：去重用的 `deque` 存的是 `id()`（顺手修）
+
+§99 里按对象 `id()` 去重同一 envelope（既经 `callback` 又经扇出）。`deque` 只存 int
+时对象早已释放，CPython 会复用 `id`——新帧可能撞上刚释放的 id 被误丢。改为在
+`deque` 里存对象本身（`any(e is event for e in seen)`），既保住身份比较，也钉住对象
+不让 id 被复用。
+
+**测试：** `tests/unit/test_frontend_channel_ext.py` 新增 6 例：纯 SSE 会话握手成功且
+只发给该会话、广播含 SSE 会话、无任何出口才返回 False、`_confirm_async` 同理、
+`push_content` 能推到纯 SSE 会话、WS+SSE 同时在线时不重复发。
+`tests/unit/test_api_stream_sse_fanout.py` 新增 1 例：生成器被 `aclose()`（客户端断开）
+后订阅已注销、待审批/待交互/待办三处清理都被调用、思考任务已被取消且会话不再停在
+“处理中”。
+
+**回归：** `tests/unit` 全量 6434 例（1 skipped，12 deselected）通过；本次相关子集
+`-k "frontend_channel or pending_requests or api_stream or chat_gateway or projection or proactive"`
+379 例通过；`tests/integration` 432 例（1 skipped）通过。
+
+
+### 100.5 其余推送路径仍只遍历 WebSocket（补）
+
+§99 / §100.1–100.2 覆盖了 `_emit` 与 `push_content`，但 `ModelRunner._push_reasoning`、
+`_push_expert_output`、`_push_todo_update` 仍然是
+`for sid in connection_manager.active_connections: send_json_from_thread(sid, ...)`：
+纯 SSE 会话（没有 WS 连接）收不到模型 reasoning、主管/专家的循环输出与 `todo_changed`，
+而且会把本会话的帧逐个投给**所有**会话的 WebSocket，等于广播。
+
+**修复：** 三处统一改为 `send_json_from_thread(self.session_id, event)` —— 与
+`_push_tool_event` / `_push_stream_chunk` 同款：本会话单点投递，WebSocket 与 SSE
+由 `ConnectionManager` 自己扇出。
+
+**测试：** `tests/unit/test_model_runner_ext2.py::test_push_reasoning_targets_own_session`
+（本会话没有 WS、只有别的会话时仍按本会话 id 投递）；
+`test_push_expert_output_expert` 增加投递目标断言。
+
+
+### 100.6 仍有推送/清理判定只看 WebSocket（补）
+
+**现象：**
+1. 全局错误总线的 `system_error` 帧只发给 WebSocket 会话，纯 SSE 客户端收不到；
+2. `/sessions` 的“空会话清理”只把 WebSocket 会话列为保留项，纯 SSE 活跃会话可能被
+   当成空会话删除（刚连上、第一条消息还没落库时尤其容易），前端会话列表随即消失。
+
+**根因：** 三处仍直接读 `connection_manager.active_connections`：
+- `api/main.py` 的 `_on_error` 广播循环；
+- `chat_gateway.get_sessions()`（chatonly）与 `api_stream.get_sessions()`（agent）的
+  `delete_empty_sessions(exclude_ids=...)`；
+- `ConnectionManager.broadcast()`。
+
+**修复：** `ConnectionManager` 新增 `push_sessions()`（WebSocket ∪ SSE，去重保序），
+上述四处统一改用它。`frontend_channel._channels()` 保留原有并集写法（兼容只实现
+`active_connections` / `stream_sessions` 的测试桩，且 MagicMock 的可调用属性会返回
+空迭代，不能直接委托）。
+
+**测试：**
+- `test_api_stream_sse_fanout.py::test_push_sessions_unions_ws_and_sse_without_duplicates`
+  （WS + SSE 去重保序、注销后只剩 WS）；
+- `test_api_stream_ext.py::test_route_get_sessions_excludes_sse_sessions`；
+- `test_chat_gateway_ext2.py::test_route_get_sessions_chatonly_keeps_sse_session`。
+
+
+## 101. 重放把主管/专家多次输出合并成一个气泡 —— entry_type 没有落库（前端 + 后端，§85/§91）
+
+**现象：** 编排模式下同一个 AI（同 tier + 同身份）一轮里发言两次（"方案v1"→"方案v2"），
+**刷新页面或切回会话后只剩"方案v2"**；更糟的是，主管/专家的最终回复有时会被塞进大模型
+回复的"思考"折叠区里，看起来像大模型的推理。
+
+**根因（两处）**：
+1. 后端 `api_stream._persist_thought()` 只把 `tier` 与 `identity_name` 写进
+   `chat_messages.metadata`，**没有写 `entry_type`**。实时帧里
+   `data.payload.content.entry_type == "response"` 是前端区分"最终回复气泡"与
+   "过程推理"的唯一依据（`classifyThinking`）；落库时丢掉它，恢复时所有主管/专家发言
+   都被判成 `kind='thinking'`。
+2. 前端 `chat.js::switchToSession` 的重放按 `tier:identity` 聚合成
+   `agg.contents[]`，最后只 `push` 一条 `content: agg.contents[被覆盖]`；而落库缺
+   `entry_type` 又让 `c.kind === 'expert'` 分支根本进不去，于是专家最终回复顺着
+   `kind === 'thinking'` 落到 `pendingLargeThinking`，被挂到下一条 assistant 消息的
+   `thinking` 上（归因错误 + 正文丢失）。
+
+**修复：**
+1. `_persist_thought(..., entry_type="")`：把 `entry_type` 一起写进 metadata（有值才写，
+   空则不产生多余键）；`scheduler_event_callback` 用它已经算好的 `_inject_entry_type` 传入。
+   `model_runner._push_expert_output` 早已写 `entry_type="thinking"`，两边口径一致。
+2. `switchToSession` 重放改为"缓冲 + 消耗"：
+   - 逐条还原 `data.entry_type` / `identity_name`（同时兼容顶层 `d.entry_type`），
+     让 `classifyThinking` 与运行时拿到同样输入（§74 的"同一套分类规则"继续成立）。
+   - 缓冲从 `expertAgg{contents[]}` 换成 `expertBuf{tier:identity -> {thinking, tools}}`：
+     每遇到一条 `response` 就**新建**一个气泡，把此刻的思考/工具挂上去并清空缓冲 ——
+     与运行时 `addExpertMessage` 完全同款，同身份多次输出不再合并。
+   - 主管/专家的非 `response` 推理进过程流（`addProcessStep`），不再污染
+     `pendingLargeThinking`；有 `role=process` 聚合时仍然跳过，避免重复。
+   - 循环结束后剩余的缓冲直接丢弃（对应运行时"未消费的思考"）。
+
+**兼容性：** 老数据没有 `entry_type`（当时的库就是这样），重放时按过程内容处理 ——
+不产生气泡，但也不会再错误地粘到大模型回复的思考区。
+
+**测试：** `tests/unit/test_api_stream_ext.py::test_persist_thought_keeps_entry_type`
+（metadata 含 entry_type；空值不产生多余键）；
+`frontend/src/stores/chat.spec.js` 新增"历史加载 主管/专家多次输出各自独立气泡"
+（同身份两条 response → 两个气泡、工具缓冲只挂首个气泡、专家回复不进大模型思考区）。
+
+**回归：** `frontend` 全量 583 例通过；`tests/unit` 相关子集（api_stream 三件套 +
+settings 两件套）223 例通过。
+
+
+### 101.1 专家气泡的思考/工具缓冲已无生产者（清理）
+
+**现象：** 不可见。但 `switchToSession` 重放会把主管/专家的工具文本塞进专家气泡的
+`_tools`，而实时运行时同样的文本进过程流——刷新前后展示不一致。
+
+**根因：** 自 414375c（专家推理/工具轨迹改走过程流）后，`addExpertThinking` /
+`addExpertTool` **已无生产调用**，只剩永远为空的 `_pendingByTier` / `_pendingTools`
+被 `addExpertMessage` 读取；重放路径却仍在填充 `_tools`（§101 改造时按旧模型对齐）。
+于是「气泡自带思考/工具」只剩重放能看到。
+
+**修复：** 删除死代码，统一到过程流：
+1. 移除 `addExpertThinking` / `addExpertTool` / `_pendingByTier` / `_pendingTools` /
+   `_expertBubbles` 及 `_hasThinkingLine`。
+2. `addExpertMessage` 只创建最终回复气泡，不再读取缓冲。
+3. `switchToSession`：主管/专家的工具文本改为 `addProcessStep`（与运行时
+   `dispatchThinking` 同款）；专家气泡不再写 `_thinking` / `_tools`。
+4. `ChatMessage.vue` 删除专家气泡内已不可达的思考折叠与工具列表块。
+
+**测试：** `chat.spec.js` 重放用例改为断言气泡无 `_tools`、工具文本进 `processFlow`；
+`ChatMessage.spec.js` 改为断言专家气泡不渲染思考/工具（防回归）。前端 583 例全过。
+
+
+## 102. settings.json 解析失败时静默当作 `{}` 写回 —— 一次保存抹掉全部配置（后端，§88 残留）
+
+**现象：** 配置文件被手工改坏（或少见的中途断电留下不完整 JSON）后，用户在 Settings 页
+随便保存一项，`settings.json` 里**其它所有已持久化的 key（模型参数、API Key、开关）全部消失**，
+只留下这次保存的那几个。
+
+**根因：** `save_user_config` 读文件时 `except Exception: data = {}`，随后在同一个锁内
+把这几个 key 写回并 `os.replace` —— 锁修好了「并发覆盖」（§96），却没修「把读失败当成空文件」
+这条**单个请求就能触发**的整文件清空路径。`_load_personas_yaml` 早就有
+「读不懂就抛 RuntimeError，阻止基于空字典写入」的保护（§86 排查时加的），
+`save_user_config` 漏了同样的保护。
+
+**修复：** 解析失败或内容不是 JSON 对象时抛 `RuntimeError`（消息里带文件路径），
+**保持原文件一个字节不动**；外层 `except` 打印并向上抛，API 层已按失败返回
+（`tests/unit/test_api_main.py` 覆盖）。文件不存在（首次运行）仍然按空配置正常写入。
+
+**测试：** `tests/unit/test_settings_ext.py::test_save_user_config_corrupt_existing`
+改为断言抛错且文件内容原样保留（原断言的是"静默写回"的旧行为）；
+新增 `test_save_user_config_non_object_json`（`[1, 2]` 这类合法但非对象的 JSON 同样拒绝）。
+
+**回归：** `tests/unit/test_settings_ext.py` + `test_settings_file_lock.py` 104 例通过。
+
+
+### 102.1 落盘失败仍先改了内存/环境变量（补）
+
+**现象：** 磁盘满、权限不足或 `~/.cortex` 被占用时保存配置，接口返回 500，但设置页重新
+读取却显示「已生效」；重启后又回到旧值——用户无法判断到底存没存上。
+
+**根因：** `PUT /config/{key}` 先 `object.__setattr__(settings, ...)`（`CORTEX_MODE`
+还会写 `os.environ`），再调 `save_user_config()`。§96 把失败改成向上抛之后，写失败只让
+接口变成 500，**内存里已经是新值**；`save_user_config` 的 `-> bool` 返回值也早已恒为
+`True`（§96/§102 之后不再返回 False），`if not ...` 分支成了死代码。
+
+**修复：**
+1. `save_user_config(keys, values=None)` 新增 `values` 参数：落盘时直接写待保存的新值，
+   而不是读 `self` 上的当前值；返回类型改为 `None`（失败一律抛异常，不返回布尔）。
+2. `PUT /config/{key}` 改为**先落盘、再应用**：`save_user_config([actual],
+   values={actual: validated})` 成功后才 `object.__setattr__` / 写 `CORTEX_MODE`；
+   写失败直接 500，内存与环境变量保持原值。
+3. 删除恒假的 `if not save_user_config(...)` 告警分支。
+4. 主模型重建、系统级开关等副作用仍只在落盘成功后执行。
+
+**测试：**
+- `test_update_config_persists_before_apply`：`save_user_config` 收到的 `values` 是新值，
+  且调用时内存仍是旧值。
+- `test_update_config_internal_error_500` /
+  `test_update_config_cortex_mode_persist_failure_keeps_env`：落盘抛错 → 500，
+  内存值与 `CORTEX_MODE` 均不变。
+- `test_save_user_config_values_override_without_mutating_memory`：`values=` 写入文件但
+  不改内存。
+- 原「持久化失败仅告警、仍返回 200」用例删除（该行为已不存在）。
+

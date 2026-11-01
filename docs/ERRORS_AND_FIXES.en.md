@@ -2340,3 +2340,272 @@ Verified-correct paths (no data loss):
 4. Overall wall-clock cap per round kept as `MODEL_THINK_MAX_WALL` (default 3600s, 0 = unlimited) to stop infinite tool loops.
 5. Visible retry notice in the blackboard while retrying, and a visible `result_summary` once retries are exhausted — no more "process but no reply".
 6. `api_stream` cancel path now falls back to the latest `blackboard_snapshots` row when the manager is already gone, recovering the `[thinking interrupted ...]` partial text.
+
+
+## 96. Cross-process config write race — a thread lock cannot protect multiple processes (backend)
+
+**Symptom:** `~/.cortex/personas.yaml` occasionally loses content (custom personas revert to old values or become empty a while after saving); some `~/.cortex/settings.json` fields return to defaults after a restart. Repeated operations inside a single process never reproduce it.
+
+**Root cause:**
+1. `config/settings.py` only had **in-process** locks: `_PERSONAS_YAML_LOCK = threading.Lock()` and `_SETTINGS_JSON_LOCK = threading.Lock()`. `threading.Lock` only excludes threads in the same process — it has **no cross-process semantics**.
+2. `_modify_personas_yaml()` (~line 770) and `save_user_config()` (~line 1132) are both read-modify-write: read file → mutate → atomic replace. When two **processes** enter at the same time, their in-process locks cannot see each other; the later writer overwrites the earlier one with its own stale snapshot → lost update (the §86/§87/§88 symptoms).
+3. `frontend/main.py:535` starts the backend via `subprocess.Popen` + uvicorn, so the frontend and backend — or multiple backend instances — may **write the same `~/.cortex` config concurrently**, a real cross-process race.
+
+**Fix:** reuse the project's existing cross-process lock `utils/faiss_lock.py::faiss_file_lock` (in-process reentrant RLock + cross-process `fcntl.flock`; platforms without fcntl automatically degrade to a thread lock; the lock file is the data path + `.lock`, and never opens/truncates the data file itself).
+1. `_modify_personas_yaml`: **nest** `with faiss_file_lock(self._personas_yaml_path):` inside `with _PERSONAS_YAML_LOCK:`. The tool appends `.lock` automatically. Keep the thread lock: outer thread lock, inner file lock.
+2. `save_user_config`: nest `faiss_file_lock(str(self._USER_CONFIG_PATH))` inside `_SETTINGS_JSON_LOCK` the same way.
+3. Import lazily **inside the function** (`from utils.faiss_lock import faiss_file_lock`) to avoid module-level circular imports; on import failure, `try/except` degrades to `contextlib.nullcontext()` (thread lock only) and logs at `logger.debug` — **a missing lock must never abort the write or crash**.
+4. Existing behavior and signatures of `_load_personas_yaml` / `_save_personas_yaml` are unchanged.
+
+**Tests:** new `tests/unit/test_settings_file_lock.py` (5 cases, all passing):
+- the lock file exists during `_modify_personas_yaml` and is released afterwards (`_depth == 0`, `_fd is None`);
+- re-entering the same path lock inside the mutator does not deadlock;
+- when importing `utils.faiss_lock` fails it degrades to the thread lock, the write still succeeds and no lock file is created;
+- the same hold/degrade checks for `save_user_config`.
+All tests use `tmp_path` + monkeypatch to redirect `_personas_yaml_path` / `_USER_CONFIG_PATH` and never touch the real `~/.cortex`.
+
+**Regression:** `tests/unit/test_settings_ext.py` + `test_faiss_lock.py` + the new cases, 109 cases in total, all passing.
+
+
+## 97. plan mode blocked read-only delegation too — empty keyword list still returned a block (backend)
+
+**Symptom:** In plan mode, the large model called `delegate_task(role=代码实现专家, task=计算 1+1)`. The log only showed `[直通委托] 失败: ... error=plan 模式拦截`, **not** `[ModelRunner] plan 模式拦截写操作委派`; the delegation was never sent and the chain was never recorded. The runner then finished with "large model produced no result_summary" and the user got nothing.
+
+**Root cause:** In `_generate_with_tools` (`modules/thinking/core/model_runner.py`) the plan-mode check was written as:
+```python
+if exec_mode == "plan":
+    matched = [kw for kw in DELEGATE_WRITE_KEYWORDS if kw in task_lower]
+    if matched:
+        logger.warning(...)              # only logs when a keyword matches
+    if self._thinker:
+        self._thinker.record_delegation(... error="plan 模式拦截")
+    return "[安全门控拦截] ..."          # ← return sits outside `if matched`
+```
+The `return` and the "record block" were indented under `if exec_mode == "plan"` instead of `if matched` → **any delegation in plan mode (including pure read-only/compute tasks) was treated as a write and blocked**, and `', '.join(matched)` printed an empty keyword list.
+
+**Fix:** move both the record call and the `return` into the `if matched:` branch. plan mode still blocks delegations containing write keywords (`写入`/`部署`/`git push` etc.); read-only tasks are dispatched normally.
+
+**Tests:**
+- New `tests/unit/test_model_runner_ext2.py::test_generate_with_tools_delegate_plan_allows_readonly_task`: plan mode + `task=计算 1+1` → no `安全门控拦截`, `adapter.delegate` awaited once, state becomes `waiting_delegation`.
+- Existing `test_generate_with_tools_delegate_plan_blocked` (task contains a write keyword) still asserts a block.
+- The 2 `tests/integration/test_thinking_e2e.py` cases (`test_delegation_chain_full_flow`, `test_query_delegation_e2e`) already failed at HEAD (a concurrent fixture pinned `EXECUTION_MODE` to plan and exposed this bug); all 5 cases pass after the fix.
+
+**Regression:** `test_model_runner_ext2.py` 178 cases and `tests/integration` 432 cases all passing.
+
+
+## 98. New events only worked in the browser — TUI saw no tools, SSE buffered until the end, replay mis-ordered a round (cross-client)
+
+When the visualization events (Phase 0–4) landed, only the Web frontend consumed all of them. Three gaps shared one consequence: **the same conversation looked different depending on the entry point**.
+
+### 98.1 `cli_tui` did not understand the new events at all
+
+**Symptom:** Running a tool-using task in the terminal left the tool panel empty; the answer appeared only after the whole generation finished; the context-usage bar never moved. The same session was fine in the Web UI.
+
+**Root cause:** `cli_tui/services/ws_client.py::_parse_event_inner` only knew the old envelopes (`stage_event` rich events + simple `thinking`/`status` events). The backend now pushes `type=tool` / `type=chunk` / `type=session_projection`, and the TUI returned `None` for all three, dropping them. The `entry_type=streaming_delta` branch in `cli_tui/screens/repl.py` was therefore dead code (nothing ever produced such an entry).
+
+**Fix:**
+1. `parse_event` gains three parsers: `type=tool` → `_parse_tool_frame` (`call_id` / `name` / one-line action summary / status / duration / result preview), `type=chunk` → a dialog entry with `entry_type=streaming_delta`, `type=session_projection` handled directly by `repl`.
+2. The one-line summary uses the card fields computed by the server (`view.title/command/path/query`), falling back to the command/path/query in the arguments — the TUI does not re-guess tool semantics.
+3. Structured events send two frames per call (`tool_call` creates the row, `tool_result` completes it). The new `cli_tui.state.merge_tool_record` merges by `call_id`: no duplicate rows, no double counting, and a result frame never overwrites the call frame's arguments. `AppState.add_tool_call` and `WSClient._process_input_impl` share it.
+4. `chunk` frames only accumulate the current round's streaming character count and update `thinking_hint` (`生成中… N 字`); they are **not** written into the dialog frame by frame — the final `assistant_message` renders the whole text, so writing deltas would print the body twice in the terminal.
+5. `session_projection` only handles keys the TUI actually displays: `contextPressure` (context bar) and `runners` (top-bar model identity). There are no panels for `todos`/`tokenUsage`, so we do not invent any.
+6. The model-status parsing in `thinking_progress` was extracted into `_apply_runner_snapshot`, reusing the same tier mapping as the `runners` projection.
+
+**Tests:** `tests/unit/test_ws_client.py` adds `TestParseEventToolFrame` (5 cases: call frame, result frame, failure status, argument fallback without `view`, `data=None` does not raise) and `TestParseEventChunkFrame` (2 cases); `tests/unit/test_tui_state.py` adds `TestToolRecordMerge` (3 cases: merge into one row while keeping arguments, failed result overrides success, missing `call_id` is not merged).
+
+**Follow-up:** `session_request` (the answerable frame) was not wired up at the time, and TUI approvals still used the old `security` event; it was connected in §99.2 (`_parse_session_request` reuses the existing approval component, while the old `security` frame is still dual-sent).
+
+### 98.2 The SSE path had no streaming
+
+**Symptom:** With SSE (`GET /stream/sse/{sid}`) instead of WebSocket, the answer appeared all at once; the WS endpoint streamed the same question token by token.
+
+**Root cause:** `chat_gateway._chatonly_sse` appended every `message` token to `full_text` but yielded no body frame inside the loop, then sent one `assistant_message` at the end. The WS branch (`_consume_turn._flush_reply_chunk`) had long been pushing `chunk` frames throttled to 40 chars / sentence end, so the two paths diverged.
+
+**Fix:** `_chatonly_sse` gains the same `flush_buf` + `_take_chunk()`: flush at 40 chars or on `\n。！？.!?`, and flush the tail before `done` and `error`. `chunk` remains ephemeral (not persisted, no seq); the final `assistant_message` is authoritative.
+
+**Tests:** `tests/unit/test_chat_gateway_ext2.py` adds 3 cases: flush at sentence end (exact content of two frames + final message still complete), accumulate below 40 chars (`done` flushes one `abcdef` frame), flush before an error (`chunk` precedes `error` and contains the generated part).
+
+### 98.3 Replay piled every tool of a round under the user message
+
+**Symptom:** After refreshing, the tool cards of a round that went "say something → call a tool → say more" all piled under the user message, as if a batch of tools ran before speaking; the live order was correct.
+
+**Root cause:** `chat.js::replayToolEvents` only advanced its anchor on `user_message` events and explicitly skipped assistant `message` events (the original concern was that old sessions without user-message events would attach tools to the previous reply). As a result **all** tools could only attach to a user message, losing the relative order inside a round.
+
+**Fix:** assistant final messages also advance the anchor, with two guards:
+1. only in **new-format sessions** (the event stream contained a `user_message`) — old sessions keep "user messages only + time fallback", unchanged;
+2. only when the message was **actually persisted** (`data.message_id` must be in the set of message ids rebuilt in this pass) — interrupted drafts have no `message_id`, and a final message that was not persisted has a mismatched id; in both cases keep the previous anchor, preferring "no anchor" (folded panel) over a wrong one.
+
+**Tests:** `frontend/src/stores/chat.spec.js`: the old "everything in a round hangs under the user message" case now asserts `['u1','a1']` (the interleaving of "say → tool → say again"), a new case covers "keep the previous anchor when the final message was not persisted", and "no anchor for old sessions without `user_message` events" keeps passing.
+
+**Regression:** `tests/unit` 6417 cases (1 skipped, including 13 new), `tests/integration` 432 cases (1 skipped) all passing; `tests/unit/test_ws_client.py` + `test_tui_state.py` 64 cases, `test_chat_gateway*.py` 83 cases; frontend vitest 51 files / 582 cases all passing.
+
+
+## 99. SSE saw no tool/streaming frames; TUI did not accept the answerable frame (backend + TUI)
+
+### 99.1 SSE received only scheduling events
+
+**Symptom:** An agent-mode SSE session (`GET /stream/sse/{sid}?question=`) delivered the body all at once, showed no tool traces, and never updated todos or context usage; the same session over WebSocket was fine.
+
+**Root cause:** Frames have two sources:
+1. `_emit(...)` → `callback` (the SSE queue) + `connection_manager.send_json`;
+2. `ModelRunner._push_tool_event` / `_push_stream_chunk`, `projections._push_frame`,
+   `pending_requests.broadcast` → **only `connection_manager`** (tools/streaming/projections/todos).
+
+`ConnectionManager` only tracked `active_connections` (WebSocket), and `send_json_from_thread` returned `False` immediately when there was "no WS connection"; SSE had no subscription entry point at all. So source 2 did not exist for SSE clients — not a failed push, but no recipient whatsoever.
+
+**Fix:** add a second outlet to `ConnectionManager`, parallel to WebSocket:
+1. `subscribe_stream(session_id) / unsubscribe_stream(...) / has_stream(...)`: one `asyncio.Queue` per subscriber per session (each subscriber gets its own copy); subscribing also records `_loop` — a pure SSE session never `connect`s over WS, and an empty `_loop` would make `send_json_from_thread` return early;
+2. `send_json` fans out to streams first, then sends WS; `send_json_from_thread` counts "has stream subscribers" as an outlet and fans out inside the coroutine scheduled on the event loop (`Queue.put_nowait` cannot be called from another thread);
+3. `_stream_sse` subscribes its own queue and drains both queues in the loop: scheduling events first (ordering), tools/projections from the stream queue; the same envelope object arrives through both `callback` and fan-out, so dedupe by object identity with a bounded `deque(maxlen=256)`; `finally` unsubscribes (client disconnect must clean up too);
+4. align with `websocket_chat`: on connect, `projections.push_current` + `pending_requests.broadcast`, so todos/context usage/approvals are visible without waiting for the next state change.
+
+**Tests:** new `tests/unit/test_api_stream_sse_fanout.py` (5 cases): `send_json` delivers with only an SSE subscriber; `send_json_from_thread` returns True and the frame arrives with no WS and only a stream subscriber; returns False with no outlet; multiple subscribers each get a copy; `_stream_sse` receives a `tool_call` frame delivered only via fan-out, the same envelope is not sent twice, and the subscription is removed after the generator ends.
+
+### 99.2 TUI did not recognize `session_request`
+
+**Symptom:** After a refresh the Web UI still showed the "pending approval" banner and the confirm button; after a refresh/reconnect the terminal showed nothing, and the approval Future could only time out.
+
+**Root cause:** Phase 4.b made todos a full `session_request` snapshot (the only thing that can rebuild banners after refresh/reconnect). The Web frontend consumed it, but the TUI `parse_event` did not know the name at all. The terminal could only rely on the old one-shot `security` event, which disappears after a refresh.
+
+**Fix:** `WSClient._parse_session_request` maps the snapshot back to the two existing TUI entries: `approval` → `security_review` (`request_id`/`tool`/`detail`), `question` → `user_intent_request` (`question`/`options`/`context`), so the approval component and the `security_response` / `interactive_response` reporting are all reused instead of writing a second set. An empty snapshot → `pending_clear`; `repl` collapses the approval panel and clears `pending_security_review`, so no dead buttons remain after answering. With multiple requests in one frame, take the earliest registered one; after answering, the next snapshot naturally continues.
+
+**Tests:** `tests/unit/test_ws_client.py::TestParseEventSessionRequest` (5 cases): approval mapping, question mapping (with options/context), first of multiple requests, empty snapshot → `pending_clear`, dirty snapshot with missing fields ignored.
+
+**Regression:** `tests/unit/test_ws_client.py` + `test_tui_state.py` + `test_api_stream_sse_fanout.py` 74 cases; `test_api_stream_ext.py` + `test_api_stream_think_ext.py` + `test_pending_requests.py` 71 cases.
+
+
+## 100. SSE sessions treated as "frontend disconnected": handshake skipped the LLM turn, pushes only targeted WS, disconnect left state behind (backend)
+
+After §99 opened the SSE frame outlet, three places still equated "is there a WebSocket connection" with "is the frontend online"; any one of them was enough to make SSE look "unreachable" or "stuck".
+
+### 100.1 Handshake failure → the LLM turn was skipped entirely
+
+**Symptom:** Connecting to `GET /stream/sse/{sid}?question=` produced only a `connection_lost` frame ("前端连接已断开，本轮请求已跳过，可在重连后重试") and no answer; the same session over WebSocket was fine.
+
+**Root cause:** Before calling the model, `think()` performs the handshake `frontend_channel.confirm_frontend_connection(session_id)`, whose first line was `if not cm.active_connections: return False` — `active_connections` only holds WebSockets. A pure SSE client never `connect`ed over WS, so the handshake always failed and the turn returned before the LLM.
+
+**Fix:** the handshake now looks at "all push outlets": the union of `ConnectionManager.stream_sessions()` (new) and `active_connections` (`frontend_channel._channels`). `confirm_frontend_connection` and `_confirm_async` both use it to decide online status and broadcast targets; an SSE session is reachable thanks to the new `send_json_from_thread` semantics (stream subscribers count as delivered).
+
+### 100.2 `push_content` only iterated WebSocket sessions
+
+**Symptom:** Proactive messages / scheduled jobs / background pushes never reached SSE clients (they were persisted and appeared in history after a refresh, but did not pop up at the time).
+
+**Root cause:** `push_content`'s send loop was hardcoded to `for sid in cm.active_connections`.
+
+**Fix:** iterate the union; when a session has both WS and SSE, `send_json` fans out internally exactly once, so no duplicates.
+
+### 100.3 SSE disconnect did not clear pending approvals or cancel the task
+
+**Symptom:** When an SSE client closed the page / lost the network during a tool approval (or `ask_user_intent`): the session stayed "processing" forever and every later request was busy; logs showed the approval neither approved nor rejected; the model kept generating (burning tokens).
+
+**Root cause:** `websocket_chat`'s `finally` called `reject_session_reviews` + `reject_session_user_responses` + `pending_requests.clear`, while `_stream_sse`'s `finally` only unsubscribed its own queue. `sse_starlette` closes the generator when the client disconnects, leaving that `_safe_think` task as an orphan: the approval future hung forever (freezing the global `Suspension` timer) and nobody consumed the task's exception.
+
+**Fix:** extract the three WS cleanup steps into `_cleanup_session_on_disconnect(session_id, tag)` and share it between the WS and SSE `finally` blocks; SSE additionally calls `task.cancel()` (SSE has no "resume after reconnect" semantics — if the client left, stop generating) and attaches `add_done_callback` to consume the exception, avoiding "Task exception was never retrieved" noise. After cancellation, `sessions[sid]["processing"]` must be set back to `False` manually: the `await _set_processing(False)` in `think()`'s `finally` may not finish when the task is cancelled, and a miss leaves the session busy forever.
+
+### 100.4 Aside: the dedupe `deque` stored `id()` (incidental fix)
+
+§99 deduped the same envelope (arriving through both `callback` and fan-out) by object `id()`. With only ints in the `deque`, the object was long gone and CPython could reuse the `id` — a new frame could collide with a just-freed id and be dropped. Store the objects themselves in the `deque` (`any(e is event for e in seen)`): identity comparison is preserved and the objects stay alive so ids cannot be reused.
+
+**Tests:** `tests/unit/test_frontend_channel_ext.py` adds 6 cases: a pure SSE session handshakes successfully and only receives its own frames; broadcast includes SSE sessions; False only with no outlet; the same for `_confirm_async`; `push_content` reaches a pure SSE session; no duplicate send when WS+SSE are both online.
+`tests/unit/test_api_stream_sse_fanout.py` adds 1 case: after the generator is `aclose()`d (client disconnect), the subscription is removed, all three cleanup paths (pending approvals / pending interactions / pending todos) are called, the thinking task is cancelled, and the session no longer stays "processing".
+
+**Regression:** `tests/unit` full 6434 cases (1 skipped, 12 deselected) passing; related subset `-k "frontend_channel or pending_requests or api_stream or chat_gateway or projection or proactive"` 379 cases; `tests/integration` 432 cases (1 skipped).
+
+
+### 100.5 Other push paths still iterated only WebSocket (follow-up)
+
+§99 / §100.1–100.2 covered `_emit` and `push_content`, but `ModelRunner._push_reasoning`, `_push_expert_output` and `_push_todo_update` still did `for sid in connection_manager.active_connections: send_json_from_thread(sid, ...)`: pure SSE sessions (no WS connection) received no model reasoning, no supervisor/expert loop output and no `todo_changed`, and the session's frames were delivered one by one to **every** session's WebSocket — effectively a broadcast.
+
+**Fix:** all three now use `send_json_from_thread(self.session_id, event)` — same as `_push_tool_event` / `_push_stream_chunk`: single-target delivery for this session, with `ConnectionManager` handling WS/SSE fan-out itself.
+
+**Tests:** `tests/unit/test_model_runner_ext2.py::test_push_reasoning_targets_own_session` (delivers to this session's id even when it has no WS and only another session does); `test_push_expert_output_expert` now also asserts the delivery target.
+
+
+### 100.6 Some push/cleanup decisions still looked only at WebSocket (follow-up)
+
+**Symptom:**
+1. `system_error` frames from the global error bus were only sent to WebSocket sessions; pure SSE clients never received them;
+2. the `/sessions` empty-session cleanup only protected WebSocket sessions, so an active pure-SSE session could be deleted as "empty" (especially right after connecting, before its first message was persisted), and the session then vanished from the frontend list.
+
+**Root cause:** three places still read `connection_manager.active_connections` directly:
+- the `_on_error` broadcast loop in `api/main.py`;
+- `delete_empty_sessions(exclude_ids=...)` in `chat_gateway.get_sessions()` (chatonly) and `api_stream.get_sessions()` (agent);
+- `ConnectionManager.broadcast()`.
+
+**Fix:** `ConnectionManager` gains `push_sessions()` (WebSocket ∪ SSE, deduplicated, order preserved), and all four places use it. `frontend_channel._channels()` keeps its explicit union (tests stubs may only provide `active_connections` / `stream_sessions`, and a `MagicMock` callable attribute iterates as empty, so it must not delegate blindly).
+
+**Tests:**
+- `test_api_stream_sse_fanout.py::test_push_sessions_unions_ws_and_sse_without_duplicates` (dedup/order for WS + SSE; only WS after unsubscribing);
+- `test_api_stream_ext.py::test_route_get_sessions_excludes_sse_sessions`;
+- `test_chat_gateway_ext2.py::test_route_get_sessions_chatonly_keeps_sse_session`.
+
+
+## 101. Replay merged multiple supervisor/expert outputs into one bubble — `entry_type` was not persisted (frontend + backend, §85/§91)
+
+**Symptom:** In orchestration mode the same AI (same tier + identity) spoke twice in one round ("方案v1" → "方案v2"); **after a page refresh or switching back to the session only "方案v2" remained**. Worse, supervisor/expert final replies were sometimes stuffed into the large model's "thinking" fold, looking like its reasoning.
+
+**Root cause (two places):**
+1. The backend `api_stream._persist_thought()` wrote only `tier` and `identity_name` into `chat_messages.metadata`, **not `entry_type`**. In live frames `data.payload.content.entry_type == "response"` is the only signal the frontend uses to distinguish a "final reply bubble" from "process reasoning" (`classifyThinking`); dropping it on persist made every supervisor/expert utterance classify as `kind='thinking'` on replay.
+2. The frontend `chat.js::switchToSession` replay aggregated by `tier:identity` into `agg.contents[]` and pushed a single `content: agg.contents[overwritten]`; the missing `entry_type` meant the `c.kind === 'expert'` branch was never reached, so expert final replies fell through to `kind === 'thinking'` → `pendingLargeThinking` and were attached to the next assistant message's `thinking` (misattribution + lost body).
+
+**Fix:**
+1. `_persist_thought(..., entry_type="")`: write `entry_type` into metadata too (only when non-empty, so no redundant key); `scheduler_event_callback` passes its already-computed `_inject_entry_type`. `model_runner._push_expert_output` already wrote `entry_type="thinking"`, so both sides agree.
+2. `switchToSession` replay switched to "buffer + consume":
+   - restore `data.entry_type` / `identity_name` per row (also accepting top-level `d.entry_type`), so `classifyThinking` receives the same input as at runtime (§74's "one classification rule" still holds).
+   - replace `expertAgg{contents[]}` with `expertBuf{tier:identity -> {thinking, tools}}`: on every `response`, **create** a new bubble, attach the current thinking/tools and clear the buffer — exactly like runtime `addExpertMessage`; multiple outputs by the same identity are no longer merged.
+   - non-`response` supervisor/expert reasoning goes to the process flow (`addProcessStep`) and no longer pollutes `pendingLargeThinking`; when a `role=process` aggregate exists it is still skipped to avoid duplication.
+   - leftover buffers at the end are discarded (matching runtime's "unconsumed thinking").
+
+**Compatibility:** old data has no `entry_type` (that is how the DB was written); replay treats it as process content — no bubble, but also no more incorrect attachment to the large model's thinking area.
+
+**Tests:** `tests/unit/test_api_stream_ext.py::test_persist_thought_keeps_entry_type` (metadata contains entry_type; an empty value does not add a redundant key); `frontend/src/stores/chat.spec.js` adds "历史加载 主管/专家多次输出各自独立气泡" (two responses by the same identity → two bubbles, the tool buffer only attached to the first, expert replies not folded into the large model's thinking).
+
+**Regression:** `frontend` 583 cases; `tests/unit` related subset (three api_stream files + two settings files) 223 cases.
+
+
+### 101.1 Expert-bubble thinking/tool buffers have no producer left (cleanup)
+
+**Symptom:** None (invisible), but `switchToSession` replay put supervisor/expert tool text into the expert bubble's `_tools`, while live runtime sent the same text to the process flow — the display differed before/after a refresh.
+
+**Root cause:** Since 414375c (expert reasoning/tool traces moved to the process flow) `addExpertThinking` / `addExpertTool` had **no production callers**; only the `_pendingByTier` / `_pendingTools` buffers — always empty — were read by `addExpertMessage`. Yet the replay path still filled `_tools` (it was aligned to the old model during the §101 rework). "Bubble-local thinking/tools" was thus visible only on replay.
+
+**Fix:** delete the dead code and unify on the process flow:
+1. Remove `addExpertThinking` / `addExpertTool` / `_pendingByTier` / `_pendingTools` / `_expertBubbles` and `_hasThinkingLine`.
+2. `addExpertMessage` only creates the final-reply bubble and no longer reads buffers.
+3. `switchToSession`: supervisor/expert tool text now goes through `addProcessStep` (same as runtime `dispatchThinking`); expert bubbles no longer write `_thinking` / `_tools`.
+4. `ChatMessage.vue` removes the now-unreachable thinking fold and tool list inside expert bubbles.
+
+**Tests:** the `chat.spec.js` replay case now asserts bubbles have no `_tools` and that tool text lands in `processFlow`; `ChatMessage.spec.js` now asserts expert bubbles do not render thinking/tools (regression guard). All 583 frontend cases pass.
+
+
+## 102. `settings.json` parse failure silently became `{}` — one save wiped all config (backend, §88 leftover)
+
+**Symptom:** After the config file was hand-edited badly (or a rare mid-write power loss left incomplete JSON), saving any single item from the Settings page made **every other persisted key (model params, API keys, toggles) disappear** from `settings.json`, leaving only the ones from that save.
+
+**Root cause:** `save_user_config` read the file with `except Exception: data = {}`, then wrote those keys back and `os.replace`d under the same lock — the lock fixed "concurrent overwrite" (§96) but not "treat a read failure as an empty file", a **single-request** whole-file wipe path. `_load_personas_yaml` already had the "unreadable → raise RuntimeError, refuse to write from an empty dict" guard (added while investigating §86); `save_user_config` was missing it.
+
+**Fix:** raise `RuntimeError` (message includes the file path) when parsing fails or the content is not a JSON object, **leaving the original file byte-for-byte untouched**; the outer `except` prints and re-raises, and the API layer already returns a failure (`tests/unit/test_api_main.py` covers it). A missing file (first run) still writes normally from an empty config.
+
+**Tests:** `tests/unit/test_settings_ext.py::test_save_user_config_corrupt_existing` now asserts the error and that the file content is preserved (it previously asserted the old "silently write back" behavior); new `test_save_user_config_non_object_json` (valid but non-object JSON such as `[1, 2]` is rejected too).
+
+**Regression:** `tests/unit/test_settings_ext.py` + `test_settings_file_lock.py` 104 cases.
+
+
+### 102.1 Failed persist still left memory/env updated (follow-up)
+
+**Symptom:** When saving a config while the disk is full, permissions are wrong, or `~/.cortex` is busy, the API returned 500 but the Settings page showed the value as applied; after a restart it was old again — the user could not tell whether it had been saved.
+
+**Root cause:** `PUT /config/{key}` called `object.__setattr__(settings, ...)` first (and wrote `os.environ` for CORTEX_MODE), then `save_user_config()`. After §96 changed failures to raise, a failed write only turned the response into 500 — **memory already held the new value**. `save_user_config`'s `-> bool` return had also been constant `True` since §96/§102 (it never returned False anymore), making the `if not ...` branch dead code.
+
+**Fix:**
+1. `save_user_config(keys, values=None)` gains a `values` parameter: persist the pending new value instead of reading the current value from `self`; the return type becomes `None` (failures always raise, never return a boolean).
+2. `PUT /config/{key}` now **persists first, applies second**: `save_user_config([actual], values={actual: validated})` must succeed before `object.__setattr__` / writing `CORTEX_MODE`; a failed write returns 500 and memory/env keep their old values.
+3. Delete the always-false `if not save_user_config(...)` warning branch.
+4. Model rebuild and system-level toggles still run only after a successful persist.
+
+**Tests:**
+- `test_update_config_persists_before_apply`: `save_user_config` receives the new value in `values`, and memory is still old at call time.
+- `test_update_config_internal_error_500` / `test_update_config_cortex_mode_persist_failure_keeps_env`: persist raises → 500, memory value and `CORTEX_MODE` unchanged.
+- `test_save_user_config_values_override_without_mutating_memory`: `values=` writes the file without touching memory.
+- The old "persist failure only warns, still 200" case is removed (that behavior no longer exists).
+

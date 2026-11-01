@@ -350,7 +350,7 @@ function apply(ev) {
 - 没有 §4.5 的 `trace.js` 节点 reducer：交错靠“消息锚点”而非 seq 排序，粒度是**消息**——同一轮里工具挂在“最后一条用户消息或助手终稿”下，不会细分到主管/专家气泡之间（他们的气泡是 `chat_messages.role=thought` 聚合出来的，没有对应的 durable `message` 事件可锚定）；
 - 时间回退只解决老会话“挂在哪个用户消息下”，不解决同轮内工具与主管/专家气泡的相对顺序；消息时间与事件时间若跨时区/时钟漂移（非同一进程写入）可能偏差；
 - 未引入 `assistant/message.source_seqs`（chunk 不落库，没有需要回指的 seq）；
-- SSE 路线：简单路线（`_chatonly_sse`）已接 chunk 帧（与 WS 同一节流，句末/40 字即推）；**agent 模式的 SSE（`_stream_sse`）仍看不到 chunk 与工具事件**——`_push_stream_chunk` / `_push_tool_event` 走 `connection_manager` 只投递 WebSocket 连接，SSE 队列没有接入点；
+- SSE 路线：简单路线（`_chatonly_sse`）与 WS 同一节流推 chunk；agent 模式 SSE（`_stream_sse`）经 `connection_manager.subscribe_stream` 接入同一套帧（工具/流式/投影/待办），连上时同样补发投影与待办快照；
 - Think 行“跟随最新一行”沿用现有过程流行为，未改为节点模型。
 
 验收：跑一个稍长的回答 → 正文边生成边渲染（尾泡 + 光标），结束后替换为正式气泡；中途刷新页面不会出现半截气泡（以 `message` 事件为准）。
@@ -451,7 +451,7 @@ function apply(ev) {
 - `type=chunk` → 只累计本轮流式字数并更新 `thinking_hint`（`生成中… N 字`），**不逐帧写进对话框**——终稿的 `assistant_message` 会整段渲染，逐帧写入会让正文在终端里出现两遍；
 - `type=session_projection` → `contextPressure`（上下文条）与 `runners`（顶栏模型身份）。`todos` / `tokenUsage` 在 TUI 里没有面板，不凭空造。
 
-遗留：`session_request`（可应答帧）未接——TUI 的审批走旧的 `security` 事件（双发仍在），接新协议会与现有审批组件重复弹窗，等旧帧撤除时一并迁移。
+`session_request`（可应答帧，Phase 4.b）也做了映射：整快照里的待处理请求转成既有的 `security_review` / `user_intent_request` 条目，直接复用已有审批组件与 `security_response` / `interactive_response` 上报；快照变空 → `pending_clear`，面板收起（避免应答后留下点不动的僵尸按钮）。一次快照多个请求时取最早登记的那个，应答后后端推新快照，下一个自然接上。
 
 ### 7.3 敏感信息
 
