@@ -176,20 +176,11 @@ function submitIntent() {
       </div>
     </template>
 
-    <!-- 主管/专家实际输出：思考过程折叠 + 工具调用 + Markdown 内容 -->
+    <!-- 主管/专家实际输出：仅 Markdown 内容（推理/工具轨迹统一在过程流） -->
     <template v-else-if="kind === 'expert'">
       <div class="message-avatar" :class="message.avatarCls"></div>
       <div class="message-body">
         <div class="message-name">{{ message.name || $t('chatMessage.expert') }}</div>
-        <!-- 思考过程折叠（该身份推理） -->
-        <div v-if="message._thinking" class="thinking-box" @click="toggleThinking(message)">
-          <div class="thinking-text">{{ message._expanded ? message._thinking : shortOf({ content: message._thinking }) }}</div>
-          <div v-if="(message._thinking || '').length > 120" class="thinking-toggle">{{ message._expanded ? $t('chatMessage.collapse') + ' ▲' : $t('chatMessage.expand') + ' ▼' }}</div>
-        </div>
-        <!-- 工具调用列表 -->
-        <div v-if="message._tools && message._tools.length" class="expert-tools">
-          <div v-for="t in message._tools" :key="t" class="expert-tool">{{ t }}</div>
-        </div>
         <!-- Markdown 内容（与总指挥一致：文本 v-html + 代码块） -->
         <div class="message-bubble expert-bubble">
           <template v-if="segments.length">

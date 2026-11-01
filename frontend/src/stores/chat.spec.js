@@ -393,7 +393,7 @@ describe('useChatStore', () => {
     // 最终输出气泡不含过程推理（主管只发最终回复才显示气泡）
     chat.addExpertMessage({ content: '我负责整体方案', data: { tier: 'supervisor', identity_name: '代码主管' } })
     const b = chat.messages.find(m => m.kind === 'expert')
-    expect(b._thinking).toBe('')
+    expect(b._thinking).toBeUndefined()
     // 旧工具文本摘要 → 过程流（结构化轨迹只由 tool 事件提供）
     chat.addThinkingStep({ content: 'todo: done (50 chars)', data: { tier: 'supervisor', identity_name: '代码主管' } })
     expect(chat.processFlow.some(l => l.includes('todo: done'))).toBe(true)
@@ -409,7 +409,7 @@ describe('useChatStore', () => {
     // 已建气泡
     chat.addExpertMessage({ content: '输出1', data: { tier: 'expert', identity_name: '实现专家' } })
     const b1 = chat.messages.find(m => m.kind === 'expert')
-    expect(b1._thinking).toBe('')
+    expect(b1._thinking).toBeUndefined()
     vi.spyOn(endpoints, 'sessionMessages').mockResolvedValue({ data: [] })
     vi.spyOn(wsClient, 'connect').mockResolvedValue(true)
     sess.switchSession('s1')
@@ -419,7 +419,7 @@ describe('useChatStore', () => {
     // 新会话再次出现 expert 输出 → 全新气泡，不带旧会话缓冲/引用
     chat.addExpertMessage({ content: '新会话输出', data: { tier: 'expert', identity_name: '实现专家' } })
     const b2 = chat.messages.find(m => m.kind === 'expert')
-    expect(b2._thinking).toBe('')
+    expect(b2._thinking).toBeUndefined()
     expect(b2.content).toBe('新会话输出')
     expect(b2).not.toBe(b1)
   })
@@ -440,9 +440,6 @@ describe('useChatStore', () => {
     expect(experts2).toHaveLength(3)
     expect(experts2[2].content).toBe('前端方案v2')
     expect(experts2[2].name).toBe('前端专家')
-    // 思考/工具缓冲也按身份隔离
-    chat.addExpertThinking({ content: '前端推理', data: { tier: 'expert', identity_name: '前端专家' } })
-    expect(experts2.find(m => m.name === '后端专家')._thinking).toBe('')
   })
 
   it('气泡关联清空后旧引用不泄漏到新会话', () => {
@@ -455,7 +452,7 @@ describe('useChatStore', () => {
     chat.addExpertMessage({ content: '新输出', data: { tier: 'supervisor', identity_name: '代码主管' } })
     const newBubble = chat.messages.find(m => m.kind === 'expert')
     expect(newBubble).not.toBe(oldBubble)
-    expect(newBubble._thinking).toBe('')
+    expect(newBubble._thinking).toBeUndefined()
   })
 
   it('思考区剔除"思考结束"段（_stripReplyText 生效，进过程流）', () => {
@@ -589,7 +586,7 @@ it('结构化工具事件进入 traces，旧文本摘要只进过程流', () => 
     expect(chat.messages).toHaveLength(1)
   })
 
-  it('历史加载 thought 工具调用不混入消息流', async () => {
+  it('历史加载 thought 工具调用进过程流（不混入消息流）', async () => {
     vi.spyOn(wsClient, 'connect').mockResolvedValue(true)
     const chat = useChatStore()
     const sess = useSessionStore()
@@ -602,9 +599,9 @@ it('结构化工具事件进入 traces，旧文本摘要只进过程流', () => 
       ],
     })
     await chat.switchToSession('s1')
-    // 工具调用进 traces（不混入消息流）
-    expect(chat.traces.length).toBeGreaterThanOrEqual(1)
-    expect(chat.traces.some(t => t.text.includes('todo: done'))).toBe(true)
+    // 与运行时 dispatchThinking 一致：旧文本工具摘要进过程流，不进 traces/消息流
+    expect(chat.processFlow.some(l => l.includes('todo: done'))).toBe(true)
+    expect(chat.traces).toHaveLength(0)
     // 消息流只有用户消息，不含工具调用；大模型 thought 聚合到回复思考区（无后续回复则丢弃，不独立成"思考"气泡）
     const kinds = chat.messages.map(m => m.kind || m.role)
     expect(kinds.filter(k => k === 'thinking')).toHaveLength(0)
@@ -654,6 +651,34 @@ it('结构化工具事件进入 traces，旧文本摘要只进过程流', () => 
     expect(expert).toBeUndefined()
     // 工具调用不混入消息流
     expect(chat.messages.some(m => (m.content || '').includes('read_file: done'))).toBe(false)
+  })
+
+  it('历史加载 主管/专家多次输出各自独立气泡（entry_type=response 不合并，§91）', async () => {
+    vi.spyOn(wsClient, 'connect').mockResolvedValue(true)
+    const chat = useChatStore()
+    const sess = useSessionStore()
+    sess.switchSession('s1')
+    vi.spyOn(endpoints, 'sessionMessages').mockResolvedValue({
+      data: [
+        { role: 'thought', content: 'read_file: done (10 chars)', tier: 'expert', id: 't1', metadata: { identity_name: '实现专家', entry_type: 'thinking' } },
+        { role: 'thought', content: '方案v1', tier: 'expert', id: 'e1', metadata: { identity_name: '实现专家', entry_type: 'response' } },
+        { role: 'thought', content: '方案v2', tier: 'expert', id: 'e2', metadata: { identity_name: '实现专家', entry_type: 'response' } },
+        { role: 'assistant', content: '最终答复', tier: 'large', id: 'a1' },
+      ],
+    })
+    await chat.switchToSession('s1')
+    const bubbles = chat.messages.filter(m => m.kind === 'expert')
+    // 同身份两次最终输出 → 两个气泡（与运行时 addExpertMessage 一致）
+    expect(bubbles).toHaveLength(2)
+    expect(bubbles.map(b => b.content)).toEqual(['方案v1', '方案v2'])
+    expect(bubbles.map(b => b.name)).toEqual(['实现专家', '实现专家'])
+    // 气泡只承载最终回复；工具轨迹进过程流（与运行时 dispatchThinking 一致）
+    expect(bubbles[0]._tools).toBeUndefined()
+    expect(bubbles[1]._tools).toBeUndefined()
+    expect(chat.processFlow.some(l => l.includes('read_file: done'))).toBe(true)
+    // 专家回复不被当成思考吞进大模型回复的思考区
+    const reply = chat.messages.find(m => m.role === 'assistant')
+    expect(reply.thinking || '').not.toContain('方案')
   })
 
   it('历史加载 security tier 的 thought 跳过（审批/提问瞬态事件不混入思考区）', async () => {

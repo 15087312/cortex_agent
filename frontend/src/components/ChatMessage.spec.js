@@ -180,19 +180,15 @@ describe('主管/专家输出气泡', () => {
     expect(wrapper.text()).toContain('正在拆分任务')
   })
 
-  it('expert 气泡显示思考过程折叠与工具调用列表', () => {
+  it('expert 气泡不再渲染气泡内思考/工具（统一进过程流，§101）', () => {
     const wrapper = mountMsg({
       kind: 'expert', name: '实现专家', content: '已完成实现',
-      _thinking: '【实现专家】分析依赖\n【实现专家】选择方案',
-      _tools: ['todo: done (50 chars)', 'read_file: done (312 chars)'],
-      _expanded: false,
+      _thinking: '【实现专家】分析依赖',
+      _tools: ['todo: done (50 chars)'],
     })
     expect(wrapper.text()).toContain('实现专家')
-    // 思考过程默认折叠展示（shortOf 截断）
-    expect(wrapper.text()).toContain('【实现专家】')
-    // 工具调用列表
-    expect(wrapper.text()).toContain('todo: done (50 chars)')
-    expect(wrapper.text()).toContain('read_file: done (312 chars)')
+    expect(wrapper.find('.expert-tools').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('todo: done (50 chars)')
   })
 
   it('expert 气泡 Markdown 内容渲染代码块', () => {
