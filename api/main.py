@@ -168,9 +168,9 @@ async def lifespan(app: FastAPI):
         from modules.thinking.api_stream import connection_manager
 
         def _on_error(error_type: str, error_msg: str, ctx: dict):
-            """错误回调：推送到所有活跃 WebSocket session"""
+            """错误回调：推送到所有活跃前端出口（WebSocket ∪ SSE）"""
             from modules.thinking.api_stream import _build_event
-            for session_id in list(connection_manager.active_connections.keys()):
+            for session_id in connection_manager.push_sessions():
                 envelope = _build_event(
                     session_id=session_id,
                     msg_type="error",
@@ -1420,13 +1420,13 @@ async def update_config(key: str, body: PutConfigRequest):
     try:
         actual = key_upper if key_upper in type(settings).model_fields else key
         old_value = getattr(settings, actual, None)
+        # 先落盘、再应用：写失败时内存/环境变量保持原值，避免出现
+        # “接口报 500 但配置已生效、重启又回滚”的不一致（§102）
+        settings.save_user_config([actual], values={actual: validated})
         object.__setattr__(settings, actual, validated)
         # CORTEX_MODE 需要同步写回环境变量，保证 chat_gateway._resolve_mode 生效
         if key_upper == "CORTEX_MODE":
             os.environ["CORTEX_MODE"] = str(validated)
-        # 实时持久化到 ~/.cortex/settings.json（原子写），重启后仍生效
-        if not settings.save_user_config([actual]):
-            logger.warning(f"配置 {actual} 已更新但持久化失败（重启后将丢失）")
         # 主模型配置变更 → 重建模型实例（新 API Key/URL/模型名立即生效，无需重启）
         if key_upper in _MODEL_CONFIG_KEYS:
             try:

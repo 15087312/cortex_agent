@@ -521,7 +521,7 @@ def test_update_config_bad_value_type(client, reset_rate_limit, fake_settings):
 
 def test_update_config_success(client, reset_rate_limit, fake_settings, monkeypatch):
     from config.settings import Settings
-    _mock_method(monkeypatch, Settings, "save_user_config", return_value=True)
+    _mock_method(monkeypatch, Settings, "save_user_config", return_value=None)
     resp = client.put("/config/DEBUG", json={"value": True})
     assert resp.status_code == 200
     body = resp.json()
@@ -530,16 +530,30 @@ def test_update_config_success(client, reset_rate_limit, fake_settings, monkeypa
     assert body["data"]["new_value"] is True
 
 
-def test_update_config_persist_failure_warns(client, reset_rate_limit, fake_settings, monkeypatch):
+def test_update_config_persists_before_apply(client, reset_rate_limit, fake_settings, monkeypatch):
+    """§102：先落盘、再应用——save 收到的是待写入新值，且此时内存仍是旧值"""
     from config.settings import Settings
-    _mock_method(monkeypatch, Settings, "save_user_config", return_value=False)
-    resp = client.put("/config/DEBUG", json={"value": True})
-    assert resp.status_code == 200  # 持久化失败仅告警，不阻断
+    before = fake_settings.DEBUG
+    seen = {}
+
+    def _save(keys=None, values=None):
+        seen["keys"] = keys
+        seen["values"] = values
+        seen["during"] = fake_settings.DEBUG
+        return None
+
+    _mock_method(monkeypatch, Settings, "save_user_config", side_effect=_save)
+    resp = client.put("/config/DEBUG", json={"value": not before})
+    assert resp.status_code == 200
+    assert seen["keys"] == ["DEBUG"]
+    assert seen["values"] == {"DEBUG": not before}
+    assert seen["during"] is before  # 落盘时内存还没改
+    assert fake_settings.DEBUG is (not before)
 
 
 def test_update_config_cortex_mode_sets_env(client, reset_rate_limit, fake_settings, monkeypatch):
     from config.settings import Settings
-    _mock_method(monkeypatch, Settings, "save_user_config", return_value=True)
+    _mock_method(monkeypatch, Settings, "save_user_config", return_value=None)
     monkeypatch.setenv("CORTEX_MODE", "sentinel")
     resp = client.put("/config/CORTEX_MODE", json={"value": "chatonly"})
     assert resp.status_code == 200
@@ -553,7 +567,7 @@ def os_environ_value(key):
 
 def test_update_config_model_key_reloads(client, no_auth, reset_rate_limit, fake_settings, monkeypatch):
     from config.settings import Settings
-    _mock_method(monkeypatch, Settings, "save_user_config", return_value=True)
+    _mock_method(monkeypatch, Settings, "save_user_config", return_value=None)
     mf = MagicMock()
     mf.reload_from_config = AsyncMock()
     monkeypatch.setattr("modules.thinking.model_factory.get_model_factory", lambda: mf)
@@ -564,7 +578,7 @@ def test_update_config_model_key_reloads(client, no_auth, reset_rate_limit, fake
 
 def test_update_config_model_reload_failure_warns(client, no_auth, reset_rate_limit, fake_settings, monkeypatch):
     from config.settings import Settings
-    _mock_method(monkeypatch, Settings, "save_user_config", return_value=True)
+    _mock_method(monkeypatch, Settings, "save_user_config", return_value=None)
     mf = MagicMock()
     mf.reload_from_config = AsyncMock(side_effect=RuntimeError("reload failed"))
     monkeypatch.setattr("modules.thinking.model_factory.get_model_factory", lambda: mf)
@@ -573,11 +587,24 @@ def test_update_config_model_reload_failure_warns(client, no_auth, reset_rate_li
 
 
 def test_update_config_internal_error_500(client, reset_rate_limit, fake_settings, monkeypatch):
+    """落盘失败 → 500，且内存值不被应用（重启后不会“回滚”）"""
     from config.settings import Settings
+    before = fake_settings.DEBUG
     _mock_method(monkeypatch, Settings, "save_user_config", side_effect=RuntimeError("disk broken"))
-    resp = client.put("/config/DEBUG", json={"value": True})
+    resp = client.put("/config/DEBUG", json={"value": not before})
     assert resp.status_code == 500
     assert resp.json()["error"]["code"] == "INTERNAL_ERROR"
+    assert fake_settings.DEBUG is before
+
+
+def test_update_config_cortex_mode_persist_failure_keeps_env(client, reset_rate_limit, fake_settings, monkeypatch):
+    """落盘失败时不写 CORTEX_MODE 环境变量（内存与环境保持一致）"""
+    from config.settings import Settings
+    _mock_method(monkeypatch, Settings, "save_user_config", side_effect=RuntimeError("disk broken"))
+    monkeypatch.setenv("CORTEX_MODE", "sentinel")
+    resp = client.put("/config/CORTEX_MODE", json={"value": "chatonly"})
+    assert resp.status_code == 500
+    assert os_environ_value("CORTEX_MODE") == "sentinel"
 
 
 # ---------------------------------------------------------------------------
@@ -1141,9 +1168,10 @@ def test_lifespan_ws_error_callback(life):
     with TestClient(app):
         pass
     cb = life["bus"].set_ws_callback.call_args.args[0]
-    life["cm"].active_connections = {"sess1": MagicMock()}
+    # 错误总线遍历所有前端出口（WebSocket ∪ SSE），由 ConnectionManager.push_sessions() 给出（§100.6）
+    life["cm"].push_sessions.return_value = ["sess1", "sess_sse"]
     cb("ERROR", "boom", {"module": "m", "function": "f", "extra": 1})
-    life["cm"].send_json_from_thread.assert_called_once()
+    assert life["cm"].send_json_from_thread.call_count == 2
 
 
 def test_lifespan_production_requires_api_key(life, monkeypatch):

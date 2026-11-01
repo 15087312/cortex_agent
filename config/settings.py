@@ -1129,11 +1129,17 @@ class Settings(BaseSettings):
             print(f"[INFO] 已应用用户配置 ({self._USER_CONFIG_PATH}): {', '.join(overridden)}", file=sys.stderr)
 
     # @link:block Settings_SaveUserConfig = Guard
-    def save_user_config(self, keys: Optional[list] = None) -> bool:
+    def save_user_config(self, keys: Optional[list] = None, values: Optional[dict] = None) -> None:
         """将可持久化配置（含自定义人设/系统提示词覆盖）写回 ~/.cortex/settings.json。
 
         Args:
             keys: 要保存的 key 列表；None 时保存人设相关 key（PERSONA_PROMPTS / SYSTEM_PROMPT_OVERRIDES）
+            values: 待落盘的新值（key → value）；缺省时读取当前内存值。
+                API 更新配置时先落盘再应用，写失败不会让内存/环境变量领先于文件（见 §102）。
+
+        Raises:
+            RuntimeError: 文件存在但无法解析，或内容不是 JSON 对象（原文件保持不动）
+            OSError: 写入/替换失败
         """
         import json
         import sys
@@ -1156,17 +1162,28 @@ class Settings(BaseSettings):
                     if path.exists():
                         try:
                             data = json.loads(path.read_text(encoding="utf-8"))
-                        except Exception:
-                            data = {}
+                        except Exception as _read_err:
+                            # 读不懂就不能写：旧实现静默当作 {} 再写回，会把文件里其它
+                            # 已持久化的 key（模型参数/API Key 等）全部抹掉
+                            # （见 docs/ERRORS_AND_FIXES.md §102）。保留原文件并向上报错。
+                            raise RuntimeError(
+                                f"settings.json 存在但无法解析，已中止保存以免覆盖其它配置: {path}"
+                            ) from _read_err
+                        if not isinstance(data, dict):
+                            raise RuntimeError(
+                                f"settings.json 内容不是 JSON 对象，已中止保存以免覆盖其它配置: {path}"
+                            )
                     for key in keys:
                         if hasattr(type(self), "model_fields") and key in type(self).model_fields:
-                            data[key] = getattr(self, key)
+                            if values is not None and key in values:
+                                data[key] = values[key]
+                            else:
+                                data[key] = getattr(self, key)
                     # 原子写：先写临时文件再替换，防读端读到半写
                     tmp = path.with_suffix(".tmp")
                     tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
                     import os as _os
                     _os.replace(tmp, path)
-            return True
         except Exception as e:
             import sys
             print(f"[ERROR] 用户配置保存失败: {e}", file=sys.stderr)

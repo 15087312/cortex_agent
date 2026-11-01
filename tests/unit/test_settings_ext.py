@@ -433,33 +433,52 @@ class TestUserConfig:
 
     def test_save_user_config_default_keys(self, tmp_path, monkeypatch):
         s = _new_settings(tmp_path, monkeypatch, PERSONA_PROMPTS='{"u": "1"}')
-        assert s.save_user_config() is True
+        assert s.save_user_config() is None
         data = json.loads((tmp_path / ".cortex" / "settings.json").read_text(encoding="utf-8"))
         assert data["PERSONA_PROMPTS"] == '{"u": "1"}'
         assert data["SYSTEM_PROMPT_OVERRIDES"] == "{}"
 
     def test_save_user_config_custom_keys_merges_existing(self, tmp_path, monkeypatch):
         s = _new_settings(tmp_path, monkeypatch, LOG_LEVEL="DEBUG", USER_NAME="tester")
-        assert s.save_user_config(["LOG_LEVEL", "USER_NAME", "NOT_A_FIELD"]) is True
+        assert s.save_user_config(["LOG_LEVEL", "USER_NAME", "NOT_A_FIELD"]) is None
         data = json.loads((tmp_path / ".cortex" / "settings.json").read_text(encoding="utf-8"))
         assert data["LOG_LEVEL"] == "DEBUG"
         assert data["USER_NAME"] == "tester"
         assert "NOT_A_FIELD" not in data
         assert "LARGE_MODEL_API_KEY" in data  # 原模板内容被合并保留
 
+    def test_save_user_config_values_override_without_mutating_memory(self, tmp_path, monkeypatch):
+        # §102：API 先落盘再应用——落盘用的是待写入的新值，内存保持原值
+        s = _new_settings(tmp_path, monkeypatch, LOG_LEVEL="INFO")
+        assert s.save_user_config(["LOG_LEVEL"], values={"LOG_LEVEL": "DEBUG"}) is None
+        data = json.loads((tmp_path / ".cortex" / "settings.json").read_text(encoding="utf-8"))
+        assert data["LOG_LEVEL"] == "DEBUG"
+        assert s.LOG_LEVEL == "INFO"
+
     def test_save_user_config_missing_file(self, tmp_path, monkeypatch):
         s = _new_settings(tmp_path, monkeypatch)
         (tmp_path / ".cortex" / "settings.json").unlink()
-        assert s.save_user_config(["LOG_LEVEL"]) is True
+        assert s.save_user_config(["LOG_LEVEL"]) is None
         data = json.loads((tmp_path / ".cortex" / "settings.json").read_text(encoding="utf-8"))
         assert data["LOG_LEVEL"] == "INFO"
 
     def test_save_user_config_corrupt_existing(self, tmp_path, monkeypatch):
+        # §102：文件损坏时不得静默当作 {} 写回（会抹掉其它已保存的 key），改为报错并保留原文件
         s = _new_settings(tmp_path, monkeypatch)
-        (tmp_path / ".cortex" / "settings.json").write_text("{broken", encoding="utf-8")
-        assert s.save_user_config(["LOG_LEVEL"]) is True
-        data = json.loads((tmp_path / ".cortex" / "settings.json").read_text(encoding="utf-8"))
-        assert data["LOG_LEVEL"] == "INFO"
+        path = tmp_path / ".cortex" / "settings.json"
+        path.write_text("{broken", encoding="utf-8")
+        with pytest.raises(RuntimeError, match="无法解析"):
+            s.save_user_config(["LOG_LEVEL"])
+        assert path.read_text(encoding="utf-8") == "{broken"
+
+    def test_save_user_config_non_object_json(self, tmp_path, monkeypatch):
+        # §102：合法 JSON 但不是对象（如数组）同样不得覆盖
+        s = _new_settings(tmp_path, monkeypatch)
+        path = tmp_path / ".cortex" / "settings.json"
+        path.write_text("[1, 2]", encoding="utf-8")
+        with pytest.raises(RuntimeError, match="不是 JSON 对象"):
+            s.save_user_config(["LOG_LEVEL"])
+        assert path.read_text(encoding="utf-8") == "[1, 2]"
 
     def test_save_user_config_failure_raises(self, tmp_path, monkeypatch):
         # §96：保存失败不再静默吞掉，向上抛出由 API 层转错误响应

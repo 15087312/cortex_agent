@@ -125,7 +125,7 @@ def test_save_user_config_holds_file_lock(tmp_path, monkeypatch):
 
     monkeypatch.setattr(fl, "faiss_file_lock", spy)
 
-    assert s.save_user_config(keys=[]) is True
+    assert s.save_user_config(keys=[]) is None
     assert seen.get("lock_exists") is True
     assert fl._get_path_lock(str(path))._fd is None
     assert isinstance(json.loads(path.read_text(encoding="utf-8")), dict)  # 原子写产物可解析
@@ -135,6 +135,6 @@ def test_save_user_config_falls_back_when_lock_unavailable(tmp_path, monkeypatch
     s = _new_settings(tmp_path, monkeypatch)
     monkeypatch.setitem(sys.modules, "utils.faiss_lock", None)
 
-    assert s.save_user_config(keys=[]) is True
+    assert s.save_user_config(keys=[]) is None
     assert s._USER_CONFIG_PATH.exists()
     assert not os.path.exists(str(s._USER_CONFIG_PATH) + ".lock")
