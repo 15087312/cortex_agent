@@ -45,7 +45,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--strict-warnings", action="store_true", help="any warning exits non-zero")
     p.add_argument("--json", action="store_true", help="machine-readable diagnostics")
     p.add_argument("--explain", metavar="NAME", help="print the expanded term for NAME and exit")
-    p.add_argument("--allow-arch", action="store_true", help="permit architecture (eq/alias) changes")
+    p.add_argument("--allow-arch", action="store_true", help="allow eq/alias drift against the baseline for this run")
+    p.add_argument("--arch-update", action="store_true", help="record the current eq/alias set as the baseline (E305)")
     p.add_argument("--graph", action="store_true", help="render the declared vs real call graph (mermaid)")
     p.add_argument("--drift-only", action="store_true", help="with --graph, only show declared/real drift")
     p.add_argument("--html", metavar="OUT", help="write the full-repo module dependency panorama (interactive HTML/SVG)")
@@ -92,6 +93,15 @@ def main(argv: list[str] | None = None) -> int:
         print(render_recall(blocks, args.recall or None, root))
         return 0
 
+    if args.arch_update:
+        from . import arch
+        from .collect import collect
+
+        result = collect(root, cfg.scan_roots, cfg.exclude, cfg.extensions)
+        path, count = arch.save_baseline(root, arch.fingerprints(result.decls, cfg.lexicon))
+        print(f"logiclink: recorded {count} eq/alias fingerprints -> {path}")
+        return 0
+
     if args.graph or args.html or args.html_flow or args.html_detail:
         from .collect import collect
 
@@ -116,14 +126,10 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         from .v2_graph import render_graph
 
-        print(render_graph(result.decls, drift_only=args.drift_only))
+        print(render_graph(result.decls, drift_only=args.drift_only, allow_cycles=cfg.arch.allow_cycles))
         return 0
 
-    if cfg.forbid_eq_change and not args.allow_arch:
-        print("error: [arch] forbid_eq_change=true; eq/alias changes need --allow-arch", file=sys.stderr)
-        return 1
-
-    diags, code = run(root, cfg, strict=args.strict)
+    diags, code = run(root, cfg, strict=args.strict, allow_arch=args.allow_arch)
     if args.json:
         print(
             json.dumps(

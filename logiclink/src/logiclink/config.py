@@ -28,6 +28,8 @@ class ArchConstraints:
     require_evidence: bool = True
     max_complexity: int = -1  # 最大复杂度（-1 表示无限制）
     require_doc: bool = False
+    # Dependency cycles that are knowingly accepted: each entry lists module names.
+    allow_cycles: list[frozenset[str]] = field(default_factory=list)
     # 全局约束
     no_direct_db_access: list[str] = field(default_factory=list)  # 这些模块不能直接访问数据库
     must_use_event_bus: list[str] = field(default_factory=list)  # 这些模块必须通过事件总线通信
@@ -103,6 +105,11 @@ def load_config(start: Path) -> Config:
     cfg.arch.require_evidence = bool(arch.get("require_evidence", True))
     cfg.arch.max_complexity = int(arch.get("max_complexity", -1))
     cfg.arch.require_doc = bool(arch.get("require_doc", False))
+    allowed = arch.get("allow_cycles", [])
+    if isinstance(allowed, list):
+        cfg.arch.allow_cycles = [
+            frozenset(str(x) for x in entry) for entry in allowed if isinstance(entry, list)
+        ]
     # 加载全局约束
     constraints = arch.get("constraints", {})
     if isinstance(constraints.get("no_direct_db_access"), list):

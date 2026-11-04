@@ -50,7 +50,12 @@ def _parse_terms(decls: list[Decl], lexicon: dict) -> tuple[dict[int, T.Term], l
     return terms, diags
 
 
-def run(root: str | Path, cfg: Config | None = None, strict: bool = False) -> tuple[list[Diagnostic], int]:
+def run(
+    root: str | Path,
+    cfg: Config | None = None,
+    strict: bool = False,
+    allow_arch: bool = False,
+) -> tuple[list[Diagnostic], int]:
     root = Path(root).resolve()
     cfg = cfg or load_config(root)
     result = collect(root, cfg.scan_roots, cfg.exclude, cfg.extensions)
@@ -290,9 +295,19 @@ def run(root: str | Path, cfg: Config | None = None, strict: bool = False) -> tu
         diags.append(Diagnostic(code, level, message, path, line, col, note))
     for (code, level, message, path, line, col, note) in v2_datav.check_datav(result.decls, cfg):
         diags.append(Diagnostic(code, level, message, path, line, col, note))
-    for (code, level, message, path, line, col, note) in v2_graph.check_graph(result.decls):
+    for (code, level, message, path, line, col, note) in v2_graph.check_graph(
+        result.decls, cfg.arch.allow_cycles
+    ):
         diags.append(Diagnostic(code, level, message, path, line, col, note))
     for (code, level, message, path, line, col, note) in v2_state.check_state(result.decls):
+        diags.append(Diagnostic(code, level, message, path, line, col, note))
+
+    # Architecture gate: eq/alias drift against the recorded baseline (E305).
+    from . import arch
+
+    for (code, level, message, path, line, col, note) in arch.check_arch(
+        result.decls, cfg, root, allow_arch=allow_arch
+    ):
         diags.append(Diagnostic(code, level, message, path, line, col, note))
 
     errors = [d for d in diags if d.level == "error"]

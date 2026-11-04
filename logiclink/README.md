@@ -31,6 +31,8 @@ logiclink examples/agent_react   # 期望：logiclink: ok
 logiclink                 # 从 cwd 读 link.toml，扫 roots
 logiclink path/           # 指定根
 logiclink --strict        # W010（多余证据）变 error
+logiclink --arch-update   # 归档当前 eq/alias 指纹到 .logiclink/arch.json
+logiclink --allow-arch    # 放行本次 eq/alias 漂移（仍打印变更清单）
 logiclink --json          # 机器可读诊断
 logiclink --explain ReAct # 打印 ReAct 展开后的 term
 ```
@@ -68,7 +70,13 @@ def react(state):
 | E004 | 父 block 声明项 ≠ 子 block 组合（报告 `missing:`/`extra:` 原子集合差） |
 | E005 | 符号重名 / `use` 悬空 |
 | E006 | `@ file:` / `fn:` 挂接失败 |
+| E305 | eq/alias 与 `.logiclink/arch.json` 基线不一致（新增/删除/改动），或门禁已开但基线缺失 |
 | W010 | 区间内有已登记原子调用但项未包含（`--strict` 变 error） |
+
+`[arch] forbid_eq_change = true` 是**基线门禁**：它不再拒绝运行，而是把当前 eq/alias
+的规范化 AST 指纹与 `.logiclink/arch.json` 对比，只有真正的新增/删除/改动才报 `E305`
+（`·` 与 `>>`、空白、注释差异不算改动）。首次启用需人工执行一次 `--arch-update`
+归档基线，该文件应提交进版本库；`--allow-arch` 只放行本次运行，不放宽后续。
 
 v1 说明：相等一律走 normalize 后的 AST（`ast_terms.equal`），禁止字符串比较；
 E004 先试严格结构相等，不等则退化为原子集合差比较（顺序/分支结构差异在 v1
@@ -84,7 +92,7 @@ v1 验证"块内"，v2 在 `logiclink/src/logiclink/v2_flow.py`、`v2_datav.py`�
 |---|---|---|
 | L1 组装 | `use name := module.Symbol` + `input Sym: [...]` / `output Sym: [...]` | E101 输入未满足 / E102 输出悬空 / E103 端口不匹配 |
 | L2 数据流 | `Atom(var)`、`Atom(v@"channel")`、`Atom(v:Type)` | E201 未定义先使用 / E202 产出未消费 / E203 类型不匹配 / E204 通道未接线 |
-| L3 调用图 | `--graph`（真实 import 边 vs `use`/`eq` 声明边） | E301 声明无真实 / E302 真实未声明 / E303 方向相反 |
+| L3 调用图 | `--graph`（真实 import 边 vs `use`/`eq` 声明边） | E301 声明无真实 / E302 真实未声明 / E303 方向相反 / E304 模块间循环依赖（W304 = 已在 `allow_cycles` 白名单） |
 | L4 状态机 | `state NAME` + `init = ...` + `trans = "s1 --event--> s2"` | E401 非法状态 / E402 声明转换未实现 / E403 转换未声明 |
 
 ```bash
@@ -95,6 +103,15 @@ logiclink . --allow-arch         # 根 app.link 已接入主链路
 
 端口声明写在模块 `.link` 的 `export` 之后；根 `app.link` 声明 `use` 与主链路
 `eq`。L3 会如实报告未声明的真实耦合（E302）——这是工具的设计产出，不是噪声。
+
+E304 只看**真实 import**：模块 A、B 互相 import 构成强连通分量即判环，声明
+`eq Flow = a · b` 与 `eq Back = b · a` 只是把环写进文档，不会让它消失。一个环报
+一条，环内边不再重复报 E302。确属设计需要的双向耦合可白名单放行，降级为 W304：
+
+```toml
+[arch]
+allow_cycles = [["desktop_pet", "thinking"]]
+```
 
 ### 代码块召回与全景图
 

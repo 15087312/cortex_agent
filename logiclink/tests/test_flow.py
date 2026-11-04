@@ -106,6 +106,10 @@ def test_e103_disjoint_ports(tmp_path):
     assert code == 1
     e103 = [d for d in diags if d.code == "E103"]
     assert e103, [(d.code, d.message) for d in diags]
+    # Disjoint ports are one broken splice: E103 only, no "all inputs missing" E101.
+    assert not [d for d in diags if d.code == "E101"], [
+        (d.code, d.message) for d in diags
+    ]
 
 
 def test_bare_port_binds_to_nearest_export(tmp_path):

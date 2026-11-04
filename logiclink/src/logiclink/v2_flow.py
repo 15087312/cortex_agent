@@ -97,7 +97,23 @@ def check_flow(decls: list[Decl]) -> list[tuple]:
         ins_b, outs_a = pb[0], pa[1]
         if ins_b and outs_a:
             missing = sorted(ins_b - outs_a)
-            if missing:
+            if not (outs_a & ins_b):
+                # Disjoint ports are E103, not also "every input missing" E101:
+                # one broken splice should produce one diagnostic.
+                src = pair_source[(a, b)]
+                diags.append(
+                    (
+                        "E103",
+                        "error",
+                        f"port mismatch between `{a}` (={sym_a}) output {{{', '.join(sorted(outs_a))}}} "
+                        f"and `{b}` (={sym_b}) input {{{', '.join(sorted(ins_b))}}}",
+                        src.path,
+                        src.line,
+                        src.col,
+                        "L1 assembly: adjacent modules share no port atoms",
+                    )
+                )
+            elif missing:
                 src = pair_source[(a, b)]
                 diags.append(
                     (
@@ -111,20 +127,6 @@ def check_flow(decls: list[Decl]) -> list[tuple]:
                         "L1 assembly: predecessor output must satisfy successor input",
                     )
                 )
-        if ins_b and outs_a and not (outs_a & ins_b):
-            src = pair_source[(a, b)]
-            diags.append(
-                (
-                    "E103",
-                    "error",
-                    f"port mismatch between `{a}` (={sym_a}) output {{{', '.join(sorted(outs_a))}}} "
-                    f"and `{b}` (={sym_b}) input {{{', '.join(sorted(ins_b))}}}",
-                    src.path,
-                    src.line,
-                    src.col,
-                    "L1 assembly: adjacent modules share no port atoms",
-                )
-            )
 
     # ---- E102: dangling outputs (whole output set consumed by nothing) ----
     has_successor = {a for (a, _b) in declared_pairs}
@@ -144,8 +146,6 @@ def check_flow(decls: list[Decl]) -> list[tuple]:
         if not outs:
             continue
         consumed = consumers_of.get(name, set())
-        if consumed and outs <= consumed:
-            continue
         if not (outs - consumed):
             continue
         src = use_decls[name]

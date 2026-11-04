@@ -83,39 +83,67 @@ def test_strict_warnings_exits_one(tmp_path, capsys):
 # ---------------------------------------------------------------- 架构门禁
 
 
-def test_forbid_eq_change_blocks_without_allow_arch(tmp_path, capsys):
-    toml = textwrap.dedent(
-        """\
-        [scan]
-        roots = ["."]
-        exclude = []
-        extensions = [".py", ".link"]
+ARCH_TOML = textwrap.dedent(
+    """\
+    [scan]
+    roots = ["."]
+    exclude = []
+    extensions = [".py", ".link"]
 
-        [arch]
-        forbid_eq_change = true
-        """
-    )
-    root = write_proj(tmp_path, {"link.toml": toml, "react.py": OK_REACT})
+    [arch]
+    forbid_eq_change = true
+    """
+)
+
+
+def arch_proj(tmp_path) -> str:
+    return write_proj(tmp_path, {"link.toml": ARCH_TOML, "react.py": OK_REACT})
+
+
+def test_forbid_eq_change_requires_baseline(tmp_path, capsys):
+    """The gate is a baseline diff now: without a baseline it says how to make one."""
+    root = arch_proj(tmp_path)
     assert cli_main([root]) == 1
-    out = capsys.readouterr().err
-    assert "forbid_eq_change" in out and "--allow-arch" in out
+    out = capsys.readouterr().out
+    assert "E305" in out and "--arch-update" in out
 
 
-def test_forbid_eq_change_allows_with_allow_arch(tmp_path, capsys):
-    toml = textwrap.dedent(
-        """\
-        [scan]
-        roots = ["."]
-        exclude = []
-        extensions = [".py", ".link"]
-
-        [arch]
-        forbid_eq_change = true
-        """
-    )
-    root = write_proj(tmp_path, {"link.toml": toml, "react.py": OK_REACT})
-    assert cli_main([root, "--allow-arch"]) == 0
+def test_arch_update_records_baseline_then_run_is_clean(tmp_path, capsys):
+    root = arch_proj(tmp_path)
+    assert cli_main([root, "--arch-update"]) == 0
+    assert (tmp_path / ".logiclink" / "arch.json").is_file()
     capsys.readouterr()
+
+    assert cli_main([root]) == 0
+    assert "E305" not in capsys.readouterr().out
+
+
+def test_arch_update_ignores_cosmetic_eq_edits(tmp_path, capsys):
+    """Fingerprints hash the normalized AST: `·` vs `>>` and spacing are not changes."""
+    root = arch_proj(tmp_path)
+    assert cli_main([root, "--arch-update"]) == 0
+    capsys.readouterr()
+
+    cosmetic = OK_REACT.replace("Loop(Think · Guard · (Tool · Observe | Emit))", "Loop(Think>>Guard>>(Tool·Observe | Emit))")
+    (tmp_path / "react.py").write_text(cosmetic, encoding="utf-8")
+    assert cli_main([root]) == 0
+    assert "E305" not in capsys.readouterr().out
+
+
+def test_eq_change_blocks_and_allow_arch_only_warns(tmp_path, capsys):
+    root = arch_proj(tmp_path)
+    assert cli_main([root, "--arch-update"]) == 0
+    capsys.readouterr()
+
+    (tmp_path / "react.py").write_text(OK_REACT + "# @link:eq Extra = Think\n", encoding="utf-8")
+    assert cli_main([root]) == 1
+    out = capsys.readouterr().out
+    assert "E305" in out and "Extra" in out and "added" in out
+
+    # --allow-arch lets this run through, but the change is still shown.
+    assert cli_main([root, "--allow-arch"]) == 0
+    out = capsys.readouterr().out
+    assert "E305" in out and "Extra" in out
 
 
 # ---------------------------------------------------------------- --recall
