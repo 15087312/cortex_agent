@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 """system doctor 自检单测 — 外部条件全部可控注入，不依赖真实环境。"""
-import os
 
 import pytest
 
@@ -110,7 +109,9 @@ class TestDoctor:
         res = doc._check_embedding_models()
         assert res["ok"] is False
 
-    def test_whisper_weights_missing_is_optional(self, monkeypatch):
+    def test_whisper_weights_missing_is_optional(self, healthy_env, monkeypatch):
+        # 需要 healthy_env 兜住 required 项（CI 无真实 API key / embedding 模型），
+        # 否则 healthy 会被环境缺失拉低，断言与 whisper_weights 无关地失败。
         monkeypatch.setenv("HOME", "/nonexistent-home")
         import infra.data_process.core.video_analyzer as va
         monkeypatch.setattr(va, "find_ffmpeg_tool", lambda n: f"/x/{n}")
