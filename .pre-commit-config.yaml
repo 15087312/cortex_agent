@@ -3,9 +3,10 @@ repos:
     hooks:
       - id: logiclink
         name: logiclink
-        # --allow-arch 必需：link.toml 设了 forbid_eq_change=true，
-        # 不带该参数时检查器不跑验证，直接以 "eq/alias changes need --allow-arch" 退出 1。
-        entry: logiclink . --allow-arch
+        # 不带 --allow-arch：E305 才是「声明改了就红」的门禁。确实要改 eq/alias 时，
+        # 先跑 `logiclink . --arch-update` 归档基线并一起提交（`--allow-arch` 只应
+        # 出现在人工排查命令里，不该写进钩子，否则门禁形同虚设）。
+        entry: logiclink . --strict
         language: system
         pass_filenames: false
         always_run: true
