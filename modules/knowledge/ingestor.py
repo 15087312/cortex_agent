@@ -289,7 +289,14 @@ class KnowledgeIngestor:
             return 0
         texts = [chunk_embedding_text(title, c.heading_path, c.text) for c in chunks]
         vectors = self.store.embed_texts(texts)
-        return self.store.add_vectors([c.id for c in chunks], vectors)
+        # embed_texts 用 None 标记失败位置；必须连 chunk_id 一起过滤，
+        # 否则 zip 后 id 与向量错位，后面检索会返回错误的出处。
+        pairs = [(c.id, v) for c, v in zip(chunks, vectors) if v]
+        if not pairs:
+            return 0
+        return self.store.add_vectors(
+            [cid for cid, _ in pairs], [vec for _, vec in pairs]
+        )
 
     # ------------------------------------------------------------------
     # 删除 / 重建

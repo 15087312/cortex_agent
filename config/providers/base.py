@@ -42,6 +42,10 @@ class ProviderBase(ABC):
     #: 适配器对应的协议格式名（如 openai / anthropic / gemini / azure / bedrock / cohere / ollama / dashscope）
     format_name: str = "openai"
 
+    #: OpenRouter 上游供应商偏好（逗号分隔的 order 列表）。仅 OpenAIProvider
+    #: 会读它；声明在基类是为了让客户端可以无条件注入而不用类型断言。
+    openrouter_supplier: str = ""
+
     def __init__(self, api_key: str, base_url: str, model_name: str):
         self.api_key = api_key
         self.base_url = base_url

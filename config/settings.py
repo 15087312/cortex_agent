@@ -780,7 +780,9 @@ class Settings(BaseSettings):
             import contextlib
             try:
                 from utils.faiss_lock import faiss_file_lock
-                _file_lock = faiss_file_lock(self._personas_yaml_path)
+                _file_lock: "contextlib.AbstractContextManager[object]" = faiss_file_lock(
+                    self._personas_yaml_path
+                )
             except Exception as _lock_err:
                 logger.debug(f"[_modify_personas_yaml] faiss_file_lock 不可用，降级为仅线程锁: {_lock_err}")
                 _file_lock = contextlib.nullcontext()
@@ -1153,7 +1155,7 @@ class Settings(BaseSettings):
                 import contextlib
                 try:
                     from utils.faiss_lock import faiss_file_lock
-                    _file_lock = faiss_file_lock(str(path))
+                    _file_lock: "contextlib.AbstractContextManager[object]" = faiss_file_lock(str(path))
                 except Exception as _lock_err:
                     logger.debug(f"[save_user_config] faiss_file_lock 不可用，降级为仅线程锁: {_lock_err}")
                     _file_lock = contextlib.nullcontext()

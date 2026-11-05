@@ -3100,12 +3100,12 @@ class ModelRunner:
                             _tool_started = time.perf_counter()
                             _tool_status = "ok"
                             _tool_error = ""
-                            args: Dict[str, Any] = {}
+                            tool_args: Dict[str, Any] = {}
                             try:
                                 self._status_detail = tc.name
-                                args = json.loads(tc.arguments) if isinstance(tc.arguments, str) and tc.arguments.strip() else {}
-                                self._push_tool_call(tc, args)
-                                missing = self._missing_required_tool_args(tc.name, args)
+                                tool_args = json.loads(tc.arguments) if isinstance(tc.arguments, str) and tc.arguments.strip() else {}
+                                self._push_tool_call(tc, tool_args)
+                                missing = self._missing_required_tool_args(tc.name, tool_args)
                                 if missing:
                                     _tool_status = "invalid"
                                     _tool_error = f"缺少必填参数: {', '.join(missing)}"
@@ -3135,7 +3135,7 @@ class ModelRunner:
                                     try:
                                         allowed, reason = await gate.check(
                                             tool_name=tc.name,
-                                            tool_params=args,
+                                            tool_params=tool_args,
                                             caller_tier=self.tier,
                                             caller_model_id=self.model_id,
                                             dialog_context=dialog_ctx,
@@ -3167,10 +3167,10 @@ class ModelRunner:
                                     else:
                                         # todo 工具：注入当前会话，任务列表按会话隔离（对齐主流 AI 的 per-task todo）
                                         if tc.name == "todo":
-                                            args.setdefault("session_id", self.session_id)
+                                            tool_args.setdefault("session_id", self.session_id)
                                         tool_request = ToolCallRequest(
                                             tool_name=tc.name,
-                                            params=args,
+                                            params=tool_args,
                                             caller_role=self.tier,
                                             caller_model_id=self.model_id,
                                             source="model_runner",
@@ -3181,6 +3181,7 @@ class ModelRunner:
                                         # 工具独立计时：执行期间冻结 AI 的静默计时（activity.pause），
                                         # 工具超时只结束本次调用并把错误回传给模型，不占用整轮思考预算。
                                         self.activity.pause()
+                                        mcp_result: Any = None
                                         try:
                                             mcp_result = await asyncio.wait_for(
                                                 asyncio.to_thread(mcp.execute, tool_request),
@@ -3246,7 +3247,7 @@ class ModelRunner:
                                 status=_tool_status,
                                 duration_ms=(time.perf_counter() - _tool_started) * 1000,
                                 error=_tool_error,
-                                args=args,
+                                args=tool_args,
                             )
                             logger.info(f"[ModelRunner] {self.model_id} 第{turn}轮 {tc.name} → {result[:400]}")
                             # 写入 Blackboard — 简洁的一行摘要，让 TUI 直观显示
@@ -3257,7 +3258,7 @@ class ModelRunner:
                                         count = result.count("'title':") if result else 0
                                         summary = f"web_search: {count} results"
                                     elif tc.name == "exec_command" or tc.name == "run_command":
-                                        cmd = args.get("command", "")[:60]
+                                        cmd = tool_args.get("command", "")[:60]
                                         exit_code = "?"
                                         try:
                                             import json as _json

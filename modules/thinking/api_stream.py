@@ -1813,7 +1813,7 @@ async def _stream_sse(session_id: str, question: str):
     # 同一个 envelope 对象既经 callback 又经扇出到达（_emit 两条都走）→ 按对象
     # 身份去重。deque 里存对象本身而不是 id()：只存 int 时对象释放后 id 会被复用，
     # 新的一帧可能撞上刚释放的 id 而被误丢。
-    seen = _collections.deque(maxlen=256)
+    seen: Any = _collections.deque(maxlen=256)
 
     # 与 websocket_chat 对齐：连上就先补发已持久化的投影与待办快照，
     # 否则 SSE 客户端在下一支状态变化前看不到 todos/上下文占用/审批项。

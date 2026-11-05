@@ -18,7 +18,7 @@ class MCPServerManager:
     """管理所有 MCP server 连接的生命周期（含自动重连）"""
 
     def __init__(self, servers: List[MCPServerConfig]):
-        self._transports: Dict[str, MCPStdioTransport | MCPSseTransport] = {}
+        self._transports: Dict[str, MCPStdioTransport | MCPSseTransport | MCPStreamableHttpTransport] = {}
         self._tools_index: Dict[str, MCPToolDef] = {}  # tool_name → tool_def
         self._tool_to_server: Dict[str, str] = {}  # tool_name → server_name
         # 自动重连监控：每个 server 一个后台 asyncio 任务 + 停止事件

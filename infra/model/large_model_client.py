@@ -98,7 +98,10 @@ class LargeModelClient(BaseModelClient):
 
         # 格式层统一由 Provider 构建（anthropic system 提取 / openai messages / dashscope input）
         headers = self._provider.build_headers()
-        provider_kwargs = {"enable_thinking": self.enable_thinking} if self._api_format == "openai" else {}
+        provider_kwargs: Dict[str, Any] = (
+            {"enable_thinking": self.enable_thinking}
+            if self._api_format == "openai" else {}
+        )
         payload = self._provider.build_request(
             [
                 {"role": "system", "content": system_prompt},

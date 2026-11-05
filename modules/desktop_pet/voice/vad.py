@@ -58,12 +58,15 @@ class SileroVAD:
         """
         if not self._ensure_loaded():
             return False
+        model = self._model
+        if model is None:
+            return False
         try:
             import torch
             audio_np = np.frombuffer(audio_chunk, dtype=np.int16).astype(np.float32) / 32768.0
             tensor = torch.from_numpy(audio_np)
             with self._lock:
-                confidence = self._model(tensor, self._sample_rate).item()
+                confidence = model(tensor, self._sample_rate).item()
             return confidence >= self._threshold
         except Exception as e:
             logger.debug(f"VAD 推理失败: {e}")

@@ -99,13 +99,17 @@ class MediumModelClient(BaseModelClient):
 
         if model != self._provider.model_name:
             self._provider.model_name = model
+        provider_kwargs: Dict[str, Any] = (
+            {"enable_thinking": self.enable_thinking}
+            if self._api_format == "openai" else {}
+        )
         payload = self._provider.build_request(
             api_messages,
             max_tokens=max_tokens,
             temperature=temperature,
             tools=tools,
             tool_choice=tool_choice,
-            **({"enable_thinking": self.enable_thinking} if self._api_format == "openai" else {}),
+            **provider_kwargs,
         )
 
         max_retries = kwargs.get("max_retries", 2)
@@ -177,11 +181,15 @@ class MediumModelClient(BaseModelClient):
 
         # 格式层统一由 Provider 构建（headers/请求体；anthropic system 提取内含）
         headers = self._provider.build_headers()
+        provider_kwargs: Dict[str, Any] = (
+            {"enable_thinking": self.enable_thinking}
+            if self._api_format == "openai" else {}
+        )
         payload = self._provider.build_request(
             messages,
             max_tokens=kwargs.get("max_tokens", self.max_tokens),
             temperature=kwargs.get("temperature", self.temperature),
-            **({"enable_thinking": self.enable_thinking} if self._api_format == "openai" else {}),
+            **provider_kwargs,
         )
 
         try:

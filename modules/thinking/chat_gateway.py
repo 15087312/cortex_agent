@@ -341,7 +341,11 @@ async def _consume_turn(
                     try:
                         from modules.database.session_events import get_session_event_repo
                         get_session_event_repo().append(
-                            session_id, "thinking", "thinking_step", "thinking", _thought,
+                            session_id,
+                            type="thinking",
+                            event="thinking_step",
+                            role="thinking",
+                            content=_thought,
                             data={"source": "reasoning",
                                   "identity_name": tok.get("identity_name", "总指挥"),
                                   "tier": tok.get("tier", "large")},
@@ -368,7 +372,11 @@ async def _consume_turn(
                     try:
                         from modules.database.session_events import get_session_event_repo
                         get_session_event_repo().append(
-                            session_id, "mental", "mental", "system", _mental,
+                            session_id,
+                            type="mental",
+                            event="mental",
+                            role="system",
+                            content=_mental,
                             data={"label": "心理活动"},
                         )
                     except Exception as _swallowed_err:
@@ -423,7 +431,12 @@ async def _consume_turn(
         try:
             from modules.database.session_events import get_session_event_repo
             get_session_event_repo().append(
-                session_id, "done", "done", "system", "处理完成", data={},
+                session_id,
+                type="done",
+                event="done",
+                role="system",
+                content="处理完成",
+                data={},
             )
         except Exception as _swallowed_err:
             logger.debug(f"[_consume_turn] ignored Exception: {_swallowed_err}")
@@ -792,9 +805,11 @@ async def get_context(session_id: str):
                 ctx_messages = repo.get_recent_messages(session_id, limit=20)
             except Exception:
                 ctx_messages = []
-        # 同步到 api_stream 会话缓存
-        if session_id in _api.sessions:
-            _api.sessions[session_id]["messages"] = ctx_messages
+        # 同步到 api_stream 会话缓存。模块本身没有 sessions 属性：
+        # get_context() 已经调用过 get_thinking_system()，这里复用同一单例。
+        _thinking = _api.get_thinking_system()
+        if session_id in _thinking.sessions:
+            _thinking.sessions[session_id]["messages"] = ctx_messages
     return {
         "success": True,
         "data": {
@@ -815,8 +830,8 @@ async def close_session(session_id: str):
     try:
         from modules.thinking.model_runner import _session_memory_context, _resume_context
         _session_memory_context.pop(session_id, None)
-        _resume_context = getattr(_resume_context, None, None)  # 清除引用（实际以 session 为键的 dict 在 model_runner 同名变量中）
-        # 若 _resume_context 是 dict，也按 session_id 删键
+        # _resume_context 是 model_runner 里的 session->上下文 dict；
+        # 之前的 getattr(_resume_context, None, None) 会抛 TypeError，导致清理整段跳过。
         if isinstance(_resume_context, dict):
             _resume_context.pop(session_id, None)
     except Exception as _swallowed_err:

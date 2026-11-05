@@ -8,6 +8,7 @@
 import asyncio
 import threading
 import weakref
+from concurrent.futures import Future
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from utils.logger import setup_logger
@@ -155,10 +156,22 @@ class PerceptionEventBus:
                     if loop is None or not loop.is_running():
                         logger.error(f"[Bus] 异步循环不可用: loop={loop}, running={loop.is_running() if loop else 'N/A'}, thread_alive={self._async_thread.is_alive() if self._async_thread else 'N/A'}")
                         continue
-                    fut = asyncio.run_coroutine_threadsafe(
-                        sub.async_handler(event), loop
+                    async def _invoke_async_handler(
+                        handler=sub.async_handler, ev=event
+                    ) -> None:
+                        await handler(ev)
+
+                    fut: Future[None] = asyncio.run_coroutine_threadsafe(
+                        _invoke_async_handler(), loop
                     )
-                    fut.add_done_callback(lambda f, et=event.event_type, sid=sub.sub_id: _check_async_result(f, et, sid))
+                    def _on_async_done(
+                        done: Future[None],
+                        et: str = event.event_type,
+                        sid: str = sub.sub_id,
+                    ) -> None:
+                        _check_async_result(done, et, sid)
+
+                    fut.add_done_callback(_on_async_done)
             except Exception as e:
                 logger.error(
                     f"事件处理异常: {event.event_type} sub={sub.sub_id} err={e}"

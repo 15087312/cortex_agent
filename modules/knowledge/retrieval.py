@@ -63,7 +63,7 @@ class KnowledgeRetrieval:
         query = (query or "").strip()
         if not query or not is_enabled():
             return []
-        top_k = int(top_k or getattr(settings, "KNOWLEDGE_TOP_K", 5))
+        top_k = int(top_k or getattr(settings, "KNOWLEDGE_TOP_K", 5) or 5)
         top_k = max(1, min(20, top_k))
         pool = max(top_k * 3, 12)
         min_semantic = float(getattr(settings, "KNOWLEDGE_MIN_SEMANTIC", 0.30))

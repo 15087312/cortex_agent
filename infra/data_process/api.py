@@ -151,6 +151,11 @@ async def identify_speaker(
 
         classifier = await get_default_classifier()
         result = await classifier.identify_speaker(audio_data, threshold=threshold)
+        if result is None:
+            raise AppError(
+                ErrorCode.VALIDATION_ERROR,
+                "声纹提取失败：音频过短或格式不支持",
+            )
 
         if not result["identified"] and register_unknown:
             emb = result.get("embedding")
@@ -242,6 +247,14 @@ async def recognize_speech_with_speaker(
         speaker_result = await classifier.identify_speaker(
             audio_data, threshold=speaker_threshold
         )
+        if speaker_result is None:
+            # 声纹失败不影响转写结果：降级为“未识别”。
+            speaker_result = {
+                "identified": False,
+                "speaker": None,
+                "similarity": 0.0,
+                "embedding": None,
+            }
 
         if not speaker_result["identified"] and auto_register:
             emb = speaker_result.get("embedding")

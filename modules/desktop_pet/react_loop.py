@@ -14,7 +14,7 @@ import json
 import re
 import time
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Callable, Dict, Optional, Type
+from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Type
 
 from utils.logger import setup_logger
 
@@ -36,12 +36,15 @@ class PetReactLoop(ABC):
         engine: "PetEngine",
         text: str,
         on_token: Optional[Callable[[str], None]] = None,
+        on_reasoning: Optional[Callable[[str], None]] = None,
+        on_message: Optional[Callable[[str], None]] = None,
         extra_system: str = "",
     ) -> str:
         """执行一次完整循环，返回桌宠回复文本（空串表示放弃回复）。
 
         on_token 非 None 时表示需要流式产出：循环应把产出逐 token 回调给
         on_token（同步回调），并在结束时返回完整文本。
+        on_reasoning 接收模型思考过程，on_message 接收一轮完整回复。
         extra_system 为外部注入的系统提示（如互动动作 prompt、状态描述）。
         """
 
@@ -367,13 +370,19 @@ class CustomLoop(PetReactLoop):
             if not has_tool and not has_obs_text:
                 msgs.append(_tool_message(f"【工具观察】{obs}"))
         collected: list = []
+
+        def _emit_token(t: str) -> None:
+            collected.append(t)
+            if on_token:
+                on_token(t)
+
         # 正文 token 实时转发到前端（与 DirectLoop 一致），边生成边显示。
         # 若最终判定为工具调用，JSON 片段已可见但下一轮会续接同一气泡，
         # 体验远优于"等半天突然冒出一整句"。
         response = await engine.client.chat_stream(
             messages=msgs,
             max_tokens=max_tokens,
-            on_token=lambda t: (collected.append(t), on_token(t) if on_token else None),
+            on_token=_emit_token,
             on_reasoning=on_reasoning,
             tools=tools or None,
         )
@@ -535,7 +544,7 @@ class CustomLoop(PetReactLoop):
         m = self._TOOL_JSON_RE.search(raw)
         if m:
             tool = m.group(1).strip()
-            params = {}
+            params: Dict[str, Any] = {}
             try:
                 obj = json.loads(raw[m.start():].strip())
                 params = obj.get("params") or {}

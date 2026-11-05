@@ -90,6 +90,9 @@ class SpeakerClassifier:
         """从音频字节提取说话人嵌入向量 (256-dim)"""
         if not self._initialized:
             await self.initialize()
+        if self.encoder is None:
+            logger.error("声纹模型未加载（encoder 为 None），无法提取声纹")
+            return None
 
         try:
             from resemblyzer import preprocess_wav

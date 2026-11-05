@@ -13,7 +13,7 @@
 import asyncio
 import threading
 import time
-from typing import Optional
+from typing import Any, Callable, Optional
 
 from modules.desktop_pet.voice.vad import SileroVAD
 from modules.desktop_pet.voice.streaming_asr import StreamingASR
@@ -55,11 +55,11 @@ class RealtimeVoicePipeline:
 
         self._running = False
         self._speech_active = False
-        self._ws_send: Optional[callable] = None
-        self._event_bus = None
+        self._ws_send: Optional[Callable[..., Any]] = None
+        self._event_bus: Optional[Any] = None
         self._lock = threading.Lock()
 
-    def start(self, ws_send: Optional[callable] = None):
+    def start(self, ws_send: Optional[Callable[..., Any]] = None):
         """启动管线
 
         Args:

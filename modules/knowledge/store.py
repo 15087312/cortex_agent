@@ -28,6 +28,18 @@ logger = setup_logger("knowledge_store")
 
 _open = open
 
+
+def _cfg_path(name: str, default: str) -> str:
+    """Read a path setting, treating ``None``/empty as "use the default".
+
+    ``getattr(settings, name, default)`` is typed ``str | None`` because the
+    settings field is optional; ``os.path`` then rejects it.  Normalising here
+    keeps every caller (and ``self._db_path``) a real ``str``.
+    """
+    value = getattr(settings, name, default)
+    return str(value) if value else default
+
+
 _JIEBA = None
 _JIEBA_FAILED = False
 _STOP_TERMS = {
@@ -89,18 +101,19 @@ class KnowledgeStore:
         id_map_path: Optional[str] = None,
         embed_fn=None,
     ):
-        self._db_path = db_path or getattr(settings, "KNOWLEDGE_DB_PATH", "data/knowledge.db")
-        self._index_path = index_path or getattr(
-            settings, "KNOWLEDGE_FAISS_INDEX", "data/knowledge_faiss.index")
-        self._id_map_path = id_map_path or getattr(
-            settings, "KNOWLEDGE_ID_MAP", "data/knowledge_id_map.json")
+        self._db_path: str = db_path or _cfg_path(
+            "KNOWLEDGE_DB_PATH", "data/knowledge.db")
+        self._index_path: str = index_path or _cfg_path(
+            "KNOWLEDGE_FAISS_INDEX", "data/knowledge_faiss.index")
+        self._id_map_path: str = id_map_path or _cfg_path(
+            "KNOWLEDGE_ID_MAP", "data/knowledge_id_map.json")
         for p in (self._db_path, self._index_path, self._id_map_path):
             os.makedirs(os.path.dirname(os.path.abspath(p)) or ".", exist_ok=True)
 
         self._write_lock = threading.RLock()
         self._conn: Optional[sqlite3.Connection] = None
         self._embed_fn = embed_fn          # 测试注入；None 时用 EmbeddingEngine 单例
-        self._index = None                 # faiss.IndexIDMap2，延迟加载
+        self._index: Any = None            # faiss.IndexIDMap2，延迟加载
         self._id_map: Dict[str, str] = {}  # str(int_id) -> chunk_id
         self._next_id: int = 1
         self._fts: Optional[bool] = None   # FTS5 可用性，None=未探测
@@ -403,6 +416,7 @@ class KnowledgeStore:
         if self._index is not None:
             return self._index
         import faiss
+        idx: Any = None
         with faiss_file_lock(self._index_path):
             if os.path.exists(self._index_path):
                 try:
