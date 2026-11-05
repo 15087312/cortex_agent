@@ -161,6 +161,9 @@ def load_and_merge(defaults: Dict[str, dict] = None, directory: str = None) -> D
         合并后的身份字典
     """
     if defaults is None:
+        # 惰性导入，且是**有意的**环：identity.py:81 亦以惰性方式反向导入本模块的
+        # load_and_merge。两条边对等且都在函数体内，导入期互不触发，运行时按需解析，
+        # 属稳定状态；改动时请保持两侧同为惰性，不要提升到模块级。
         from modules.thinking.identity import get_identities
         defaults = get_identities()
 

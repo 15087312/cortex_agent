@@ -1,4 +1,4 @@
-# @link:block OutputAPI_Emit = Emit
+# @link:block OutputAPI_Emit = Emit · Tool · Throttle
 """
 输出 API - 文字、语音、键鼠控制、UI交互
 

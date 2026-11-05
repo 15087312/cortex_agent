@@ -598,9 +598,7 @@ class RuntimeExpert(ABC):
         # 列出可用工具（唯一出口：ToolPermissionController）
         try:
             from infra.tool_manager.tool_registry import ToolRegistry
-            from modules.security_system.tool_permission_controller import (
-                get_tool_permission_controller,
-            )
+            from infra.security_gate import get_tool_permission_controller
             from config.settings import settings as _cfg
             all_tools = ToolRegistry.list_tools()
             ctrl = get_tool_permission_controller()
@@ -740,7 +738,7 @@ class RuntimeExpert(ABC):
             # ToolSecurityGate 审查 + MCPToolService(CombinedToolExecutor) 执行
             from infra.mcp.factory import get_mcp_tool_service
             from infra.mcp.types import ToolCallRequest
-            from modules.security_system.tool_security_gate import get_tool_security_gate
+            from infra.security_gate import get_tool_security_gate
 
             gate = get_tool_security_gate()
             allowed, reason = await gate.check(

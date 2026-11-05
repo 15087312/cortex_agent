@@ -23,7 +23,7 @@ except Exception:
 # 后端退出时桌宠随之退出，避免任何启动路径下的残留。
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 try:
-    from cortex.watchdog import bind_backend as _bind_backend
+    from infra.watchdog import bind_backend as _bind_backend
     _bind_backend(fail_after=120)  # 冷启动时后端就绪需 1~2 分钟，等足再判定
 except Exception:
     pass

@@ -13,8 +13,13 @@ class DifferenceDetectorActivityNotifier:
 
     def notify_activity(self) -> None:
         try:
-            from modules.perception.difference import get_detector
-            get_detector().notify_activity()
+            # 经端口取用：避免 thinking → perception 模块边（notify 是旁路通知，
+            # 缺失时静默降级即可，不影响主流程）
+            from infra.ports import resolve
+
+            detector = resolve("perception.activity_notifier")
+            if detector is not None:
+                detector.notify_activity()
         except Exception as e:
             logger.debug(f"[活动通知] 差异检测器通知失败 (非致命): {e}")
 
@@ -24,7 +29,7 @@ class SecurityApiAdapter:
 
     def validate_input(self, user_input: str) -> Tuple[bool, str]:
         try:
-            from modules.security_system.api import get_security_api
+            from infra.security_gate import get_security_api
 
             api = get_security_api()
             return api.validate_input(user_input)
@@ -69,8 +74,10 @@ class OutputSystemReviewAdapter:
             return ""
 
         try:
-            from modules.output_system.core import OutputSystem
-            return OutputSystem.clean_response(raw_response)
+            # 清洗是纯函数，实现放在 infra：think 无需 import output_system，
+            # 两侧共用同一份规则，不会漂移。
+            from infra.text_cleanup import clean_response
+            return clean_response(raw_response)
         except Exception as e:
             logger.debug(f"[输出清洗] clean_response 失败，使用原始响应: {e}")
             return raw_response

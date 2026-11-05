@@ -26,7 +26,15 @@ def test_skips_underscore_modules(monkeypatch):
 def test_restore_ai_tools_failure(monkeypatch):
     monkeypatch.setattr(pkgutil, "iter_modules", lambda *a, **k: [])
     monkeypatch.setattr(importlib, "import_module", MagicMock())
-    monkeypatch.setattr(tm.ai_tools, "restore_ai_tools",
-                        MagicMock(side_effect=RuntimeError("boom")))
-    importlib.reload(tm)
-    assert True  # 异常被吞掉并降级为 warning
+    restore = MagicMock(side_effect=RuntimeError("boom"))
+    monkeypatch.setattr(tm.ai_tools, "restore_ai_tools", restore)
+    warning = MagicMock()
+    monkeypatch.setattr(tm.logger, "warning", warning)
+
+    importlib.reload(tm)  # 不得向上抛（导入期失败会拖垮整个工具集）
+
+    assert restore.call_count == 1
+    assert tm.__all__ == []          # 恢复失败不影响已扫描模块清单
+    warning.assert_called_once()
+    assert "AI 自创工具恢复失败" in warning.call_args[0][0]
+    assert "boom" in warning.call_args[0][0]

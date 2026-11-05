@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Optional
 from enum import Enum
 from utils.logger import get_logger
+from infra.tool_policy import DEFAULT_TOOL_WHITELISTS
 
 logger = get_logger(__name__)
 
@@ -87,40 +88,9 @@ def load_external_identities(directory: str = None) -> Dict[str, dict]:
 
 
 # ── 默认工具白名单（按层级 + 角色）──
-
-DEFAULT_TOOL_WHITELISTS: Dict[str, List[str]] = {
-    "large": [
-        "web_search", "web_fetch", "memory_match", "event_query", "deep_recall",
-        "knowledge_search", "knowledge_list", "knowledge_ingest", "knowledge_delete",
-        "knowledge_reindex",
-        "causal_graph_edit", "exec_command",
-        "transcribe_audio", "understand_screen", "detect_ui_elements", "calc", "todo",
-        "tools_search", "open_app",
-        "mouse_click", "mouse_move", "mouse_double_click", "mouse_scroll", "mouse_drag",
-        "keyboard_type", "keyboard_press", "keyboard_hotkey", "get_mouse_position",
-        "mcp_discover", "mcp_call_tool", "mcp_server_status", "mcp_register_server",
-        "create_tool", "list_my_tools", "delete_tool", "edit_tool",
-        "create_skill", "*",
-    ],
-    "orchestrator": ["web_search", "web_fetch", "memory_match", "event_query", "deep_recall", "knowledge_search", "knowledge_list", "exec_command", "*"],
-    "supervisor": [
-        "web_search", "web_fetch", "memory_match", "event_query", "deep_recall",
-        "knowledge_search", "knowledge_list",
-        "causal_graph_edit",
-        "directory_tree", "list_directory", "read_text_file", "todo",
-    ],
-    "expert_code_reviewer": ["memory_match", "event_query", "knowledge_search", "knowledge_list", "directory_tree", "list_directory", "read_text_file", "todo"],
-    "code_reviewer": ["memory_match", "event_query", "knowledge_search", "knowledge_list", "directory_tree", "list_directory", "read_text_file", "todo"],
-    "expert_code_writer": ["run_command", "write_text_file", "event_query", "knowledge_search", "knowledge_list", "directory_tree", "list_directory", "read_text_file", "todo"],
-    "code_writer": ["run_command", "write_text_file", "event_query", "knowledge_search", "knowledge_list", "directory_tree", "list_directory", "read_text_file", "todo"],
-    "expert_test_writer": ["run_pytest", "run_command", "write_text_file", "event_query", "knowledge_search", "knowledge_list", "directory_tree", "list_directory", "read_text_file", "todo"],
-    "tester": ["run_pytest", "run_command", "write_text_file", "event_query", "knowledge_search", "knowledge_list", "directory_tree", "list_directory", "read_text_file", "todo"],
-    "expert_data_analyzer": ["web_search", "memory_match", "event_query", "knowledge_search", "knowledge_list", "directory_tree", "list_directory", "read_text_file", "todo"],
-    "expert_customer": ["event_query", "todo"],
-    "expert_emotion": ["event_query", "todo"],
-    "expert_creative_writer": ["event_query", "todo"],
-    "expert_ui_designer": ["event_query", "knowledge_search", "knowledge_list", "web_fetch", "write_text_file", "directory_tree", "list_directory", "read_text_file", "todo"],
-}
+# 常量已下沉到 infra/tool_policy：security_system 也需要按层级查白名单，
+# 若继续从这里导入会形成 security_system → thinking 的实依赖（双向成环）。
+# 此处保留模块级名字，既有 `from modules.thinking.identity import ...` 不受影响。
 
 
 # ── 专家启动模式 ──
@@ -376,3 +346,37 @@ class ModelIdentity:
                 "allowed_tool_categories": self.permissions.allowed_tool_categories,
             },
         }
+
+
+# ── 门面注册（供 security_system 取用，避免其 import 本模块）──────────────
+class _IdentityProvider:
+    """把身份/权限查询能力暴露给 security_system（经 infra 门面）。"""
+
+    ModelPermissions = ModelPermissions
+
+    @staticmethod
+    def get_identities() -> Dict[str, dict]:
+        return get_identities()
+
+    @staticmethod
+    def get_permissions(template_key: str):
+        return get_permissions(template_key)
+
+
+def _register_identity_port() -> None:
+    """登记身份端口。
+
+    这里刻意只 import `infra.ports`，而**不** import `infra.security_gate`。
+    security_gate 的 `_identity_provider()` 会在身份端口缺席时惰性 import 本模块；
+    若本模块在导入期又反向 import security_gate，就会与 identity_loader 一起闭合
+    成 infra.security_gate → identity → identity_loader → identity 的环。
+    端口名是字符串契约，直接写字面量即可，无需从门面取常量。
+    """
+    try:
+        from infra import ports as _ports
+        _ports.register("security.identities", _IdentityProvider())
+    except Exception:
+        pass
+
+
+_register_identity_port()

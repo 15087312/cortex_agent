@@ -18,6 +18,9 @@ from modules.thinking.ports import (
     OutputReviewPort,
     SecurityPort,
 )
+# 轮次状态机：声明见 modules/thinking/orchestrator.link 的 `state turn`。
+# 顶层导入（pool 只依赖 infra.context_types），避免每处调用点重复 import。
+from modules.thinking.context.pool import TurnState
 
 from utils.logger import setup_logger
 
@@ -37,6 +40,42 @@ def get_active_sessions() -> List[Dict[str, Any]]:
     """获取所有活跃会话信息"""
     with _session_registry_lock:
         return list(_session_registry.values())
+
+
+def _sync_session_state(turn_context: Any, session_id: str) -> None:
+    """把轮次状态同步到会话表（只读字段，任何异常不得打断回回合）。
+
+    管理 API 的 `/sessions` 直接读 `state` / `is_active` 两个字段；此前它们只在
+    创建时写死为 "planning" + True，于是会话永远显示"规划中"。现在它们跟随
+    `TurnContext.state`（声明见 modules/thinking/orchestrator.link 的 `state turn`）。
+    """
+    if turn_context is None:
+        return
+    state = getattr(turn_context, "state", None)
+    if state is None:
+        return
+    with _session_registry_lock:
+        info = _session_registry.get(session_id or "")
+        if info is None:
+            return
+        info["state"] = getattr(state, "value", str(state))
+        info["is_active"] = bool(getattr(turn_context, "is_active", False))
+
+
+def _advance_turn_state(turn_context: Any, state: Any, session_id: str = "") -> None:
+    """推进轮次状态机（idle → planning → executing → integrating → complete/error）。
+
+    同一入口集中所有推进点，目的是让 L4（`state turn`）能把“声明的每条转换”对到
+    一个真实调用点。`TurnContext` 的测试替身不实现 `transition_to` 时直接跳过：
+    状态推进属可观测性，不得因替身缺方法而打断回合。
+    """
+    if turn_context is None:
+        return
+    transition = getattr(turn_context, "transition_to", None)
+    if transition is None:
+        return
+    transition(state)
+    _sync_session_state(turn_context, session_id)
 
 
 def resolve_active_large_role() -> str:
@@ -308,6 +347,11 @@ class MultiModelOrchestrator:
         # ---- 5. 输出审查 (专家系统) ----
         final_response = await self._review_output(raw_response, user_input, expert_guidance, blackboard)
 
+        # 状态机 integrating → complete：本轮结束（失败路径已由 ERROR 占位，不覆盖）
+        turn_context = thinking_result.get("turn_context")
+        if turn_context is not None and getattr(turn_context, "state", None) == TurnState.INTEGRATING:
+            _advance_turn_state(turn_context, TurnState.COMPLETE, session_id)
+
         # ---- 6. 反馈闭环：良知系统分析模型回应，调整因果图置信度 ----
         asyncio.create_task(self._conscience_feedback(
             user_input, final_response, session_id=session_id or "large_primary"))
@@ -465,7 +509,7 @@ class MultiModelOrchestrator:
             timings['开始'] = (0, '多模型思考启动')
 
             try:
-                from modules.thinking.context.pool import TurnContext
+                from modules.thinking.context.pool import TurnContext, TurnState
                 from modules.thinking.cognition.blackboard import CognitiveBlackboard
                 turn_context = TurnContext(session_id=session_id or "", user_input=user_input)
                 blackboard = CognitiveBlackboard(
@@ -477,8 +521,8 @@ class MultiModelOrchestrator:
                 with _session_registry_lock:
                     _session_registry[session_id or ""] = {
                         "session_id": session_id or "",
-                        "state": "planning",
-                        "is_active": True,
+                        "state": turn_context.state.value,
+                        "is_active": turn_context.is_active,
                         "turn_id": turn_context.turn_id,
                         "blackboard": blackboard,
                         "turn_context": turn_context,
@@ -513,7 +557,7 @@ class MultiModelOrchestrator:
             # 注入 Blackboard 到 ToolSecurityGate（用于安全拦截检查）
             if blackboard:
                 try:
-                    from modules.security_system.tool_security_gate import get_tool_security_gate
+                    from infra.security_gate import get_tool_security_gate
                     get_tool_security_gate().set_active_blackboard(blackboard)
                 except Exception as e:
                     logger.debug("注入 Blackboard 到 SecurityGate 失败: %s", e)
@@ -628,6 +672,9 @@ class MultiModelOrchestrator:
             except Exception as e:
                 logger.warning(f"[编排器] 直接激活大模型失败 (非致命): {e}")
 
+            # 状态机 idle → planning：大模型已激活，本轮进入规划阶段
+            _advance_turn_state(turn_context, TurnState.PLANNING, session_id or "")
+
             # 4. 用户输入（触发 probe_start → 大模型激活）
             turn_start_ts = time.time()
             if blackboard:
@@ -635,6 +682,9 @@ class MultiModelOrchestrator:
                 turn_start_ts = getattr(user_entry, "timestamp", turn_start_ts)
             else:
                 turn_start_ts = time.time()
+
+            # 状态机 planning → executing：模型开始执行，编排器转入等待
+            _advance_turn_state(turn_context, TurnState.EXECUTING, session_id or "")
 
             # ---- 等待大模型完成 (轮询 + 活动感知超时) ----
             t_wait_start = time.time()
@@ -762,22 +812,29 @@ class MultiModelOrchestrator:
                 logger.info(f"  • {desc:20s} {elapsed:7.3f}s ({pct:5.1f}%)")
             logger.info(f"  最慢步骤: {max(timings.items(), key=lambda x: x[1][0])[0]}")
 
+            # 状态机 executing → integrating：回复已拿到，进入输出整合/审查
+            _advance_turn_state(turn_context, TurnState.INTEGRATING, session_id or "")
+
             return {
                 "response": final_response,
                 "thinking_history": [],
                 "thinking_turns": 0,
                 "probe_signals": [],
                 "blackboard": blackboard,
+                "turn_context": turn_context,
             }
 
         except Exception as e:
             logger.error(f"多模型思考失败: {e}")
+            # 状态机 → error：本轮失败，会话表不再显示"规划中"
+            _advance_turn_state(turn_context, TurnState.ERROR, session_id or "")
             return {
                 "response": f"[思考失败] {e}",
                 "thinking_history": [],
                 "thinking_turns": 0,
                 "probe_signals": [],
                 "blackboard": None,
+                "turn_context": turn_context,
             }
         finally:
             try:

@@ -204,12 +204,11 @@ class PerceptionSystem:
             return
         self._started = True
         logger.info("感知系统已启动")
-        # 会话定时任务（每会话独立，到点调用逻辑）
-        try:
-            from modules.thinking.scheduled_tasks import get_task_manager
-            get_task_manager().start()
-        except Exception as e:
-            logger.warning(f"会话定时任务启动失败: {e}")
+        # 注：会话定时任务的启动已上移到装配层（api/main.py）。
+        # 原本此处 `from modules.thinking.scheduled_tasks import get_task_manager`
+        # 使 perception 反向依赖 thinking，与 thinking → perception 构成逻辑循环。
+        # 定时任务是**思考侧**的生命周期，不该由感知启动顺带拉起 ——
+        # 与桌宠启动上移同一个理由（见 api/main.py 装配处注释）。
 
     def stop(self) -> None:
         if not self._started:

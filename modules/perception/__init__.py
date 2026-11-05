@@ -54,3 +54,30 @@ __all__ = [
     "get_detector",
     "get_heartbeat",
 ]
+
+# ── 端口注册（供 management / thinking 取用，避免其 import 本模块）──
+# 包成具名函数：import 时执行一次，测试隔离 fixture 亦可重放
+# （端口表是进程级全局状态，测试间需重建；见 tests/conftest.py）。
+from infra.ports import as_factory, register as _register_port
+
+
+def _register_perception_ports() -> None:
+    _register_port("perception.system", as_factory(lambda: get_perception_system()))
+    _register_port("perception.manager", perception_manager)
+    # 供 thinking 侧取用（避免 thinking → perception 的模块边；thinking 的扫描根
+    # 已回到包根，这条边会如实被 E302 检出，故必须走端口而非 import）
+    _register_port("perception.integrator", as_factory(lambda: _get_integrator()))
+    _register_port("perception.activity_notifier", as_factory(lambda: _get_notifier()))
+
+
+_register_perception_ports()
+
+
+def _get_integrator():
+    from .integration import get_perception_integrator
+    return get_perception_integrator()
+
+
+def _get_notifier():
+    from .difference import get_detector
+    return get_detector()

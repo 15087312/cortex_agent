@@ -2,10 +2,17 @@
 
 后端用 caffeinate -dimsu 保持系统不睡眠（比前端 Web Wake Lock 在 Qt
 WebEngine 里可靠）。启用时启动常驻子进程，关闭时终止。
+
+与进程登记的分工
+    本模块只负责「起停 caffeinate」，**不负责收编**。子进程句柄经
+    `get_process()` 暴露，由装配层（api/main.py）登记进进程登记表。
+    这样做是为了让 utils 不 import infra —— 否则 utils ⇄ infra 会构成循环
+    （infra 各处都依赖 utils.logger）。登记属生命周期关切，本就该由装配层持有。
 """
 import subprocess
 import sys
 import threading
+from typing import Optional
 
 from utils.logger import setup_logger
 
@@ -15,8 +22,8 @@ _proc = None
 _lock = threading.Lock()
 
 
-def get_process() -> subprocess.Popen:
-    """返回 caffeinate 子进程句柄（供后端 shutdown 收编；无则 None）"""
+def get_process() -> Optional[subprocess.Popen]:
+    """返回 caffeinate 子进程句柄（供装配层登记收编；未启用时为 None）"""
     return _proc
 
 # @link:block Power_Apply = Guard · Tool
@@ -33,11 +40,6 @@ def apply(enabled: bool) -> bool:
                     ["caffeinate", "-dimsu"],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 )
-                try:
-                    from cortex.process_registry import register
-                    register("caffeinate", _proc)
-                except Exception as _swallowed_err:
-                    logger.debug(f"[apply] ignored Exception: {_swallowed_err}")
                 logger.info("[防休眠] 已启用 (caffeinate)")
             except Exception as e:
                 logger.warning(f"[防休眠] 启动失败: {e}")

@@ -1,53 +1,21 @@
-"""后端子进程登记 — 后端拉起的子进程统一登记，shutdown 时收编。
+"""后端子进程登记 — 实现已下沉 infra.process_registry。
 
-caffeinate（utils.power）等常驻子进程此前只有模块内句柄、退出时从不终止，
-后端重启/退出后会残留。这里提供登记表 + shutdown 收编，与 watchdog 的
-「卫星进程绑定后端」互补：登记表覆盖后端直接拉起的子进程，watchdog 覆盖
-外部拉起的卫星进程。
+为什么搬家
+    `utils/power.py`（防休眠拉起 caffeinate 并登记）需要本模块，而
+    `cortex/main.py` 需要 `utils.port_discovery`，于是形成 cortex ⇄ utils
+    逻辑循环。本模块是**纯基础设施**：只依赖标准库，与 cortex 无任何关系，
+    放在 cortex 下属于历史位置，不是设计意图（消费者另有 api、desktop_pet）。
+
+    下沉 infra 后 utils 不再向上依赖 cortex，循环消失。
+
+此处保留同名转发，既有 `from cortex.process_registry import register` 调用点
+无需改动；新增调用方请直接用 infra.process_registry。
 """
-import subprocess
-import threading
-from typing import List, Optional, Tuple
+from infra.process_registry import (  # noqa: F401
+    register,
+    unregister,
+    snapshot,
+    shutdown_all_children,
+)
 
-_lock = threading.Lock()
-_children: List[Tuple[str, subprocess.Popen]] = []
-
-
-def register(name: str, proc: Optional[subprocess.Popen]) -> None:
-    """登记一个后端拉起的子进程（重复名字覆盖旧登记）"""
-    if proc is None:
-        return
-    with _lock:
-        _children[:] = [(n, p) for n, p in _children if n != name]
-        _children.append((name, proc))
-
-
-def unregister(name: str) -> None:
-    """取消登记（子进程被正常终止时）"""
-    with _lock:
-        _children[:] = [(n, p) for n, p in _children if n != name]
-
-
-def snapshot() -> List[Tuple[str, subprocess.Popen]]:
-    with _lock:
-        return list(_children)
-
-
-def shutdown_all_children(timeout: float = 3.0) -> None:
-    """终止所有登记的子进程（先 SIGTERM，超时 SIGKILL）。幂等。"""
-    with _lock:
-        children = list(_children)
-        _children.clear()
-    for name, proc in children:
-        try:
-            if proc.poll() is None:
-                proc.terminate()
-                try:
-                    proc.wait(timeout=timeout)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-        except Exception:
-            try:
-                proc.kill()
-            except Exception:
-                pass
+__all__ = ["register", "unregister", "snapshot", "shutdown_all_children"]

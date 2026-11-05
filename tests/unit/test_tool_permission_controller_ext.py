@@ -98,7 +98,7 @@ def test_identity_whitelist_tier_match(monkeypatch):
         "w1": {"tier": "expert", "role": "code_writer", "tool_whitelist": ["run_command", "todo"]},
         "w2": {"tier": "expert", "role": "other", "tool_whitelist": ["x"]},
     }
-    monkeypatch.setattr("modules.thinking.identity.get_identities", lambda: fake_ids)
+    monkeypatch.setattr("infra.security_gate.get_identities", lambda: fake_ids)
     assert ToolPermissionController._identity_whitelist("expert", "code_writer", {}) == ["run_command", "todo"]
 
 
@@ -108,14 +108,14 @@ def test_identity_whitelist_no_tier_match(monkeypatch):
         "w1": {"tier": "supervisor", "tool_whitelist": ["x"]},
         "w2": {"tier": "large", "tool_whitelist": ["y"]},
     }
-    monkeypatch.setattr("modules.thinking.identity.get_identities", lambda: fake_ids)
+    monkeypatch.setattr("infra.security_gate.get_identities", lambda: fake_ids)
     assert ToolPermissionController._identity_whitelist("expert", "", {"large": ["fallback"]}) == []
 
 
 def test_identity_whitelist_exception(monkeypatch):
     def boom():
         raise Exception("yaml err")
-    monkeypatch.setattr("modules.thinking.identity.get_identities", boom)
+    monkeypatch.setattr("infra.security_gate.get_identities", boom)
     assert ToolPermissionController._identity_whitelist("large", "", {"large": ["a"]}) == ["a"]
 
 
@@ -262,7 +262,7 @@ def test_caller_permissions_model_id_match(monkeypatch):
     inst = MagicMock()
     inst.identity.permissions = "PERM_BY_ID"
     factory.get.return_value = inst
-    monkeypatch.setattr("modules.thinking.model_factory.get_model_factory", lambda: factory)
+    monkeypatch.setattr("infra.security_gate.get_model_factory", lambda: factory)
     result = ToolPermissionController._get_caller_permissions("model_x", "expert", "code_writer")
     assert result == "PERM_BY_ID"
     factory.get.assert_called_with("model_x")
@@ -275,10 +275,10 @@ def test_caller_permissions_model_id_no_permissions(monkeypatch):
     del inst.identity.permissions  # 触发 hasattr 检查失败路径
     factory.get.return_value = inst
     factory.list_by_tier.return_value = []
-    monkeypatch.setattr("modules.thinking.model_factory.get_model_factory", lambda: factory)
-    monkeypatch.setattr("modules.thinking.identity.get_identities", lambda: {})
+    monkeypatch.setattr("infra.security_gate.get_model_factory", lambda: factory)
+    monkeypatch.setattr("infra.security_gate.get_identities", lambda: {})
     monkeypatch.setattr(
-        "modules.thinking.identity.get_permissions",
+        "infra.security_gate.get_permissions",
         lambda key: ModelPermissions(allowed_tool_categories=["query"]),
     )
     result = ToolPermissionController._get_caller_permissions("model_x", "large", "")
@@ -294,7 +294,7 @@ def test_caller_permissions_role_exact_match(monkeypatch):
     inst.identity.role = "code_writer"
     factory.get.return_value = None
     factory.list_by_tier.return_value = [inst]
-    monkeypatch.setattr("modules.thinking.model_factory.get_model_factory", lambda: factory)
+    monkeypatch.setattr("infra.security_gate.get_model_factory", lambda: factory)
     result = ToolPermissionController._get_caller_permissions("", "expert", "code_writer")
     assert result == "PERM_ROLE_EXACT"
 
@@ -306,7 +306,7 @@ def test_caller_permissions_tier_role_match(monkeypatch):
     inst.identity.role = "code_writer"
     factory.get.return_value = None
     factory.list_by_tier.return_value = [inst]
-    monkeypatch.setattr("modules.thinking.model_factory.get_model_factory", lambda: factory)
+    monkeypatch.setattr("infra.security_gate.get_model_factory", lambda: factory)
     result = ToolPermissionController._get_caller_permissions("", "expert", "expert_code_writer")
     assert result == "PERM_ROLE"
 
@@ -317,7 +317,7 @@ def test_caller_permissions_tier_fallback(monkeypatch):
     inst.identity.permissions = "PERM_FIRST"
     factory.get.return_value = None
     factory.list_by_tier.return_value = [inst]
-    monkeypatch.setattr("modules.thinking.model_factory.get_model_factory", lambda: factory)
+    monkeypatch.setattr("infra.security_gate.get_model_factory", lambda: factory)
     result = ToolPermissionController._get_caller_permissions("", "supervisor", "")
     assert result == "PERM_FIRST"
 
@@ -326,14 +326,14 @@ def test_caller_permissions_yaml_match(monkeypatch):
     factory = MagicMock()
     factory.get.return_value = None
     factory.list_by_tier.return_value = []
-    monkeypatch.setattr("modules.thinking.model_factory.get_model_factory", lambda: factory)
+    monkeypatch.setattr("infra.security_gate.get_model_factory", lambda: factory)
     fake_ids = {
         "expert_code_writer": {
             "tier": "expert",
             "permissions": {"allowed_tool_categories": ["query", "admin"]},
         },
     }
-    monkeypatch.setattr("modules.thinking.identity.get_identities", lambda: fake_ids)
+    monkeypatch.setattr("infra.security_gate.get_identities", lambda: fake_ids)
     result = ToolPermissionController._get_caller_permissions("", "expert", "code_writer")
     assert result is not None
     assert result.allowed_tool_categories == ["query", "admin"]
@@ -343,11 +343,11 @@ def test_caller_permissions_yaml_tier_match(monkeypatch):
     factory = MagicMock()
     factory.get.return_value = None
     factory.list_by_tier.return_value = []
-    monkeypatch.setattr("modules.thinking.model_factory.get_model_factory", lambda: factory)
+    monkeypatch.setattr("infra.security_gate.get_model_factory", lambda: factory)
     fake_ids = {
         "w1": {"tier": "expert", "permissions": {"allowed_tool_categories": ["query"]}},
     }
-    monkeypatch.setattr("modules.thinking.identity.get_identities", lambda: fake_ids)
+    monkeypatch.setattr("infra.security_gate.get_identities", lambda: fake_ids)
     result = ToolPermissionController._get_caller_permissions("", "expert", "unmatched_role")
     assert result is not None
     assert result.allowed_tool_categories == ["query"]
@@ -358,14 +358,14 @@ def test_caller_permissions_yaml_empty_cats(monkeypatch):
     factory = MagicMock()
     factory.get.return_value = None
     factory.list_by_tier.return_value = []
-    monkeypatch.setattr("modules.thinking.model_factory.get_model_factory", lambda: factory)
+    monkeypatch.setattr("infra.security_gate.get_model_factory", lambda: factory)
     fake_ids = {
         "w1": {"tier": "expert", "permissions": {"allowed_tool_categories": []}},
         "w2": {"tier": "expert", "permissions": None},
     }
-    monkeypatch.setattr("modules.thinking.identity.get_identities", lambda: fake_ids)
+    monkeypatch.setattr("infra.security_gate.get_identities", lambda: fake_ids)
     monkeypatch.setattr(
-        "modules.thinking.identity.get_permissions",
+        "infra.security_gate.get_permissions",
         lambda key: ModelPermissions(allowed_tool_categories=["query"]),
     )
     result = ToolPermissionController._get_caller_permissions("", "expert", "x")
@@ -377,11 +377,11 @@ def test_caller_permissions_tier_empty(monkeypatch):
     factory = MagicMock()
     factory.get.return_value = None
     factory.list_by_tier.return_value = []
-    monkeypatch.setattr("modules.thinking.model_factory.get_model_factory", lambda: factory)
+    monkeypatch.setattr("infra.security_gate.get_model_factory", lambda: factory)
     fake_ids = {
         "w1": {"tier": "large", "permissions": {"allowed_tool_categories": ["query"]}},
     }
-    monkeypatch.setattr("modules.thinking.identity.get_identities", lambda: fake_ids)
+    monkeypatch.setattr("infra.security_gate.get_identities", lambda: fake_ids)
     result = ToolPermissionController._get_caller_permissions("", "weird_tier", "x")
     assert result is not None
     assert result.allowed_tool_categories == ["query"]
@@ -392,10 +392,10 @@ def test_caller_permissions_none_found(monkeypatch):
     factory = MagicMock()
     factory.get.return_value = None
     factory.list_by_tier.return_value = []
-    monkeypatch.setattr("modules.thinking.model_factory.get_model_factory", lambda: factory)
-    monkeypatch.setattr("modules.thinking.identity.get_identities", lambda: {})
+    monkeypatch.setattr("infra.security_gate.get_model_factory", lambda: factory)
+    monkeypatch.setattr("infra.security_gate.get_identities", lambda: {})
     monkeypatch.setattr(
-        "modules.thinking.identity.get_permissions",
+        "infra.security_gate.get_permissions",
         lambda key: ModelPermissions(allowed_tool_categories=[]),
     )
     result = ToolPermissionController._get_caller_permissions("", "large", "")
@@ -406,11 +406,11 @@ def test_caller_permissions_get_permissions_fallback(monkeypatch):
     factory = MagicMock()
     factory.get.return_value = None
     factory.list_by_tier.return_value = []
-    monkeypatch.setattr("modules.thinking.model_factory.get_model_factory", lambda: factory)
-    monkeypatch.setattr("modules.thinking.identity.get_identities", lambda: {})
+    monkeypatch.setattr("infra.security_gate.get_model_factory", lambda: factory)
+    monkeypatch.setattr("infra.security_gate.get_identities", lambda: {})
     from modules.thinking.identity import ModelPermissions
     monkeypatch.setattr(
-        "modules.thinking.identity.get_permissions",
+        "infra.security_gate.get_permissions",
         lambda key: ModelPermissions(allowed_tool_categories=["query"]),
     )
     result = ToolPermissionController._get_caller_permissions("", "large", "code_writer")
@@ -421,7 +421,7 @@ def test_caller_permissions_get_permissions_fallback(monkeypatch):
 def test_caller_permissions_exception_fail_closed(monkeypatch):
     def boom():
         raise RuntimeError("factory down")
-    monkeypatch.setattr("modules.thinking.model_factory.get_model_factory", boom)
+    monkeypatch.setattr("infra.security_gate.get_model_factory", boom)
     result = ToolPermissionController._get_caller_permissions("", "large", "")
     assert result is not None
     assert result.allowed_tool_categories == []
@@ -433,7 +433,14 @@ def _names(tools):
     return [t["function"]["name"] for t in tools]
 
 
+# 控制工具 schema 经 infra 端口取得，端口由 thinking 侧在导入时登记。
+# 生产环境里 thinking 必然已加载；单测需显式触发这次登记。
+def _ensure_control_tools_registered():
+    import modules.thinking.core.control_tools  # noqa: F401
+
+
 def test_get_control_tools_large_full():
+    _ensure_control_tools_registered()
     ctrl = _make()
     tools = _names(ctrl.get_control_tools("large", "edit", delegation_available=True))
     assert "continue_thinking" in tools
@@ -443,6 +450,7 @@ def test_get_control_tools_large_full():
 
 
 def test_get_control_tools_supervisor():
+    _ensure_control_tools_registered()
     ctrl = _make()
     tools = _names(ctrl.get_control_tools("supervisor", "edit", delegation_available=True))
     assert "delegate_task" in tools
@@ -451,6 +459,7 @@ def test_get_control_tools_supervisor():
 
 
 def test_get_control_tools_no_delegation():
+    _ensure_control_tools_registered()
     ctrl = _make()
     tools = _names(ctrl.get_control_tools("large", "edit", delegation_available=False))
     assert "delegate_task" not in tools
@@ -458,6 +467,7 @@ def test_get_control_tools_no_delegation():
 
 
 def test_get_control_tools_expert():
+    _ensure_control_tools_registered()
     ctrl = _make()
     tools = _names(ctrl.get_control_tools("expert", "edit", delegation_available=False))
     assert tools == ["continue_thinking", "query_tool_details", "narrow_my_tools", "reset_my_tools"]

@@ -1,7 +1,12 @@
-"""cortex/watchdog 测试：父进程存活检测 / enable 各分支"""
+"""watchdog 测试：父进程存活检测 / enable 各分支
+
+实现已从 cortex/watchdog.py 下沉 infra/watchdog.py（纯基础设施，消费者是
+api/infra/frontend；留在 cortex 会让 infra → cortex 反向依赖形成循环）。
+测试须针对实现模块，因为要打桩其内部（os.kill / _started）并验证私有函数。
+"""
 import os
 
-import cortex.watchdog as wd
+import infra.watchdog as wd
 
 
 def test_parent_alive_low_pid():

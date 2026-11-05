@@ -20,7 +20,11 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from infra.errors import AppError, ErrorCode
 from sse_starlette.sse import EventSourceResponse
 
-from modules.thinking.multi_model_orchestrator import MultiModelOrchestrator
+# MultiModelOrchestrator 不在顶层导入：multi_model_orchestrator 会在运行期回调本模块
+# （mental 事件推送，见其 :588 的 `from modules.thinking.api_stream import ...`）。
+# 两条边若都在模块级，就构成模块级循环依赖，导入顺序稍有变化即
+# `ImportError: cannot import name 'MultiModelOrchestrator' from partially initialized module`。
+# 该反向边本就是惰性的，此处同样惰性化后，本组环只剩函数内边，导入顺序不再敏感。
 # 非对话 role 由公共层统一定义（agent / chatonly 共用），避免两份定义漂移
 from modules.thinking.context.dialog_memory import NON_DIALOG_ROLES as _NON_DIALOG_ROLES
 from utils.logger import setup_logger
@@ -335,6 +339,9 @@ class StreamThinkingSystem:
         self.sessions: Dict[str, Dict[str, Any]] = {}
         self._running = False
         self._lock = asyncio.Lock()
+        # 惰性导入（原因见文件顶部说明）：此处两模块必已加载完毕，
+        # 只走 sys.modules 命中，无额外开销。
+        from modules.thinking.multi_model_orchestrator import MultiModelOrchestrator
         self._orchestrator = MultiModelOrchestrator()
         self._session_repo = None  # 延迟初始化
 
@@ -768,7 +775,7 @@ class StreamThinkingSystem:
 
             # 注入安全门控事件回调 — 安全审查结果推送到 CLI 流
             try:
-                from modules.security_system.tool_security_gate import set_security_event_callback
+                from infra.security_gate import set_security_event_callback
                 set_security_event_callback(scheduler_event_callback)
             except Exception as e:
                 logger.debug(f"[安全门控] 设置事件回调失败 (非致命): {e}")
@@ -1538,7 +1545,8 @@ def _cleanup_session_on_disconnect(session_id: str, tag: str = "WS") -> None:
     （ask_user_intent）：防止审批 future 永久挂起 + Suspension 全局计时冻结。
     """
     try:
-        from modules.security_system.tool_security_gate import ToolSecurityGate
+        from infra.security_gate import get_tool_security_gate_cls as _get_gate_cls
+        ToolSecurityGate = _get_gate_cls()
         ToolSecurityGate.reject_session_reviews(session_id)
     except Exception as e:
         logger.debug(f"[{tag}] 清理待审批失败 (非致命): {e}")
@@ -1730,7 +1738,8 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
                 reason = msg_data.get("reason", "")
                 if request_id:
                     try:
-                        from modules.security_system.tool_security_gate import ToolSecurityGate
+                        from infra.security_gate import get_tool_security_gate_cls as _get_gate_cls
+                        ToolSecurityGate = _get_gate_cls()
                         ToolSecurityGate.resolve_review(request_id, approved, reason)
                     except Exception as e:
                         logger.warning(f"[安全审查] 响应处理失败: {e}")

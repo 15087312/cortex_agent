@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+import infra.security_gate as sg
 from modules.security_system.tool_permission_controller import ToolPermissionController
 
 
@@ -153,7 +154,7 @@ def test_get_base_whitelist_role_tools(monkeypatch):
     ))
     import modules.thinking.identity as ident
     monkeypatch.setattr(ident, "DEFAULT_TOOL_WHITELISTS", {"expert": ["web_fetch"]})
-    monkeypatch.setattr(ident, "get_identities", lambda: {})
+    monkeypatch.setattr(sg, "get_identities", lambda: {})
     out = c._get_base_whitelist("expert", "code_writer")
     assert out == ["calc"]
 
@@ -167,7 +168,7 @@ def test_get_base_whitelist_blacklist(monkeypatch):
     ))
     import modules.thinking.identity as ident
     monkeypatch.setattr(ident, "DEFAULT_TOOL_WHITELISTS", {"expert": ["web_fetch"]})
-    monkeypatch.setattr(ident, "get_identities", lambda: {
+    monkeypatch.setattr(sg, "get_identities", lambda: {
         "code_writer": {"tier": "expert", "tool_whitelist": ["calc"]},
     })
     out = c._get_base_whitelist("expert", "x")
@@ -178,7 +179,7 @@ def test_get_base_whitelist_identity_fallback(monkeypatch):
     c = _ctrl()
     import modules.thinking.identity as ident
     monkeypatch.setattr(ident, "DEFAULT_TOOL_WHITELISTS", {"expert": ["web_fetch", "calc"]})
-    monkeypatch.setattr(ident, "get_identities", lambda: {
+    monkeypatch.setattr(sg, "get_identities", lambda: {
         "code_writer": {"tier": "expert", "tool_whitelist": ["calc"]},
     })
     out = c._get_base_whitelist("expert", "code_writer")
@@ -221,7 +222,7 @@ def test_get_base_whitelist_star(monkeypatch):
         get_role_tools=lambda role: {"whitelist": ["*"], "blacklist": []}
     ))
     import modules.thinking.identity as ident
-    monkeypatch.setattr(ident, "get_identities", lambda: {})
+    monkeypatch.setattr(sg, "get_identities", lambda: {})
     # 用 monkeypatch.setattr 隔离 _tools（teardown 自动恢复，不污染全局单例）
     import infra.tool_manager.tool_registry as tr
     class _FakeInfo:
@@ -241,7 +242,7 @@ def test_identity_whitelist_from_yaml(monkeypatch):
     c = _ctrl()
     import modules.thinking.identity as ident
     monkeypatch.setattr(ident, "DEFAULT_TOOL_WHITELISTS", {"expert": ["default_tool"]})
-    monkeypatch.setattr(ident, "get_identities", lambda: {
+    monkeypatch.setattr(sg, "get_identities", lambda: {
         "code_writer": {"tier": "expert", "tool_whitelist": ["yaml_tool", "calc"]},
         "other": {"tier": "expert", "tool_whitelist": ["other_tool"]},
     })
@@ -257,10 +258,11 @@ def test_get_caller_permissions_by_model_id(monkeypatch):
     perms = MagicMock()
     perms.allowed_tool_categories = ["query"]
     instance.identity.permissions = perms
-    import modules.thinking.model_factory as mf
+    import infra.security_gate as sg
     factory = MagicMock()
     factory.get.return_value = instance
-    monkeypatch.setattr(mf, "get_model_factory", lambda: factory)
+    # model factory 经 infra 门面取得（模块间已无直接 import），故在门面处打桩
+    monkeypatch.setattr(sg, "get_model_factory", lambda: factory)
     out = c._get_caller_permissions("large_primary", "large")
     assert out == perms
 
@@ -272,10 +274,10 @@ def test_get_caller_permissions_unknown_returns_none(monkeypatch):
     factory = MagicMock()
     factory.get.return_value = None
     factory.list_by_tier.return_value = []
-    monkeypatch.setattr(mf, "get_model_factory", lambda: factory)
+    monkeypatch.setattr(sg, "get_model_factory", lambda: factory)
     import modules.thinking.identity as ident
-    monkeypatch.setattr(ident, "get_identities", lambda: {})
-    monkeypatch.setattr(ident, "get_permissions", lambda key: type("P", (), {"allowed_tool_categories": []})())
+    monkeypatch.setattr(sg, "get_identities", lambda: {})
+    monkeypatch.setattr(sg, "get_permissions", lambda key: type("P", (), {"allowed_tool_categories": []})())
     out = c._get_caller_permissions("ghost_001", "expert", "ghost")
     assert out is None
 
@@ -300,7 +302,7 @@ def test_get_caller_permissions_fail_closed(monkeypatch):
     """权限查询异常 → fail-closed 返回空权限（拒绝全部），而非放行"""
     c = _ctrl()
     import modules.thinking.model_factory as mf
-    monkeypatch.setattr(mf, "get_model_factory", lambda: (_ for _ in ()).throw(RuntimeError("factory down")))
+    monkeypatch.setattr(sg, "get_model_factory", lambda: (_ for _ in ()).throw(RuntimeError("factory down")))
     out = c._get_caller_permissions("x", "expert")
     assert out is not None
     assert out.allowed_tool_categories == []
@@ -316,7 +318,7 @@ def test_get_base_whitelist_role_tools_exception(monkeypatch):
     ))
     import modules.thinking.identity as ident
     monkeypatch.setattr(ident, "DEFAULT_TOOL_WHITELISTS", {"expert": ["calc"]})
-    monkeypatch.setattr(ident, "get_identities", lambda: {
+    monkeypatch.setattr(sg, "get_identities", lambda: {
         "code_writer": {"tier": "expert", "tool_whitelist": ["calc"]},
     })
     out = c._get_base_whitelist("expert", "x")

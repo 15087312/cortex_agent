@@ -957,9 +957,12 @@ async def get_perception_full():
     """获取感知模块完整信息"""
     try:
         import platform
-        from modules.perception import get_perception_system
 
-        ps = get_perception_system()
+        from infra.ports import resolve
+
+        ps = resolve("perception.system")
+        if ps is None:
+            raise AppError(ErrorCode.INTERNAL_ERROR, "感知模块未加载")
         status = ps.get_status()
 
         watch_paths = []
@@ -987,8 +990,12 @@ async def get_perception_full():
 async def start_perception():
     """启动感知监控"""
     try:
-        from modules.perception import perception_manager
-        perception_manager.start_monitoring()
+        from infra.ports import resolve
+
+        mgr = resolve("perception.manager")
+        if mgr is None:
+            raise AppError(ErrorCode.INTERNAL_ERROR, "感知模块未加载")
+        mgr.start_monitoring()
         
         return {
             "success": True,
@@ -1002,8 +1009,12 @@ async def start_perception():
 async def stop_perception():
     """停止感知监控"""
     try:
-        from modules.perception import perception_manager
-        perception_manager.stop_monitoring()
+        from infra.ports import resolve
+
+        mgr = resolve("perception.manager")
+        if mgr is None:
+            raise AppError(ErrorCode.INTERNAL_ERROR, "感知模块未加载")
+        mgr.stop_monitoring()
         
         return {
             "success": True,
@@ -1168,8 +1179,11 @@ async def get_thinking_status():
 async def get_security_status():
     """获取安全模块状态"""
     try:
-        from modules.security_system.audit_logger import SecurityAuditLogger
-        audit = SecurityAuditLogger()
+        from infra.ports import resolve
+
+        audit_cls = resolve("security.audit_logger")
+        # 保持原有语义：构造失败即视为安全模块不可用（走 except 分支）
+        audit = audit_cls() if audit_cls is not None else None
         audit_ok = audit is not None
 
         return {

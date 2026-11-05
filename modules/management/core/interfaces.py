@@ -13,9 +13,13 @@ class ModuleStatusPort(Protocol):
 class PerceptionStatusAdapter:
     def get_status(self) -> Dict[str, Any]:
         import platform
-        from modules.perception import get_perception_system
 
-        ps = get_perception_system()
+        from infra.ports import resolve
+
+        ps = resolve("perception.system")
+        if ps is None:
+            # 感知模块未加载：如实报告，不去 import 它（那会形成 management → perception 实依赖）
+            return {"status": "unknown", "reason": "perception 未加载"}
         return {
             "status": "healthy",
             "platform": platform.system(),
@@ -27,13 +31,16 @@ class PerceptionStatusAdapter:
 
 class SecurityStatusAdapter:
     def get_status(self) -> Dict[str, Any]:
-        from modules.security_system.interface import get_security_port
+        from infra.ports import resolve
 
+        port = resolve("security.port")
+        if port is None:
+            return {"status": "unknown", "reason": "security_system 未加载"}
         return {
             "status": "healthy",
             "audit_enabled": True,
             "available": True,
-            "state": get_security_port().get_security_state(),
+            "state": port.get_security_state(),
         }
 
 

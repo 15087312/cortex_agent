@@ -494,42 +494,42 @@ def test_get_perception_full_error(monkeypatch):
         _run(api_mod.get_perception_full())
 
 
-def test_start_perception(monkeypatch):
-    import modules.perception as perc_mod
+def _override_port(monkeypatch, name, value):
+    """在端口注册表里临时覆盖一个端口（测试结束自动还原）。"""
+    from infra import ports
 
+    monkeypatch.setitem(ports._PROVIDERS, name, value)
+    return value
+
+
+def test_start_perception(monkeypatch):
     mgr = MagicMock()
-    monkeypatch.setattr(perc_mod, "perception_manager", mgr)
+    _override_port(monkeypatch, "perception.manager", mgr)
     out = _run(api_mod.start_perception())
     assert out["success"] is True
     mgr.start_monitoring.assert_called_once()
 
 
 def test_start_perception_error(monkeypatch):
-    import modules.perception as perc_mod
-
     mgr = MagicMock()
     mgr.start_monitoring.side_effect = RuntimeError("fail")
-    monkeypatch.setattr(perc_mod, "perception_manager", mgr)
+    _override_port(monkeypatch, "perception.manager", mgr)
     with pytest.raises(Exception):
         _run(api_mod.start_perception())
 
 
 def test_stop_perception(monkeypatch):
-    import modules.perception as perc_mod
-
     mgr = MagicMock()
-    monkeypatch.setattr(perc_mod, "perception_manager", mgr)
+    _override_port(monkeypatch, "perception.manager", mgr)
     out = _run(api_mod.stop_perception())
     assert out["success"] is True
     mgr.stop_monitoring.assert_called_once()
 
 
 def test_stop_perception_error(monkeypatch):
-    import modules.perception as perc_mod
-
     mgr = MagicMock()
     mgr.stop_monitoring.side_effect = RuntimeError("fail")
-    monkeypatch.setattr(perc_mod, "perception_manager", mgr)
+    _override_port(monkeypatch, "perception.manager", mgr)
     with pytest.raises(Exception):
         _run(api_mod.stop_perception())
 
@@ -586,11 +586,10 @@ def test_get_info_process_error(monkeypatch):
 
 
 def test_get_security_status_unavailable(monkeypatch):
-    import modules.security_system.audit_logger as al_mod
+    def _boom():
+        raise RuntimeError("no")
 
-    monkeypatch.setattr(
-        al_mod, "SecurityAuditLogger", lambda: (_ for _ in ()).throw(RuntimeError("no"))
-    )
+    _override_port(monkeypatch, "security.audit_logger", _boom)
     out = _run(api_mod.get_security_status())
     assert out["data"]["status"] == "unavailable"
 

@@ -519,3 +519,44 @@ class ThinkingControlDecision:
             delegations=list(payload.get("delegations", []) or []),
             raw=dict(payload),
         )
+
+
+# ── 门面注册（供 security_system 取用，避免其 import 本模块）──────────────
+# security_system 需要这些工具 schema 来决定「该 tier+mode 可见哪些控制工具」。
+# 通过端口暴露，security_system 只依赖 infra，反向 import 边消失。
+_CONTROL_TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
+    "continue_thinking": CONTINUE_THINKING_TOOL,
+    "query_tool_details": QUERY_TOOL_DETAILS_TOOL,
+    "delegate_task": DELEGATE_TASK_TOOL,
+    "stop_task": STOP_TASK_TOOL,
+    "create_supervisor": CREATE_SUPERVISOR_TOOL,
+    "respond_to_user": RESPOND_TO_USER_TOOL,
+    "request_skill": REQUEST_SKILL_TOOL,
+    "list_skills": LIST_SKILLS_TOOL,
+    "stop_skill": STOP_SKILL_TOOL,
+    "request_mode_change": REQUEST_MODE_CHANGE_TOOL,
+    "ask_user_intent": ASK_USER_INTENT_TOOL,
+    "query_delegation": QUERY_DELEGATION_TOOL,
+    "resume_delegation": RESUME_DELEGATION_TOOL,
+    "inspect_delegation": INSPECT_DELEGATION_TOOL,
+    "read_context": READ_CONTEXT_TOOL,
+    "narrow_my_tools": NARROW_MY_TOOLS_TOOL,
+    "reset_my_tools": RESET_MY_TOOLS_TOOL,
+}
+
+
+class _ControlToolsProvider:
+    def get_control_tools(self) -> Dict[str, Dict[str, Any]]:
+        return _CONTROL_TOOL_SCHEMAS
+
+
+def _register_control_tools_port() -> None:
+    """登记控制类工具端口（只依赖 infra.ports，不 import 门面——避免与门面成环）。"""
+    try:
+        from infra import ports as _ports
+        _ports.register("thinking.control_tools", _ControlToolsProvider())
+    except Exception:
+        pass
+
+
+_register_control_tools_port()

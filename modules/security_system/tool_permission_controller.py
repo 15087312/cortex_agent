@@ -79,6 +79,48 @@ def clear_ai_narrowed_tools(model_id: str, session_id: str = "",
             _AI_NARROWED.pop(k, None)
 
 
+class _FallbackPermissions:
+    """权限类型取不到时的兜底（空权限 = 拒绝全部类别）。
+
+    仅在「权限查询已抛异常」且「identity 模块未加载、连 ModelPermissions 类型
+    都拿不到」的双重故障下使用。语义与 ModelPermissions(allowed_tool_categories=[])
+    一致：fail-closed。之所以不直接 import ModelPermissions，是为了不让
+    security_system → thinking 的模块边重新出现。
+    """
+
+    __slots__ = ("allowed_tool_categories",)
+
+    def __init__(self, allowed_tool_categories=None):
+        self.allowed_tool_categories = list(allowed_tool_categories or [])
+
+    def can_use_tool_category(self, category: str) -> bool:
+        return category in self.allowed_tool_categories
+
+    def __repr__(self) -> str:
+        return f"_FallbackPermissions(allowed_tool_categories={self.allowed_tool_categories!r})"
+
+
+class _NullModelFactory:
+    """模型工厂缺席时的空实现（thinking 未加载）。
+
+    与「工厂存在但查不到实例」保持同一语义：get/list_by_tier 都返回空，
+    于是权限查询自然走到 template_key / tier 默认表回退，而不是抛异常被
+    外层误判为查询失败。
+    """
+
+    @staticmethod
+    def get(_model_id):
+        return None
+
+    @staticmethod
+    def list_by_tier(_tier):
+        return []
+
+    @staticmethod
+    def list_all():
+        return []
+
+
 class ToolPermissionController:
     """工具权限控制器 — 单例"""
 
@@ -124,7 +166,7 @@ class ToolPermissionController:
 
         优先级：持久化角色工具覆盖（personas.yaml role_tools）> YAML identity > DEFAULT_TOOL_WHITELISTS
         """
-        from modules.thinking.identity import DEFAULT_TOOL_WHITELISTS
+        from infra.tool_policy import DEFAULT_TOOL_WHITELISTS
 
         # 0. 持久化角色工具权限覆盖（编排页可改）：whitelist 非空则整体替换，blacklist 剔除
         try:
@@ -156,7 +198,7 @@ class ToolPermissionController:
     @staticmethod
     def _identity_whitelist(tier: str, role: str, default_whitelists) -> List[str]:
         """从 YAML identity 获取白名单，回退 DEFAULT_TOOL_WHITELISTS"""
-        from modules.thinking.identity import get_identities
+        from infra.security_gate import get_identities
 
         try:
             all_ids = get_identities()
@@ -308,10 +350,15 @@ class ToolPermissionController:
         查找顺序: model_id 精确查找 → tier 回退查找 → template_key 回退。
         """
         try:
-            from modules.thinking.model_factory import get_model_factory
-            from modules.thinking.identity import get_permissions
+            from infra.security_gate import get_model_factory
+            from infra.security_gate import get_permissions
 
             factory = get_model_factory()
+            if factory is None:
+                # 模型工厂未登记（thinking 未加载）：跳过实例查找，走下方 template_key
+                # 回退。不能直接让 factory.get 抛 AttributeError —— 那会被外层
+                # except 捕获成「权限查询异常」，把「未启用」误判成「查询失败」而拒绝全部。
+                factory = _NullModelFactory()
 
             # 优先通过 model_id 精确查找
             if caller_model_id:
@@ -342,9 +389,10 @@ class ToolPermissionController:
 
             # 尝试从 YAML 配置的 identity.permissions 读取
             try:
-                from modules.thinking.identity import get_identities
-                from modules.thinking.identity import ModelPermissions
-                all_ids = get_identities()
+                from infra.security_gate import get_identities
+                from infra.security_gate import get_model_permissions_cls as _get_mp_cls
+                ModelPermissions = _get_mp_cls()
+                all_ids = get_identities() if ModelPermissions is not None else {}
                 for key, idata in all_ids.items():
                     perm_dict = idata.get("permissions")
                     if perm_dict and isinstance(perm_dict, dict):
@@ -360,23 +408,32 @@ class ToolPermissionController:
                 logger.debug(f"[权限] YAML 身份权限解析失败: {yaml_err}")
 
             # 最后回退: 通过 template_key 查找 DEFAULT_PERMISSIONS
+            # 注：身份模块未加载时 get_permissions 返回 None（而非抛出），
+            # 此处必须判空 —— 否则 None.allowed_tool_categories 抛异常，会被外层
+            # 误判成「权限查询失败」而拒绝全部工具（把「未启用」当成「故障」）。
             if caller_role:
                 permissions = get_permissions(caller_role)
-                if permissions.allowed_tool_categories:
+                if permissions is not None and permissions.allowed_tool_categories:
                     return permissions
 
             if caller_tier:
                 permissions = get_permissions(caller_tier)
-                if permissions.allowed_tool_categories:
+                if permissions is not None and permissions.allowed_tool_categories:
                     return permissions
 
         except Exception as perm_err:
-            # fail-closed：权限查询异常时返回"空权限（拒绝全部）"，而不是返回 None。
-            # 原 `except: pass` → return None → check_execution_permission 对 None 放行，
-            # 即权限系统故障时所有工具绕过类别校验（fail-open）。
+            # fail-closed：权限查询**发生异常**时必须返回空权限（拒绝全部），而不是
+            # 返回 None。原 `except: pass` → return None → check_execution_permission
+            # 对 None 放行，即权限系统故障时所有工具绕过类别校验（fail-open）。
             logger.error(f"[权限] 权限查询异常，按空权限（拒绝全部）处理: {perm_err}")
-            from modules.thinking.identity import ModelPermissions
-            return ModelPermissions(allowed_tool_categories=[])
+            from infra.security_gate import get_model_permissions_cls as _get_mp_cls
+            _mp = _get_mp_cls()
+            if _mp is None:
+                # 连锁失败：查询已出错，且身份模块也没加载，连类型都取不到。
+                # 用本模块自带的构造器兜底，仍返回「空权限」维持 fail-closed。
+                # 绝不返回 None —— 那会把「故障」变成「放行」。
+                return _FallbackPermissions(allowed_tool_categories=[])
+            return _mp(allowed_tool_categories=[])
         return None
 
     # ── 控制工具可见性 ──────────────────────────────────────────────────
@@ -387,17 +444,25 @@ class ToolPermissionController:
 
         由激活的 Skill 的 ToolRules 控制 delegate_task 等工具的可见性。
         """
-        from modules.thinking.core.control_tools import (
-            CONTINUE_THINKING_TOOL, QUERY_TOOL_DETAILS_TOOL,
-            DELEGATE_TASK_TOOL, STOP_TASK_TOOL,
-            CREATE_SUPERVISOR_TOOL,
-            RESPOND_TO_USER_TOOL, REQUEST_SKILL_TOOL,
-            LIST_SKILLS_TOOL, STOP_SKILL_TOOL,
-            REQUEST_MODE_CHANGE_TOOL, ASK_USER_INTENT_TOOL,
-            QUERY_DELEGATION_TOOL, RESUME_DELEGATION_TOOL,
-            INSPECT_DELEGATION_TOOL, READ_CONTEXT_TOOL,
-            NARROW_MY_TOOLS_TOOL, RESET_MY_TOOLS_TOOL,
-        )
+        from infra.security_gate import get_control_tools as _get_ct
+        _ct = _get_ct()
+        CONTINUE_THINKING_TOOL = _ct["continue_thinking"]
+        QUERY_TOOL_DETAILS_TOOL = _ct["query_tool_details"]
+        DELEGATE_TASK_TOOL = _ct["delegate_task"]
+        STOP_TASK_TOOL = _ct["stop_task"]
+        CREATE_SUPERVISOR_TOOL = _ct["create_supervisor"]
+        RESPOND_TO_USER_TOOL = _ct["respond_to_user"]
+        REQUEST_SKILL_TOOL = _ct["request_skill"]
+        LIST_SKILLS_TOOL = _ct["list_skills"]
+        STOP_SKILL_TOOL = _ct["stop_skill"]
+        REQUEST_MODE_CHANGE_TOOL = _ct["request_mode_change"]
+        ASK_USER_INTENT_TOOL = _ct["ask_user_intent"]
+        QUERY_DELEGATION_TOOL = _ct["query_delegation"]
+        RESUME_DELEGATION_TOOL = _ct["resume_delegation"]
+        INSPECT_DELEGATION_TOOL = _ct["inspect_delegation"]
+        READ_CONTEXT_TOOL = _ct["read_context"]
+        NARROW_MY_TOOLS_TOOL = _ct["narrow_my_tools"]
+        RESET_MY_TOOLS_TOOL = _ct["reset_my_tools"]
 
         tools = [CONTINUE_THINKING_TOOL, QUERY_TOOL_DETAILS_TOOL,
                  NARROW_MY_TOOLS_TOOL, RESET_MY_TOOLS_TOOL]

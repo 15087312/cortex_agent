@@ -935,7 +935,9 @@ async def test_ws_flow_attachment_parse_error(monkeypatch):
 async def test_ws_flow_security_response(monkeypatch):
     s, safe = _ws_env(monkeypatch)
     gate = MagicMock()
-    monkeypatch.setattr("modules.security_system.tool_security_gate.ToolSecurityGate", gate)
+    # 门控类现在经 infra.security_gate 门面取得（模块间已无直接 import），
+    # 故在门面访问器处打桩，才能作用到 api_stream 的实际取值路径。
+    monkeypatch.setattr("infra.security_gate.get_tool_security_gate_cls", lambda: gate)
     ws = FakeWS(incoming=[json.dumps({"type": "security_response", "request_id": "r1", "approved": True})])
     await stream.websocket_chat(ws, "s1")
     gate.resolve_review.assert_called_once_with("r1", True, "")
@@ -945,7 +947,7 @@ async def test_ws_flow_security_response_error(monkeypatch):
     s, safe = _ws_env(monkeypatch)
     gate = MagicMock()
     gate.resolve_review = MagicMock(side_effect=RuntimeError("resolve fail"))
-    monkeypatch.setattr("modules.security_system.tool_security_gate.ToolSecurityGate", gate)
+    monkeypatch.setattr("infra.security_gate.get_tool_security_gate_cls", lambda: gate)
     ws = FakeWS(incoming=[json.dumps({"type": "security_response", "request_id": "r1"})])
     await stream.websocket_chat(ws, "s1")  # 错误被捕获，连接正常断开
 

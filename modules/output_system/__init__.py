@@ -11,8 +11,11 @@ from .core import OutputSystem
 from .input_controller import InputController, input_controller
 from .ui_interactor import UIInteractor, ui_interactor
 from .distributor import OutputDistributor
-from modules.security_system import SecurityLevel
-from modules.security_system.validators import CoreValidator, ContentValidator, OutputValidator
+
+# 安全符号不在此转出（原 `from modules.security_system import SecurityLevel, ...`）。
+# 该转出无任何消费方（全仓均直接 import modules.security_system.*），却让
+# output_system → security_system 形成一条纯转出式的实依赖，L3 记为 E302。
+# 需要这些符号请直接 `from modules.security_system... import ...`。
 
 __all__ = [
     # 核心
@@ -25,9 +28,4 @@ __all__ = [
     "ui_interactor",
     # 分发
     "OutputDistributor",
-    # 安全
-    "SecurityLevel",
-    "CoreValidator",
-    "ContentValidator",
-    "OutputValidator"
 ]

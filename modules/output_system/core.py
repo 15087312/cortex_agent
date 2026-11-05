@@ -8,7 +8,7 @@
 """
 from typing import Dict, Generator, Optional, Tuple
 
-from modules.security_system.validators import CoreValidator, ContentValidator, OutputValidator
+from infra.ports import resolve
 from .distributor import OutputDistributor
 from .input_controller import InputController
 from utils.logger import setup_logger
@@ -18,9 +18,9 @@ logger = setup_logger("output_system")
 
 class OutputSystem:
     def __init__(self, _memory_module=None):
-        self.core_validator = CoreValidator()
-        self.content_validator = ContentValidator()
-        self.output_validator = OutputValidator()
+        # 安全校验器不再直接实例化（那会让 output_system 反向 import security_system）。
+        # 改为延迟到真正校验时向端口注册表取；构造期不依赖安全系统。
+        self._validators = None
         self.distributor = OutputDistributor()
         self.input_controller = InputController()
         
@@ -60,40 +60,51 @@ class OutputSystem:
 
     @staticmethod
     def clean_response(text: str) -> str:
-        """清洗模型输出：去除记事本标记、格式化冗余等。"""
-        if not text:
-            return text
-        import re
-        text = re.sub(r'【更新记事本】.*', '', text, flags=re.DOTALL)
-        lines = text.split('\n')
-        in_notebook = False
-        result = []
-        for line in lines:
-            s = line.strip()
-            if s.startswith('- 任务状态:') or s.startswith('- 当前进度:'):
-                in_notebook = True
-                continue
-            if in_notebook and s.startswith('- '):
-                continue
-            if in_notebook and s and not s.startswith('- '):
-                in_notebook = False
-            result.append(line)
-        text = '\n'.join(result)
-        text = re.sub(r'\n{3,}', '\n\n', text)
-        return text.strip()
+        """清洗模型输出：去除记事本标记、格式化冗余等。
+
+        实现已下沉 infra.text_cleanup（纯函数），此处仅为兼容既有调用方保留转发。
+        思考侧不再需要 import output_system 就能做同一套清洗。
+        """
+        from infra.text_cleanup import clean_response as _clean
+        return _clean(text)
+
+    @property
+    def _sec(self):
+        """安全校验器（延迟解析端口）。
+
+        只有真正要校验输出时才需要 security_system 已加载；构造 OutputSystem
+        本身不产生依赖。缺失时显式报错，而不是静默放行。
+        """
+        bundle = getattr(self, "_validators", None)
+        if bundle is not None:
+            return bundle
+        # 兼容显式注入（测试或自定义装配）：对象上有三个校验器就直接用
+        explicit = getattr(self, "core_validator", None)
+        if explicit is not None:
+            bundle = (explicit, self.content_validator, self.output_validator)
+            self._validators = bundle
+            return bundle
+        bundle = resolve("security.validators")
+        if bundle is None:
+            raise RuntimeError(
+                "安全校验器未注册：security_system 未加载，无法校验输出"
+            )
+        self._validators = bundle
+        return self._validators
 
     def validate(self, content: str, output_type: str = "text") -> Tuple[bool, str]:
-        passed, result = self.core_validator.validate_all(content)
+        core_validator, content_validator, output_validator = self._sec
+        passed, result = core_validator.validate_all(content)
         if not passed:
             return False, result
 
         if self._content_enabled:
-            passed, result = self.content_validator.validate(content)
+            passed, result = content_validator.validate(content)
             if not passed:
                 return False, result
 
         if self._output_fmt_enabled:
-            passed, result = self.output_validator.validate(content)
+            passed, result = output_validator.validate(content)
             if not passed:
                 return False, result
 

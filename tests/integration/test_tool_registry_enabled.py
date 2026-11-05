@@ -22,14 +22,26 @@ def test_set_enabled_toggle(isolate_settings):
 
 
 def test_security_tool_not_disablable(isolate_settings):
-    # 查找 security 源的工具（如果存在）
+    """security 源工具不可被禁用（无内置 security 工具时注册一个探针工具，
+    保证这条防线始终被测到，而不是条件跳过）"""
+    from infra.tool_manager.tool_registry import ToolInfo
+
     security_tools = [n for n, i in ToolRegistry._tools.items() if i.source == "security"]
-    if not security_tools:
-        pytest.skip("无 security 源工具，跳过测试")
-    name = security_tools[0]
-    ok, msg = ToolRegistry.set_tool_enabled(name, False)
-    assert not ok
-    assert "安全工具" in msg
+    injected = None
+    if security_tools:
+        name = security_tools[0]
+    else:
+        name = "__security_guard_probe__"
+        injected = name
+        ToolRegistry._tools[name] = ToolInfo(name=name, func=lambda **kw: None, source="security")
+    try:
+        ok, msg = ToolRegistry.set_tool_enabled(name, False)
+        assert not ok
+        assert "安全工具" in msg
+        assert ToolRegistry.is_tool_enabled(name) is True
+    finally:
+        if injected:
+            ToolRegistry._tools.pop(injected, None)
 
 
 def test_disabled_tool_filtered_from_api(isolate_settings):

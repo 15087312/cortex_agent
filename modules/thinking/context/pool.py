@@ -12,6 +12,10 @@ from enum import Enum
 from dataclasses import dataclass
 from typing import Dict, Tuple, Optional
 
+# ContextFragment 是感知/记忆/良知共享的纯数据契约，已下沉 infra.context_types，
+# 以打断 perception ⇄ thinking 的逻辑循环。此处转发，保持既有 import 路径可用。
+from infra.context_types import ContextFragment  # noqa: F401
+
 
 class TurnState(str, Enum):
     """轮次状态机"""
@@ -21,17 +25,6 @@ class TurnState(str, Enum):
     INTEGRATING = "integrating"
     COMPLETE = "complete"
     ERROR = "error"
-
-
-@dataclass
-class ContextFragment:
-    """上下文片段 — 每个 Source 产出一个"""
-    source: str                          # "memory" | "perception" | "conscience" | ...
-    content: str                         # 格式化后的纯文本
-    target_roles: Tuple[str, ...]        # 哪些角色应看到此片段
-    section_title: str                   # prompt 中显示的标题
-    priority: int = 0                    # 排序权重，越小越靠前
-    ttl_turns: int = 0                   # 0=仅本轮, -1=永久
 
 
 class TurnContext:

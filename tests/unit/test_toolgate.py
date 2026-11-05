@@ -690,7 +690,9 @@ class TestPermissionControllerFailClosed:
     def test_permission_query_exception_rejects(self, monkeypatch):
         """model_factory 抛异常 → _get_caller_permissions 返回空权限 → 工具被拒绝"""
         from modules.security_system.tool_permission_controller import ToolPermissionController
-        import modules.thinking.model_factory as mf_mod
+        # model_factory 经 infra 门面取得（security_system → thinking 已无直接
+        # import），故在门面处打桩，才能作用到控制器的实际取值路径。
+        import infra.security_gate as sg
 
         class BoomFactory:
             def get(self, *a):
@@ -698,7 +700,7 @@ class TestPermissionControllerFailClosed:
             def list_by_tier(self, *a):
                 raise RuntimeError("boom")
 
-        monkeypatch.setattr(mf_mod, "get_model_factory", lambda: BoomFactory())
+        monkeypatch.setattr(sg, "get_model_factory", lambda: BoomFactory())
         ctrl = ToolPermissionController()
         allowed, reason = ctrl.check_execution_permission("git_add", "expert", "m1")
         assert allowed is False

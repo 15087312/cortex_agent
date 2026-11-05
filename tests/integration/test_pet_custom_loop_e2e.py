@@ -34,7 +34,12 @@ def _pet_db(tmp_path, monkeypatch):
 
 
 def _tokens_of(body: str) -> str:
-    """从 SSE body 提取并拼接全部 token 帧（逐 token 流式后按帧比对）"""
+    """从 SSE body 提取并拼接全部 token 帧（逐 token 流式后按帧比对）
+
+    注意：react_loop 现为**实时转发**（边生成边显示），工具轮的 JSON 片段也会
+    出现在 token 流里，随后才接最终文本。故断言最终回复应判「结尾」，不能判全等；
+    轮次边界由 \x00ROUND_DONE\x00 标记，此处一并剔除。
+    """
     out = []
     for line in body.split("\r\n"):
         if line.startswith("data:"):
@@ -69,16 +74,12 @@ def _stub_mcp(monkeypatch):
 
 
 @pytest.fixture
-def app(monkeypatch, tmp_path):
-    """最小 app：桌宠路由 + 前端连接/状态/广播桩
+def app(monkeypatch):
+    """最小 app：桌宠路由 + 前端连接/广播桩
 
     注意：不 patch confirm_frontend_connection —— 桌宠页面形态不依赖 WS 握手，
     此 fixture 保持真实路径，任何回归（重新引入握手检查）都会在无 WS 环境下失败。
     """
-    from modules.desktop_pet.pet_state import PetState
-    st = PetState(path=str(tmp_path / "pet_state.json"))
-    monkeypatch.setattr(PetState, "get_instance", lambda: st)
-
     from modules.desktop_pet import api as pet_api
     app = FastAPI()
     app.include_router(pet_api.router)
@@ -209,7 +210,9 @@ def test_chat_sse_tool_then_text(app, monkeypatch):
     with TestClient(app) as c:
         with c.stream("POST", "/stream/pet/chat", json={"text": "1+1 等于几"}) as r:
             body = r.read().decode()
-            assert _tokens_of(body) == "结果是 2"
+            # 工具 JSON 片段先流（实时转发），最终文本续接其后
+            _stream = _tokens_of(body).replace("\x00ROUND_DONE\x00", "")
+            assert _stream.endswith("结果是 2")
             assert "done" in body
 
 
@@ -223,7 +226,8 @@ def test_chat_sse_whitelist_blocks(app, monkeypatch, _pet_db):
     with TestClient(app) as c:
         with c.stream("POST", "/stream/pet/chat", json={"text": "执行命令"}) as r:
             body = r.read().decode()
-            assert _tokens_of(body) == "这个工具我不能用"
+            _stream = _tokens_of(body).replace("\x00ROUND_DONE\x00", "")
+            assert _stream.endswith("这个工具我不能用")
     # 历史落库确认回复
     hist = _pet_db.get_history(limit=10)
     assert hist[-1]["content"] == "这个工具我不能用"

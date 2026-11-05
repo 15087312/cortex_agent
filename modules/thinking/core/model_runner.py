@@ -40,8 +40,8 @@ _TASK_ENHANCEMENT_PROMPT = (
 
 
 def get_tool_security_gate():
-    """延迟导入工具安全门控"""
-    from modules.security_system.tool_security_gate import get_tool_security_gate as _get
+    """延迟导入工具安全门控（经 infra 门面，避免 thinking → security_system 模块边）"""
+    from infra.security_gate import get_tool_security_gate as _get
     return _get()
 
 
@@ -1228,7 +1228,7 @@ class ModelRunner:
 
         # 通过安全事件回调直接推送到 TUI（与 security_review 同一通道）
         try:
-            from modules.security_system.tool_security_gate import _emit_security_event
+            from infra.security_gate import emit_security_event as _emit_security_event
             # 提取交互式工具的额外字段，通过 extra_fields 传入 payload
             extra = {k: v for k, v in event_data.items()
                      if k not in ("action", "request_id") and v is not None}
@@ -1286,9 +1286,11 @@ class ModelRunner:
         "⚠ 等待审批：request_mode_change" 横幅，点批准/拒绝后生效。
         """
         import uuid
-        from modules.security_system.tool_security_gate import (
-            ToolSecurityGate, _emit_security_event,
+        from infra.security_gate import (
+            get_tool_security_gate_cls as _get_gate_cls,
+            emit_security_event as _emit_security_event,
         )
+        ToolSecurityGate = _get_gate_cls()
         from utils.suspension import Suspension
         request_id = f"review_mode_change_{uuid.uuid4().hex[:8]}"
         loop = asyncio.get_running_loop()
@@ -1531,6 +1533,39 @@ class ModelRunner:
                 args=args,
             ),
         )
+
+    def _push_skill_event(self, event: str, *, skill_id: str = "", name: str = "", phase: str = "") -> None:
+        """推送技能生命周期事件（type='skill'），供前端时间线渲染「加载技能 X」步骤。"""
+        try:
+            from modules.thinking.api_stream import connection_manager, _build_event, _record_event
+            envelope = _build_event(
+                session_id=self.session_id,
+                msg_type="skill",
+                event=event,
+                content="",
+                role=self.tier,
+                data={"skill_id": skill_id or "", "name": name or "", "phase": phase or ""},
+            )
+            _record_event(self.session_id, envelope)
+            connection_manager.send_json_from_thread(self.session_id, envelope)
+        except Exception as e:
+            logger.debug(f"[ModelRunner] 技能事件推送失败 (非致命): {e}")
+
+    def _set_active_skill(self, skill) -> None:
+        """统一设置/清除活跃技能，并在状态变化时发射 skill 事件（前端时间线用）。"""
+        prev_id = self._active_skill.id if self._active_skill else None
+        self._active_skill = skill
+        self._active_skill_tool_rules = getattr(skill, "tool_rules", None) if skill else None
+        new_id = skill.id if skill else None
+        if new_id == prev_id:
+            return
+        if new_id:
+            self._push_skill_event(
+                "skill_loaded", skill_id=new_id,
+                name=getattr(skill, "name", "") or "", phase="start",
+            )
+        else:
+            self._push_skill_event("skill_unloaded", skill_id=prev_id or "", name="", phase="done")
 
     def _push_expert_output(self, content: str) -> None:
         """推送主管/专家每轮循环输出到过程流（非气泡）。
@@ -1953,9 +1988,7 @@ class ModelRunner:
                 )
             self._narrowed_tools = set(effective)
             try:
-                from modules.security_system.tool_permission_controller import (
-                    set_ai_narrowed_tools as _set_narrowed,
-                )
+                from infra.security_gate import set_ai_narrowed_tools as _set_narrowed
                 _set_narrowed(self.model_id, set(effective), self.session_id, self._task_id)
             except Exception as e:
                 logger.warning(f"[ModelRunner] 自限登记失败: {e}")
@@ -1972,9 +2005,7 @@ class ModelRunner:
         """reset_my_tools：恢复到用户设置的默认值。"""
         self._narrowed_tools = None
         try:
-            from modules.security_system.tool_permission_controller import (
-                set_ai_narrowed_tools as _set_narrowed,
-            )
+            from infra.security_gate import set_ai_narrowed_tools as _set_narrowed
             _set_narrowed(self.model_id, None, self.session_id, self._task_id)
         except Exception as e:
             logger.warning(f"[ModelRunner] 自限恢复失败: {e}")
@@ -2115,9 +2146,7 @@ class ModelRunner:
         权限策略不再在 ModelRunner 内分散实现；旧降级路径已移除，
         全部委托给 ToolPermissionController 统一裁决。
         """
-        from modules.security_system.tool_permission_controller import (
-            get_tool_permission_controller,
-        )
+        from infra.security_gate import get_tool_permission_controller
         from config.settings import settings as _cfg
         ctrl = get_tool_permission_controller()
         base = ctrl.get_visible_tools(
@@ -2130,9 +2159,7 @@ class ModelRunner:
         # 唯一来源是权限控制器的会话级登记（实例字段只做兼容回退），
         # 显示与执行门控认同一份，避免两边不一致。
         try:
-            from modules.security_system.tool_permission_controller import (
-                get_ai_narrowed_tools as _get_narrowed,
-            )
+            from infra.security_gate import get_ai_narrowed_tools as _get_narrowed
             narrowed = _get_narrowed(
                 getattr(self, "model_id", ""),
                 getattr(self, "session_id", ""),
@@ -2160,9 +2187,7 @@ class ModelRunner:
         """任务结束时清除自限（会话隔离，防止串台）。"""
         try:
             self._narrowed_tools = None
-            from modules.security_system.tool_permission_controller import (
-                clear_ai_narrowed_tools as _clear,
-            )
+            from infra.security_gate import clear_ai_narrowed_tools as _clear
             _clear(*self._narrow_scope())
         except Exception as e:
             logger.warning(f"[ModelRunner] 自限清除失败: {e}")
@@ -2190,8 +2215,7 @@ class ModelRunner:
                             from modules.thinking.skills import skill_manager
                             _fskill = skill_manager.get_skill(_forced)
                             if _fskill and _fskill.enabled:
-                                self._active_skill = _fskill
-                                self._active_skill_tool_rules = _fskill.tool_rules
+                                self._set_active_skill(_fskill)
                                 skill_id = _fskill.id
                                 logger.info(f"[ModelRunner] 强制技能动态注入: {_forced}")
                 except Exception as _swallowed_err:
@@ -2417,9 +2441,7 @@ class ModelRunner:
             raise RuntimeError(f"{self.model_id} 无可用工具，无法执行工具调用")
 
         # 注入控制工具（使用 ToolPermissionController）
-        from modules.security_system.tool_permission_controller import (
-            get_tool_permission_controller,
-        )
+        from infra.security_gate import get_tool_permission_controller
         perm_ctrl = get_tool_permission_controller()
         from config.settings import settings as _settings
         control_tool_names = perm_ctrl.get_control_tools(
@@ -2761,8 +2783,7 @@ class ModelRunner:
                                                 skill in skill_manager.list_skills_for_role(role)
                                             )
                                             if allowed:
-                                                self._active_skill = skill
-                                                self._active_skill_tool_rules = skill.tool_rules  # type: ignore[union-attr]
+                                                self._set_active_skill(skill)
                                                 logger.info(f"[ModelRunner] 技能已切换: {skill_id}")
                                                 preview = skill.description[:120].replace("\n", " ")  # type: ignore[union-attr]
                                                 result = f"【技能已激活】{skill.name}\n{preview}"  # type: ignore[union-attr]
@@ -2781,8 +2802,7 @@ class ModelRunner:
                                     skill_name = self._active_skill.name
                                     reason = args.get("reason", "")
                                     logger.info(f"[ModelRunner] 技能已停用: {self._active_skill.id} ({reason})")
-                                    self._active_skill = None
-                                    self._active_skill_tool_rules = None
+                                    self._set_active_skill(None)
                                     result = f"【技能已停用】{skill_name}，已恢复默认角色。"
                                 else:
                                     result = "【无活跃技能】当前没有激活的技能。"
@@ -2862,7 +2882,7 @@ class ModelRunner:
                                 except Exception:
                                     exec_mode = "edit"
                                 if exec_mode == "plan":
-                                    from modules.security_system.tool_security_gate import DELEGATE_WRITE_KEYWORDS
+                                    from infra.security_gate import DELEGATE_WRITE_KEYWORDS
                                     task_lower = task.lower()
                                     matched = [kw for kw in DELEGATE_WRITE_KEYWORDS if kw in task_lower]
                                     if matched:

@@ -43,9 +43,7 @@ class ModelInstance:
         而是交给 ToolPermissionController 按 tier/role/模式统一裁决。
         """
         try:
-            from modules.security_system.tool_permission_controller import (
-                get_tool_permission_controller,
-            )
+            from infra.security_gate import get_tool_permission_controller
             from config.settings import settings as _cfg
             ctrl = get_tool_permission_controller()
             visible = ctrl.get_visible_tools(
@@ -378,3 +376,32 @@ def get_model_factory() -> ModelInstanceFactory:
             if _factory is None:
                 _factory = ModelInstanceFactory()
     return _factory
+
+
+# ── 门面注册（供 security_system 取用，避免其 import 本模块）──────────────
+class _FactoryProvider:
+    """延迟查找 model factory，而不是在注册时快照函数对象。
+
+    若直接 register(get_model_factory)，端口里存的是**注册那一刻的函数对象**；
+    此后 `monkeypatch.setattr(model_factory, "get_model_factory", fake)` 对端口
+    无效 —— 打桩静默失效，并跨测试泄漏（先跑的测试换了实现，后续测试仍看到它）。
+    改为每次调用重新读取模块属性，打桩在任何时刻都生效。
+    """
+
+    def __call__(self):
+        return get_model_factory()
+
+    def get(self):
+        return get_model_factory()
+
+
+def _register_model_factory_port() -> None:
+    """登记模型工厂端口（只依赖 infra.ports，不 import 门面——避免与门面成环）。"""
+    try:
+        from infra import ports as _ports
+        _ports.register("thinking.model_factory", _FactoryProvider())
+    except Exception:
+        pass
+
+
+_register_model_factory_port()

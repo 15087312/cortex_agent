@@ -87,33 +87,12 @@ def test_pet_actions_endpoint(gw_app):
         assert "cake" in ids and "hug" in ids and "joke" in ids
 
 
-def test_pet_state_endpoint(gw_app):
-    app, _ = gw_app
-    with TestClient(app) as client:
-        resp = client.get("/stream/pet/state")
-        assert resp.status_code == 200
-        values = resp.json()["data"]["values"]
-        for k in ("mood", "satiety", "energy", "cleanliness"):
-            assert k in values and 0 <= values[k] <= 100
-
-
-def test_pet_state_model(tmp_path):
-    from modules.desktop_pet.pet_state import PetState, DEFAULTS
-    st = PetState(path=str(tmp_path / "pet_state.json"))
-    # 衰减：1 小时后饱食下降
-    t0 = st._updated_at
-    v = st.read(t0 + 3600)
-    assert v["satiety"] < DEFAULTS["satiety"]
-    # 效果应用
-    v2 = st.apply("cake", t0 + 3600)
-    assert v2["satiety"] > v["satiety"]
-    assert v2["energy"] == v["energy"]
-
-
 def test_pet_chat_stream(gw_app, monkeypatch):
     app, _ = gw_app
     async def _fake_stream(self, text, extra_system="", on_reasoning=None):
-        assert extra_system
+        # 互动动作：输入是动作 prompt，不再注入状态描述
+        assert text
+        assert extra_system == ""
         yield "你好"
         yield "呀"
 
@@ -125,6 +104,8 @@ def test_pet_chat_stream(gw_app, monkeypatch):
             assert "token" in body
             assert "你好" in body
             assert "done" in body
+            # 状态已移除：done 帧不再携带 state/state_text
+            assert '"state"' not in body and "state_text" not in body
 
 
 def test_pet_config_idle_backoff_roundtrip(gw_app, monkeypatch, tmp_path):

@@ -61,6 +61,8 @@ class PetEngine:
     @property
     def loop(self):
         """当前 ReAct 循环（随配置懒实例化；循环本体由用户亲自设计）"""
+        # 惰性导入：react_loop 对本模块只有 TYPE_CHECKING 期的类型引用
+        # （react_loop.py:22，运行时不执行），故此处保持惰性即可，无环风险。
         from modules.desktop_pet.react_loop import build_react_loop
         loop_type = self.config.get("loop_type") or "direct"
         if self._loop is None or getattr(self._loop, "name", "") != loop_type:

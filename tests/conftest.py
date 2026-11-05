@@ -151,6 +151,63 @@ def _reset_feature_flags(monkeypatch, tmp_path):
         os.environ.pop("APP_ENV", None)
 
 
+def _replay_ports() -> None:
+    """清空端口表并重放「已导入模块」的注册钩子。
+
+    端口表是进程级全局状态（见 infra/ports.py、infra/security_gate.py）。
+    任何测试导入某模块都会触发其 register()，对其他测试可见；monkeypatch 对
+    模块属性的打桩也可能经端口扩散。典型症状是「单跑通过、混跑失败」。
+
+    这里不采用快照/还原：快照会丢掉测试**执行期间**才发生的导入期注册
+    （例如某测试首次 import thinking.core.control_tools，还原后该端口永久消失）。
+    改为按 sys.modules 重放，把注册表恢复成「当前已导入模块应有的状态」，
+    每个测试看到确定性的基线。
+    """
+    import sys
+
+    from infra import ports
+
+    ports.clear()
+    # 只重放已导入模块的钩子；未导入的模块保持未注册（与其缺席语义一致）
+    replayers = (
+        ("modules.security_system", "_register_security_ports"),
+        ("modules.security_system", "_register_security_facade_ports"),
+        ("modules.security_system", "_register_keywords_port"),
+        ("modules.security_system", "_register_narrowing_port"),
+        ("modules.thinking.core.control_tools", "_register_control_tools_port"),
+        ("modules.thinking.identity", "_register_identity_port"),
+        ("modules.thinking.model_factory", "_register_model_factory_port"),
+        ("modules.perception", "_register_perception_ports"),
+    )
+    for mod_name, fn_name in replayers:
+        mod = sys.modules.get(mod_name)
+        if mod is None:
+            continue
+        fn = getattr(mod, fn_name, None)
+        if callable(fn):
+            try:
+                fn()
+            except Exception:
+                pass
+
+
+@pytest.fixture(autouse=True)
+def _isolate_port_registry():
+    """测试结束后把端口表重建为「已导入模块应有」的确定性状态。
+
+    只在**测试后**重放，不在测试前 clear：测试前清空会误删此前导入触发的
+    注册（例如某测试文件只 import 了 tool_permission_controller，尚未 import
+    thinking.identity，此时 clear 会让身份端口消失，权限查询退化为最小权限）。
+    测试后重放足以消除「本测试注册的东西泄漏给下一个测试」这一唯一问题。
+    """
+    yield
+    try:
+        import infra.ports  # noqa: F401
+    except Exception:
+        return
+    _replay_ports()
+
+
 @pytest.fixture(scope="session", autouse=True)
 def block_real_native_libs():
     """unit 测试不真实加载重量级原生库。

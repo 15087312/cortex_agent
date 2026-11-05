@@ -21,7 +21,7 @@ from infra.errors import (
     ErrorCode, error_response, AppError,
 )
 from cortex.version import __version__ as _CORTEX_VERSION
-from cortex.watchdog import enable as _enable_orphan_watchdog
+from infra.watchdog import enable as _enable_orphan_watchdog
 
 # 防残留: 若启动本后端的 cortex 父进程被强杀，自动退出避免孤儿进程
 try:
@@ -59,7 +59,7 @@ async def lifespan(app: FastAPI):
     # 进程锚定: 把自身 PID 写入发现文件，所有卫星进程（前端代理/Qt/桌宠/
     # 截图 daemon/MCP server）通过它绑定后端；后端退出时全体随之退出。
     try:
-        from cortex.watchdog import write_backend_pid_file
+        from infra.watchdog import write_backend_pid_file
         write_backend_pid_file(os.getpid())
     except Exception as _swallowed_err:
         logger.debug(f"[lifespan] ignored Exception: {_swallowed_err}")
@@ -161,7 +161,7 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"✗ 全局错误总线初始化失败: {e}")
 
-    # 注册错误总线 WebSocket 回调 — 错误推送到前端 TUI
+    # 注册错误总线 WebSocket 回调 — 枚举可推送出口（Retrieve）后逐个发送（Emit）
     # @link:block App_Emit = Retrieve · Emit
     try:
         from infra.error_bus import error_bus
@@ -216,6 +216,17 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(f"✗ 感知系统启动失败: {e}")
 
+    # 会话定时任务（每会话独立，到点调用逻辑）
+    # 由装配层拉起：定时任务属思考侧生命周期，若挂在 perception.start() 内会让
+    # perception 反向依赖 thinking，与 thinking → perception 形成逻辑循环。
+    # 同时放在感知开关之外，使「关掉感知」不再连带禁用定时任务。
+    try:
+        from modules.thinking.scheduled_tasks import get_task_manager
+        get_task_manager().start()
+        logger.info("✓ 会话定时任务已启动")
+    except Exception as e:
+        logger.warning(f"会话定时任务启动失败: {e}")
+
     # MCP 屏幕差异检测（独立子进程，像素级帧差）
     if settings.SCREEN_DIFF_ENABLED and settings.DIFFERENCE_DETECTOR_ENABLED and settings.PERCEPTION_MCP_ENABLED:
         try:
@@ -248,8 +259,13 @@ async def lifespan(app: FastAPI):
     # 启动时应用系统级设置（真实生效，非摆设）：
     # 防休眠（caffeinate 保系统不睡）+ 开机启动（LaunchAgent）
     try:
-        from utils.power import apply as _apply_power
+        from utils.power import apply as _apply_power, get_process as _power_proc
         _apply_power(bool(getattr(settings, "prevent_sleep", False)))
+        # caffeinate 是后端拉起的常驻子进程：登记以随 shutdown 收编，
+        # 否则后端重启后会残留。登记由装配层负责，utils.power 不 import infra。
+        if _power_proc() is not None:
+            from infra.process_registry import register as _reg_proc
+            _reg_proc("caffeinate", _power_proc())
     except Exception as e:
         logger.debug(f"防休眠应用失败 (非致命): {e}")
     try:
@@ -265,7 +281,7 @@ async def lifespan(app: FastAPI):
     # 进程锚定收尾: 正常退出时清 PID 文件（kill -9 时文件残留，
     # 卫星进程靠「PID 不存在」探测自动退出），并收编自己拉起的子进程。
     try:
-        from cortex.watchdog import clear_backend_pid_file
+        from infra.watchdog import clear_backend_pid_file
         clear_backend_pid_file(os.getpid())
     except Exception as _swallowed_err:
         logger.debug(f"[lifespan] ignored Exception: {_swallowed_err}")
@@ -399,7 +415,7 @@ app.add_middleware(
     allow_origins=allowed_cors_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "X-API-Key", "Authorization", "X-Request-ID"],
+    allow_headers=["Content-Type", "X-API-Key", "Authorization", "X-Request-ID", "X-Trace-Id", "X-Request-Seq"],
 )
 
 # ---------------------------------------------------------------------------
@@ -498,7 +514,7 @@ _TRUSTED_PROXIES = {"127.0.0.1", "::1"}  # Q-7: Whitelist of trusted reverse pro
 _MAX_RATE_LIMIT_KEYS = 10000  # 防止内存泄漏：最多跟踪的 IP:minute 组合数
 # 高频本地轮询端点跳过限流（桌宠轮询/健康检查/前端初始化等只读查询，与 _API_GET_IGNORE 对齐）
 _RATE_LIMIT_WHITELIST_PATHS = (
-    "/stream/pet/move", "/stream/pet/state", "/stream/pet/last-reply",
+    "/stream/pet/move", "/stream/pet/last-reply",
     "/stream/pet/actions", "/stream/status", "/stream/sessions",
     "/config", "/health", "/metrics", "/dashboard", "/dashboard/",
 )
@@ -535,7 +551,7 @@ def _get_client_ip(request: Request) -> str:
 
 # 高频轮询 GET（桌宠状态/健康检查等）不记录到仪表盘请求日志
 _API_GET_IGNORE = {
-    "/stream/pet/move", "/stream/pet/state", "/stream/pet/last-reply",
+    "/stream/pet/move", "/stream/pet/last-reply",
     "/stream/pet/actions", "/stream/status", "/stream/sessions",
     "/config", "/health", "/metrics", "/dashboard", "/dashboard/",
 }
@@ -1438,8 +1454,11 @@ async def update_config(key: str, body: PutConfigRequest):
         # 系统级配置：变更时立即生效（防休眠 caffeinate / 开机启动 LaunchAgent / 感知系统开关）
         try:
             if key_upper == "PREVENT_SLEEP":
-                from utils.power import apply as _apply_power
+                from utils.power import apply as _apply_power, get_process as _power_proc
                 _apply_power(bool(validated))
+                if _power_proc() is not None:
+                    from infra.process_registry import register as _reg_proc
+                    _reg_proc("caffeinate", _power_proc())
             elif key_upper == "LAUNCH_AT_STARTUP":
                 from utils.autostart import apply as _apply_autostart
                 _apply_autostart(bool(validated))

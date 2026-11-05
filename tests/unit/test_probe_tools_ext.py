@@ -187,7 +187,9 @@ async def test_guidance_adapter_error(monkeypatch):
 
 
 async def test_output_review_ok(monkeypatch):
-    monkeypatch.setattr("modules.output_system.core.OutputSystem.clean_response", staticmethod(lambda s: f"clean:{s}"))
+    # 清洗实现已下沉 infra.text_cleanup（think 不再 import output_system），
+    # 故在实现处打桩
+    monkeypatch.setattr("infra.text_cleanup.clean_response", lambda s: f"clean:{s}")
     a = ad.OutputSystemReviewAdapter()
     assert await a.review("raw") == "clean:raw"
 
@@ -200,6 +202,6 @@ async def test_output_review_empty():
 async def test_output_review_error(monkeypatch):
     def boom(*a, **k):
         raise RuntimeError("clean fail")
-    monkeypatch.setattr("modules.output_system.core.OutputSystem.clean_response", staticmethod(boom))
+    monkeypatch.setattr("infra.text_cleanup.clean_response", boom)
     a = ad.OutputSystemReviewAdapter()
     assert await a.review("raw") == "raw"

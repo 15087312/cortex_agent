@@ -43,7 +43,9 @@ class FakeThinker:
         self.cancelled = False
         self.calls = []
 
-    async def think(self, session_id, content, queue):
+    async def think(self, session_id, content, queue, **kwargs):
+        # 网关现按 msg.web_search 传入 enable_web_search（+ 未来可能的扩展参数），
+        # 替身需容忍额外 kwargs，否则 create_task 内抛 TypeError 导致本轮永不完成。
         self.calls.append((session_id, content))
         try:
             if self.delay:

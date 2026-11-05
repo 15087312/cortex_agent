@@ -1476,10 +1476,12 @@ def test_build_prompt_with_expert_context():
 # ── _wait_for_user_response / ask_user_intent / mode change 补充 ───────────
 
 async def test_wait_for_user_response_send_error(monkeypatch):
-    import modules.security_system.tool_security_gate as tsg
+    # 安全事件经 infra 门面发射（thinking → security_system 已无直接 import），
+    # 故在门面处打桩，才能作用到 model_runner 的实际取值路径。
+    import infra.security_gate as sg
     def boom(*a, **k):
         raise RuntimeError("emit down")
-    monkeypatch.setattr(tsg, "_emit_security_event", boom)
+    monkeypatch.setattr(sg, "emit_security_event", boom)
     r = _runner()
     if hasattr(r, "_pending_user_responses"):
         del r._pending_user_responses

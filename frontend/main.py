@@ -21,7 +21,7 @@ import sys as _sys
 import os as _os
 _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
 try:
-    from cortex.watchdog import enable as _enable_orphan_watchdog, bind_backend as _bind_backend
+    from infra.watchdog import enable as _enable_orphan_watchdog, bind_backend as _bind_backend
     _enable_orphan_watchdog()
 except Exception:
     pass
@@ -599,7 +599,7 @@ def main():
     # 后端就绪后再绑定其 PID（后端启动/由本进程拉起时 lifespan 会写入 PID 文件），
     # 之后后端退出 → 本 Qt 进程及桌宠/代理等卫星进程全部自动退出。
     try:
-        from cortex.watchdog import bind_backend as _bind_backend
+        from infra.watchdog import bind_backend as _bind_backend
         _bind_backend(fail_after=120)
     except Exception:
         pass
