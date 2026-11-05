@@ -557,3 +557,13 @@ def test_W012_is_gating_under_strict(tmp_path):
     assert code == 1
     w = [d for d in diags if d.code == "W012"]
     assert w and w[0].level == "error", [(d.code, d.level) for d in diags]
+
+
+def test_use_module_segment_must_name_a_declaration_not_a_bare_atom(tmp_path):
+    """`use a := alpha.Think` cannot lean on a global atom: the module owns nothing."""
+    toml = '[scan]\nroots = ["app.link"]\nexclude = []\n[atoms.Think]\ncalls = ["think"]\n'
+    root = write_proj(tmp_path, {"link.toml": toml, "app.link": "use a := alpha.Think\n"})
+    diags, code = run(root)
+    assert code == 1
+    e005 = [d for d in diags if d.code == "E005"]
+    assert e005 and "only an atom" in e005[0].message, [(d.code, d.message) for d in diags]

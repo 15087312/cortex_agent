@@ -248,6 +248,23 @@ def run(
             diags.append(
                 Diagnostic("E005", "error", f"use `{d.name}` does not resolve to any known symbol", d.path, d.line, d.col)
             )
+        elif module and not known_decls:
+            # `use a := alpha.Think` where Think is only a global atom: the module
+            # segment names a module but there is no declaration to own.  Both
+            # halves of the contract must resolve; a global atom cannot satisfy
+            # `module.Symbol` (otherwise the module half is decorative again).
+            diags.append(
+                Diagnostic(
+                    "E005",
+                    "error",
+                    f"use `{d.name}` declares `{module}.{target}` but `{target}` is only an atom, "
+                    f"not a symbol exported by module `{module}`",
+                    d.path,
+                    d.line,
+                    d.col,
+                    "declare/export the symbol in the module (a bare atom has no owner)",
+                )
+            )
         elif module and known_decls and not any(_in_module(x, module) for x in known_decls):
             elsewhere = known_decls[0]
             diags.append(
@@ -456,7 +473,7 @@ def run(
                 Diagnostic(
                     "E011",
                     "error",
-                    f"weak-evidence debt grew to {len(weak)} (max_weak_evidence = {limit})",
+                    f"weak-evidence debt is {len(weak)}, above max_weak_evidence = {limit}",
                     first.path,
                     first.line,
                     first.col,

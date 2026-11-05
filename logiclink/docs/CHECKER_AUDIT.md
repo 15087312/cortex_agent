@@ -541,6 +541,8 @@ think 的 `Write` 也被“别处的消费”掩蔽了。
     但不能淹没日常输出）；当前全仓 0 条。
   - 顺带修掉点号声明的假 E005：符号表按整名建键，`export alpha.ASym` 的 `use a := alpha.ASym`
     原先查不到（`_decls_named` 只做整名查找），现在同时匹配最后一段。
+  - 收紧 module 段：`use a := alpha.Think` 里 `Think` 若只是全局原子（`[atoms.*]` / `atom`），
+    没有任何声明归属于 alpha，报 E005——否则模块段又变成装饰性的。
 - **`E011` + `[arch] max_weak_evidence` — 债账天花板**：`ArchConstraints` 新增
   `max_weak_evidence`（默认 `-1` = 不设限），`run()` 在收尾时统计 `W011` 条数，超过上限
   追加一条 `error[E011]` 并以 1 退出；W011 本身仍是 info。
