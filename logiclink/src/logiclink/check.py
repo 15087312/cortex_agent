@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 from . import ast_terms as T
 from .collect import collect
 from .config import Config, load_config
-from .evidence import calls_in, facts_of, has_evidence_call, in_range
+from .evidence import calls_in, facts_of, in_range
 from .parser import Decl, ParseError, parse_term
 
 
@@ -40,16 +40,38 @@ def _decls_named(
     aliases: dict[str, tuple[T.Term, Decl]],
     blocks: dict[str, Block],
 ) -> list[Decl]:
-    """Every declaration that could satisfy a symbol name, in any symbol table."""
+    """Every declaration that could satisfy a symbol name, in any symbol table.
+
+    Tables are keyed by the full declared name, but the parser accepts a
+    module-qualified spelling (``export alpha.ASym``) and ``_in_module`` treats
+    it as a first-class module owner.  A ``use`` names the last segment, so match
+    both the exact key and keys whose final segment is ``name``; looking up only
+    the exact key made a dotted export invisible to its own ``use`` (false E005).
+    """
     out: list[Decl] = []
-    if name in exports:
-        out.append(exports[name])
-    if name in eqs:
-        out.append(eqs[name][1])
-    if name in aliases:
-        out.append(aliases[name][1])
-    if name in blocks:
-        out.append(blocks[name].decl)
+    seen: set[tuple[str, int, str]] = set()
+
+    def add(d: Decl) -> None:
+        key = (d.path, d.line, d.kind)
+        if key not in seen:
+            seen.add(key)
+            out.append(d)
+
+    def matches(key: str) -> bool:
+        return key == name or key.rsplit(".", 1)[-1] == name
+
+    for key, d in exports.items():
+        if matches(key):
+            add(d)
+    for key, (_term, d) in eqs.items():
+        if matches(key):
+            add(d)
+    for key, (_term, d) in aliases.items():
+        if matches(key):
+            add(d)
+    for key, b in blocks.items():
+        if matches(key):
+            add(b.decl)
     return out
 
 
@@ -247,7 +269,6 @@ def run(
             # whichever declaration the symbol table saw first -- the graph then
             # wires an implementation the author never named.  Keep the ambiguity
             # visible instead of letting it resolve by luck.
-            scoped = [x for x in known_decls if _in_module(x, module)] if module else known_decls
             # A `.link` declaration (export/eq/alias) and the Python `block` that
             # implements it legitimately live in two files of the same module;
             # only two *modules* declaring the same short name collide.
@@ -265,7 +286,10 @@ def run(
                 diags.append(
                     Diagnostic(
                         "W012",
-                        "warning",
+                        # Same contract as W010: visible by default, gating under
+                        # `--strict`.  An ambiguous wiring is a defect, not a style
+                        # nit -- it just must not drown normal runs.
+                        "error" if strict else "warning",
                         f"use `{d.name}` is ambiguous: `{target}` is declared by {len(owners)} modules "
                         f"({where}); {hint}",
                         d.path,
@@ -290,13 +314,14 @@ def run(
             b.eff = T.Atom(b.decl.name, ())
 
     # E001: unregistered identifiers inside terms.
+    declared_full: set[str] = set(aliases) | set(eqs) | set(blocks_by_name) | set(exports)
+    # 点号声明（`export alpha.ASym`）在 term 里也可能以短名引用，两种拼写都认。
+    declared_short = {k.rsplit(".", 1)[-1] for k in declared_full}
     known_names: set[str] = (
         set(cfg.atoms)
         | atoms_declared
-        | set(aliases)
-        | set(eqs)
-        | set(blocks_by_name)
-        | set(exports)
+        | declared_full
+        | declared_short
         | {"id", "Loop"}
         | {d.name.split(".")[-1] for d in uses}
     )
@@ -728,7 +753,7 @@ def _check_atom_constraints(blocks, resolve, cfg: Config, facts_for) -> list[Dia
     """检查原子规则的新增约束：forbidden_calls, requires_import, requires_context, min/max_calls"""
     from .evidence import (
         forbidden_calls_in, has_import, has_async_context, has_with_context,
-        count_calls, calls_in,
+        count_calls,
     )
     
     diags: list[Diagnostic] = []

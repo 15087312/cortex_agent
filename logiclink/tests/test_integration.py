@@ -2,8 +2,6 @@
 
 import textwrap
 
-import pytest
-
 from logiclink.check import run
 from logiclink.cli import main as cli_main
 
@@ -402,6 +400,44 @@ def test_qualified_use_disambiguates_same_symbol(tmp_path):
     assert not [d for d in diags if d.code == "W012"]
 
 
+def test_dotted_export_resolves_in_its_module(tmp_path):
+    """`export alpha.ASym` + `use a := alpha.ASym` must resolve (no E005).
+
+    Symbol tables are keyed by the full declared name while `use` names only the
+    last segment.  Matching only the exact key made a dotted export invisible to
+    its own wiring and reported a false E005.
+    """
+    root = write_proj(
+        tmp_path,
+        {
+            "link.toml": SCAN_ALPHA_BETA,
+            "app.link": "use a := alpha.ASym\n",
+            "modules/alpha/alpha.link": "export alpha.ASym\neq alpha.ASym = id\n",
+        },
+    )
+    diags, code = run(root)
+    assert code == 0, [(d.code, d.message) for d in diags]
+    assert not [d for d in diags if d.code in ("E005", "W012")]
+
+
+def test_unqualified_use_of_dotted_exports_is_ambiguous(tmp_path):
+    """Two dotted exports of the same short name + unqualified `use` -> W012."""
+    root = write_proj(
+        tmp_path,
+        {
+            "link.toml": SCAN_ALPHA_BETA,
+            "app.link": "use ASym\n",
+            "modules/alpha/alpha.link": "export alpha.ASym\neq alpha.ASym = id\n",
+            "modules/beta/beta.link": "export beta.ASym\neq beta.ASym = id\n",
+        },
+    )
+    diags, code = run(root)
+    assert code == 0, [(d.code, d.message) for d in diags]
+    w = [d for d in diags if d.code == "W012"]
+    assert len(w) == 1, [(d.code, d.message) for d in diags]
+    assert "alpha" in w[0].message and "beta" in w[0].message
+
+
 def test_link_declaration_plus_python_block_is_not_ambiguous(tmp_path):
     """A `.link` declaration and its Python block are one symbol, not two implementations."""
     root = write_proj(
@@ -466,3 +502,58 @@ def test_max_weak_evidence_is_parsed(tmp_path):
 
     root = write_proj(tmp_path, {"link.toml": "[arch]\nmax_weak_evidence = 6\n"})
     assert load_config(Path(root)).arch.max_weak_evidence == 6
+
+
+# ---------------------------------------------------------------- E010 复杂度上限
+
+def test_max_complexity_emits_E010(tmp_path):
+    """`[arch] max_complexity` is wired: calls + branches + loops over the limit fail."""
+    toml = '[scan]\nroots = ["."]\nexclude = []\nextensions = [".py"]\n[arch]\nmax_complexity = 1\n'
+    src = textwrap.dedent(
+        """\
+        # @link:block B = id
+        def f():
+            a()
+            if x:
+                b()
+            return 1
+        """
+    )
+    root = write_proj(tmp_path, {"link.toml": toml, "a.py": src})
+    diags, code = run(root)
+    assert code == 1
+    assert [d for d in diags if d.code == "E010"], [(d.code, d.message) for d in diags]
+
+
+def test_max_complexity_default_is_unlimited(tmp_path):
+    src = textwrap.dedent(
+        """\
+        # @link:block B = id
+        def f():
+            a()
+            if x:
+                b()
+            return 1
+        """
+    )
+    root = write_proj(tmp_path, {"a.py": src})
+    diags, code = run(root)
+    assert code == 0, [(d.code, d.message) for d in diags]
+    assert not [d for d in diags if d.code == "E010"]
+
+
+def test_W012_is_gating_under_strict(tmp_path):
+    """Same contract as W010: a warning by default, an error under `--strict`."""
+    root = write_proj(
+        tmp_path,
+        {
+            "link.toml": SCAN_ALPHA_BETA,
+            "app.link": "use ASym\n",
+            "modules/alpha/alpha.link": "export ASym\neq ASym = id\n",
+            "modules/beta/beta.py": BETA_IMPL,
+        },
+    )
+    diags, code = run(root, strict=True)
+    assert code == 1
+    w = [d for d in diags if d.code == "W012"]
+    assert w and w[0].level == "error", [(d.code, d.level) for d in diags]

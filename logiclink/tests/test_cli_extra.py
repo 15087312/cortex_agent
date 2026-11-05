@@ -240,7 +240,6 @@ def test_html_detail_outputs(tmp_path, capsys):
 
 def test_examples_agent_react_ok(capsys):
     # README：`logiclink examples/agent_react` → logiclink: ok
-    import os
     from pathlib import Path
 
     examples = Path(__file__).resolve().parent.parent / "examples" / "agent_react"

@@ -17,13 +17,12 @@ them, so the picture matches the project instead of the declarations:
 from __future__ import annotations
 
 import json
-import os
 from collections import Counter
 from pathlib import Path
 
 from .evidence import facts_of
 from .v2_graph import _resolve_edges
-from .viz import _CSS, _rel
+from .viz import _CSS
 
 _SKIP_DIRS = {"__pycache__", ".venv", "node_modules", "tests"}
 
@@ -98,7 +97,7 @@ def _layout(mods: dict, edges: dict) -> tuple[list[dict], int, int]:
     for long, m in mods.items():
         layers[_layer_of(m["short"], ind, outd)].append(long)
     for k in layers:
-        layers[k].sort(key=lambda l: mods[l]["short"])
+        layers[k].sort(key=lambda name: mods[name]["short"])
 
     NW, NH = 200, 172
     GAP = 44

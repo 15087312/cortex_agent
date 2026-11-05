@@ -76,7 +76,7 @@ def react(state):
 | E011 | 弱证据债超过 `[arch] max_weak_evidence` 上限（超过一条即失败，除非把上限调高） |
 | W010 | 区间内有已登记原子调用但项未包含（`--strict` 变 error） |
 | W011 | 该原子只有弱证据（泛名）撑着：E002 通过，但不能算“已验证”（info，不卡门禁） |
-| W012 | `use` 同名歧义：同一个短名由多个模块声明，未限定模块时可能接错实现（warning） |
+| W012 | `use` 同名歧义：同一个短名由多个模块声明，未限定模块时可能接错实现（`--strict` 变 error） |
 
 `[arch] forbid_eq_change = true` 是**基线门禁**：它不再拒绝运行，而是把当前 eq/alias
 的规范化 AST 指纹与 `.logiclink/arch.json` 对比，只有真正的新增/删除/改动才报 `E305`

@@ -16,14 +16,13 @@ All three levels share pan/zoom, hover highlight, and click-for-detail.
 from __future__ import annotations
 
 import json
-import re
 from collections import defaultdict
 from pathlib import Path
 
 from . import ast_terms as T
 from .evidence import facts_of
 from .parser import parse_term
-from .viz import _CSS, _rel
+from .viz import _CSS
 from .viz_all import _module_map, _real_edges
 
 _SKIP_DIRS = {"__pycache__", ".venv", "node_modules", "tests"}
@@ -208,7 +207,6 @@ def collect_detail(decls, cfg, root: Path) -> dict:
 
     # group-level edges (group A's blocks import group B's module)
     group_edges: dict[tuple[str, str], int] = defaultdict(int)
-    group_module = {g["name"]: g["module"] for g in groups}
     for b in blocks:
         if not b["eq"]:
             continue
@@ -239,7 +237,6 @@ def _l1_layout(mods, real, mod_edges) -> tuple[list[dict], list[dict], int, int]
         ind[b] += 1
     layers = {0: [], 1: [], 2: []}
     for long, m in mods.items():
-        s = m["short"]
         if outd.get(long, 0) >= 5:
             layers[0].append(long)
         elif ind.get(long, 0) >= 3 and outd.get(long, 0) <= 1:
@@ -247,7 +244,7 @@ def _l1_layout(mods, real, mod_edges) -> tuple[list[dict], list[dict], int, int]
         else:
             layers[1].append(long)
     for k in layers:
-        layers[k].sort(key=lambda l: mods[l]["short"])
+        layers[k].sort(key=lambda name: mods[name]["short"])
 
     NW, NH = 195, 168
     GAP = 42

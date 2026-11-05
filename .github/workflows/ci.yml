@@ -58,12 +58,18 @@ jobs:
           python -m pip install mypy types-PyYAML types-requests
           python -m mypy modules/ infra/ config/ utils/ api/
 
-      # 逻辑链接检查门禁：logiclink --strict 全绿
+      # 逻辑链接检查门禁：logiclink --strict 全绿；不带 --allow-arch，E305 基线漂移必须失败
       - name: Logic link check (logiclink)
         shell: bash
         run: |
           python -m pip install -e logiclink
-          logiclink . --strict --allow-arch
+          logiclink . --strict
+
+      # logiclink 自身的回归用例（118+），与检查器门禁同批保护
+      - name: Logic link unit tests
+        shell: bash
+        run: |
+          python -m pytest logiclink/tests -q -p no:cacheprovider
 
       - name: Run integration tests
         shell: bash

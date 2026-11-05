@@ -537,7 +537,10 @@ think 的 `Write` 也被“别处的消费”掩蔽了。
   - 只在 `use` 处判定，避免“声明了但没人接线”时的噪声；限定模块后不再报；
   - `.link` 的 `export`/`eq` 与同模块的 Python `block` 是同一个符号的两半，**不**算歧义
     （早期版本按“文件数 > 1”判定时在本仓误报 3 条，已改为按模块判定）；
-  - 当前全仓 0 条 W012，`--strict` / `--strict-warnings` 不受影响。
+  - 与 W010 同一契约：默认 warning，`--strict` 下升级为 error（歧义是缺陷，不是风格问题，
+    但不能淹没日常输出）；当前全仓 0 条。
+  - 顺带修掉点号声明的假 E005：符号表按整名建键，`export alpha.ASym` 的 `use a := alpha.ASym`
+    原先查不到（`_decls_named` 只做整名查找），现在同时匹配最后一段。
 - **`E011` + `[arch] max_weak_evidence` — 债账天花板**：`ArchConstraints` 新增
   `max_weak_evidence`（默认 `-1` = 不设限），`run()` 在收尾时统计 `W011` 条数，超过上限
   追加一条 `error[E011]` 并以 1 退出；W011 本身仍是 info。
