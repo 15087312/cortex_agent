@@ -3,7 +3,9 @@ repos:
     hooks:
       - id: logiclink
         name: logiclink
-        entry: logiclink .
+        # --allow-arch 必需：link.toml 设了 forbid_eq_change=true，
+        # 不带该参数时检查器不跑验证，直接以 "eq/alias changes need --allow-arch" 退出 1。
+        entry: logiclink . --allow-arch
         language: system
         pass_filenames: false
         always_run: true

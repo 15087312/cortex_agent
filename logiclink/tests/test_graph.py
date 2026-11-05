@@ -184,6 +184,112 @@ def test_render_graph_shows_mutual_cycle(tmp_path):
     assert "beta -.->|环E304" in drift, drift
 
 
+def test_scan_root_comes_from_use_not_from_symbol_location(tmp_path):
+    """Moving a symbol into ``core/`` must not shrink the module's scan root.
+
+    The symbol only proves the module is wired.  When the scan root was derived
+    from the declaring file's directory, the import in ``modules/alpha/sibling.py``
+    was invisible and this project failed with a phantom E301.
+    """
+    files = {
+        "link.toml": textwrap.dedent(
+            """\
+            [scan]
+            roots = ["app.link", "modules/alpha", "modules/beta"]
+            exclude = []
+            extensions = [".py", ".link"]
+            """
+        ),
+        "app.link": "use a := alpha.ASym\nuse b := beta.BSym\neq Flow = a · b\n",
+        "modules/alpha/core/alpha.link": "export ASym\neq ASym = Loop(Think)\n",
+        "modules/alpha/sibling.py": "import modules.beta\n\ndef run_a():\n    pass\n",
+        "modules/beta/beta.link": "export BSym\neq BSym = Loop(Think)\n",
+        "modules/beta/impl.py": "def run_b():\n    pass\n",
+    }
+    root = write_proj(tmp_path, files)
+    diags, code = run(root)
+    assert code == 0, [(d.code, d.message) for d in diags]
+
+
+def test_use_declares_symbol_owned_by_another_module(tmp_path):
+    """``use a := alpha.BSym`` must fail: BSym belongs to beta.
+
+    Regression: only the symbol segment used to be resolved, so a wrong module
+    segment was decorative -- the declaration claimed a capability alpha does
+    not export and the checker stayed silent (exit 0).
+    """
+    files = base_proj()
+    files["modules/alpha/impl.py"] = "import modules.beta\n\ndef run_a():\n    pass\n"
+    files["app.link"] = """
+        use a := alpha.BSym
+        use b := beta.BSym
+        eq Flow = a · b
+        """
+    root = write_proj(tmp_path, files)
+    diags, code = run(root)
+    assert code == 1, [(d.code, d.message) for d in diags]
+    e005 = [d for d in diags if d.code == "E005"]
+    assert len(e005) == 1, [(d.code, d.message) for d in diags]
+    assert "alpha.BSym" in e005[0].message, e005[0].message
+    assert "beta.link" in e005[0].message, e005[0].message
+
+
+def test_use_symbol_moved_into_module_subdir_still_resolves(tmp_path):
+    """A symbol declared in ``modules/alpha/core/`` belongs to alpha.
+
+    The module check must not turn the F3 layout (declaration in a sub-directory
+    of the module) into a false E005.
+    """
+    files = base_proj()
+    del files["modules/alpha/alpha.link"]
+    files["link.toml"] = textwrap.dedent(
+        """\
+        [scan]
+        roots = ["app.link", "modules/alpha", "modules/beta"]
+        exclude = []
+        extensions = [".py", ".link"]
+        """
+    )
+    files["modules/alpha/core/alpha.link"] = "export ASym\neq ASym = Loop(Think)\n"
+    files["app.link"] = """
+        use a := alpha.ASym
+        use b := beta.BSym
+        eq Flow = a · b
+        """
+    files["modules/alpha/impl.py"] = "import modules.beta\n\ndef run_a():\n    pass\n"
+    root = write_proj(tmp_path, files)
+    diags, code = run(root)
+    assert code == 0, [(d.code, d.message) for d in diags]
+
+
+def test_relative_import_across_packages_is_a_real_edge(tmp_path):
+    """``from ...beta import BSym`` inside ``alpha/core`` crosses into beta."""
+    files = base_proj()
+    files["modules/alpha/core/impl.py"] = "from ...beta import BSym\n\ndef run_a():\n    pass\n"
+    files["modules/alpha/core/__init__.py"] = ""
+    root = write_proj(tmp_path, files)
+    diags, code = run(root)
+    assert code == 0, [(d.code, d.message) for d in diags]
+    assert not [d for d in diags if d.code.startswith("E30")]
+
+
+def test_relative_import_inside_package_is_not_a_cross_edge(tmp_path):
+    """``from .beta import B`` stays inside alpha: it must not declare alpha→beta.
+
+    Matching on names would turn the local ``alpha/beta.py`` into the wired
+    module ``beta`` and invent a dependency that does not exist.
+    """
+    files = base_proj()
+    files["modules/alpha/impl.py"] = "from .beta import B\n\ndef run_a():\n    pass\n"
+    files["modules/alpha/beta.py"] = "B = 1\n"
+    root = write_proj(tmp_path, files)
+    diags, code = run(root)
+    # Declared a → b but nothing really imports the beta module.
+    assert code == 1
+    assert [d for d in diags if d.code == "E301"], [(d.code, d.message) for d in diags]
+    assert not [d for d in diags if d.code == "E302"]
+
+
 def test_render_graph_ok(tmp_path):
     files = base_proj()
     files["modules/alpha/impl.py"] = "import modules.beta\n\ndef run_a():\n    pass\n"

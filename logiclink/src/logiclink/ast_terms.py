@@ -298,6 +298,69 @@ def linear_atoms(t: Term) -> list[Atom]:
     return out
 
 
+def _edge_atoms(t: Term) -> tuple[list[Atom], list[Atom]]:
+    """(first atoms, last atoms) of a term, per branch.
+
+    ``A · (B | C)`` firsts are ``A``, lasts are ``B`` and ``C``: an alternative
+    has several possible beginnings and endings.
+    """
+    if isinstance(t, Atom):
+        return [t], [t]
+    if isinstance(t, Id):
+        return [], []
+    if isinstance(t, (Loop, Star, Plus, Opt)):
+        return _edge_atoms(t.body)
+    if isinstance(t, Seq):
+        lf, ll = _edge_atoms(t.left)
+        rf, rl = _edge_atoms(t.right)
+        return (lf or rf), (rl or ll)
+    if isinstance(t, (Alt, Par)):
+        lf, ll = _edge_atoms(t.left)
+        rf, rl = _edge_atoms(t.right)
+        return lf + rf, ll + rl
+    raise TypeError(f"unknown term node: {t!r}")
+
+
+def sequence_pairs(t: Term) -> list[tuple[str, str]]:
+    """Successor pairs *within a branch*, never across an alternative.
+
+    ``linear_atoms`` flattens branches into one sequence, so taking adjacent
+    pairs of it invents edges: ``A · (B | C) · D`` would yield ``B → C`` even
+    though ``B`` and ``C`` are alternatives.  Here ``Seq`` connects last(left)
+    to first(right) and ``Alt``/``Par`` only recurse, giving
+    ``A→B, A→C, B→D, C→D``.
+    """
+    out: list[tuple[str, str]] = []
+
+    def visit(n: Term) -> None:
+        if isinstance(n, (Atom, Id)):
+            return
+        if isinstance(n, (Loop, Star, Plus, Opt)):
+            visit(n.body)
+            return
+        if isinstance(n, Seq):
+            visit(n.left)
+            visit(n.right)
+            for a in _edge_atoms(n.left)[1]:
+                for b in _edge_atoms(n.right)[0]:
+                    out.append((a.name, b.name))
+            return
+        if isinstance(n, (Alt, Par)):
+            visit(n.left)
+            visit(n.right)
+            return
+        raise TypeError(f"unknown term node: {n!r}")
+
+    visit(t)
+    seen: set[tuple[str, str]] = set()
+    uniq: list[tuple[str, str]] = []
+    for pair in out:
+        if pair not in seen:
+            seen.add(pair)
+            uniq.append(pair)
+    return uniq
+
+
 def fmt(t: Term) -> str:
     """Canonical pretty printer (right-associated, minimal parens)."""
     if isinstance(t, Atom):

@@ -33,13 +33,65 @@ class Block:
     attached_fn: str | None = None
 
 
+def _decls_named(
+    name: str,
+    exports: dict[str, Decl],
+    eqs: dict[str, tuple[T.Term, Decl]],
+    aliases: dict[str, tuple[T.Term, Decl]],
+    blocks: dict[str, Block],
+) -> list[Decl]:
+    """Every declaration that could satisfy a symbol name, in any symbol table."""
+    out: list[Decl] = []
+    if name in exports:
+        out.append(exports[name])
+    if name in eqs:
+        out.append(eqs[name][1])
+    if name in aliases:
+        out.append(aliases[name][1])
+    if name in blocks:
+        out.append(blocks[name].decl)
+    return out
+
+
+def _in_module(decl: Decl, module: str) -> bool:
+    """Does ``decl`` belong to the module named ``module``?
+
+    Two signals, because both spellings exist in the wild: a dotted declaration
+    name (``export alpha.ASym``) and the enclosing directory name.  Directories
+    are matched on every ancestor, not just the parent, so a symbol that moved
+    into ``modules/<module>/core/`` still counts as belonging to the module.
+    """
+    if decl.name.startswith(module + "."):
+        return True
+    return any(part == module for part in Path(decl.path).parent.parts)
+
+
+def _module_of(path: str, roots: list[Path]) -> str:
+    """Which scan root owns ``path`` (used to tell a real ambiguity from a pair).
+
+    A ``.link`` declaration and the Python ``block`` implementing it are two
+    files but one module; two *modules* exporting the same short name are the
+    dangerous case.  Scan roots are the module boundaries declared in
+    ``link.toml`` (``modules/thinking`` → ``thinking``, ``app.link`` → ``app``).
+    """
+    p = Path(path).resolve()
+    best: Path | None = None
+    for r in roots:
+        if p == r or r in p.parents:
+            if best is None or len(r.parts) > len(best.parts):
+                best = r
+    if best is None:
+        return p.parent.name
+    return best.stem if best.is_file() else best.name
+
+
 def _parse_terms(decls: list[Decl], lexicon: dict) -> tuple[dict[int, T.Term], list[Diagnostic]]:
     terms: dict[int, T.Term] = {}
     diags: list[Diagnostic] = []
     for idx, d in enumerate(decls):
         if d.term_str is None:
             continue
-        if d.kind in ("input", "output", "state_init", "state_trans", "use"):
+        if d.kind in ("input", "output", "accept", "state_init", "state_trans", "state_enum", "use"):
             continue  # v2 port lists / state literals / module refs are not term expressions
         try:
             terms[idx] = parse_term(d.term_str, lexicon)
@@ -58,6 +110,7 @@ def run(
 ) -> tuple[list[Diagnostic], int]:
     root = Path(root).resolve()
     cfg = cfg or load_config(root)
+    scan_roots = [(root / r).resolve() for r in cfg.scan_roots]
     result = collect(root, cfg.scan_roots, cfg.exclude, cfg.extensions)
     diags: list[Diagnostic] = []
 
@@ -151,15 +204,21 @@ def run(
 
     for d in uses:
         if d.op == ":=":
-            # v2 assembly use: `use name := module.Symbol` resolves its Symbol.
-            target = (d.term_str or d.name).split(".")[-1]
+            # v2 assembly use: `use name := module.Symbol` -- both segments are
+            # the contract.  Resolving only the symbol made the module segment
+            # decorative: `use a := alpha.ThinkLoop` passed while ThinkLoop was
+            # exported by beta and alpha exported nothing of the sort.
+            binding = d.term_str or d.name
+            target = binding.split(".")[-1]
+            module = binding.split(".")[0] if "." in binding else None
         else:
             target = d.name.split(".")[-1]
+            module = None
+        known_decls = _decls_named(
+            target, exports=exports, eqs=eqs, aliases=aliases, blocks=blocks_by_name
+        )
         known = (
-            target in exports
-            or target in eqs
-            or target in aliases
-            or target in blocks_by_name
+            bool(known_decls)
             or target in atoms_declared
             or target in cfg.atoms
         )
@@ -167,6 +226,54 @@ def run(
             diags.append(
                 Diagnostic("E005", "error", f"use `{d.name}` does not resolve to any known symbol", d.path, d.line, d.col)
             )
+        elif module and known_decls and not any(_in_module(x, module) for x in known_decls):
+            elsewhere = known_decls[0]
+            diags.append(
+                Diagnostic(
+                    "E005",
+                    "error",
+                    f"use `{d.name}` declares `{module}.{target}` but module `{module}` "
+                    f"exports no `{target}` (declared in {elsewhere.path}:{elsewhere.line})",
+                    d.path,
+                    d.line,
+                    d.col,
+                    "v2 assembly: both halves of `module.Symbol` must resolve",
+                )
+            )
+        else:
+            # W012 (F8): same short name declared by several files.  A qualified
+            # `module.Symbol` picks the module-owned one, but an unqualified `use`
+            # (or a module that still has two implementations) silently binds to
+            # whichever declaration the symbol table saw first -- the graph then
+            # wires an implementation the author never named.  Keep the ambiguity
+            # visible instead of letting it resolve by luck.
+            scoped = [x for x in known_decls if _in_module(x, module)] if module else known_decls
+            # A `.link` declaration (export/eq/alias) and the Python `block` that
+            # implements it legitimately live in two files of the same module;
+            # only two *modules* declaring the same short name collide.
+            scoped = [x for x in known_decls if _in_module(x, module)] if module else known_decls
+            owners: dict[str, int] = {}
+            for x in scoped:
+                owners.setdefault(_module_of(x.path, scan_roots), x.line)
+            if len(owners) > 1:
+                where = "、".join(f"{m}:{ln}" for m, ln in list(owners.items())[:3])
+                hint = (
+                    f"qualify the reference as `module.{target}`"
+                    if module is None
+                    else "the module segment still matches several declarations; keep one"
+                )
+                diags.append(
+                    Diagnostic(
+                        "W012",
+                        "warning",
+                        f"use `{d.name}` is ambiguous: `{target}` is declared by {len(owners)} modules "
+                        f"({where}); {hint}",
+                        d.path,
+                        d.line,
+                        d.col,
+                        "same short name in several modules can silently wire the wrong implementation",
+                    )
+                )
 
     # Effective terms for blocks: explicit -> eq -> alias -> bare atom.
     for b in blocks:
@@ -296,10 +403,12 @@ def run(
     for (code, level, message, path, line, col, note) in v2_datav.check_datav(result.decls, cfg):
         diags.append(Diagnostic(code, level, message, path, line, col, note))
     for (code, level, message, path, line, col, note) in v2_graph.check_graph(
-        result.decls, cfg.arch.allow_cycles
+        result.decls, cfg.arch.allow_cycles, roots=[root / r for r in cfg.scan_roots]
     ):
         diags.append(Diagnostic(code, level, message, path, line, col, note))
-    for (code, level, message, path, line, col, note) in v2_state.check_state(result.decls):
+    for (code, level, message, path, line, col, note) in v2_state.check_state(
+        result.decls, roots=[root / r for r in cfg.scan_roots]
+    ):
         diags.append(Diagnostic(code, level, message, path, line, col, note))
 
     # Architecture gate: eq/alias drift against the recorded baseline (E305).
@@ -309,6 +418,26 @@ def run(
         result.decls, cfg, root, allow_arch=allow_arch
     ):
         diags.append(Diagnostic(code, level, message, path, line, col, note))
+
+    # W011 debt ceiling ([arch] max_weak_evidence): turns "only ever goes down",
+    # which used to be a convention maintained by hand, into a gate.  Default -1
+    # keeps every existing fixture and repo without the knob unchanged.
+    limit = cfg.arch.max_weak_evidence
+    if limit >= 0:
+        weak = [d for d in diags if d.code == "W011"]
+        if len(weak) > limit:
+            first = weak[limit]
+            diags.append(
+                Diagnostic(
+                    "E011",
+                    "error",
+                    f"weak-evidence debt grew to {len(weak)} (max_weak_evidence = {limit})",
+                    first.path,
+                    first.line,
+                    first.col,
+                    "verify the extra atom with a real call (`calls`) or drop it from the term",
+                )
+            )
 
     errors = [d for d in diags if d.level == "error"]
     diags.sort(key=lambda d: (d.path, d.line, d.code))
@@ -450,6 +579,9 @@ def _check_composition(blocks: list[Block], resolve, cfg: Config, eq_names: set[
 def _check_evidence(blocks, resolve, cfg: Config, facts_for, py_texts, strict: bool) -> list[Diagnostic]:
     from .evidence import CodeFacts  # local to avoid circulars in type hints
 
+    # Strong-only rules: lets W011 tell "verified by a real call" from "only a generic name".
+    strong_rules = {n: r.calls for n, r in cfg.atoms.items() if r.calls}
+
     diags: list[Diagnostic] = []
     for b in blocks:
         if b.eff is None or b.start == 0:
@@ -495,16 +627,38 @@ def _check_evidence(blocks, resolve, cfg: Config, facts_for, py_texts, strict: b
             # (e.g. Emit may be witnessed by a notify-call OR a return).
             hits: list[bool] = []
             notes: list[str] = []
-            if rule.calls:
+            if rule.calls or rule.weak_calls:
                 from .evidence import evidence_hit
 
-                call_rules = {n: r.calls for n, r in cfg.atoms.items() if r.calls}
+                # Weak calls count as evidence (existence), so a term that truly
+                # retrieves is not punished for using a generic-looking API.
+                call_rules = {
+                    n: r.calls + r.weak_calls for n, r in cfg.atoms.items() if r.calls or r.weak_calls
+                }
                 hit = evidence_hit(facts, b.start, b.end, atom, call_rules)
                 hits.append(hit is not None)
                 if hit is None:
-                    notes.append(f"expected calls: {', '.join(rule.calls)}")
+                    notes.append(f"expected calls: {', '.join(rule.calls + rule.weak_calls)}")
                 else:
                     evidenced.add(atom)
+                    # W011: the claim rests only on a generic name (`dict.get`,
+                    # `Future.result`, `__aexit__`). E002 passes on purpose (an
+                    # honest declaration must not be punished for using a generic
+                    # API), but the debt has to stay visible: otherwise `weak_calls`
+                    # is where unverifiable claims go to hide. Info level, so the
+                    # `--strict` 0-diagnostic gate is unaffected.
+                    if rule.weak_calls and evidence_hit(facts, b.start, b.end, atom, strong_rules) is None:
+                        diags.append(
+                            Diagnostic(
+                                "W011",
+                                "info",
+                                f"`{atom}` in block `{b.decl.name}` is witnessed only by a generic call (`{hit}`)",
+                                d.path,
+                                d.line,
+                                d.col,
+                                note="add the real call name to the atom's `calls`, or drop the atom from the term",
+                            )
+                        )
             if rule.requires_branch:
                 branch_hit = bool([ln for ln in facts.branches if in_range(ln, b.start, b.end)])
                 hits.append(branch_hit)
@@ -535,6 +689,8 @@ def _check_evidence(blocks, resolve, cfg: Config, facts_for, py_texts, strict: b
         # W010: registered atom calls present in the interval but absent from the term.
         # Each actual call is attributed to exactly one atom (best match), so
         # e.g. tools.invoke counts for Tool, not for Think's loose "invoke".
+        # `weak_calls` are deliberately excluded: `x.get()` is not a retrieval,
+        # and attributing it would flag every block that touches a dict.
         from .evidence import attribute_call
 
         call_rules = {n: r.calls for n, r in cfg.atoms.items() if r.calls}

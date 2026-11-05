@@ -44,6 +44,35 @@ def test_fmt_roundtrip():
         assert T.equal(parse_term(s), parse_term(T.fmt(t)))
 
 
+def pairs(s: str) -> list[tuple[str, str]]:
+    return T.sequence_pairs(parse_term(s))
+
+
+def test_sequence_pairs_linear():
+    assert pairs("A · B · C") == [("A", "B"), ("B", "C")]
+
+
+def test_sequence_pairs_never_cross_an_alternative():
+    """Alternatives are not successors -- `B | C` must not produce `B → C`."""
+    assert pairs("A · (B | C)") == [("A", "B"), ("A", "C")]
+    assert pairs("A · (B | C) · D") == [("A", "B"), ("A", "C"), ("B", "D"), ("C", "D")]
+    assert ("B", "C") not in pairs("A · (B | C) · D")
+
+
+def test_sequence_pairs_nested_branch():
+    got = pairs("A · (B · C | D)")
+    assert ("B", "C") in got
+    assert ("A", "B") in got and ("A", "D") in got
+    assert ("C", "D") not in got
+
+
+def test_sequence_pairs_loop_body():
+    got = pairs("Loop(Retrieve · Think · Guard · (Write | Emit))")
+    assert ("Think", "Guard") in got
+    assert ("Guard", "Write") in got and ("Guard", "Emit") in got
+    assert ("Write", "Emit") not in got
+
+
 def test_atoms_of():
     t = parse_term("Loop(Think · Guard · (Tool · Observe | Emit))")
     assert T.atoms_of(t) == {"Think", "Guard", "Tool", "Observe", "Emit"}

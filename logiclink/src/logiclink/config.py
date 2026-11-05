@@ -12,6 +12,10 @@ class AtomRule:
     calls: list[str] = field(default_factory=list)
     returns: bool = False
     requires_branch: bool = False
+    # Low-specificity call names: they may witness the atom for E002 (so honest
+    # declarations are not punished), but they are never attributed for W010 --
+    # a bare `x.get()` must not be reported as "you forgot Retrieve".
+    weak_calls: list[str] = field(default_factory=list)
     # 新增约束
     forbidden_calls: list[str] = field(default_factory=list)  # 禁止调用
     requires_import: list[str] = field(default_factory=list)  # 必须导入
@@ -22,18 +26,25 @@ class AtomRule:
 
 @dataclass
 class ArchConstraints:
+    """Architecture knobs.  Every field here must be wired to a check.
+
+    `test_config_wiring.py` fails when a field exists in this dataclass but is
+    referenced nowhere outside ``config.py``: a knob that parses and does
+    nothing is worse than no knob, because it reads as a guard rail that is
+    actually off.  The six fields that used to sit here unused
+    (forbid_new_atoms / forbid_new_blocks / require_evidence / require_doc /
+    no_direct_db_access / must_use_event_bus / require_security_check) were
+    removed for that reason -- see docs/CHECKER_AUDIT.md F6.
+    """
+
     forbid_eq_change: bool = False
-    forbid_new_atoms: bool = False
-    forbid_new_blocks: bool = False
-    require_evidence: bool = True
     max_complexity: int = -1  # 最大复杂度（-1 表示无限制）
-    require_doc: bool = False
     # Dependency cycles that are knowingly accepted: each entry lists module names.
     allow_cycles: list[frozenset[str]] = field(default_factory=list)
-    # 全局约束
-    no_direct_db_access: list[str] = field(default_factory=list)  # 这些模块不能直接访问数据库
-    must_use_event_bus: list[str] = field(default_factory=list)  # 这些模块必须通过事件总线通信
-    require_security_check: list[str] = field(default_factory=list)  # 这些模块必须经过安全检查
+    # W011 (weak-evidence) upper bound. -1 = no gate. When the number of W011
+    # diagnostics exceeds this value the run fails with E011: the debt ledger
+    # ("only ever goes down") stops being a convention maintained by hand.
+    max_weak_evidence: int = -1
 
 
 @dataclass
@@ -100,24 +111,13 @@ def load_config(start: Path) -> Config:
     # 加载架构约束
     arch = data.get("arch", {})
     cfg.arch.forbid_eq_change = bool(arch.get("forbid_eq_change", False))
-    cfg.arch.forbid_new_atoms = bool(arch.get("forbid_new_atoms", False))
-    cfg.arch.forbid_new_blocks = bool(arch.get("forbid_new_blocks", False))
-    cfg.arch.require_evidence = bool(arch.get("require_evidence", True))
     cfg.arch.max_complexity = int(arch.get("max_complexity", -1))
-    cfg.arch.require_doc = bool(arch.get("require_doc", False))
+    cfg.arch.max_weak_evidence = int(arch.get("max_weak_evidence", -1))
     allowed = arch.get("allow_cycles", [])
     if isinstance(allowed, list):
         cfg.arch.allow_cycles = [
             frozenset(str(x) for x in entry) for entry in allowed if isinstance(entry, list)
         ]
-    # 加载全局约束
-    constraints = arch.get("constraints", {})
-    if isinstance(constraints.get("no_direct_db_access"), list):
-        cfg.arch.no_direct_db_access = [str(x) for x in constraints["no_direct_db_access"]]
-    if isinstance(constraints.get("must_use_event_bus"), list):
-        cfg.arch.must_use_event_bus = [str(x) for x in constraints["must_use_event_bus"]]
-    if isinstance(constraints.get("require_security_check"), list):
-        cfg.arch.require_security_check = [str(x) for x in constraints["require_security_check"]]
     cfg.tool_wildcard = bool(data.get("tool_wildcard", False))
     # v2 dataflow roles (optional; defaults above apply when absent).
     df = data.get("dataflow", {})
@@ -160,5 +160,6 @@ def load_config(start: Path) -> Config:
                     min_calls=int(rule.get("min_calls", base.min_calls)),
                     max_calls=int(rule.get("max_calls", base.max_calls)),
                 )
+            base.weak_calls = [str(c) for c in rule.get("weak_calls", base.weak_calls)]
             cfg.atoms[str(name)] = base
     return cfg

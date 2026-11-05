@@ -172,3 +172,6 @@ Cortico/
 # runtime outputs
 data/output/
 .preview/
+
+# logiclink generated views (regenerate with --html / --html-flow / --html-detail)
+logiclink/logiclink-*.html

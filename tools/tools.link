@@ -2,8 +2,10 @@
 
 export MockLog
 eq MockLog = Write
+# MockHttp：观测中间件——读的是别人发来的请求头/请求体（hdrs.get / request.body），
+# 不是本层去取数据；动作是按方法分流后放行 → Guard。
 export MockHttp
-eq MockHttp = Guard · Retrieve
+eq MockHttp = Guard
 export MockWs
 eq MockWs = Loop(Retrieve · Guard · Write · Emit)
 export MockReply

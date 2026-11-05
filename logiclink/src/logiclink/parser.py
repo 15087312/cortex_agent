@@ -327,10 +327,12 @@ _USE_BIND_RE = re.compile(r"^use\s+([^\W\d]\w*)\s*:=\s*([^\W\d]\w*(?:\.[^\W\d]\w
 # v2: port contracts -- input [Atom, ...] / output [Atom, ...]
 #     optional NAME binds to that symbol; bare form binds to the nearest `export`.
 _PORT_RE = re.compile(
-    r"^(input|output)\s*(?:([^\W\d]\w*)\s*)?:\s*\[(.*)\]\s*$", re.UNICODE | re.DOTALL
+    r"^(input|output|accept)\s*(?:([^\W\d]\w*)\s*)?:\s*\[(.*)\]\s*$", re.UNICODE | re.DOTALL
 )
 # v2: state machine declarations
 _STATE_RE = re.compile(r"^state\s+([^\W\d]\w*)\s*$", re.UNICODE)
+# v2: state 取值的真实来源（Enum 类名），让 L4 校验枚举成员而不是字符串字面量
+_STATE_ENUM_RE = re.compile(r"^enum\s*=\s*([^\W\d]\w*(?:\.[^\W\d]\w*)*)\s*$", re.UNICODE)
 _STATE_INIT_RE = re.compile(r"^init\s*=\s*(\S+)\s*$", re.UNICODE)
 _STATE_TRANS_RE = re.compile(r'^trans\s*=\s*"(.+)"\s*$', re.UNICODE)
 
@@ -388,6 +390,9 @@ def parse_decl(text: str, path: str, line: int, col: int = 1) -> Decl:
     m = _STATE_RE.match(s)
     if m:
         return Decl("state", m.group(1), None, path, line, col)
+    m = _STATE_ENUM_RE.match(s)
+    if m:
+        return Decl("state_enum", "", m.group(1), path, line, col)
     m = _STATE_INIT_RE.match(s)
     if m:
         return Decl("state_init", "", m.group(1), path, line, col)

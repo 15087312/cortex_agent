@@ -103,10 +103,16 @@ class _Visitor(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_ImportFrom(self, node: ast.ImportFrom):
+        dots = "." * node.level
         if node.module:
-            # 相对导入（from .x / from ..y import）记录为相对名，避免误配为顶层包
-            name = ("." * node.level) + node.module if node.level > 0 else node.module
+            # 相对导入（from .x / from ..y import）记录为相对名，保留点数以便解析
+            name = dots + node.module if node.level > 0 else node.module
             self.facts.imports.append((node.lineno, name))
+        elif node.level > 0:
+            # `from . import beta` 没有 module 段：模块名在 names 里，逐个记录
+            # （之前整条丢弃，导致这类导入完全不可见）
+            for alias in node.names:
+                self.facts.imports.append((node.lineno, dots + alias.name))
         self.generic_visit(node)
 
     def visit_With(self, node: ast.With):

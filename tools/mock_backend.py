@@ -51,7 +51,7 @@ def _new_session():
     return f"mock_{_seq}_{uuid.uuid4().hex[:6]}"
 
 
-# @link:block MockHttp = Guard · Retrieve
+# @link:block MockHttp = Guard
 @app.middleware("http")
 async def trace_http(request: Request, call_next):
     body = b""

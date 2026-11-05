@@ -36,26 +36,87 @@ from .parser import Decl, parse_term
 _SKIP_DIRS = {"__pycache__", ".venv", "node_modules", "tests"}
 
 
-def _symbol_decl(decls: list[Decl], symbol: str) -> Decl | None:
+def _symbol_decl(decls: list[Decl], module: str, symbol: str) -> Decl | None:
+    """The declaration of ``symbol`` that belongs to ``module``.
+
+    Matching on the last name segment alone made the module segment of
+    ``use n := module.Symbol`` unverifiable: with two modules exporting the same
+    symbol the first declaration won, and a symbol that lived in another module
+    resolved as if it were this one's.  ``check.run`` reports that mismatch as
+    E005; this function returns the module-owned declaration when there is one
+    and only falls back to the bare name match so the scan root does not vanish
+    (an already-reported error must not also delete the module from the graph).
+    """
+    fallback: Decl | None = None
     for d in decls:
-        if d.kind in ("export", "eq", "block"):
-            last = d.name.split(".")[-1]
-            if last == symbol:
-                return d
-    return None
+        if d.kind not in ("export", "eq", "block"):
+            continue
+        if d.name.split(".")[-1] != symbol:
+            continue
+        if d.name.startswith(module + ".") or any(
+            part == module for part in Path(d.path).parent.parts
+        ):
+            return d
+        if fallback is None:
+            fallback = d
+    return fallback
 
 
-def _module_dirs(decls: list[Decl], use_target: dict[str, str]) -> dict[str, Path]:
-    """module-name -> module directory (from the wired symbol's declaration)."""
+def _module_dirs(
+    decls: list[Decl], use_target: dict[str, str], roots: list[Path] = ()
+) -> dict[str, Path]:
+    """module-name -> module directory.
+
+    The module root is the scan root whose directory name matches the ``use``
+    target's module segment.  Falling back to "the directory of the file that
+    declares the symbol" is what made scanning silently shrink when a symbol
+    moved into ``module/core/``: imports from the rest of the module vanished
+    and produced phantom E301 / missing E302.  The symbol is still what proves
+    the module is wired (and E005 covers a dangling one); it no longer decides
+    the scan width.
+    """
+    by_name: dict[str, Path] = {}
+    for r in roots:
+        p = Path(r)
+        if p.is_dir():
+            by_name.setdefault(p.name, p.resolve())
     out: dict[str, Path] = {}
     for name, target in use_target.items():
         module = target.split(".")[0] if "." in target else name
         symbol = target.split(".")[-1]
-        d = _symbol_decl(decls, symbol)
+        d = _symbol_decl(decls, module, symbol)
+        if module in by_name:
+            out.setdefault(module, by_name[module])
+            continue
         if d is None:
             continue
         out.setdefault(module, Path(d.path).resolve().parent)
     return out
+
+
+def _relative_target(imp: str, source: Path) -> Path | None:
+    """Filesystem target of a relative import (``..beta`` from ``pkg/core/x.py``).
+
+    ``level`` dots mean "the package of this file", ``level - 1`` goes up.
+    Resolving on paths (not on names) keeps ``from .x`` from being mistaken for
+    a top-level module ``x``: an intra-package import must never become a
+    cross-module edge.
+    """
+    level = len(imp) - len(imp.lstrip("."))
+    rest = imp.lstrip(".")
+    base = source.parent
+    for _ in range(max(0, level - 1)):
+        if base.parent == base:
+            return None
+        base = base.parent
+    return base / Path(*rest.split(".")) if rest else base
+
+
+def _under(path: Path, directory: Path) -> bool:
+    try:
+        return path == directory or path.is_relative_to(directory)
+    except (OSError, ValueError):
+        return False
 
 
 def _real_edges(module_dirs: dict[str, Path]) -> tuple[set[tuple[str, str]], dict[tuple[str, str], tuple[str, int]]]:
@@ -75,10 +136,17 @@ def _real_edges(module_dirs: dict[str, Path]) -> tuple[set[tuple[str, str]], dic
             except OSError:
                 continue
             for ln, imp in facts.imports:
+                target = _relative_target(imp, py) if imp.startswith(".") else None
                 for b in names:
                     if b == a:
                         continue
-                    if imp == f"modules.{b}" or imp.startswith(f"modules.{b}.") or imp == b or imp.startswith(b + "."):
+                    hit = _under(target, module_dirs[b]) if target is not None else (
+                        imp == f"modules.{b}"
+                        or imp.startswith(f"modules.{b}.")
+                        or imp == b
+                        or imp.startswith(b + ".")
+                    )
+                    if hit:
                         edge = (a, b)
                         edges.add(edge)
                         evidence.setdefault(edge, (str(py), ln))
@@ -95,9 +163,9 @@ def _declared_edges(decls: list[Decl], use_target: dict[str, str]) -> tuple[set[
             term = parse_term(d.term_str)
         except Exception:
             continue
-        atoms = [a.name for a in T.linear_atoms(term)]
-        for i in range(len(atoms) - 1):
-            a, b = atoms[i], atoms[i + 1]
+        # Successor pairs stay inside a branch: an alternative is not a
+        # successor, so `a · (b | c)` must not declare `b → c`.
+        for a, b in T.sequence_pairs(term):
             if a in use_target and b in use_target:
                 edges.add((a, b))
                 source.setdefault((a, b), d)
@@ -105,9 +173,9 @@ def _declared_edges(decls: list[Decl], use_target: dict[str, str]) -> tuple[set[
 
 
 def _resolve_edges(
-    decls: list[Decl], use_target: dict[str, str]
+    decls: list[Decl], use_target: dict[str, str], roots: list[Path] = ()
 ) -> tuple[set[tuple[str, str]], set[tuple[str, str]], dict[tuple[str, str], Decl], dict[tuple[str, str], tuple[str, int]]]:
-    dirs = _module_dirs(decls, use_target)
+    dirs = _module_dirs(decls, use_target, roots)
     declared, dsource = _declared_edges(decls, use_target)
     # Map use-name edges to module-name edges.
     module_of = {n: (t.split(".")[0] if "." in t else n) for n, t in use_target.items()}
@@ -225,11 +293,11 @@ def _cycle_edges(real: set[tuple[str, str]], allow_cycles=()) -> dict[tuple[str,
     return out
 
 
-def check_graph(decls: list[Decl], allow_cycles=()) -> list[tuple]:
+def check_graph(decls: list[Decl], allow_cycles=(), roots: list[Path] = ()) -> list[tuple]:
     use_target = {d.name: (d.term_str or "") for d in decls if d.kind == "use" and d.op == ":="}
     if not use_target:
         return []
-    declared, real, dsource, revidence = _resolve_edges(decls, use_target)
+    declared, real, dsource, revidence = _resolve_edges(decls, use_target, roots)
     allowed = {frozenset(c) for c in allow_cycles}
     in_cycle = _cycle_edges(real, allow_cycles)
     diags: list[tuple] = []
@@ -325,12 +393,14 @@ def check_graph(decls: list[Decl], allow_cycles=()) -> list[tuple]:
     return diags
 
 
-def render_graph(decls: list[Decl], drift_only: bool = False, allow_cycles=()) -> str:
+def render_graph(
+    decls: list[Decl], drift_only: bool = False, allow_cycles=(), roots: list[Path] = ()
+) -> str:
     """Mermaid ``flowchart LR`` of declared vs real edges between wired modules."""
     use_target = {d.name: (d.term_str or "") for d in decls if d.kind == "use" and d.op == ":="}
     if not use_target:
         return "flowchart LR\n  %% no `use name := module.Symbol` declarations found\n"
-    declared, real, _dsource, revidence = _resolve_edges(decls, use_target)
+    declared, real, _dsource, revidence = _resolve_edges(decls, use_target, roots)
     in_cycle = _cycle_edges(real, allow_cycles)
 
     lines = ["flowchart LR"]

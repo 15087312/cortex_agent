@@ -2,6 +2,8 @@
 
 > 状态：经验沉淀（来自 2026-09 三轮全仓审计，修复 ~75 处误写）
 > 适用范围：为 ai_backend 及任何 logiclink 仓库写 `.link` / `# @link:block` 的模型与人工审阅者
+> 姊妹文档：本文讲"标注写错"；checker 自己失效的模式（空真守卫、渲染/判定分叉、
+> 配置不接线）与修复计划见 [`CHECKER_AUDIT.md`](./CHECKER_AUDIT.md)
 
 ---
 

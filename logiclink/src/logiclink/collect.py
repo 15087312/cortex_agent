@@ -90,7 +90,7 @@ def _collect_link_file(text: str, path: str, decls: list[Decl], failures: list) 
                 d.name = last_export
         elif d.kind == "state":
             current_state = d.name
-        elif d.kind in ("state_init", "state_trans"):
+        elif d.kind in ("state_init", "state_trans", "state_enum"):
             if not current_state:
                 failures.append((path, i, 1, f"{d.kind} declaration outside a `state` block"))
                 continue

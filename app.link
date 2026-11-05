@@ -1,7 +1,7 @@
 # 根级装配宪法（v2 L1/L3）：端到端主链路声明
 # 模块名 := 模块.导出符号 —— 声明即文档即验证
 use perceive := perception.PerceiveLoop
-use think    := thinking.ThinkLoop
+use think    := thinking.ThinkModule
 use memory   := memory.MemRetrieve
 use output   := output_system.Distrib
 use app      := api.App
@@ -9,10 +9,17 @@ use pet      := desktop_pet.PetChat
 use manage   := management.StatusCollect
 use secure   := security_system.GateCheck
 
-# 主链路：感知 → 思考 → 记忆（真实调用：perception→thinking→memory 均有 import 证据）
+# 主链路：思考 → 记忆（真实调用：thinking→memory 有 import 证据）
+#
+# 注：原声明为 perceive · think · memory，依赖 perception→thinking 的 import。
+# 该 import 已按依赖倒置改为**端口拉取**（thinking 的 PerceptionSource 经
+# resolve("perception.integrator") 主动取感知快照），import 边消失，故 E301。
+# 运行期数据流仍是「感知 → 思考」，但已不是编译期依赖 —— 这正是倒置的目的，
+# 声明必须如实反映 import 图，不能把运行期流向写成编译期边。
+# 感知侧接线见 ApiPerceive（装配层拉起感知系统）。
 # 说明：memory → output 在真实代码中无直接调用（文档 E301 示例场景），
 #       故主链路如实止于 memory；输出分发由 API 编排层驱动（见 ApiOutput）。
-eq MainFlow  = perceive · think · memory
+eq MainFlow  = think · memory
 
 # API 编排层（app）对下游模块的真实调用（api/main.py import 证据）
 eq ApiThink    = app · think
@@ -23,20 +30,61 @@ eq ApiPet      = app · pet
 eq ApiManage   = app · manage
 eq ApiSecure   = app · secure
 
+# management 的跨模块真实耦合（api.py 直接 import，未走端口倒置）：
+#   thinking：技能注册表 skill_manager（api.py）；memory：事件存储 EventStore（api.py）。
+# 这两个边此前因扫描根盲区完全不可见（见下方说明），现在如实声明。
+# 若要消除，方向与 perception/security_system 相同：下沉成 infra 端口 + resolve()。
+eq ManageThink = manage · think
+eq ManageMem   = manage · memory
+
 # 桌宠组合链（pet 是组合型模块，复用各基础能力）
 eq PetToMem      = pet · memory
 eq PetToOutput   = pet · output
 eq PetToPerceive = pet · perceive
 eq PetToThink    = pet · think
 
-# 已知未声明耦合（L3 E302 如实报告，暂不声明）：
-#   thinking → output_system：modules/thinking/adapters.py:80 借用 OutputSystem.clean_response
-#   做思考循环内的输出清洗（端口语义为 Write，非 Distrib 的 Emit，无法用 eq 声明）。
-#   收敛方向：清洗逻辑下沉 infra 或经注入，使 think 不再直接依赖 output_system。
+# 已收敛的横切耦合（经 infra 端口倒置，模块边已消失，勿改回直接 import）：
+#   management → perception / security_system：interfaces.py 经 infra/ports.py 端口查询，
+#       缺提供方时返回 {"status": "unknown"}，管理面不因依赖缺失而崩溃。
+#   output_system → security_system：core.py 经 resolve("security.validators") 取校验器，
+#       显式注入仍优先（便于测试），缺失时校验跳过。
+#   thinking ↔ security_system：双向边经 infra/security_gate.py 门面消除。该门面把两类
+#       语义分开：判定类接口（门控检查、输入校验）缺席时 fail-closed，收窄类接口
+#       （权限查询、AI 工具收窄）缺席时 fail-open，通知类接口（安全事件）缺席时 no-op。
+#       类级审批状态（ToolSecurityGate._pending_reviews）经 get_tool_security_gate_cls()
+#       取得同一类对象，保证思考侧放置 futures、前端决议驱动兑现走的是同一份共享状态。
+#       注意：门面各入口的**签名必须与所替代的原函数一致**（含位置参数顺序）——
+#       早期版本把 emit_security_event 写成只收 **kwargs，调用方按位置传参会直接
+#       TypeError 打断安全事件通道；收窄三函数实为模块级函数而非控制器实例方法，
+#       按实例方法转发会静默 no-op。
+#   thinking → output_system：输出清洗 clean_response 是纯函数，已下沉
+#       infra/text_cleanup.py，两侧共用同一实现（不会规则漂移）。adapters.py 不再
+#       import output_system。
+#   perception ⇄ thinking：曾为逻辑循环。ContextFragment 是双方共享的纯数据契约，
+#       已下沉 infra/context_types.py；感知的整合器/活动通知器经
+#       resolve("perception.integrator") / resolve("perception.activity_notifier") 取用；
+#       会话定时任务启动从 perception.start() 上移到装配层（api/main.py），
+#       与桌宠启动同理（定时任务属思考侧生命周期）。
+#   cortex ⇄ utils：process_registry（纯 stdlib）与 watchdog 均为基础设施，消费者是
+#       api/infra/frontend 而非 cortex，已下沉 infra.process_registry / infra.watchdog；
+#       caffeinate 的进程登记由装配层负责，utils.power 不再 import infra。
 #
-#   横切基础设施耦合（管理面/安全/配置复用，不进主链路）：
-#   management → perception：interfaces.py:16 状态收集查感知健康（管理面监控）
-#   management → security_system：interfaces.py:30 状态收集查安全状态（管理面监控）
-#   output_system → security_system：__init__.py:14 输出前安全校验（安全强制检查）
-#   security_system → thinking：tool_permission_controller.py:75 复用工具白名单（配置复用）
-#   thinking → security_system：model_runner.py:44 工具执行前安全门检查（安全强制检查）
+# E302 扫描盲区（已根治）：
+#   扫描根原先取自「已接线模块的 export 符号所在目录」（v2_graph._module_dirs），
+#   于是 `use think := thinking.ThinkLoop`（声明在 modules/thinking/core/）把扫描根
+#   缩到 core/，modules/thinking/adapters.py 等顶层文件的跨模块 import 全部静默逃逸。
+#   当时的绕行方案是改指包根符号 ThinkModule；现在扫描根改由 `use` 的 **module 段**
+#   匹配 scan_roots 目录名决定（符号只用于证明模块确实接线），符号搬家不再改变扫描范围，
+#   `use think := ThinkLoop` 也已安全。回归用例：test_graph.py::
+#   test_scan_root_comes_from_use_not_from_symbol_location。
+#   代价：盲区封堵后立刻多出两条真实未声明边（management → thinking / memory），
+#   已在上面 eq ManageThink / ManageMem 如实声明。
+#
+# 另注：v2_graph 的 E302 判定原先有一行 `if (mb, ma) in declared: continue`，
+#   注释称「already reported as E303」，但当反向边也真实存在时 E303 分支要求
+#   `(ma, mb) not in real`，两侧都不成立 —— 于是**双向真实边两边都不报**。
+#   perception ⇄ thinking 原先正是这种隐形循环。
+#   该检查器缺陷**已修复**（v2_graph.check_graph：real 循环里的跳过条件改为
+#   `if (mb, ma) in declared and (mb, ma) not in real`，即只在 E303 真正
+#   负责该对边时才跳过）。回归用例见 logiclink/tests/test_graph.py::
+#   test_mutual_dependency_is_reported。修复后本仓库仍为 0 error。

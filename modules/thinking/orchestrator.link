@@ -1,3 +1,52 @@
 # 编排器主入口的结构骨架：审查亦是一次思考（专家复核），故有两个 Think
 export Orchestrate
 eq Orchestrate = Guard · Retrieve · Think · Think · Emit
+
+# think 模块对外的接线符号。
+#
+# 为什么需要它（而不是直接 use thinking.ThinkLoop）
+#   logiclink 的 E302 用 `_module_dirs` 从 **export 符号所在目录**反推模块扫描根
+#   （v2_graph.py）。ThinkLoop 声明在 modules/thinking/core/thinking.link，于是
+#   扫描根被解析为 modules/thinking/core/，rglob 覆盖不到 modules/thinking/ 下的
+#   顶层文件（adapters.py、api_stream.py、chat_gateway.py……）——那些文件里的
+#   跨模块 import 全部静默逃过检查。
+#   think 是唯一符号落在子目录的接线模块，其余模块的 export 都在包根，故只有它
+#   中招。把 use 指向本符号（声明在包根）后，扫描根回到 modules/thinking/，盲区消除。
+#
+#   语义与 ThinkLoop 保持一致：input Think / output Write 是模块的对外契约
+#   （主链路 eq MainFlow = think · memory 依赖 think 产出 Write）。内部实现骨架
+#   仍由 core/thinking.link 的 ThinkLoop / RunnerLoop 描述，二者不冲突。
+export ThinkModule
+input ThinkModule: [Think]
+output ThinkModule: [Write]
+# 返回端口：主链 `eq MainFlow = think · memory` 里 memory 在链尾，其 Retrieve 回到
+# think（`_build_prompt` 把检索片段注入 prompt）—— 不声明就是真的悬空。
+accept ThinkModule: [Retrieve]
+eq ThinkModule = Loop(Retrieve · Think · Guard · Write · Throttle) · Emit
+
+# ---------------------------------------------------------------- L4 轮次状态机
+# 状态取值的真实来源：modules/thinking/context/pool.py 的 TurnState 枚举
+#   IDLE / PLANNING / EXECUTING / INTEGRATING / COMPLETE / ERROR
+#
+# 声明即验证（logiclink L4）：
+#   E401 代码引用了未声明的 TurnState 成员（有人改名/拼错 → 立刻红）
+#   E402 声明了转换，但代码里没有任何位置把该状态设进去（声明而未实现）
+#   E403 代码把状态设成某值，但没有任何声明指向它（绕过状态机改状态）
+#
+# 驱动点（全部来自 multi_model_orchestrator 的真实调用，不是文档想象）：
+#   idle        → planning     大模型激活（probe_start 发出）
+#   planning    → executing    编排器转入等待模型产出
+#   executing   → integrating  回复已拿到，进入输出整合/审查
+#   integrating → complete     process() 返回前
+#   任意进行中状态 → error     _execute_multi_model_thinking 异常分支
+state turn
+enum = TurnState
+init = idle
+trans = "idle --transition_to--> planning"
+trans = "planning --transition_to--> executing"
+trans = "executing --transition_to--> integrating"
+trans = "integrating --transition_to--> complete"
+trans = "idle --transition_to--> error"
+trans = "planning --transition_to--> error"
+trans = "executing --transition_to--> error"
+trans = "integrating --transition_to--> error"

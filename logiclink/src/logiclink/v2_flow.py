@@ -6,10 +6,24 @@ what it produces.  An ``eq`` that chains use-names (``A · B · C``) declares
 an end-to-end pipeline; every adjacent pair is checked for port
 compatibility.
 
+Return ports close the last hole in that model.  A call hands its result back
+to the caller, so an output atom can legitimately leave a chain without a
+*downstream* consumer -- but only if the caller says it receives it:
+
+    output Distrib: [Emit]
+    accept App: [Emit]        # app 调用 Distrib 后接到 Emit
+
+The old rule exempted whatever happened to be last in a chain (position, not
+intent) and unioned consumption across *all* chains, so an atom consumed
+somewhere silenced a dangling output everywhere else.  Now, per chain and per
+pair ``a · b``: b's outputs must be consumed by b's successor's input **or**
+by a's ``accept`` port.
+
 Diagnostics (returned as tuples for the orchestrator to wrap):
     E101  a module's declared input is not fully provided by its predecessor
-    E102  a module's whole output set is consumed by nothing (dangling)
+    E102  an output atom is neither consumed downstream nor accepted by the caller
     E103  adjacent modules declare disjoint port atom sets (cannot splice)
+    E104  `accept` declares an atom no callee actually produces (a mute button)
 """
 
 from __future__ import annotations
@@ -33,9 +47,12 @@ def _parse_port_list(raw: str | None) -> set[str]:
 
 
 def _neighbour_pairs(term: T.Term) -> list[tuple[str, str]]:
-    """All adjacent atom pairs of a term, branch bodies concatenated in order."""
-    atoms = T.linear_atoms(term)
-    return [(atoms[i].name, atoms[i + 1].name) for i in range(len(atoms) - 1)]
+    """Declared successor pairs, within a branch (never across ``|``).
+
+    ``sequence_pairs`` keeps alternatives apart, so ``a · (b | c) · d`` yields
+    ``a→b, a→c, b→d, c→d`` instead of the bogus ``b→c``.
+    """
+    return T.sequence_pairs(term)
 
 
 def check_flow(decls: list[Decl]) -> list[tuple]:
@@ -45,12 +62,17 @@ def check_flow(decls: list[Decl]) -> list[tuple]:
     use_decls: dict[str, Decl] = {}  # bound use name -> declaration
     use_target: dict[str, str] = {}  # bound use name -> module.Symbol
     ports: dict[str, tuple[set[str], set[str]]] = {}  # symbol -> (inputs, outputs)
+    accepts: dict[str, set[str]] = {}  # symbol -> atoms the caller takes back
+    accept_decls: dict[str, Decl] = {}
     chain_decls: list[Decl] = []
 
     for d in decls:
         if d.kind == "use" and d.op == ":=":
             use_decls[d.name] = d
             use_target[d.name] = d.term_str or ""
+        elif d.kind == "accept" and d.name:
+            accepts.setdefault(d.name, set()).update(_parse_port_list(d.term_str))
+            accept_decls.setdefault(d.name, d)
         elif d.kind in ("input", "output") and d.name:
             ins, outs = ports.get(d.name, (set(), set()))
             parsed = _parse_port_list(d.term_str)
@@ -128,37 +150,112 @@ def check_flow(decls: list[Decl]) -> list[tuple]:
                     )
                 )
 
-    # ---- E102: dangling outputs (whole output set consumed by nothing) ----
-    has_successor = {a for (a, _b) in declared_pairs}
-    consumers_of: dict[str, set[str]] = {}
-    for (a, b) in declared_pairs:
-        sym_b = use_target.get(b, "").split(".")[-1]
-        ins_b = ports.get(sym_b, (set(), set()))[0]
-        consumers_of.setdefault(a, set()).update(ins_b)
+    # ---- E102: dangling outputs, judged per chain ----
+    #
+    # For a pair `a · b` (a calls b), b's outputs leave the chain in one of two
+    # legitimate ways: forward into b's successor in the *same* chain, or back
+    # to its caller through the caller's `accept` port.  Anything else is dangling.
+    #
+    # The rule this replaces was doubly positional: a module was exempt just for
+    # being last in a chain, and `consumers_of` unioned consumption across every
+    # chain, so an atom consumed in chain X silenced the same atom in chain Y.
+    reported: set[tuple[str, str]] = set()
+    produced_to_caller: dict[str, set[str]] = {}
+    for d in chain_decls:
+        try:
+            term = parse_term(d.term_str)
+        except Exception:
+            continue
+        pairs = [(a, b) for a, b in _neighbour_pairs(term) if a in use_decls and b in use_decls]
+        if not pairs:
+            continue
+        successors: dict[str, set[str]] = {}
+        for a, b in pairs:
+            successors.setdefault(a, set()).add(b)
+            sym_a = use_target.get(a, "").split(".")[-1]
+            sym_b = use_target.get(b, "").split(".")[-1]
+            produced_to_caller.setdefault(sym_a, set()).update(
+                ports.get(sym_b, (set(), set()))[1]
+            )
 
-    for name in sorted(chain_modules):
-        if name not in use_decls:
+        # Called members (their output needs a destination) ...
+        callees = {b for (_a, b) in pairs}
+        # ... and the members that enter the chain: never called by another one.
+        heads = [a for (a, _b) in pairs if a not in callees] or [pairs[0][0]]
+        heads_ports = [
+            ports.get(use_target.get(h, "").split(".")[-1])
+            or accepts.get(use_target.get(h, "").split(".")[-1])
+            for h in heads
+        ]
+        # A chain whose entry publishes no port contract makes no dataflow claim
+        # (e.g. an `eq` that only documents an import edge): requiring a return
+        # port there would force a declaration the caller cannot honestly make.
+        if not any(heads_ports):
             continue
-        if name not in has_successor:
-            continue  # terminal module: nothing after it, no dangling check
-        sym = use_target.get(name, "").split(".")[-1]
-        outs = ports.get(sym, (set(), set()))[1]
-        if not outs:
-            continue
-        consumed = consumers_of.get(name, set())
-        if not (outs - consumed):
-            continue
-        src = use_decls[name]
+        predecessors: dict[str, set[str]] = {}
+        for a, b in pairs:
+            predecessors.setdefault(b, set()).add(a)
+
+        # Only a callee's output needs a destination.  A chain head's `output` is
+        # what the head itself produces for *its* callers -- `app` declaring
+        # [Think, Write, Emit] is not a promise to hand all three to `think`.
+        for elem in sorted(callees):
+            sym_e = use_target.get(elem, "").split(".")[-1]
+            outs_e = ports.get(sym_e, (set(), set()))[1]
+            if not outs_e:
+                continue
+            succ = successors.get(elem, set())
+            if succ:
+                destination: set[str] = set()
+                for nxt in succ:
+                    destination |= ports.get(use_target.get(nxt, "").split(".")[-1], (set(), set()))[0]
+                why = f"its successor {{{', '.join(sorted(destination))}}} does not take it"
+                how = "consumed downstream"
+            else:
+                destination = set()
+                for pred in predecessors.get(elem, set()):
+                    destination |= accepts.get(use_target.get(pred, "").split(".")[-1], set())
+                why = (
+                    f"it ends the chain and no caller accepts it "
+                    f"(accept {{{', '.join(sorted(destination))}}})"
+                )
+                how = "accepted by the caller (`accept Symbol: [Atom]`)"
+            for atom in sorted(outs_e - destination):
+                key = (elem, atom)
+                if key in reported:
+                    continue
+                reported.add(key)
+                src = use_decls[elem]
+                diags.append(
+                    (
+                        "E102",
+                        "error",
+                        f"module `{elem}` (={sym_e}) output `{atom}` is dangling: {why}",
+                        src.path,
+                        src.line,
+                        src.col,
+                        f"L1 assembly: every output must be {how}",
+                    )
+                )
+
+    # ---- E104: `accept` that names an atom no callee produces ----
+    # Without this, `accept X: [everything]` would be a global mute button for E102.
+    for sym, atoms in sorted(accepts.items()):
+        impossible = atoms - produced_to_caller.get(sym, set())
+        if not impossible or sym not in produced_to_caller:
+            continue  # 模块不调用任何东西时，accept 无意义但也不冤报
+        src = accept_decls[sym]
         diags.append(
             (
-                "E102",
+                "E104",
                 "error",
-                f"module `{name}` (={sym}) output {{{', '.join(sorted(outs - consumed))}}} "
-                f"is dangling (no successor consumes it)",
+                f"accept `{sym}` declares {{{', '.join(sorted(impossible))}}} but no module it "
+                f"calls produces "
+                f"{{{', '.join(sorted(produced_to_caller.get(sym, set())))}}}",
                 src.path,
                 src.line,
                 src.col,
-                "L1 assembly: every declared output must be consumed downstream",
+                "L1 assembly: accept may only name atoms a callee really outputs",
             )
         )
 

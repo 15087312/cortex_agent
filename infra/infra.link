@@ -1,15 +1,18 @@
 # infra 模块：基础设施（MCP stdio/SSE 传输层）
 
+# StdioSubmit：只是把协程丢回它绑定的 event loop 并等结果（run_coroutine_threadsafe / fut.result），
+# 跨线程调度 + 参数校验，没有任何取数据动作 → 不再声明 Retrieve。
 export StdioSubmit
-eq StdioSubmit = Guard · Retrieve
+eq StdioSubmit = Guard
 export StdioConnect
 eq StdioConnect = Retrieve · Emit
 export StdioList
 eq StdioList = Guard · Retrieve
 export StdioCall
 eq StdioCall = Guard · Retrieve · Emit
+# close 家族：只做分支判断 + 资源释放（__aexit__），不是检索
 export StdioClose
-eq StdioClose = Guard · Retrieve
+eq StdioClose = Guard
 export SseConnect
 eq SseConnect = Retrieve · Emit
 export SseList
@@ -17,4 +20,16 @@ eq SseList = Guard · Retrieve
 export SseCall
 eq SseCall = Guard · Retrieve · Emit
 export SseClose
-eq SseClose = Guard · Retrieve
+eq SseClose = Guard
+
+# 安全门面：把 thinking ↔ security_system 的双向依赖收敛到 infra
+export GateResolve
+eq GateResolve = Guard · Retrieve
+export GateDegrade
+eq GateDegrade = Guard · Emit
+export PermResolve
+eq PermResolve = Guard · Retrieve
+export ValidateInput
+eq ValidateInput = Guard · Retrieve
+export EmitSecurityEvent
+eq EmitSecurityEvent = Guard · Emit

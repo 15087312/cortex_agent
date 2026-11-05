@@ -2,4 +2,9 @@
 export App
 input App: [Guard, Retrieve]
 output App: [Think, Write, Emit]
+# 返回端口：app 调用下游后真正接住的东西（think 的 Write、memory 的 Retrieve、
+# output 的 Emit 都回到这里再交给前端）。
+# 为什么需要它：E102 不再因“模块恰好在链尾”而豁免，也不再把“别处有人消费”当自证；
+# 链尾产出必须由调用方显式 accept，否则报 E102。
+accept App: [Write, Retrieve, Emit]
 eq App = Guard · Retrieve · Think · Write · Emit

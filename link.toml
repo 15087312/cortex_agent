@@ -6,12 +6,28 @@ extensions = [".py", ".link"]
 
 [arch]
 forbid_eq_change = true
+# W011（弱证据债）的机器上限：超过即 E011。降一条就把这个数字跟着降；
+# 想放宽必须有意识地改这一行（而不是靠「大家都记得别加」）。
+max_weak_evidence = 6
 
 [atoms.Think]
 calls = ["think_fn", "think_once", "think", "llm.invoke", "continuous_think", "_execute_multi_model_thinking", "_review_output", "_run_periodic_check", "_check_impl", "_client.chat", "initialize_system", "start_backend", "chat_stream", "run", "_think", "model", "_model", "_check_llm_review", "_check_high_risk"]
 
 [atoms.Retrieve]
-calls = ["retrieve", "_build_prompt", "build_prompt", "get_event_retrieval", "recall", "_run_expert_pipeline", "_match_skill", "to_dict", "popleft", "receive", "receive_text", "embed", "_vector_search", "_causal_search", "_rank_and_filter", "_get_session_conversation", "fetchone", "fetchall", "get_recent_messages", "get_session_metadata", "_build_context", "get_instance", "_load_model", "s.query", "_collect_generic", "_get_caller_permissions", "is_tool_available", "urlopen", "parse_event", "list_tools", "call_tool", "initialize", "_port_in_use", "post", "from_pretrained", "gather", "get", "slice", "collect", "wait_for", "get_url", "exists", "isdir", "run_coroutine_threadsafe", "result", "__aexit__"]
+calls = ["retrieve", "_build_prompt", "build_prompt", "get_event_retrieval", "recall", "_recall_memories", "_recall_knowledge", "read_edit_history", "_run_expert_pipeline", "_match_skill", "receive", "receive_text", "embed", "_vector_search", "_causal_search", "_rank_and_filter", "_get_session_conversation", "fetchone", "fetchall", "get_recent_messages", "get_session_metadata", "_build_context", "_load_model", "s.query", "_collect_generic", "_get_caller_permissions", "is_tool_available", "urlopen", "parse_event", "list_tools", "call_tool", "push_sessions", "_port_in_use", "from_pretrained"]
+# 低区分度调用名：可作 E002 的证据，但不会被算作「多余 Retrieve 证据」产生 W010。
+# 依据 docs/CHECKER_AUDIT.md F1：`ctx.get()` / `fut.result()` 是局部查表与并发等待，
+# 不是检索；放进 calls 会让全仓一半 block 误报 W010。
+#
+# F1b 清完后只留 4 个——每个都对应一个原理上无法强证据的 block（均报 W011）：
+#   get          → CtxBuild `d.get`、BusReceive `self._queues.get`
+#   to_dict      → BB_ReadDialog `e.to_dict`
+#   wait_for     → BusRequest / ChatOnly_Turn 等待 Future/Queue
+#   get_instance → PetPersist（真正读库在 PetEngine._last_assistant_same_as 里）
+# 其余 12 个泛名（slice/collect/result/__aexit__/gather/popleft/post/get_url/initialize/
+# exists/isdir/run_coroutine_threadsafe）已经没有 block 需要，删除——留着就是下一个
+# “用泛名盖住未验证声明”的隐藏点。
+weak_calls = ["get", "to_dict", "wait_for", "get_instance"]
 
 [atoms.Throttle]
 calls = ["sleep"]

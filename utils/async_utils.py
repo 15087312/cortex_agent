@@ -18,7 +18,8 @@ def async_wrap(func: Callable) -> Callable:
     return async_wrapper
 
 
-# @link:block Async_Gather = Retrieve
+# 注：纯并发工具（Semaphore + asyncio.gather），无取数无副作用；旧有的
+# `Async_Gather = Retrieve` 是幻影声明（唯一“证据”是 asyncio.gather），已删除。
 async def gather_with_concurrency(n: int, *coros) -> List[Any]:
     """带并发限制的 gather"""
     semaphore = asyncio.Semaphore(n)

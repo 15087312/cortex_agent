@@ -126,7 +126,14 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         from .v2_graph import render_graph
 
-        print(render_graph(result.decls, drift_only=args.drift_only, allow_cycles=cfg.arch.allow_cycles))
+        print(
+            render_graph(
+                result.decls,
+                drift_only=args.drift_only,
+                allow_cycles=cfg.arch.allow_cycles,
+                roots=[root / r for r in cfg.scan_roots],
+            )
+        )
         return 0
 
     diags, code = run(root, cfg, strict=args.strict, allow_arch=args.allow_arch)
@@ -152,8 +159,11 @@ def main(argv: list[str] | None = None) -> int:
     else:
         if diags:
             print(_render_text(diags, root))
-        else:
-            print("logiclink: ok")
+        # `info` diags (W011 weak-evidence ledger) must not swallow the green
+        # signal: the gate is still "0 error / 0 warning", so say so explicitly.
+        if not diags or not [d for d in diags if d.level in ("error", "warning")]:
+            info = [d for d in diags if d.level == "info"]
+            print("logiclink: ok" + (f" ({len(info)} info)" if info else ""))
     if args.strict_warnings and any(d.level == "warning" for d in diags):
         return 1
     return code

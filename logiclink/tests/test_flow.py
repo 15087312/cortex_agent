@@ -1,4 +1,4 @@
-"""v2 L1 assembly: use/port wiring checks (E101/E102/E103)."""
+"""v2 L1 assembly: use/port wiring checks (E101/E102/E103/E104)."""
 
 import textwrap
 
@@ -28,6 +28,8 @@ def ok_proj():
             output PerceiveLoop: [Think, Emit]
             input ThinkLoop: [Think, Emit]
             output ThinkLoop: [Write, Emit]
+            # think 在链尾，它的产出交给调用方 perceive（返回端口）
+            accept PerceiveLoop: [Write, Emit]
 
             eq MainFlow = perceive · think
             """,
@@ -66,17 +68,43 @@ def test_e101_input_not_provided(tmp_path):
     assert e101 and "Guard" in e101[0].message, [(d.code, d.message) for d in diags]
 
 
-def test_e102_output_dangling(tmp_path):
+def test_e102_mid_chain_output_not_consumed(tmp_path):
+    """中间模块产出没人接：既然后继存在，就必须由它的 input 接住。"""
     files = ok_proj()
-    # perceive outputs Emit but nothing downstream declares input Emit.
+    files["app.link"] = """
+        use perceive := perception.PerceiveLoop
+        use think    := thinking.ThinkLoop
+        use emit     := perception.PerceiveLoop
+
+        input PerceiveLoop: [Think]
+        output PerceiveLoop: [Think, Emit]
+        input ThinkLoop: [Think]
+        output ThinkLoop: [Write, Emit]
+        accept PerceiveLoop: [Write, Emit]
+
+        eq MainFlow = perceive · think · emit
+        """
+    root = write_proj(tmp_path, files)
+    diags, code = run(root)
+    assert code == 1
+    e102 = [d for d in diags if d.code == "E102"]
+    # perceive 的 Emit 与 think 的 Emit 都不在 emit 的 input 里
+    assert e102, [(d.code, d.message) for d in diags]
+    assert any("does not take it" in d.message for d in e102), [(d.code, d.message) for d in diags]
+
+
+def test_e102_chain_tail_needs_accepted_return(tmp_path):
+    """链尾输出不再因“在末尾”而豁免：必须由调用方的 accept 声明。"""
+    files = ok_proj()
     files["app.link"] = """
         use perceive := perception.PerceiveLoop
         use think    := thinking.ThinkLoop
 
         input PerceiveLoop: [Think]
         output PerceiveLoop: [Think, Emit]
-        input ThinkLoop: [Think]
+        input ThinkLoop: [Think, Emit]
         output ThinkLoop: [Write, Emit]
+        accept PerceiveLoop: [Write]
 
         eq MainFlow = perceive · think
         """
@@ -84,7 +112,31 @@ def test_e102_output_dangling(tmp_path):
     diags, code = run(root)
     assert code == 1
     e102 = [d for d in diags if d.code == "E102"]
-    assert e102 and "perceive" in e102[0].message, [(d.code, d.message) for d in diags]
+    assert len(e102) == 1, [(d.code, d.message) for d in diags]
+    assert "`Emit`" in e102[0].message and "think" in e102[0].message, e102[0].message
+    assert "ends the chain" in e102[0].message, e102[0].message
+
+
+def test_e104_accept_names_atom_no_callee_produces(tmp_path):
+    """accept 不能凭空声明：没人产出的原子等于一个消音器。"""
+    files = ok_proj()
+    files["app.link"] = """
+        use perceive := perception.PerceiveLoop
+        use think    := thinking.ThinkLoop
+
+        input PerceiveLoop: [Think]
+        output PerceiveLoop: [Think, Emit]
+        input ThinkLoop: [Think, Emit]
+        output ThinkLoop: [Write, Emit]
+        accept PerceiveLoop: [Write, Emit, Guard]
+
+        eq MainFlow = perceive · think
+        """
+    root = write_proj(tmp_path, files)
+    diags, code = run(root)
+    assert code == 1
+    e104 = [d for d in diags if d.code == "E104"]
+    assert e104 and "Guard" in e104[0].message, [(d.code, d.message) for d in diags]
 
 
 def test_e103_disjoint_ports(tmp_path):

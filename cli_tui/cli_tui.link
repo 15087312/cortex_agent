@@ -1,8 +1,12 @@
 # cli_tui 模块：CLI/TUI 界面（REPL 事件分发/输入处理/命令路由）
 
 export WsDispatch
-eq WsDispatch = Guard · Retrieve · Write
+# 应用后端推来的快照：读的是别人已经取得并推过来的帧（data.get），不是本层去取数据，
+# 故不声明 Retrieve；写只是属性赋值（self.state.* = ...），Write 也只认调用名，不可验证。
+# 剩下的只有“帧字段齐全才更新”的分支 → 如实为 Guard。
+eq WsDispatch = Guard
 export InputProcess
+# Retrieve 证据是真正的检索调用 `read_edit_history`（.opencode/edits/ 里的已修正历史）
 eq InputProcess = Guard · Retrieve · Loop(Write) · Emit
 export CmdDispatch
 eq CmdDispatch = Guard · Emit

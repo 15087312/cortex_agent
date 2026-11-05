@@ -126,6 +126,124 @@ def test_strict_turns_W010_into_error(tmp_path, capsys):
     assert cli_main([root, "--strict"]) == 1  # W010 -> error
 
 
+WEAK_TOML = textwrap.dedent(
+    """\
+    [scan]
+    roots = ["."]
+    exclude = []
+    extensions = [".py"]
+
+    [atoms.Retrieve]
+    calls = ["retrieve"]
+    weak_calls = ["get"]
+    """
+)
+
+
+def test_weak_call_witnesses_atom_without_w010(tmp_path):
+    """A generic call proves the atom (E002) but is never a surplus (W010).
+
+    `d.get("k")` is local dict access, not a retrieval: warning "you forgot
+    Retrieve" on it flags every block that touches a dict.  But a term that
+    honestly declares Retrieve must not fail for using only that API either.
+    """
+    src = textwrap.dedent(
+        """\
+        # @link:block Fetch = Retrieve
+        def f(d):
+            return d.get("k")
+        """
+    )
+    root = write_proj(tmp_path, {"link.toml": WEAK_TOML, "a.py": src})
+    diags, code = run(root)
+    assert code == 0, [(d.code, d.message) for d in diags]
+
+
+def test_weak_call_is_not_reported_as_surplus(tmp_path):
+    src = textwrap.dedent(
+        """\
+        # @link:block G = Guard
+        def f(d):
+            if d.get("k"):
+                return 1
+            return 0
+        """
+    )
+    root = write_proj(tmp_path, {"link.toml": WEAK_TOML, "a.py": src})
+    diags, code = run(root)
+    assert code == 0, [(d.code, d.message) for d in diags]
+    assert not [d for d in diags if d.code == "W010"]
+
+
+def test_strong_call_is_still_a_surplus(tmp_path):
+    """Emptying `calls` for real retrieval names would kill the signal."""
+    src = textwrap.dedent(
+        """\
+        # @link:block G = Guard
+        def f(d):
+            retrieve(d)
+            if d:
+                return 1
+            return 0
+        """
+    )
+    root = write_proj(tmp_path, {"link.toml": WEAK_TOML, "a.py": src})
+    diags, code = run(root)
+    assert code == 0
+    assert [d for d in diags if d.code == "W010"], [(d.code, d.message) for d in diags]
+
+
+def test_weak_only_evidence_is_reported_as_W011(tmp_path):
+    """Generic-only evidence passes E002 but must stay visible as W011 (info)."""
+    src = textwrap.dedent(
+        """\
+        # @link:block Fetch = Retrieve
+        def f(d):
+            return d.get("k")
+        """
+    )
+    root = write_proj(tmp_path, {"link.toml": WEAK_TOML, "a.py": src})
+    diags, code = run(root)
+    assert code == 0, [(d.code, d.message) for d in diags]
+    w011 = [d for d in diags if d.code == "W011"]
+    assert len(w011) == 1, [(d.code, d.message) for d in diags]
+    assert w011[0].level == "info"  # not a gate: --strict / --strict-warnings stay green
+    assert "Retrieve" in w011[0].message and "Fetch" in w011[0].message
+
+
+def test_strong_evidence_does_not_emit_W011(tmp_path):
+    """A real retrieval call makes the claim verified, so no W011."""
+    src = textwrap.dedent(
+        """\
+        # @link:block Fetch = Retrieve
+        def f(d):
+            return retrieve(d) or d.get("k")
+        """
+    )
+    root = write_proj(tmp_path, {"link.toml": WEAK_TOML, "a.py": src})
+    diags, code = run(root)
+    assert code == 0, [(d.code, d.message) for d in diags]
+    assert not [d for d in diags if d.code == "W011"]
+
+
+def test_W011_does_not_change_cli_exit_codes(tmp_path, capsys):
+    """W011 is a ledger, not a gate: both strict flags must still pass."""
+    src = textwrap.dedent(
+        """\
+        # @link:block Fetch = Retrieve
+        def f(d):
+            return d.get("k")
+        """
+    )
+    root = write_proj(tmp_path, {"link.toml": WEAK_TOML, "a.py": src})
+    capsys.readouterr()
+    assert cli_main([root, "--strict"]) == 0
+    out = capsys.readouterr().out
+    assert "W011" in out and "logiclink: ok" in out  # debt visible, green signal kept
+    capsys.readouterr()
+    assert cli_main([root, "--strict-warnings"]) == 0
+
+
 def test_json_and_explain(tmp_path, capsys):
     root = write_proj(tmp_path, {"react.py": OK_REACT})
     assert cli_main([root, "--json"]) == 0
@@ -235,3 +353,116 @@ def test_block_term_conflicts_with_eq_is_E003(tmp_path):
     assert code == 1
     e003 = [d for d in diags if d.code == "E003"]
     assert e003 and "block" in e003[0].message, [(d.code, d.message) for d in diags]
+
+
+# ---------------------------------------------------------------- F8/W012 同名符号歧义
+
+SCAN_ALPHA_BETA = "[scan]\nroots = [\"app.link\", \"modules/alpha\", \"modules/beta\"]\nexclude = []\n"
+BETA_IMPL = "# @link:block ASym = id\ndef f():\n    return 1\n"
+
+
+def test_ambiguous_unqualified_use_is_reported_as_W012(tmp_path):
+    """Two modules declaring the same short name + an unqualified `use`.
+
+    `_symbol_decl` only ever sees one of them, so the wiring would silently pick
+    an implementation the author never named.  The ambiguity must be visible
+    (warning: a qualified reference is still valid, it just has to say which).
+    """
+    root = write_proj(
+        tmp_path,
+        {
+            "link.toml": SCAN_ALPHA_BETA,
+            "app.link": "use ASym\n",
+            "modules/alpha/alpha.link": "export ASym\neq ASym = id\n",
+            "modules/beta/beta.py": BETA_IMPL,
+        },
+    )
+    diags, code = run(root)
+    assert code == 0, [(d.code, d.message) for d in diags]
+    w = [d for d in diags if d.code == "W012"]
+    assert len(w) == 1, [(d.code, d.message) for d in diags]
+    assert w[0].level == "warning"
+    assert "alpha" in w[0].message and "beta" in w[0].message
+    assert "qualify" in w[0].message
+
+
+def test_qualified_use_disambiguates_same_symbol(tmp_path):
+    """`alpha.ASym` names one module: the same short name elsewhere is not a problem."""
+    root = write_proj(
+        tmp_path,
+        {
+            "link.toml": SCAN_ALPHA_BETA,
+            "app.link": "use a := alpha.ASym\n",
+            "modules/alpha/alpha.link": "export ASym\neq ASym = id\n",
+            "modules/beta/beta.py": BETA_IMPL,
+        },
+    )
+    diags, code = run(root)
+    assert code == 0, [(d.code, d.message) for d in diags]
+    assert not [d for d in diags if d.code == "W012"]
+
+
+def test_link_declaration_plus_python_block_is_not_ambiguous(tmp_path):
+    """A `.link` declaration and its Python block are one symbol, not two implementations."""
+    root = write_proj(
+        tmp_path,
+        {
+            "link.toml": "[scan]\nroots = [\"app.link\", \"modules/alpha\"]\nexclude = []\n",
+            "app.link": "use a := alpha.ASym\n",
+            "modules/alpha/alpha.link": "export ASym\neq ASym = id\n",
+            "modules/alpha/impl.py": BETA_IMPL,
+        },
+    )
+    diags, code = run(root)
+    assert code == 0, [(d.code, d.message) for d in diags]
+    assert not [d for d in diags if d.code == "W012"]
+
+
+# ---------------------------------------------------------------- W011 上限（E011）
+
+WEAK_BLOCK = textwrap.dedent(
+    """\
+    # @link:block Fetch = Retrieve
+    def f(d):
+        return d.get("k")
+    """
+)
+
+
+def _debt_toml(limit: int | None) -> str:
+    if limit is None:
+        return WEAK_TOML
+    return WEAK_TOML + f"\n[arch]\nmax_weak_evidence = {limit}\n"
+
+
+def test_weak_evidence_ceiling_allows_baseline(tmp_path):
+    root = write_proj(tmp_path, {"link.toml": _debt_toml(1), "a.py": WEAK_BLOCK})
+    diags, code = run(root)
+    assert code == 0, [(d.code, d.message) for d in diags]
+    assert not [d for d in diags if d.code == "E011"]
+
+
+def test_weak_evidence_ceiling_fires_when_debt_grows(tmp_path):
+    """The ledger is machine-enforced: one more weak-only atom than the ceiling fails."""
+    root = write_proj(tmp_path, {"link.toml": _debt_toml(0), "a.py": WEAK_BLOCK})
+    diags, code = run(root)
+    assert code == 1
+    e011 = [d for d in diags if d.code == "E011"]
+    assert len(e011) == 1, [(d.code, d.message) for d in diags]
+    assert e011[0].level == "error"
+    assert "max_weak_evidence = 0" in e011[0].message
+
+
+def test_weak_evidence_ceiling_default_is_unlimited(tmp_path):
+    root = write_proj(tmp_path, {"link.toml": _debt_toml(None), "a.py": WEAK_BLOCK})
+    diags, code = run(root)
+    assert code == 0
+    assert not [d for d in diags if d.code == "E011"]
+
+
+def test_max_weak_evidence_is_parsed(tmp_path):
+    from logiclink.config import load_config
+    from pathlib import Path
+
+    root = write_proj(tmp_path, {"link.toml": "[arch]\nmax_weak_evidence = 6\n"})
+    assert load_config(Path(root)).arch.max_weak_evidence == 6

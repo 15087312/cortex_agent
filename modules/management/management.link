@@ -1,7 +1,9 @@
 # 治理模块：模块发现 = 遍历目录守卫 → 登记；状态收集 = 逐模块 → 守卫 → 读取聚合
 # 日志落库：写入 = 守卫 → 批量写；查询 = 守卫 → 读取
+# ModuleScan：只做目录存在性探测（os.path.isdir/exists）与内存登记，不读任何文件内容，
+# 故不声明 Retrieve；剩下的是逐目录循环 + 存在性分支。
 export ModuleScan
-eq ModuleScan = Loop(Guard · Retrieve)
+eq ModuleScan = Loop(Guard)
 
 export StatusCollect
 eq StatusCollect = Loop(Guard · Retrieve)

@@ -85,7 +85,7 @@ class MCPStdioTransport:
         self._connected = False
         self._loop: Optional[asyncio.AbstractEventLoop] = None
 
-    # @link:block StdioSubmit = Guard · Retrieve
+    # @link:block StdioSubmit = Guard
     def _submit_on_loop(self, coro_factory) -> Any:
         """把 session 调用提交回其绑定的常驻事件循环。
 
@@ -198,7 +198,7 @@ class MCPStdioTransport:
             logger.error(f"[MCP] call_tool 失败 {self.server_name}/{tool_name}: {e}")
             return {"isError": True, "content": [{"type": "text", "text": str(e)}]}
 
-    # @link:block StdioClose = Guard · Retrieve
+    # @link:block StdioClose = Guard
     async def close(self):
         """关闭连接，清理子进程和 session 资源"""
         self._connected = False
@@ -345,7 +345,7 @@ class MCPSseTransport:
             logger.error(f"[MCP-SSE] call_tool 失败 {self.server_name}/{tool_name}: {e}")
             return {"isError": True, "content": [{"type": "text", "text": str(e)}]}
 
-    # @link:block SseClose = Guard · Retrieve
+    # @link:block SseClose = Guard
     async def close(self):
         self._connected = False
         self._session = None
