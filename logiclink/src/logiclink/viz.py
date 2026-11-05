@@ -92,11 +92,11 @@ svg { display:block; width:100%; height:auto; touch-action:none; }
 """
 
 
-def _rel(p: str) -> str:
+def _rel(p: str | Path) -> str:
     try:
         return os.path.relpath(p)
     except ValueError:
-        return p
+        return str(p)
 
 
 def _collect(decls: list[Decl]) -> dict | None:
@@ -155,7 +155,7 @@ def _collect(decls: list[Decl]) -> dict | None:
             "file": eq_file.get(sym, _rel(dirs.get(mod, Path(".")) / "link")),
         }
 
-    chains = []
+    chains: list[dict] = []
     for d in decls:
         if d.kind != "eq" or not d.term_str:
             continue

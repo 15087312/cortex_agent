@@ -20,7 +20,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from . import ast_terms as T
-from .evidence import facts_of
+from .evidence import CodeFacts, facts_of
 from .parser import parse_term
 from .viz import _CSS
 from .viz_all import _module_map, _real_edges
@@ -80,18 +80,26 @@ def _block_span(text: str, lineno: int, funcs) -> tuple[int, int]:
     return lineno, lineno
 
 
-def _eq_of_block(name: str, atom: str | None, module: str, eq_index: dict[str, list[str]]) -> str | None:
-    """Block name like App_Think -> eq 'App'; fallback: module eq containing atom."""
+def _eq_of_block(
+    name: str, atom: str | None, module: str, eq_index: dict[str, dict[str, list[str]]]
+) -> str | None:
+    """Block name like App_Think -> eq 'App'; fallback: module eq containing atom.
+
+    The fallback used to be a no-op loop (``if atom in eq_index[module]: pass``)
+    that always returned None, so a block whose name does not mirror its eq never
+    joined a group.  Match the atom against each eq's parsed atom list instead.
+    """
+    module_eqs = eq_index.get(module, {})
     if "_" in name:
         prefix = name.split("_")[0]
-        if prefix in eq_index.get(module, []):
+        if prefix in module_eqs:
             return prefix
-    if name in eq_index.get(module, []):
+    if name in module_eqs:
         return name
     if atom:
-        for eqn in eq_index.get(module, []):
-            if atom in eq_index[module]:
-                pass
+        for eqn, atoms in module_eqs.items():
+            if atom in atoms:
+                return eqn
     return None
 
 
@@ -133,7 +141,7 @@ def collect_detail(decls, cfg, root: Path) -> dict:
 
     # blocks
     blocks: list[dict] = []
-    file_cache: dict[str, tuple[str, object]] = {}
+    file_cache: dict[str, tuple[str, CodeFacts]] = {}
     for d in decls:
         if d.kind != "block":
             continue
@@ -149,7 +157,7 @@ def collect_detail(decls, cfg, root: Path) -> dict:
         calls = [name for ln, name in facts.calls if start <= ln <= end]
         imports = [name for ln, name in facts.imports if start <= ln <= end]
         atom = d.term_str
-        eqn = _eq_of_block(d.name, atom, mod, {m: list(eq_index[m].keys()) for m in eq_index})
+        eqn = _eq_of_block(d.name, atom, mod, eq_index)
         blocks.append({
             "name": d.name, "atom": atom, "module": mod, "path": d.path,
             "line": start, "end": end, "calls": calls[:12], "imports": imports[:8],
@@ -230,12 +238,12 @@ def collect_detail(decls, cfg, root: Path) -> dict:
 # ---------------------------------------------------------------- L1 layout
 
 def _l1_layout(mods, real, mod_edges) -> tuple[list[dict], list[dict], int, int]:
-    ind = defaultdict(int)
-    outd = defaultdict(int)
+    ind: dict[str, int] = defaultdict(int)
+    outd: dict[str, int] = defaultdict(int)
     for (a, b) in real:
         outd[a] += 1
         ind[b] += 1
-    layers = {0: [], 1: [], 2: []}
+    layers: dict[int, list[str]] = {0: [], 1: [], 2: []}
     for long, m in mods.items():
         if outd.get(long, 0) >= 5:
             layers[0].append(long)

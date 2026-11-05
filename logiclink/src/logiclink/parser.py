@@ -255,7 +255,7 @@ class _Parser:
                 args += (("type", ty.text),)
             self.expect("RPAREN")
             return T.Atom(name, args)
-        args: tuple = ()
+        args = ()
         if self.peek().kind == "LBRACK":
             self.next()
             args = self.parse_arglist()

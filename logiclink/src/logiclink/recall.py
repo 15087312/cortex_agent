@@ -68,10 +68,10 @@ def render_recall(blocks: list[tuple[str, str, int, int, str]], name: str | None
             counts[b[0]] = counts.get(b[0], 0) + 1
         if not counts:
             return "(no @link:block declarations found)\n"
-        lines = [f"{len(counts)} named blocks:"]
+        summary = [f"{len(counts)} named blocks:"]
         for n in sorted(counts):
-            lines.append(f"  {n:28s} x{counts[n]}")
-        return "\n".join(lines) + "\n"
+            summary.append(f"  {n:28s} x{counts[n]}")
+        return "\n".join(summary) + "\n"
 
     lines: list[str] = []
     hits = [b for b in blocks if b[0] == name]

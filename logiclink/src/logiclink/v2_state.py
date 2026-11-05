@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import ast
 import re
+from collections.abc import Sequence
 from pathlib import Path
 
 from .evidence import call_matches, facts_of
@@ -85,7 +86,7 @@ def _collect_machines(decls: list[Decl]) -> list[dict]:
     return machines
 
 
-def _module_root(link_path: str, roots: list[Path] = ()) -> Path:
+def _module_root(link_path: str, roots: Sequence[Path] = ()) -> Path:
     """The module directory a ``.link`` file speaks for.
 
     The declaration used to be bound to ``Path(link_path).parent``, so a machine
@@ -193,12 +194,12 @@ def _enum_sites(
                 continue
             if _dotted_tail(node.value) != enum:
                 continue
-            parent = parents.get(node)
+            owner = parents.get(node)
             is_target = (
-                (isinstance(parent, ast.Call) and node in parent.args)
-                or isinstance(parent, ast.keyword)
-                or (isinstance(parent, ast.Assign) and node is parent.value)
-                or (isinstance(parent, ast.AnnAssign) and node is parent.value)
+                (isinstance(owner, ast.Call) and node in owner.args)
+                or isinstance(owner, ast.keyword)
+                or (isinstance(owner, ast.Assign) and node is owner.value)
+                or (isinstance(owner, ast.AnnAssign) and node is owner.value)
             )
             member = _snake(node.attr)
             referenced.add(member)
@@ -208,7 +209,7 @@ def _enum_sites(
     return referenced, targeted, sites
 
 
-def check_state(decls: list[Decl], roots: list[Path] = ()) -> list[tuple]:
+def check_state(decls: list[Decl], roots: Sequence[Path] = ()) -> list[tuple]:
     machines = _collect_machines(decls)
     if not machines:
         return []
@@ -232,10 +233,10 @@ def check_state(decls: list[Decl], roots: list[Path] = ()) -> list[tuple]:
         module_dir = _module_root(decl.path, roots)
 
         if enum:
-            _referenced, targeted, sites = _enum_sites(module_dir, enum)
+            _referenced, targeted, enum_sites = _enum_sites(module_dir, enum)
             events_called = _calls_in(module_dir)
             # E401: any referenced member must exist in the machine.
-            for (fpath, fline, member, _is_target) in sites:
+            for (fpath, fline, member, _is_target) in enum_sites:
                 if member in states:
                     continue
                 diags.append(
@@ -251,7 +252,7 @@ def check_state(decls: list[Decl], roots: list[Path] = ()) -> list[tuple]:
                     )
                 )
             # E403: a state the code *sets* must be reachable by a declaration.
-            for (fpath, fline, member, is_target) in sites:
+            for (fpath, fline, member, is_target) in enum_sites:
                 if not is_target or member not in states:
                     continue
                 if member != init and member not in to_states:
@@ -270,9 +271,9 @@ def check_state(decls: list[Decl], roots: list[Path] = ()) -> list[tuple]:
                     )
             implemented = targeted
         else:
-            events_called, _literals, sites = _scan_module(module_dir)
+            events_called, _literals, lit_sites = _scan_module(module_dir)
             implemented = set()
-            for (fpath, fline, lit) in sites:
+            for (fpath, fline, lit) in lit_sites:
                 if lit not in states:
                     diags.append(
                         (
@@ -299,7 +300,7 @@ def check_state(decls: list[Decl], roots: list[Path] = ()) -> list[tuple]:
                             "L4 state machine: reached states must be reachable by a declared transition",
                         )
                     )
-            implemented = {lit for (_p, _l, lit) in sites}
+            implemented = {lit for (_p, _l, lit) in lit_sites}
 
         # E402: every declared transition must be implemented -- either the event
         # is a real call, or the target state is reached by a real site.

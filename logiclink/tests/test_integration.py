@@ -567,3 +567,37 @@ def test_use_module_segment_must_name_a_declaration_not_a_bare_atom(tmp_path):
     assert code == 1
     e005 = [d for d in diags if d.code == "E005"]
     assert e005 and "only an atom" in e005[0].message, [(d.code, d.message) for d in diags]
+
+
+# ---------------------------------------------------------------- config validation
+
+def test_invalid_arch_int_fails_cleanly(tmp_path):
+    from logiclink.config import ConfigError, load_config
+    from pathlib import Path
+
+    root = write_proj(tmp_path, {"link.toml": '[arch]\nmax_weak_evidence = "6"\n'})
+    try:
+        load_config(Path(root))
+    except ConfigError as exc:
+        assert "max_weak_evidence" in str(exc)
+    else:  # pragma: no cover - the assertion above is the test
+        raise AssertionError("string max_weak_evidence should be rejected")
+
+
+def test_negative_arch_int_fails_cleanly(tmp_path):
+    from logiclink.config import ConfigError, load_config
+    from pathlib import Path
+
+    root = write_proj(tmp_path, {"link.toml": "[arch]\nmax_complexity = -5\n"})
+    try:
+        load_config(Path(root))
+    except ConfigError as exc:
+        assert "max_complexity" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("negative max_complexity should be rejected")
+
+
+def test_cli_reports_invalid_config_with_exit_2(tmp_path, capsys):
+    root = write_proj(tmp_path, {"link.toml": "[arch]\nmax_complexity = true\n"})
+    assert cli_main([root]) == 2
+    assert "invalid link.toml" in capsys.readouterr().err

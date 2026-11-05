@@ -9,7 +9,7 @@ from pathlib import Path
 
 from . import ast_terms as T
 from .check import run
-from .config import load_config
+from .config import ConfigError, load_config
 
 
 def _render_text(diags, root: Path) -> str:
@@ -59,7 +59,11 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     root = Path(args.path).resolve()
-    cfg = load_config(root)
+    try:
+        cfg = load_config(root)
+    except ConfigError as exc:
+        print(f"logiclink: invalid link.toml: {exc}", file=sys.stderr)
+        return 2
 
     if args.explain:
         from .collect import collect

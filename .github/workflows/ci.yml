@@ -58,6 +58,13 @@ jobs:
           python -m pip install mypy types-PyYAML types-requests
           python -m mypy modules/ infra/ config/ utils/ api/
 
+      # logiclink 类型门禁：单独一步，18 个源文件 0 error（不改变主工程路径）
+      - name: Type check (logiclink)
+        shell: bash
+        run: |
+          python -m pip install mypy
+          python -m mypy logiclink/src/
+
       # 逻辑链接检查门禁：logiclink --strict 全绿；不带 --allow-arch，E305 基线漂移必须失败
       - name: Logic link check (logiclink)
         shell: bash

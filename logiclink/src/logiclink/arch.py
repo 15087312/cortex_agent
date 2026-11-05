@@ -88,20 +88,22 @@ def save_baseline(root: Path, payload: dict) -> tuple[Path, int]:
     """Write the baseline; returns (path, number of recorded names)."""
     path = baseline_path(root)
     path.parent.mkdir(parents=True, exist_ok=True)
-    body = {
-        "version": _VERSION,
-        **{kind: dict(sorted((payload.get(kind) or {}).items())) for kind in _KINDS},
+    recorded: dict[str, dict] = {
+        kind: dict(sorted((payload.get(kind) or {}).items())) for kind in _KINDS
     }
+    body: dict[str, object] = {"version": _VERSION, **recorded}
     path.write_text(json.dumps(body, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    return path, sum(len(body[kind]) for kind in _KINDS)
+    return path, sum(len(names) for names in recorded.values())
 
 
 def diff(old: dict, new: dict) -> list[tuple[str, str, str]]:
     """``(kind, name, change)`` for every added / removed / changed declaration."""
     changes: list[tuple[str, str, str]] = []
     for kind in _KINDS:
-        before = old.get(kind) if isinstance(old.get(kind), dict) else {}
-        after = new.get(kind) if isinstance(new.get(kind), dict) else {}
+        raw_before = old.get(kind)
+        raw_after = new.get(kind)
+        before: dict = raw_before if isinstance(raw_before, dict) else {}
+        after: dict = raw_after if isinstance(raw_after, dict) else {}
         for name in sorted(set(before) | set(after)):
             if name not in before:
                 changes.append((kind, name, "added"))

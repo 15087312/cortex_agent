@@ -557,8 +557,18 @@ think 的 `Write` 也被“别处的消费”掩蔽了。
     `test_weak_evidence_ceiling_default_is_unlimited` /
     `test_max_weak_evidence_is_parsed`；
   - `test_config_wiring.py` 自动要求新字段被 `check.py` 引用。
+- **检查器卫生（2026-11-05 收尾）**：
+  - `logiclink/src` 纳入独立 CI 类型门禁（18 文件 0 error；主工程 mypy 路径不变）；
+  - `[arch] max_complexity` / `max_weak_evidence` 增加类型与范围校验：bool / str / float /
+    负数在加载时报 `ConfigError`，CLI 以 exit 2 输出 `invalid link.toml: ...`，不再抛裸
+    traceback，也不再让负数静默等于“不设限”；
+  - `viz_detail._eq_of_block` 的原子回退原是死循环（永远返回 None），改为真实匹配
+    eq 的原子列表——block 名不镜像 eq 名时也能归组；
+  - 新增 `tests/test_viz.py`：分层阈值、模块发现、block 跨度、eq 归组与 `_rel` 的纯函数断言，
+    HTML 渲染不再只有“文件存在”冒烟。
 - **验收**：`logiclink .`、`--strict`、`--strict-warnings` 三种调用均 exit 0 且输出
-  `logiclink: ok (6 info)`；`logiclink/tests` 111 → 118。
+  `logiclink: ok (6 info)`；`logiclink/tests` 111 → 136 passed；`mypy logiclink/src` 0 error；
+  `ruff check` clean。
 
 ## 八、待决策
 

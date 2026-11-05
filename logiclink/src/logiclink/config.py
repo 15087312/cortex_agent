@@ -7,6 +7,26 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
+class ConfigError(ValueError):
+    """A ``link.toml`` value has the wrong type or range."""
+
+
+def _arch_int(arch: dict, key: str, default: int, *, minimum: int = -1) -> int:
+    """Read an ``[arch]`` integer, rejecting bools/floats/strings and negatives.
+
+    ``int("abc")`` used to escape ``load_config`` as a raw traceback; ``-5``
+    silently meant "no gate" while the knob claimed to be on.  Both are config
+    errors, not runtime states.  ``bool`` is an ``int`` subclass in Python, so
+    ``max_complexity = true`` would otherwise become 1 -- reject it too.
+    """
+    raw = arch.get(key, default)
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        raise ConfigError(f"[arch] {key} must be an integer, got {raw!r}")
+    if raw < minimum:
+        raise ConfigError(f"[arch] {key} must be >= {minimum}, got {raw}")
+    return raw
+
+
 @dataclass
 class AtomRule:
     calls: list[str] = field(default_factory=list)
@@ -111,8 +131,8 @@ def load_config(start: Path) -> Config:
     # 加载架构约束
     arch = data.get("arch", {})
     cfg.arch.forbid_eq_change = bool(arch.get("forbid_eq_change", False))
-    cfg.arch.max_complexity = int(arch.get("max_complexity", -1))
-    cfg.arch.max_weak_evidence = int(arch.get("max_weak_evidence", -1))
+    cfg.arch.max_complexity = _arch_int(arch, "max_complexity", -1)
+    cfg.arch.max_weak_evidence = _arch_int(arch, "max_weak_evidence", -1)
     allowed = arch.get("allow_cycles", [])
     if isinstance(allowed, list):
         cfg.arch.allow_cycles = [

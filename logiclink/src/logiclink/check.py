@@ -401,14 +401,14 @@ def run(
         d = b.decl
         if d.hook_file is None:
             continue
-        target = (root / d.hook_file).resolve()
-        if not target.is_file():
+        hook_path = (root / d.hook_file).resolve()
+        if not hook_path.is_file():
             diags.append(
                 Diagnostic("E006", "error", f"block `{d.name}` hook file not found: {d.hook_file}", d.path, d.line, d.col)
             )
             continue
         if d.hook_fn is not None:
-            facts = facts_of(target.read_text(encoding="utf-8"))
+            facts = facts_of(hook_path.read_text(encoding="utf-8"))
             if all(f.name != d.hook_fn for f in facts.funcs):
                 diags.append(
                     Diagnostic(
@@ -588,6 +588,9 @@ def _check_composition(blocks: list[Block], resolve, cfg: Config, eq_names: set[
                 children.append(c)
         if not children or all(c is parent for c in children):
             continue
+        # Participants always carry an effective term (see the assignment loop
+        # above); assert it so mypy can narrow without a redundant fallback.
+        assert parent.eff is not None
         parent_n = T.normalize(parent.eff, resolve)
         combo_n = T.normalize(_combo(children), resolve)
         if T.equal(parent.eff, _combo(children), resolve, cfg.tool_wildcard):

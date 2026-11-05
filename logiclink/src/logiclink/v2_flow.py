@@ -93,6 +93,8 @@ def check_flow(decls: list[Decl]) -> list[tuple]:
     pair_source: dict[tuple[str, str], Decl] = {}
     chain_modules: set[str] = set()
     for d in chain_decls:
+        if not d.term_str:
+            continue
         try:
             term = parse_term(d.term_str)
         except Exception:
@@ -162,6 +164,8 @@ def check_flow(decls: list[Decl]) -> list[tuple]:
     reported: set[tuple[str, str]] = set()
     produced_to_caller: dict[str, set[str]] = {}
     for d in chain_decls:
+        if not d.term_str:
+            continue
         try:
             term = parse_term(d.term_str)
         except Exception:

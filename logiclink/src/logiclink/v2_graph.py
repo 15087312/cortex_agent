@@ -27,6 +27,7 @@ when both directions existed, neither diagnostic fired.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 
 from . import ast_terms as T
@@ -63,7 +64,7 @@ def _symbol_decl(decls: list[Decl], module: str, symbol: str) -> Decl | None:
 
 
 def _module_dirs(
-    decls: list[Decl], use_target: dict[str, str], roots: list[Path] = ()
+    decls: list[Decl], use_target: dict[str, str], roots: Sequence[Path] = ()
 ) -> dict[str, Path]:
     """module-name -> module directory.
 
@@ -173,7 +174,7 @@ def _declared_edges(decls: list[Decl], use_target: dict[str, str]) -> tuple[set[
 
 
 def _resolve_edges(
-    decls: list[Decl], use_target: dict[str, str], roots: list[Path] = ()
+    decls: list[Decl], use_target: dict[str, str], roots: Sequence[Path] = ()
 ) -> tuple[set[tuple[str, str]], set[tuple[str, str]], dict[tuple[str, str], Decl], dict[tuple[str, str], tuple[str, int]]]:
     dirs = _module_dirs(decls, use_target, roots)
     declared, dsource = _declared_edges(decls, use_target)
@@ -293,7 +294,7 @@ def _cycle_edges(real: set[tuple[str, str]], allow_cycles=()) -> dict[tuple[str,
     return out
 
 
-def check_graph(decls: list[Decl], allow_cycles=(), roots: list[Path] = ()) -> list[tuple]:
+def check_graph(decls: list[Decl], allow_cycles=(), roots: Sequence[Path] = ()) -> list[tuple]:
     use_target = {d.name: (d.term_str or "") for d in decls if d.kind == "use" and d.op == ":="}
     if not use_target:
         return []
@@ -332,8 +333,8 @@ def check_graph(decls: list[Decl], allow_cycles=(), roots: list[Path] = ()) -> l
         )
 
     for (ma, mb) in sorted(declared):
-        src = dsource.get((ma, mb))
-        if src is None:
+        decl_src = dsource.get((ma, mb))
+        if decl_src is None:
             continue
         if (mb, ma) in real and (ma, mb) not in real:
             diags.append(
@@ -342,9 +343,9 @@ def check_graph(decls: list[Decl], allow_cycles=(), roots: list[Path] = ()) -> l
                     "error",
                     f"declared wiring {ma} → {mb} is opposite to the real dependency "
                     f"(real code imports {mb} → {ma})",
-                    src.path,
-                    src.line,
-                    src.col,
+                    decl_src.path,
+                    decl_src.line,
+                    decl_src.col,
                     "L3 call graph: declared direction must match real calls",
                 )
             )
@@ -355,9 +356,9 @@ def check_graph(decls: list[Decl], allow_cycles=(), roots: list[Path] = ()) -> l
                     "error",
                     f"declared wiring {ma} → {mb} has no real call: "
                     f"no file in the {ma} module imports the {mb} module",
-                    src.path,
-                    src.line,
-                    src.col,
+                    decl_src.path,
+                    decl_src.line,
+                    decl_src.col,
                     "L3 call graph: declared edges must exist in real code",
                 )
             )
@@ -394,7 +395,7 @@ def check_graph(decls: list[Decl], allow_cycles=(), roots: list[Path] = ()) -> l
 
 
 def render_graph(
-    decls: list[Decl], drift_only: bool = False, allow_cycles=(), roots: list[Path] = ()
+    decls: list[Decl], drift_only: bool = False, allow_cycles=(), roots: Sequence[Path] = ()
 ) -> str:
     """Mermaid ``flowchart LR`` of declared vs real edges between wired modules."""
     use_target = {d.name: (d.term_str or "") for d in decls if d.kind == "use" and d.op == ":="}
