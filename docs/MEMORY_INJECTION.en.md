@@ -238,7 +238,7 @@ else:                           # new session (e.g. just sent "1") → no event 
 
 ## 10. Blackboard Shared-Memory Fix (Role Alias)
 
-> Archived to section 16 of `docs/ERRORS_AND_FIXES.md`; this document keeps the original context.
+> Archived to §16 of [`docs/bugfixes/02-backend-memory.en.md`](./bugfixes/02-backend-memory.en.md); this document keeps the original context.
 
 **Problem**: `TurnContext.view(role)` filters by `role in target_roles`, while in `continuous_thinker._build_prompt`
 `role = getattr(self, '_role', 'orchestrator')` is always **'orchestrator'**. But most fragments (collaboration context /

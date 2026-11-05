@@ -3,7 +3,7 @@
 **Language / 语言**: [简体中文](./MEMORY_LEAK_TESTING.md) | [English](./MEMORY_LEAK_TESTING.en.md)
 
 > 本文档记录项目的内存泄漏**检测机制**、**泄漏测试套件**、**运行方法与配置**。
-> 相关 bug 修复见 `docs/ERRORS_AND_FIXES.md` §30/32/35/36/37。
+> 相关 bug 修复见 [`docs/bugfixes/08-testing-ci.md`](./bugfixes/08-testing-ci.md) §30/32/35/36/37。
 
 ## 一、体系总览（三层 + 覆盖证明）
 
@@ -74,6 +74,21 @@
 
 - 全部标记 `pytestmark = pytest.mark.leak`，**默认被 deselected**（不进入正常套件）
 - 运行验证：`python scripts/verify_leak_detection.py`（每个文件独立进程，断言输出 `⚠ 疑似内存泄漏`）
+
+**内存安全回归（断言有界，检测器不得报警）** — 与上面的「故意泄漏」相反，这些文件
+直接断言真实代码的资源/对象有界，误报即说明检测阈值或实现有问题：
+
+| 文件 | 保护对象 |
+|---|---|
+| `test_leak_blackboard_state.py` | 委托链上限 / 黑板观察有界 |
+| `test_leak_client_rebuild.py` | client 重建时 session 关闭 |
+| `test_leak_conscience_dialogs.py` | 心理活动缓存有界 |
+| `test_leak_todo_persistence.py` | todo 持久化不累积 |
+| `test_leak_pet_loop.py` | 桌宠持续循环空拍退避有界（§103） |
+| `test_leak_frontend_proxy.py` | SSE 代理每请求「上游连接 + 读线程 + 队列」有界（§103.1） |
+| `test_leak_viz_events.py` | 事件表 seq 计数器 / 投影单行覆盖 / 待办表清理有界 |
+
+`scripts/verify_leak_detection.py` 的 `SAFETY_ONLY` 维护这份清单（阈值 500 KiB/测试）。
 
 ## 四、定位工具（scripts/leak_check.py）
 

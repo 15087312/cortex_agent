@@ -310,7 +310,7 @@ cd frontend && npm test
 - **MCP 生命周期**：独立热插拔（`remove_server`/`replace_server`）+ 断线指数退避自动重连——对齐 dsh mcp-client。
 - **后台线程安全**：屏幕源/事件总线/语音检测等类级 `weakref` 注册表 + conftest 统一清理，杜绝测试随机挂起。
 - **隔离原则**：绝不触碰生产库（临时 SQLite + monkeypatch 单例）；重库加载放宽 timeout；禁 `except: pass` 吞错掩盖；测试假对象须与真实模型字段一致。
-- **Bug 记录**：`docs/ERRORS_AND_FIXES.md`（§1-38 含系统性模式审计）；内存安全体系见 `docs/MEMORY_LEAK_TESTING.md`。
+- **Bug 记录**：`docs/bugfixes/`（按模块拆分，§1-§103 含系统性模式审计，见 [总索引](docs/bugfixes/README.md)）；内存安全体系见 `docs/MEMORY_LEAK_TESTING.md`。
 
 ---
 
@@ -375,7 +375,7 @@ PyInstaller 产出**单个启动文件**（`pyinstaller pyinstaller.spec --clean
 | [docs/THINKING_ARCHITECTURE.md](docs/THINKING_ARCHITECTURE.md) | 思考模块内部架构（双层 ReAct 循环） |
 | [docs/MEMORY_INJECTION.md](docs/MEMORY_INJECTION.md) | 记忆系统与注入链路 |
 | [docs/CONFIG_VALUE_EVOLUTION.md](docs/CONFIG_VALUE_EVOLUTION.md) | 价值观进化配置 |
-| [docs/ERRORS_AND_FIXES.md](docs/ERRORS_AND_FIXES.md) | 错误原因与修复记录（§1-§27，含假测试/安全/覆盖修复经验） |
+| [docs/bugfixes/README.md](docs/bugfixes/README.md) | 错误原因与修复记录总索引（按模块拆分，§1-§103，含假测试/安全/覆盖修复经验） |
 | [frontend/ARCHITECTURE.md](frontend/ARCHITECTURE.md) | 前端架构 |
 | [frontend/README.md](frontend/README.md) | 前端使用/开发 |
 

@@ -234,7 +234,7 @@ else:                           # 新会话（如只发"1"）→ 不注入事件
 
 ## 十、黑板共享记忆修复（角色别名）
 
-> 已归档至 `docs/ERRORS_AND_FIXES.md` 第 16 节，本文档保留原始上下文。
+> 已归档至 [`docs/bugfixes/02-backend-memory.md`](./bugfixes/02-backend-memory.md) §16，本文档保留原始上下文。
 
 **问题**：`TurnContext.view(role)` 按 `role in target_roles` 过滤，而 `continuous_thinker._build_prompt` 里
 `role = getattr(self, '_role', 'orchestrator')` 恒为 **'orchestrator'**。但大部分片段（协作上下文/委托状态/

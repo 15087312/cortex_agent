@@ -310,7 +310,7 @@ The **module coverage manifest** proves that all production modules (including t
 - **MCP lifecycle**: independent hot-plugging (`remove_server`/`replace_server`) + automatic reconnection with exponential backoff — aligned with the dsh mcp-client.
 - **Background thread safety**: class-level `weakref` registries for screen sources/event buses/voice detection + unified conftest cleanup, eliminating random test hangs.
 - **Isolation principle**: never touch production databases (temporary SQLite + monkeypatched singletons); relaxed timeouts when loading heavy libraries; `except: pass` error swallowing forbidden; test fakes must match real model fields.
-- **Bug log**: `docs/ERRORS_AND_FIXES.md` (§1-38, including systematic pattern audits); see `docs/MEMORY_LEAK_TESTING.md` for the memory-safety framework.
+- **Bug log**: [docs/bugfixes/](docs/bugfixes/README.en.md) (split by module, §1-§103 including systematic pattern audits); see `docs/MEMORY_LEAK_TESTING.en.md` for the memory-safety framework.
 
 ---
 
@@ -376,7 +376,7 @@ The client bundles the Vue build output `frontend/dist` (run `cd frontend && npm
 | [docs/THINKING_ARCHITECTURE.en.md](docs/THINKING_ARCHITECTURE.en.md) | Thinking module internals (dual-layer ReAct loop) |
 | [docs/MEMORY_INJECTION.en.md](docs/MEMORY_INJECTION.en.md) | Memory system and injection pipeline |
 | [docs/CONFIG_VALUE_EVOLUTION.en.md](docs/CONFIG_VALUE_EVOLUTION.en.md) | Value-evolution configuration |
-| [docs/ERRORS_AND_FIXES.en.md](docs/ERRORS_AND_FIXES.en.md) | Error causes and fix records (§1-§27, incl. fake-test/security/coverage lessons) |
+| [docs/bugfixes/README.en.md](docs/bugfixes/README.en.md) | Error log and fix records index (split by module, §1-§103, incl. fake-test/security/coverage lessons) |
 | [frontend/ARCHITECTURE.en.md](frontend/ARCHITECTURE.en.md) | Frontend architecture |
 | [frontend/README.en.md](frontend/README.en.md) | Frontend usage/development |
 

@@ -3,7 +3,7 @@
 **Language**: [English](./MEMORY_LEAK_TESTING.en.md) | [简体中文](./MEMORY_LEAK_TESTING.md)
 
 > This document records the project's memory leak **detection mechanisms**, **leak test suite**, and **how to run and configure them**.
-> For related bug fixes see `docs/ERRORS_AND_FIXES.md` §30/32/35/36/37.
+> For related bug fixes see [`docs/bugfixes/08-testing-ci.en.md`](./bugfixes/08-testing-ci.en.md) §30/32/35/36/37.
 
 ## 1. System Overview (Three Layers + Coverage Proof)
 
@@ -74,6 +74,22 @@ Output entry point: `pytest_sessionfinish` (displays reliably after capture rele
 
 - All marked with `pytestmark = pytest.mark.leak`, **deselected by default** (not part of the normal suite)
 - Run verification: `python scripts/verify_leak_detection.py` (each file in an independent process, asserting the output contains `⚠ suspected memory leak`)
+
+**Memory-safety regressions (bounded; the detector must not alert)** — the opposite of the
+deliberate leaks above: these assert real code stays bounded, so a false alarm means the
+threshold or the implementation is wrong:
+
+| File | What it protects |
+|---|---|
+| `test_leak_blackboard_state.py` | Delegation-chain cap / bounded blackboard observations |
+| `test_leak_client_rebuild.py` | Session closed when the client is rebuilt |
+| `test_leak_conscience_dialogs.py` | Bounded mental-activity cache |
+| `test_leak_todo_persistence.py` | Todo persistence does not accumulate |
+| `test_leak_pet_loop.py` | Bounded idle backoff in the continuous pet loop (§103) |
+| `test_leak_frontend_proxy.py` | Per-request “upstream connection + reader thread + queue” bounded in the SSE proxy (§103.1) |
+| `test_leak_viz_events.py` | Event-log seq counters / single-row projection upsert / pending-table cleanup bounded |
+
+`SAFETY_ONLY` in `scripts/verify_leak_detection.py` maintains this list (500 KiB/test threshold).
 
 ## 4. Investigation Tools (scripts/leak_check.py)
 
