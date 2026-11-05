@@ -27,7 +27,10 @@ from infra.watchdog import enable as _enable_orphan_watchdog
 try:
     _enable_orphan_watchdog()
 except Exception as _swallowed_err:
-    logger.debug(f"[module] ignored Exception: {_swallowed_err}")
+    # logger 在文件下方才初始化（依赖 config.settings）。这里直接引用它会抛
+    # NameError，把真正的 watchdog 故障掩盖掉，所以异常分支必须自足。
+    import logging as _logging
+    _logging.getLogger("api_main").debug("[module] ignored Exception: %s", _swallowed_err)
 from infra.data_process.api import router as data_process_router
 from infra.tool_manager.api import router as tool_router
 from modules.thinking.chat_gateway import router as stream_router
