@@ -54,7 +54,7 @@ async def test_chatonly_ws_input_ping_stop(monkeypatch):
     ])
     monkeypatch.setattr(cg, "_consume_turn", AsyncMock())
 
-    async def fake_think(sid, content, queue):
+    async def fake_think(sid, content, queue, **kwargs):
         await queue.put({"type": "done"})
     # 覆盖 _consume_turn 被替换，无需 thinker
     await cg._chatonly_ws(ws, "s1")
@@ -113,7 +113,7 @@ async def test_chatonly_ws_stop_cancels_active(monkeypatch):
         json.dumps({"type": "stop"}),
     ])
 
-    async def fake_consume(websocket, sid, r, thinker, content):
+    async def fake_consume(websocket, sid, r, thinker, content, **kwargs):
         await asyncio.sleep(5)
 
     monkeypatch.setattr(cg, "_consume_turn", fake_consume)
@@ -127,7 +127,7 @@ async def test_chatonly_sse_errored_finish(monkeypatch):
     repo = _noop(monkeypatch)
     thinker = MagicMock()
 
-    async def fake_think(sid, content, queue):
+    async def fake_think(sid, content, queue, **kwargs):
         pass  # 任务直接结束且无 token → errored
 
     thinker.think = fake_think
@@ -141,7 +141,7 @@ async def test_chatonly_sse_timeout(monkeypatch):
     repo = _noop(monkeypatch)
     thinker = MagicMock()
 
-    async def fake_think(sid, content, queue):
+    async def fake_think(sid, content, queue, **kwargs):
         await asyncio.sleep(30)
 
     thinker.think = fake_think

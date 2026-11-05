@@ -42,8 +42,6 @@ function mockApi(cfg = {}) {
     { match: '/api/management/vision-models', data: cfg.visionModels || { success: true, data: { models: ['mlx'], dir: '/tmp/models' } } },
     { match: '/api/management/install-voice-deps', data: { success: true, data: { message: '已安装' } } },
     { match: '/api/management/open-folder', data: (u, init) => { writes.push({ url: String(u), method: init?.method, body: JSON.parse(init.body) }); return { success: true } } },
-    { match: '/api/stream/pet/state/reset', data: (u, init) => { writes.push({ url: String(u), method: init?.method }); return { success: true, data: { values: { mood: 80 } } } } },
-    { match: '/api/stream/pet/state', data: { success: true, data: { values: { mood: 50, satiety: 60, energy: 70, cleanliness: 80 }, text: '心情不错' } } },
     // ── 第三方许可（默认走 /api/ 冗余 → content 为空 → licensesMissing 兑底）──
     { match: '/api/system/licenses', data: (u, init) => (cfg.licenses !== undefined ? cfg.licenses : { success: true, data: {} }) },
     { match: '/api/health', data: { success: true, data: { version: __APP_VERSION__ } } },
@@ -231,42 +229,6 @@ describe('Settings.vue', () => {
     await w.vm.checkUpdates()
     await new Promise((r) => setTimeout(r, 30))
     expect(w.vm.checkingUpdate).toBe(false)
-  })
-
-  it('加载桌宠状态并重置', async () => {
-    mockApi()
-    const w = await mountSettings()
-    await new Promise((r) => setTimeout(r, 30))
-    expect(w.vm.petState.mood).toBe(50)
-    await w.vm.resetPetState()
-    await new Promise((r) => setTimeout(r, 20))
-    expect(w.vm.petState.mood).toBe(80)
-  })
-
-  it('桌宠状态板数值渲染文本（mood/satiety/energy/cleanliness 展示值断言）', async () => {
-    mockApi()
-    const w = await mountSettings()
-    // 状态板在「感知」tab 的桌面宠物分组下
-    await w.findAll('.settings-tab').find((t) => t.text() === '感知').trigger('click')
-    await new Promise((r) => setTimeout(r, 30))
-    // 断言四项 badge 展示值为 mood 50, satiety 60, energy 70, cleanliness 80
-    const badges = w.findAll('.setting-row .badge').filter((b) => /心情|饱食|精力|清洁/.test(b.text()))
-    expect(badges.length).toBe(4)
-    expect(badges[0].text()).toContain('心情 50')
-    expect(badges[1].text()).toContain('饱食 60')
-    expect(badges[2].text()).toContain('精力 70')
-    expect(badges[3].text()).toContain('清洁 80')
-    // stateText 展示
-    expect(w.find('.setting-hint-inline').text()).toBe('心情不错')
-  })
-
-  it('卸载时清理桌宠轮询定时器（防泄漏）', async () => {
-    mockApi()
-    const w = await mountSettings()
-    await new Promise((r) => setTimeout(r, 30))
-    expect(w.vm.petPollTimer).not.toBeNull()
-    w.unmount()
-    expect(w.vm.petPollTimer).toBeNull()
   })
 
   it('computed 配置包装：boolCfg 读写并持久化', async () => {
@@ -719,10 +681,6 @@ describe('Settings.vue', () => {
     // 切回本地（视觉后端，title 定位避免与语音本地按钮重名）→ 加载本地模型列表
     await w.findAll('button').find((b) => b.attributes('title') === '本地模型（自动检测）').trigger('click')
     expect(w.vm.visionBackend).toBe('local')
-    // 重置状态按钮
-    await w.findAll('button').find((b) => b.text().includes('重置状态')).trigger('click')
-    await new Promise((r) => setTimeout(r, 30))
-    expect(writes.some((x) => x.url.includes('pet/state/reset'))).toBe(true)
   })
 
   it('高级 tab：配置行编辑（editConfig + prompt）', async () => {

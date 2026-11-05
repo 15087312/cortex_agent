@@ -29,6 +29,8 @@ SAFETY_ONLY = {
     "test_leak_conscience_dialogs.py", # 心理活动缓存有界
     "test_leak_todo_persistence.py",   # todo 持久化不累积
     "test_leak_pet_loop.py",           # 桌宠持续循环空拍退避有界
+    "test_leak_frontend_proxy.py",     # SSE 代理每请求线程/上游连接有界
+    "test_leak_viz_events.py",         # 事件表/投影/待办表有界
 }
 ENV_DELIBERATE = {"LEAK_INTERVAL": "1", "LEAK_RATE_THRESHOLD": "50"}
 ENV_SAFETY = {"LEAK_INTERVAL": "1", "LEAK_RATE_THRESHOLD": "500"}
@@ -42,6 +44,8 @@ SAFETY_ONLY = {
     "test_leak_conscience_dialogs.py", # 心理活动缓存有界
     "test_leak_todo_persistence.py",   # todo 持久化不累积
     "test_leak_pet_loop.py",           # 桌宠持续循环空拍退避有界
+    "test_leak_frontend_proxy.py",     # SSE 代理每请求线程/上游连接有界
+    "test_leak_viz_events.py",         # 事件表/投影/待办表有界
 }
 ENV_DELIBERATE = {"LEAK_INTERVAL": "1", "LEAK_RATE_THRESHOLD": "50"}
 ENV_SAFETY = {"LEAK_INTERVAL": "1", "LEAK_RATE_THRESHOLD": "500"}

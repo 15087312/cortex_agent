@@ -126,7 +126,7 @@ async def test_consume_turn_message_flow(monkeypatch):
     repo.save_message = MagicMock(side_effect=lambda sid, role, c: f"id_{role}")
     thinker = MagicMock()
 
-    async def fake_think(sid, content, queue):
+    async def fake_think(sid, content, queue, **kwargs):
         await queue.put({"type": "message", "content": "你"})
         await queue.put({"type": "message", "content": "好"})
         await queue.put({"type": "thinking", "content": "思考中", "identity_name": "总指挥", "tier": "large"})
@@ -182,7 +182,7 @@ async def test_consume_turn_records_user_message_after_ack(monkeypatch):
     repo.save_message = MagicMock(return_value="m1")
     thinker = MagicMock()
 
-    async def fake_think(sid, content, queue):
+    async def fake_think(sid, content, queue, **kwargs):
         await queue.put({"type": "done"})
 
     thinker.think = fake_think
@@ -200,7 +200,7 @@ async def test_consume_turn_error_flow(monkeypatch):
     repo.save_message = MagicMock(return_value="m1")
     thinker = MagicMock()
 
-    async def fake_think(sid, content, queue):
+    async def fake_think(sid, content, queue, **kwargs):
         await queue.put({"type": "error", "content": "模型出错"})
 
     thinker.think = fake_think
@@ -227,7 +227,7 @@ async def test_chatonly_sse_flow(monkeypatch):
     monkeypatch.setattr(cg, "_get_chat_session_repo", lambda: repo)
     thinker = MagicMock()
 
-    async def fake_think(sid, content, queue):
+    async def fake_think(sid, content, queue, **kwargs):
         await queue.put({"type": "message", "content": "答案"})
         await queue.put({"type": "done"})
 
@@ -243,7 +243,7 @@ async def test_chatonly_sse_error(monkeypatch):
     monkeypatch.setattr(cg, "_get_chat_session_repo", lambda: repo)
     thinker = MagicMock()
 
-    async def fake_think(sid, content, queue):
+    async def fake_think(sid, content, queue, **kwargs):
         await queue.put({"type": "error", "content": "内部错误"})
 
     thinker.think = fake_think

@@ -228,14 +228,14 @@ async def _safe_ws_send(websocket: WebSocket, data: dict) -> bool:
 # ---------------------------------------------------------------------------
 # chatonly WebSocket — 简单路线
 # ---------------------------------------------------------------------------
-
-# @link:block ChatOnly_Turn = Loop(Retrieve · Guard · Write · Emit)
+# @link:block ChatOnly_Turn = Retrieve · Guard · Think · Loop(Retrieve · Guard · Write · Emit)
 async def _consume_turn(
     websocket: WebSocket,
     session_id: str,
     repo,
     thinker,
     content: str,
+    web_search: bool = False,
 ) -> None:
     """消费一次思考回合：把 backend 简单事件翻译成统一 envelope 流式输出。
 
@@ -261,7 +261,7 @@ async def _consume_turn(
     except Exception as e:
         logger.debug(f"[chat_gateway] 对话握手失败 (非致命): {e}")
     think_task = asyncio.create_task(thinker.think(
-        session_id, content, queue,
+        session_id, content, queue, enable_web_search=web_search,
     ))
     full_text = []
     done = False
@@ -331,10 +331,21 @@ async def _consume_turn(
                 # deepseek 思考过程（reasoning）单独推送，与回复区分。
                 # 持久化 role="thought"（与 agent 模式 _persist_thought 一致），
                 # 切换会话后思考历史可恢复；上下文恢复按 user/assistant 过滤不污染模型。
+                # 同时写入会话事件日志（session_events），供仪表盘"会话轨迹"页按时间线回放。
                 _thought = tok.get("content", "")
                 if _thought:
                     try:
                         repo.save_message(session_id, "thought", _thought)
+                    except Exception as _swallowed_err:
+                        logger.debug(f"[_consume_turn] ignored Exception: {_swallowed_err}")
+                    try:
+                        from modules.database.session_events import get_session_event_repo
+                        get_session_event_repo().append(
+                            session_id, "thinking", "thinking_step", "thinking", _thought,
+                            data={"source": "reasoning",
+                                  "identity_name": tok.get("identity_name", "总指挥"),
+                                  "tier": tok.get("tier", "large")},
+                        )
                     except Exception as _swallowed_err:
                         logger.debug(f"[_consume_turn] ignored Exception: {_swallowed_err}")
                 if not await _safe_ws_send(websocket, _envelope(
@@ -346,11 +357,20 @@ async def _consume_turn(
                 )): pass
             elif tok.get("type") == "mental":
                 # 心理活动（conscience 内心独白）：持久化 role="mental"（与对话同款），
-                # 前端切换会话后历史可恢复；上下文恢复时按 role 过滤不污染模型输入
+                # 前端切换会话后历史可恢复；上下文恢复时按 role 过滤不污染模型输入。
+                # 同样写入会话事件日志，供仪表盘轨迹回放。
                 _mental = tok.get("content", "")
                 if _mental:
                     try:
                         repo.save_message(session_id, "mental", _mental)
+                    except Exception as _swallowed_err:
+                        logger.debug(f"[_consume_turn] ignored Exception: {_swallowed_err}")
+                    try:
+                        from modules.database.session_events import get_session_event_repo
+                        get_session_event_repo().append(
+                            session_id, "mental", "mental", "system", _mental,
+                            data={"label": "心理活动"},
+                        )
                     except Exception as _swallowed_err:
                         logger.debug(f"[_consume_turn] ignored Exception: {_swallowed_err}")
                 if not await _safe_ws_send(websocket, _envelope(
@@ -397,9 +417,16 @@ async def _consume_turn(
         )): pass
     # 失败/取消路径：只发过 error，不再发「处理完成」，避免语义矛盾
     if not errored:
-        if not await _safe_ws_send(websocket, 
+        if not await _safe_ws_send(websocket,
             _envelope(session_id, "done", "done", "处理完成", "system")
         ): pass
+        try:
+            from modules.database.session_events import get_session_event_repo
+            get_session_event_repo().append(
+                session_id, "done", "done", "system", "处理完成", data={},
+            )
+        except Exception as _swallowed_err:
+            logger.debug(f"[_consume_turn] ignored Exception: {_swallowed_err}")
 
 
 # @link:block ChatOnly_WS = Loop(Retrieve · Guard · Emit)
@@ -507,7 +534,7 @@ async def _chatonly_ws(websocket: WebSocket, session_id: str) -> None:
                 from modules.thinking.turn_images import set_turn_images
                 set_turn_images(att_images or None)
                 active_task = asyncio.create_task(
-                    _consume_turn(websocket, session_id, repo, _get_chat_thinker(), content)
+                    _consume_turn(websocket, session_id, repo, _get_chat_thinker(), content, web_search=bool(msg.get("web_search", False)))
                 )
                 # 注册到全局表，供 REST /stream/stop 跨连接取消
                 _CHATONLY_TASKS[session_id] = active_task

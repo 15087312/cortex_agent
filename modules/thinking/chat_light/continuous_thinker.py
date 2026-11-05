@@ -57,6 +57,7 @@ class ContinuousThinker:
         session_id: str,
         user_message: str,
         message_queue: asyncio.Queue,
+        enable_web_search: bool = False,
     ) -> None:
         """Main thinking entry point.
 
@@ -117,6 +118,38 @@ class ContinuousThinker:
                         system_prompt += f"\n\n【环境感知】\n{_frag.content}"
                 except Exception as e:
                     logger.debug(f"[ChatLight] 感知上下文收集失败: {e}")
+
+                # 3.7 联网搜索（可选）：纯对话模式按需搜索互联网，将结果注入模型上下文。
+                # 项目自带 web_search 工具（infra/tool_manager/tools/web_search.py），无需依赖模型 API 原生搜索。
+                if enable_web_search:
+                    try:
+                        from infra.tool_manager.tools import web_search as _ws_tool
+                        _res = await _ws_tool.web_search(user_message, limit=5, fetch_content=False)
+                        _results = _res.get("results") or []
+                        if _results:
+                            _ctx = "\n\n".join(
+                                f"- {r.get('title', '')}：{r.get('snippet', '')}\n  {r.get('url', '')}"
+                                for r in _results[:5]
+                            )
+                            system_prompt += (
+                                f"\n\n【联网搜索结果（来源 {_res.get('source', '')}，"
+                                f"共 {len(_results)} 条，请据此回答并标注来源）】\n{_ctx}"
+                            )
+                            message_queue.put_nowait({
+                                "type": "thinking",
+                                "content": f"【联网搜索】{user_message} → 找到 {len(_results)} 条结果",
+                                "identity_name": "总指挥",
+                                "tier": "large",
+                            })
+                        else:
+                            message_queue.put_nowait({
+                                "type": "thinking",
+                                "content": f"【联网搜索】{user_message} → 未找到结果",
+                                "identity_name": "总指挥",
+                                "tier": "large",
+                            })
+                    except Exception as e:
+                        logger.debug(f"[ChatLight] 联网搜索失败（忽略，不影响回答）: {e}")
 
                 # 4. Stream response
                 full_response = []

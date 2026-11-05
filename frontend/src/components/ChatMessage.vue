@@ -162,9 +162,9 @@ function submitIntent() {
       </div>
     </template>
 
-    <!-- 过程流面板（持久化的连续思考 + 调度语言 + 模型状态快照） -->
+    <!-- 过程流面板（DSH 式时间线：技能/思考/工具/完成 按时间串成一条线） -->
     <template v-else-if="kind === 'process'">
-      <ProcessPanel :content="message.content || ''" :runners="message.runners || null" :open="false" />
+      <ProcessPanel :trajectory="message.trajectory || null" :content="message.content || ''" :runners="message.runners || null" :open="false" />
     </template>
 
     <!-- 心理活动 -->

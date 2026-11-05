@@ -78,7 +78,7 @@ async def test_consume_turn_handshake_exception(monkeypatch):
     repo.save_message = MagicMock(side_effect=lambda sid, role, c: f"id_{role}")
     thinker = MagicMock()
 
-    async def fake_think(sid, content, queue):
+    async def fake_think(sid, content, queue, **kwargs):
         await queue.put({"type": "done"})
 
     thinker.think = fake_think
@@ -98,7 +98,7 @@ async def test_consume_turn_task_abort(monkeypatch):
     repo.save_message = MagicMock(return_value="m1")
     thinker = MagicMock()
 
-    async def fake_think(sid, content, queue):
+    async def fake_think(sid, content, queue, **kwargs):
         pass  # 直接返回，无 token
 
     thinker.think = fake_think
@@ -114,7 +114,7 @@ async def test_consume_turn_real_timeout(monkeypatch):
     repo.save_message = MagicMock(return_value="m1")
     thinker = MagicMock()
 
-    async def fake_think(sid, content, queue):
+    async def fake_think(sid, content, queue, **kwargs):
         await asyncio.sleep(30)
 
     thinker.think = fake_think
@@ -132,7 +132,7 @@ async def test_consume_turn_flush_and_token_heartbeat(monkeypatch):
     repo.save_message = MagicMock(side_effect=lambda sid, role, c: f"id_{role}")
     thinker = MagicMock()
 
-    async def fake_think(sid, content, queue):
+    async def fake_think(sid, content, queue, **kwargs):
         await queue.put({"type": "message", "content": "部"})
         await queue.put({"type": "done"})
 
@@ -155,7 +155,7 @@ async def test_consume_turn_streams_chunks_incrementally(monkeypatch):
     repo.save_message = MagicMock(side_effect=lambda sid, role, c: f"id_{role}")
     thinker = MagicMock()
 
-    async def fake_think(sid, content, queue):
+    async def fake_think(sid, content, queue, **kwargs):
         for _ in range(3):
             await queue.put({"type": "message", "content": "x" * 20})
         await queue.put({"type": "done"})
@@ -177,7 +177,7 @@ async def test_consume_turn_error_flush_and_cancel(monkeypatch):
     repo.save_message = MagicMock(return_value="m1")
     thinker = MagicMock()
 
-    async def fake_think(sid, content, queue):
+    async def fake_think(sid, content, queue, **kwargs):
         await queue.put({"type": "message", "content": "部"})
         await queue.put({"type": "error", "content": "模型失败"})
         await asyncio.sleep(30)
@@ -271,7 +271,7 @@ async def test_chatonly_ws_new_message_cancels_old(monkeypatch):
     _noop(monkeypatch)
     started = asyncio.Event()
 
-    async def slow_consume(websocket, sid, repo, thinker, content):
+    async def slow_consume(websocket, sid, repo, thinker, content, **kwargs):
         started.set()
         await asyncio.sleep(30)
 
@@ -334,7 +334,7 @@ async def test_chatonly_sse_heartbeat_and_timeout(monkeypatch):
     repo = _noop(monkeypatch)
     thinker = MagicMock()
 
-    async def fake_think(sid, content, queue):
+    async def fake_think(sid, content, queue, **kwargs):
         await asyncio.sleep(30)
 
     thinker.think = fake_think
@@ -721,7 +721,7 @@ async def test_consume_turn_thinking_mental_tokens(monkeypatch):
     repo.save_message = MagicMock(side_effect=lambda sid, role, c: f"id_{role}")
     thinker = MagicMock()
 
-    async def fake_think(sid, content, queue):
+    async def fake_think(sid, content, queue, **kwargs):
         await queue.put({"type": "thinking", "content": "思考", "identity_name": "x", "tier": "large"})
         await queue.put({"type": "mental", "content": "独白"})
         await queue.put({"type": "done"})
@@ -752,7 +752,7 @@ async def test_chatonly_ws_attachment_format_error(monkeypatch):
 async def test_chatonly_ws_stop_with_active_task(monkeypatch):
     _noop(monkeypatch)
 
-    async def slow_consume(websocket, sid, repo, thinker, content):
+    async def slow_consume(websocket, sid, repo, thinker, content, **kwargs):
         await asyncio.sleep(30)
 
     monkeypatch.setattr(cg, "_consume_turn", slow_consume)
@@ -770,7 +770,7 @@ async def test_chatonly_sse_message_done_flow(monkeypatch):
     repo = _noop(monkeypatch)
     thinker = MagicMock()
 
-    async def fake_think(sid, content, queue):
+    async def fake_think(sid, content, queue, **kwargs):
         await queue.put({"type": "message", "content": "答案"})
         await queue.put({"type": "done"})
 
@@ -790,7 +790,7 @@ async def test_chatonly_sse_streams_chunk_frames(monkeypatch):
     repo = _noop(monkeypatch)
     thinker = MagicMock()
 
-    async def fake_think(sid, content, queue):
+    async def fake_think(sid, content, queue, **kwargs):
         await queue.put({"type": "message", "content": "第一句话。"})
         await queue.put({"type": "message", "content": "第二句话！"})
         await queue.put({"type": "done"})
@@ -811,7 +811,7 @@ async def test_chatonly_sse_chunk_buffers_below_threshold(monkeypatch):
     repo = _noop(monkeypatch)
     thinker = MagicMock()
 
-    async def fake_think(sid, content, queue):
+    async def fake_think(sid, content, queue, **kwargs):
         await queue.put({"type": "message", "content": "abc"})
         await queue.put({"type": "message", "content": "def"})
         await queue.put({"type": "done"})
@@ -829,7 +829,7 @@ async def test_chatonly_sse_flushes_chunk_before_error(monkeypatch):
     repo = _noop(monkeypatch)
     thinker = MagicMock()
 
-    async def fake_think(sid, content, queue):
+    async def fake_think(sid, content, queue, **kwargs):
         await queue.put({"type": "message", "content": "半句话"})
         await queue.put({"type": "error", "content": "失败"})
 
@@ -847,7 +847,7 @@ async def test_chatonly_sse_error_token(monkeypatch):
     repo = _noop(monkeypatch)
     thinker = MagicMock()
 
-    async def fake_think(sid, content, queue):
+    async def fake_think(sid, content, queue, **kwargs):
         await queue.put({"type": "error", "content": "失败"})
 
     thinker.think = fake_think
@@ -860,7 +860,7 @@ async def test_chatonly_sse_errored_task_ends(monkeypatch):
     repo = _noop(monkeypatch)
     thinker = MagicMock()
 
-    async def fake_think(sid, content, queue):
+    async def fake_think(sid, content, queue, **kwargs):
         pass  # 无 token 直接结束
 
     thinker.think = fake_think
@@ -897,7 +897,7 @@ async def test_route_sse_chatonly(monkeypatch):
     repo = _noop(monkeypatch)
     thinker = MagicMock()
 
-    async def fake_think(sid, content, queue):
+    async def fake_think(sid, content, queue, **kwargs):
         await queue.put({"type": "done"})
 
     thinker.think = fake_think

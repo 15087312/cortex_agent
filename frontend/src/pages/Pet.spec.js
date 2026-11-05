@@ -82,6 +82,22 @@ describe('Pet 页面', () => {
     expect(w.text()).toContain('暂无独立记忆')
   })
 
+  it('桌宠总开关只在页眉出现一次，设置页不再重复', async () => {
+    routeFetch(BASE_ROUTES())
+    const w = mountPage()
+    await tick()
+    await w.vm.$nextTick()
+    // 页眉唯一的总开关（默认启用 → 「关闭桌面宠物」）
+    const toggles = w.findAll('.pet-header button')
+      .filter((b) => b.text().includes('桌面宠物'))
+    expect(toggles.length).toBe(1)
+    // 设置页曾有一份等价的总开关（标题「总开关」+「启用桌宠」），已合并到页眉
+    w.vm.tab = 'settings'
+    await w.vm.$nextTick()
+    expect(w.text()).not.toContain('总开关')
+    expect(w.text()).not.toContain('启用桌宠')
+  })
+
   it('发送消息：SSE 逐 token 追加到回复', async () => {
     routeFetch(BASE_ROUTES())
     const w = mountPage()
@@ -105,7 +121,7 @@ describe('Pet 页面', () => {
       'event: token\r\ndata: {"token":"你好"}\r\n\r\n',
       'event: token\r\ndata: {"token":"！"}\r\n\r\n',
       'event: round_complete\r\ndata: {"round_complete":true}\r\n\r\n',
-      'event: done\r\ndata: {"state":{},"state_text":""}\r\n\r\n',
+      'event: done\r\ndata: {"audio_url":""}\r\n\r\n',
     ])
     w.vm.input = '在吗'
     await w.vm.send()
@@ -378,9 +394,10 @@ describe('Pet 页面', () => {
     expect(w.vm.messages[w.vm.messages.length - 1].content).toBe('你好')
   })
 
-  it('互动接入：加载动作/状态，送礼物点击发送 action_id 并流式回复', async () => {
+  it('互动接入：加载动作，送礼物点击发送 action_id 并流式回复（不再轮询宠物状态）', async () => {
     let chatBody = null
     let chatCalled = false
+    let stateCalls = 0
     const PROMPT = '你送来了一个美味的蛋糕给桌宠吃。'
     // 拦截 /stream/pet/chat：记录 body，返回 SSE 动作回复；历史 mock 模拟落库
     const base = routeFetchFrom([
@@ -405,10 +422,10 @@ describe('Pet 页面', () => {
           },
         },
       },
-      { match: '/stream/pet/state', data: { data: { values: { mood: 90, satiety: 40, energy: 66, cleanliness: 75 } } } },
     ])
     globalThis.fetch = vi.fn(async (url, init) => {
       const u = String(url)
+      if (u.includes('/stream/pet/state')) stateCalls++
       if (u.includes('/stream/pet/chat')) {
         chatCalled = true
         chatBody = JSON.parse(init.body)
@@ -418,10 +435,11 @@ describe('Pet 页面', () => {
     })
     const w = mountPage()
     await tick()
-    // 动作与状态已加载
+    // 动作已加载；状态栏已移除 → 页面不再请求/展示宠物状态
     expect(w.vm.petCats.length).toBe(1)
     expect(w.vm.petActs.length).toBe(1)
-    expect(w.vm.petStateValues.mood).toBe(90)
+    expect(stateCalls).toBe(0)
+    expect(w.find('.pet-statebar').exists()).toBe(false)
     // 分类点开 → 动作按钮出现
     w.vm.activeCat = 'feed'
     await w.vm.$nextTick()
@@ -436,18 +454,20 @@ describe('Pet 页面', () => {
     const msgs = w.vm.messages
     expect(msgs.some((m) => m.role === 'user' && m.actionId === 'cake' && !m.content)).toBe(true)
     expect(msgs[msgs.length - 1].content).toBe('喵呜～谢谢蛋糕！')
+    expect(stateCalls).toBe(0) // 互动后也不再刷新已删除的状态栏
   })
 
   it('语音播放：done 帧带 audio_url → 自动播放；无 URL 不播放；停止按钮终止', async () => {
     routeFetch(BASE_ROUTES())
     const w = mountPage()
     await tick()
-    // mock 全局 Audio：记录 src 与 play 调用
+    // mock 全局 Audio：记录 src、play/pause 真实调用（不是只断言"不抛异常"）
     const played = []
+    const instances = []
     class FakeAudio {
-      constructor(src) { this.src = src; played.push(src); this.paused = true }
+      constructor(src) { this.src = src; played.push(src); this.paused = true; this.pauses = 0; instances.push(this) }
       async play() { this.paused = false }
-      pause() { this.paused = true }
+      pause() { this.paused = true; this.pauses++ }
     }
     globalThis.Audio = FakeAudio
     // done 帧带 audio_url → 播放
@@ -460,15 +480,17 @@ describe('Pet 页面', () => {
     await tick()
     expect(played.some((s) => s.includes('/audio/tts_1.mp3'))).toBe(true)
     expect(w.vm.messages[w.vm.messages.length - 1].content).toBe('你好呀')
-    // 停止按钮 → 音频暂停
-    const current = w.vm.currentAudio ?? null
-    // currentAudio 是模块内变量，经停止路径间接验证：再次播放后调用 stopSend
+    // 停止按钮 → 当前音频必须被真实 pause（不能只断言"没报错"）
     sseMock(['data: {"token":"hi"}\n\n', 'event: done\r\ndata: {"audio_url":"/audio/tts_2.mp3"}\r\n\r\n'])
     w.vm.input = 'hi'
     await w.vm.send()
     await tick()
+    const latest = instances[instances.length - 1]
+    expect(latest.src).toContain('/audio/tts_2.mp3')
+    expect(latest.paused).toBe(false)
     w.vm.stopSend()
-    expect(current === null || current === undefined || true).toBe(true) // 不抛异常即通过
+    expect(latest.paused).toBe(true)
+    expect(latest.pauses).toBe(1)
   })
 
   it('语音播放：done 帧无 audio_url（开关关闭）→ 不创建 Audio', async () => {

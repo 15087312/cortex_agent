@@ -393,21 +393,20 @@ describe('Chat 页面', () => {
     chat.addMessage({ kind: 'process', role: 'system', content: '思考步骤A\n调度语言B', runners: null })
     chat.addMessage({ role: 'assistant', content: '最终回答X' })
     await flushPromises()
-    // 删除前：面板与回复都在渲染输出中（面板默认折叠 → 依次展开面板与过程流文本区）
-    expect(w.find('.process-panel').exists()).toBe(true)
-    await w.find('.process-panel-head').trigger('click')
-    await w.find('.process-flow-head').trigger('click')
+    // 删除前：时间线面板与回复都在渲染输出中（面板默认折叠 → 展开后显示步骤）
+    expect(w.find('.trajectory').exists()).toBe(true)
+    await w.find('.trajectory-head').trigger('click')
     await flushPromises()
     expect(w.text()).toContain('思考步骤A')
     expect(w.text()).toContain('最终回答X')
-    // 删除 assistant → 确认框通过 → 联动移除上方 process 面板，渲染同步更新
+    // 删除 assistant → 确认框通过 → 联动移除上方 process 时间线，渲染同步更新
     const p = w.vm.handleDeleteMessage(2)
     await new Promise((r) => setTimeout(r, 10))
     const { resolveDialog } = await import('@/composables/useDialog.js')
     resolveDialog(true)
     await p
     await flushPromises()
-    expect(w.find('.process-panel').exists()).toBe(false)
+    expect(w.find('.trajectory').exists()).toBe(false)
     expect(w.text()).not.toContain('思考步骤A')
     expect(w.text()).toContain('问')
   })
@@ -549,26 +548,26 @@ describe('Chat 页面', () => {
     expect(pct.text()).toBe('50%')
   })
 
-  it('处理中显示实时过程流面板，结束后固化为过程消息', async () => {
+  it('处理中显示实时思考轨迹时间线，结束后固化为过程消息', async () => {
     const w = await mountChat()
     const chat = useChatStore()
-    // 无处理状态时即使有 processFlow 也不渲染（v-if 依赖 processing）
-    chat.addProcessStep('第一步思考')
+    // 无处理状态时即使有轨迹也不渲染（v-if 依赖 processing）
+    chat.addThinkingStep({ content: '第一步思考' })
     await flushPromises()
-    expect(w.find('.process-panel').exists()).toBe(false)
-    // 标记处理中 → 实时面板出现，内容为当前累积过程流
+    expect(w.find('.trajectory').exists()).toBe(false)
+    // 标记处理中 → 实时时间线出现，内容为当前累积轨迹
     chat.markProcessing('s1', true)
-    chat.addProcessStep('第二步思考')
+    chat.addThinkingStep({ content: '第二步思考' })
     await flushPromises()
-    expect(w.find('.process-panel').exists()).toBe(true)
-    expect(w.find('.process-flow-body').text()).toContain('第一步思考')
-    expect(w.find('.process-flow-body').text()).toContain('第二步思考')
-    // 结束处理 → 实时面板消失，过程流固化为会话消息（持久化，刷新后可恢复）
+    expect(w.find('.trajectory').exists()).toBe(true)
+    expect(w.text()).toContain('第一步思考')
+    expect(w.text()).toContain('第二步思考')
+    // 结束处理 → 实时面板消失，轨迹固化为会话消息（持久化，刷新后可恢复）
     chat.finalizeStream('')
     await flushPromises()
     expect(chat.processing).toBe(false)
-    expect(chat.processFlow.length).toBe(0)
-    expect(chat.messages.some(m => m.kind === 'process')).toBe(true)
+    expect(chat.trajectory.length).toBe(0)
+    expect(chat.messages.some(m => m.kind === 'process' && m.trajectory && m.trajectory.length)).toBe(true)
   })
 
   it('WS ack busy 设置提示并稍后重发', async () => {
@@ -633,7 +632,7 @@ describe('Chat 页面', () => {
     const sendSpy = vi.spyOn(chat, 'sendMessage').mockResolvedValue()
     const atts = [{ type: 'image/png', data: 'data:image/png;base64,xxx', name: 'a.png' }, { type: 'text/plain', data: 'hello', name: 'b.txt' }]
     w.vm.handleSend({ text: '看图', attachments: atts })
-    expect(sendSpy).toHaveBeenCalledWith('看图', atts)
+    expect(sendSpy).toHaveBeenCalledWith('看图', atts, undefined)
     const userMsg = chat.messages.find(m => m.role === 'user' && m.content === '看图')
     expect(userMsg.images).toEqual(['data:image/png;base64,xxx'])
     expect(chat.hint).toBe('思考中...')

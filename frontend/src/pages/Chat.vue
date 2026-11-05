@@ -168,6 +168,7 @@ const _onMessage = (d) => {
       kind: 'mental',
       id: '',
     })
+    chat.addMentalStep(d)
     scrollBottom()
     return
   }
@@ -210,12 +211,18 @@ const _onMessage = (d) => {
   scrollBottom()
 }
 
+const _onSkill = (d) => {
+  if (!_isCurrent(d)) return
+  chat.addSkillStep(d)
+}
+
 const _onDone = (d) => {
   if (d.session_id && d.session_id !== session.sessionId) {
     // 处理中其他会话完成 → 仅清理该会话状态（并行会话互不干扰）
     chat.finalizeSession(d.session_id)
     return
   }
+  chat.markTurnDone()
   chat.finalizeStream('')
 }
 const _onError = (d) => {
@@ -382,6 +389,7 @@ onMounted(async () => {
   ws.wsClient.on('session_projection', _onProjection)
   ws.wsClient.on('session_request', _onRequest)
   ws.wsClient.on('tool', _onTool)
+  ws.wsClient.on('skill', _onSkill)
   ws.wsClient.on('chunk', _onChunk)
   // 连接看门狗：处理中断开 → 复位加载态并提示，避免"一直加载"
   watchTimer = setInterval(() => {
@@ -412,14 +420,15 @@ onUnmounted(() => {
   ws.wsClient.off('session_projection', _onProjection)
   ws.wsClient.off('session_request', _onRequest)
   ws.wsClient.off('tool', _onTool)
+  ws.wsClient.off('skill', _onSkill)
   ws.wsClient.off('chunk', _onChunk)
   if (watchTimer) clearInterval(watchTimer)
 })
 
-function handleSend({ text, attachments }) {
+function handleSend({ text, attachments, webSearch }) {
   // 有待审批/待回答时输入区被接管：先处理横幅，避免消息插到等待中间
   if (chat.processing || chat.hasPendingRequest) return
-  chat.sendMessage(text, attachments)
+  chat.sendMessage(text, attachments, webSearch)
   const images = (attachments || [])
     .filter(a => a && String(a.type || '').startsWith('image/'))
     .map(a => a.data)
@@ -597,11 +606,10 @@ function handleAnswerIntent(requestId, answer) {
         <!-- 思考循环状态面板：大循环（指挥→主管→专家）/ 连续思考 / 工具循环 -->
         <ThinkingStatusPanel v-if="chat.processing && chat.runners.length" :runners="chat.runners" :elapsed="chat.elapsed" :context-tokens="contextTokens" :context-window-size="contextWindowSize" />
 
-        <!-- 本轮实时过程流：AI 运行过程中边思考边展示（结束后固化为消息，由 ProcessPanel 持久化恢复） -->
+        <!-- 本轮实时思考轨迹（DSH 式时间线）：技能/思考/工具/完成 按时间串成一条线 -->
         <ProcessPanel
-          v-if="chat.processing && chat.processFlow.length"
-          :content="chat.processFlow.join('\n\n')"
-          :runners="chat.processSnapshot"
+          v-if="chat.processing && chat.trajectory.length"
+          :live="true"
           :open="true"
         />
 

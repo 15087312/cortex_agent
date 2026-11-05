@@ -3,6 +3,7 @@ import { ref, computed, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { endpoints } from '@/api.js'
 import Icon from '@/components/Icon.vue'
+import TrajectoryTimeline from '@/components/TrajectoryTimeline.vue'
 import { useI18n } from 'vue-i18n'
 
 const router = useRouter()
@@ -118,6 +119,84 @@ function copyApiBody(s) {
   const text = s || ''
   navigator.clipboard?.writeText(text).catch(() => {})
 }
+
+// ── 会话轨迹（DSH 式）：选会话 → 看该会话完整思考/工具时间线 ──
+const trajSid = ref('')
+const trajEntries = ref([])
+const trajLoading = ref(false)
+const trajError = ref('')
+
+function _tsSec(v) {
+  if (typeof v === 'number' && isFinite(v)) return v
+  const s = String(v || '').trim()
+  if (!s) return 0
+  const norm = s.replace(/(\.\d{3})\d+/, '$1')
+  const iso = /([zZ]|[+-]\d{2}:?\d{2})$/.test(norm) ? norm : norm + 'Z'
+  const ms = Date.parse(iso)
+  return isFinite(ms) ? ms / 1000 : 0
+}
+
+// 将会话事件（与 WS 帧同构）映射为时间线条目
+function eventToEntry(ev) {
+  const t = ev.type
+  const e = ev.event
+  const data = ev.data || {}
+  const ts = _tsSec(ev.timestamp)
+  if (t === 'skill') {
+    const name = data.name || data.skill_id || ''
+    const unload = e === 'skill_unloaded'
+    return { ts, kind: 'skill', title: (unload ? '停用技能 ' : '加载技能 ') + name, phase: data.phase || (unload ? 'done' : 'start') }
+  }
+  if (t === 'tool') {
+    const view = data.view || null
+    let kind = 'tool'
+    let title = data.name || 'tool'
+    if (view && view.card) {
+      if (view.card === 'terminal') kind = 'command'
+      else if (view.card === 'read') kind = 'read'
+      else if (view.card === 'search') kind = 'search'
+      else if (view.card === 'web') kind = 'web'
+      else if (view.card === 'diff') kind = 'diff'
+    }
+    if (view && view.title) title = view.title
+    return {
+      ts, kind, title,
+      status: data.status || (e === 'tool_call' ? 'running' : 'ok'),
+      callId: data.call_id || '', durationMs: data.duration_ms || 0, view,
+      preview: data.result_preview || '', error: data.error || '',
+    }
+  }
+  if (t === 'thinking') return { ts, kind: 'thinking', title: (data.content || ev.content || '').slice(0, 200) }
+  if (t === 'mental') return { ts, kind: 'thinking', title: (data.content || ev.content || '').slice(0, 200) }
+  if (t === 'done') return { ts, kind: 'done', title: '已完成' }
+  if (t === 'error') return { ts, kind: 'thinking', title: '错误：' + (data.content || ev.content || '') }
+  return null
+}
+
+async function loadTrajectory(sid) {
+  if (!sid) return
+  trajSid.value = sid
+  trajLoading.value = true
+  trajError.value = ''
+  try {
+    const r = await endpoints.sessionEvents(sid, 0, 2000)
+    const evs = r?.data?.events || []
+    trajEntries.value = evs.map(eventToEntry).filter(Boolean)
+  } catch (err) {
+    trajError.value = String(err?.message || err)
+    trajEntries.value = []
+  } finally {
+    trajLoading.value = false
+  }
+}
+function openTrajectory(sid) {
+  trajSid.value = sid
+  loadTrajectory(sid)
+  nextTick(() => {
+    const el = document.querySelector('.dash-trajectory-card')
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  })
+}
 </script>
 
 <template>
@@ -217,6 +296,7 @@ function copyApiBody(s) {
                 <th class="text-left">{{ $t('dashboard.sessionTitle') }}</th>
                 <th class="text-right">{{ $t('dashboard.msgCount') }}</th>
                 <th class="text-right">{{ $t('dashboard.updatedAt') }}</th>
+                <th class="text-right">轨迹</th>
               </tr>
             </thead>
             <tbody>
@@ -226,11 +306,31 @@ function copyApiBody(s) {
                 <td class="dash-session-title">{{ s.title || s.session_id.slice(0, 12) }}</td>
                 <td class="text-right dash-session-meta">{{ s.message_count ?? 0 }}</td>
                 <td class="text-right dash-session-time">{{ (s.last_active || '').slice(5, 16) }}</td>
+                <td class="text-right">
+                  <button class="btn btn-sm" @click.stop="openTrajectory(s.session_id)"><Icon name="activity" :size="12" /> {{ $t('dashboard.openTrajectory') }}</button>
+                </td>
               </tr>
             </tbody>
           </table>
         </div>
         <div v-else class="dash-empty">{{ $t('dashboard.noSessions') }}</div>
+      </div>
+
+      <!-- 会话轨迹（DSH 式）：选会话 → 看完整思考/工具时间线 -->
+      <div class="card dash-mt dash-trajectory-card">
+        <div class="card-header dash-card-header-wrap">
+          <span>{{ $t('dashboard.sessionTrajectory') }}</span>
+          <div class="dash-traj-bar">
+            <select v-model="trajSid" class="input w-200">
+              <option value="">{{ $t('dashboard.selectSession') }}</option>
+              <option v-for="s in sessions" :key="s.session_id" :value="s.session_id">{{ s.title || s.session_id.slice(0, 16) }}</option>
+            </select>
+            <button class="btn btn-sm" :disabled="!trajSid || trajLoading" @click="loadTrajectory(trajSid)"><Icon name="activity" :size="13" /> {{ $t('dashboard.loadTrajectory') }}</button>
+          </div>
+        </div>
+        <div v-if="trajLoading" class="dash-empty">{{ $t('app.loading') }}</div>
+        <div v-else-if="trajError" class="dash-empty">{{ trajError }}</div>
+        <TrajectoryTimeline v-else :entries="trajEntries" title="会话轨迹" :open="true" empty-text="该会话暂无轨迹（请先选择会话并加载）" />
       </div>
 
       <!-- API 调用频率 -->
@@ -378,6 +478,7 @@ function copyApiBody(s) {
 .dash-timeline-time { color: var(--text-muted); font-size: 11px; }
 .dash-timeline-text { font-size: 13px; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dash-filter-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.dash-traj-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .dash-card-header { display: flex; justify-content: space-between; align-items: center; }
 .dash-card-header-wrap { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
 .dash-timeline-badge { font-size: 10px; }

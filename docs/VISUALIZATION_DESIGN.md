@@ -435,6 +435,22 @@ function apply(ev) {
 - `tests/unit/test_api_stream*.py`、`test_chat_gateway*.py` 中依赖旧 `thinking` 文案的断言需同步调整；
 - `cli_tui/services/ws_client.py` 的 `tool_call` / `thinking` 分支保留（旧帧兼容），Phase 3 后再统一。
 
+### 6.4 已落地（补充）
+
+在上述计划之外，按项目标准补齐了端到端与资源有界用例：
+
+- `tests/integration/test_visualization_pipeline.py`：真实 SQLite + 路由，验证
+  事件按 seq 回放与 `user_message` 锚点、`after_seq` 只补缺口、投影写入后读回与实时帧同构、
+  重连 `push_current` 补发全部投影、`runners` 与过程流快照同构、待办快照重建/应答后清空/会话隔离；
+- `tests/unit/test_session_events_ext.py`、`test_session_projections_ext.py`：
+  seq 冲突一次重试与重试仍失败、data/value 截断与不可序列化兑底、清理失败返回 0、单例缓存；
+- `tests/unit/test_tool_view_ext.py`、`test_tool_events.py`（扩展）：卡片在空/超长/脏数据/
+  不可解析结果下的降级，以及 `_bounded` 的两级降级；
+- `tests/unit/test_api_stream_ext4.py`：SSE 扇出队列满丢帧、事件循环外订阅、
+  `require_ack` envelope、上下文窗口配置缺失、过程流落库早退与异常；
+- `tests/leak/test_leak_viz_events.py`：事件表计数器/环形缓冲、投影单行覆盖、待办表
+  登记→应答循环均不随时间增长（内存安全回归，检测器不得报警）。
+
 ---
 
 ## 7. 兼容与风险

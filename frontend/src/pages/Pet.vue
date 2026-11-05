@@ -162,6 +162,16 @@ async function pumpSse(res, { last, onRoundStart } = {}) {
         messages.value.push({ role: 'assistant', content: '', thinking: '' })
         last = messages.value[messages.value.length - 1]
         scrollDown()
+      } else if (evt.tool && evt.tool.call_id != null) {
+        const toolMsg = {
+          _id: 't' + (++_uid),
+          role: 'assistant',
+          content: '',
+          tool: evt.tool,
+        }
+        messages.value.push(toolMsg)
+        last = toolMsg
+        scrollDown()
       } else if (evt.error) {
         if (!last.content) last.content = t('pet.error') + '：' + evt.error
       }
@@ -303,10 +313,6 @@ async function loadMasterEnabled() {
   } catch { /* 静默，保持默认 true */ }
 }
 
-async function toggleMaster() {
-  await setMasterEnabled(!masterEnabled.value)
-}
-
 // 打开/关闭桌面宠物（进程级：拉起/停止窗口进程 + 同步引擎总开关）
 // 窗口进程由后端 window_supervisor 统一持有：崩溃自动重启、Web 页可见状态。
 async function setMasterEnabled(v) {
@@ -428,13 +434,6 @@ async function clearHistory() {
 const petCats = ref([])      // [{id,label,icon}]
 const petActs = ref([])      // [{id,label,category,icon}]
 const activeCat = ref('')    // 当前展开的动作分类
-const petStateValues = ref(null) // {mood,satiety,energy,cleanliness}
-const STATE_META = [
-  { key: 'mood', icon: 'smile', labelKey: 'pet.stateMood' },
-  { key: 'satiety', icon: 'utensils', labelKey: 'pet.stateSatiety' },
-  { key: 'energy', icon: 'sun', labelKey: 'pet.stateEnergy' },
-  { key: 'cleanliness', icon: 'sparkles', labelKey: 'pet.stateClean' },
-]
 
 async function loadActions() {
   try {
@@ -448,13 +447,6 @@ async function loadActions() {
       if (act) { m.actionId = act.id; m.actionLabel = act.label; m.actionIcon = act.icon; m.content = '' }
     }
   } catch { /* 后端未就绪时静默 */ }
-}
-
-async function loadState() {
-  try {
-    const r = await endpoints.petState()
-    petStateValues.value = r?.data?.values || null
-  } catch { /* 静默 */ }
 }
 
 function actsOf(catId) {
@@ -483,7 +475,6 @@ async function sendAction(action) {
     if (!res.ok || !res.body) throw new Error('HTTP ' + res.status)
     last = await pumpSse(res, { last })
     await loadHistory()
-    loadState() // 互动改变状态 → 刷新状态条
   } catch (e) {
     if (e.name !== 'AbortError' && last && !last.content) last.content = t('pet.sendFailed')
   } finally {
@@ -542,7 +533,6 @@ onMounted(async () => {
   await loadMasterEnabled()
   loadMemory()
   loadActions()
-  loadState()
   loadWindowStatus()
   // 窗口进程状态轮询（10s）：崩溃/重启后页眉徽标同步
   if (windowPollTimer) clearInterval(windowPollTimer)
@@ -599,11 +589,35 @@ onUnmounted(() => {
               <div class="pet-thinking-text">{{ m.thinking }}</div>
             </div>
             <div v-if="m.content">{{ m.content }}</div>
+            <div v-if="m.tool" class="pet-tool">
+              <div class="pet-tool-label">
+                <span class="pet-tool-dot"></span>
+                {{ $t('pet.toolLabel') }} {{ m.tool.name }}
+              </div>
+              <div class="pet-tool-body">
+                <div class="pet-tool-progress">{{ $t('pet.toolRunning') }}</div>
+                <pre v-if="m.tool.args && Object.keys(m.tool.args).length" class="pet-tool-args">{{ JSON.stringify(m.tool.args, null, 2) }}</pre>
+              </div>
+            </div>
             <div v-else-if="!(m.role === 'user' && m.actionIcon) && sending && !m.thinking && m.role === 'assistant'" class="pet-waiting">
               <span class="pet-waiting-dots"><i></i><i></i><i></i></span>
               {{ $t('pet.thinking') }}
             </div>
+            <div v-if="m.tool" class="pet-tool">
+              <div class="pet-tool-label">
+                <span class="pet-tool-dot"></span>
+                {{ $t('pet.toolLabel') }} {{ m.tool.name }}
+              </div>
+              <div class="pet-tool-body">
+                <div class="pet-tool-progress">{{ $t('pet.toolRunning') }}</div>
+                <pre v-if="m.tool.args && Object.keys(m.tool.args).length" class="pet-tool-args">{{ JSON.stringify(m.tool.args, null, 2) }}</pre>
+              </div>
+            </div>
           </div>
+        </div>
+        <div class="pet-tool-timeline" v-if="m.tool">
+          <span class="pet-tool-timeline-dot"></span>
+          {{ $t('pet.toolTimeline') }} {{ m.tool.name }}
         </div>
       </div>
       <!-- 互动动作栏：与桌面桌宠圆环菜单同源（分类 → 动作） -->
@@ -646,26 +660,10 @@ onUnmounted(() => {
         <button class="btn btn-primary" @click="send"><Icon name="send" :size="14" /> {{ $t('pet.send') }}</button>
         <button v-if="sending" class="btn" @click="stopSend"><Icon name="x" :size="14" /> {{ $t('pet.stop') }}</button>
       </div>
-      <!-- 状态条：心情/饱食/精力/清洁（与养成状态同源） -->
-      <div v-if="petStateValues" class="pet-statebar">
-        <div v-for="s in STATE_META" :key="s.key" class="pet-state-item" :title="$t(s.labelKey) + ' ' + petStateValues[s.key]">
-          <Icon :name="s.icon" :size="13" />
-          <div class="pet-state-bar"><div class="pet-state-fill" :class="'lv-' + s.key" :style="{ width: petStateValues[s.key] + '%' }"></div></div>
-        </div>
-      </div>
     </div>
 
     <!-- 设置 -->
     <div v-else-if="tab === 'settings'" class="pet-settings">
-      <div class="settings-group">
-        <div class="settings-group-title">{{ $t('pet.masterTitle') }}</div>
-        <div class="setting-row">
-          <div class="lbl"><div class="t">{{ $t('pet.masterEnabled') }}</div><div class="d">{{ $t('pet.masterEnabledDesc') }}</div></div>
-          <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="masterEnabled" :disabled="savingMaster" @change="toggleMaster" /><span class="toggle-slider"></span></label></div>
-        </div>
-      </div>
-
-      <div class="settings-divider"></div>
       <div class="settings-group">
         <div class="settings-group-title">{{ $t('pet.personaTitle') }}</div>
         <div class="setting-row">
@@ -936,18 +934,4 @@ onUnmounted(() => {
   background: rgba(88,166,255,.1); color: var(--accent, #4a7dff);
   font-size: 13px;
 }
-
-/* ── 状态条 ── */
-.pet-statebar {
-  display: flex; gap: 14px; align-items: center;
-  padding: 8px 16px 10px;
-  border-top: 1px solid var(--border-color, #E4E3DD);
-}
-.pet-state-item { display: flex; align-items: center; gap: 5px; color: var(--text-muted, #6B7280); flex: 1; min-width: 0; }
-.pet-state-bar { flex: 1; height: 5px; border-radius: 999px; background: var(--border-color, #E4E3DD); overflow: hidden; }
-.pet-state-fill { height: 100%; border-radius: 999px; transition: width .4s ease; }
-.pet-state-fill.lv-mood { background: #f7b955; }
-.pet-state-fill.lv-satiety { background: #58a55c; }
-.pet-state-fill.lv-energy { background: #4a7dff; }
-.pet-state-fill.lv-cleanliness { background: #b07fe8; }
 </style>

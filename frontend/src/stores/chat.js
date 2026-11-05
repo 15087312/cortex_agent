@@ -97,6 +97,10 @@ export const useChatStore = defineStore('chat', () => {
   const processFlow = ref([])
   // 过程流面板的模型状态快照（显示"当时"情况，非实时）
   const processSnapshot = ref(null)
+  // DSH 式统一轨迹时间线（本轮实时）：技能/思考/工具/完成 按时间排序串成一条线
+  const trajectory = ref([])
+  // 事件日志回放标记：回放期间不往实时轨迹里塞条目（避免把历史塞进当前轮）
+  let _replaying = false
   // 运行轨迹：工具调用/委托等中间步骤（借鉴 dsh，从对话流分离）
   const traces = ref([])
   // 流式正文尾巴（Phase 3）：`chunk` 帧边收边显示，最终 `message` 到达时替换
@@ -142,6 +146,7 @@ export const useChatStore = defineStore('chat', () => {
     streamTail.value = null
     processFlow.value = []
     processSnapshot.value = null
+    trajectory.value = []
     resetProjections()
     resetPending()
     _thinkingSeen.clear()
@@ -180,6 +185,7 @@ export const useChatStore = defineStore('chat', () => {
     streamTail.value = null
     processFlow.value = []
     processSnapshot.value = null
+    trajectory.value = []
     // 若会话中已有 role=process 聚合记录（新格式），则跳过逐条 thought 折叠（避免重复）
     const hasProcessAgg = msgs.some(m => m.role === 'process')
     // 用户消息 = 回放定位锚点（老会话没有 user_message 事件时按时间回退）
@@ -341,16 +347,20 @@ export const useChatStore = defineStore('chat', () => {
       if (_thinkingSeen.has(text)) return
       _thinkingSeen.add(text)
       pendingThinking.value += (pendingThinking.value ? '\n\n' : '') + text
+      // 同时作为时间线的一步（DSH 式：思考推理也纳入轨迹），与 agent 模式一致
+      _pushTrajectory({ ts: Date.now(), kind: 'thinking', title: text.slice(0, 200) })
       return
     }
     // 主管/专家的推理 → 过程流（不混入总思考区）
     const tier = _tierOf(d)
     if (tier === 'supervisor' || tier === 'expert') {
       addProcessStep(text)
+      _pushTrajectory({ ts: Date.now(), kind: 'thinking', title: text.slice(0, 200) })
       return
     }
     // 大模型连续思考/调度语言 → 过程流
     addProcessStep(text)
+    _pushTrajectory({ ts: Date.now(), kind: 'thinking', title: text.slice(0, 200) })
   }
 
   // 去重：流式增量可能重复推送相同片段（用 Set 精确匹配，不用 includes 子串）
@@ -430,17 +440,20 @@ export const useChatStore = defineStore('chat', () => {
   function _persistLiveProcess() {
     const flow = processFlow.value || []
     const snap = processSnapshot.value
-    if (!flow.length && !snap) return
+    const traj = trajectory.value || []
+    if (!flow.length && !snap && !traj.length) return
     messages.value.push({
       _id: uid(),
       kind: 'process',
       role: 'system',
       content: flow.join('\n\n'),
       runners: snap,
+      trajectory: traj,
       _processOpen: false,
     })
     processFlow.value = []
     processSnapshot.value = null
+    trajectory.value = []
     _thinkingSeen.clear()
   }
 
@@ -463,15 +476,16 @@ export const useChatStore = defineStore('chat', () => {
     return false
   }
 
-  async function sendMessage(content, attachments) {
+  async function sendMessage(content, attachments, webSearch = false) {
     if (!session.sessionId) {
       await session.createSession()
     }
     _stopped.value = false
-    _lastInput.value = { content, attachments }
+    _lastInput.value = { content, attachments, webSearch }
+    trajectory.value = []
     _processingSids.value.add(session.sessionId)
     await _ensureConnected()
-    const ok = await _sendWithRetry({ type: 'input', content, model: currentModel.value, attachments })
+    const ok = await _sendWithRetry({ type: 'input', content, model: currentModel.value, attachments, web_search: !!webSearch })
     if (!ok) {
       _processingSids.value.delete(session.sessionId)
       hint.value = ''
@@ -487,6 +501,7 @@ export const useChatStore = defineStore('chat', () => {
       content: _lastInput.value.content,
       model: currentModel.value,
       attachments: _lastInput.value.attachments,
+      web_search: !!_lastInput.value.webSearch,
     })
   }
 
@@ -509,6 +524,7 @@ export const useChatStore = defineStore('chat', () => {
     streamTail.value = null
     processFlow.value = []
     processSnapshot.value = null
+    trajectory.value = []
     // 后端清空对话时同步删除投影与待办（chat_gateway.clear_session_messages）→ 本地也清掉
     resetProjections()
     resetPending()
@@ -621,6 +637,57 @@ export const useChatStore = defineStore('chat', () => {
     return ''
   }
 
+  // ── DSH 式统一轨迹时间线 ──
+  // 把 技能/思考/工具/完成 这些不同来源的步骤，按时间顺序串成一条可渲染的时间线。
+  // 回放期间（_replaying）不写入，避免历史事件污染当前轮的实时轨迹。
+  function _pushTrajectory(entry) {
+    if (_replaying) return
+    trajectory.value.push(entry)
+  }
+
+  // 工具轨迹 → 时间线条目种类（与图标/标签映射一致）
+  function _toolKind(item) {
+    const card = item.view && item.view.card
+    if (card === 'terminal') return 'command'
+    if (card === 'read') return 'read'
+    if (card === 'diff') return 'diff'
+    if (card === 'search') return 'search'
+    if (card === 'web') return 'web'
+    return 'tool'
+  }
+  function _toolTitle(item) {
+    const v = item.view
+    if (v && v.title) return v.title
+    return item.name || 'tool'
+  }
+
+  function addSkillStep(d) {
+    const p = d.data || {}
+    const name = p.name || p.skill_id || ''
+    const unload = d.event === 'skill_unloaded'
+    _pushTrajectory({
+      ts: Date.now(),
+      kind: 'skill',
+      title: (unload ? '停用技能 ' : '加载技能 ') + name,
+      phase: p.phase || (unload ? 'done' : 'start'),
+      skillId: p.skill_id || '',
+    })
+  }
+
+  // 心理活动（内心独白）：作为"思考"步骤纳入时间线（chat_light / agent 均有）
+  function addMentalStep(d) {
+    const text = String(d?.content || '').trim()
+    if (!text) return
+    _pushTrajectory({ ts: Date.now(), kind: 'thinking', title: text.slice(0, 200) })
+  }
+
+  function markTurnDone() {
+    if (_replaying) return
+    const last = trajectory.value[trajectory.value.length - 1]
+    if (last && last.kind === 'done') return
+    _pushTrajectory({ ts: Date.now(), kind: 'done', title: '已完成' })
+  }
+
   function addToolCall(d) {
     const p = d.data || {}
     // 同一 call_id 只建一行（重连补发/历史回放可能与实时事件重叠）
@@ -653,6 +720,11 @@ export const useChatStore = defineStore('chat', () => {
       time: Date.now(),
     }
     traces.value.push(item)
+    _pushTrajectory({
+      ts: Date.now(), kind: _toolKind(item), title: _toolTitle(item),
+      status: item.status, callId: item.callId, durationMs: 0,
+      view: item.view, identityName: item.identityName,
+    })
     return item
   }
 
@@ -678,6 +750,17 @@ export const useChatStore = defineStore('chat', () => {
     // 结果卡片覆盖调用骨架（无 view 时清空 → 前端回退 generic）
     if (p.view) item.view = p.view
     else if (p.status && p.status !== 'running') item.view = null
+    // 时间线里对应的工具条目同步状态/详情
+    if (!_replaying) {
+      const te = trajectory.value.find(e => e.callId === item.callId)
+      if (te) {
+        te.status = item.status
+        te.durationMs = item.durationMs
+        te.view = item.view
+        te.preview = item.preview
+        te.error = item.error
+      }
+    }
     return item
   }
 
@@ -686,6 +769,8 @@ export const useChatStore = defineStore('chat', () => {
   // 正文气泡与过程流仍由 chat_messages 重建；事件表只用来补工具轨迹与“位置”。
   // 按 seq 分页读取（长会话事件远超一页；最多 10 页 = 5000 条，避免卡死首屏）
   async function replayToolEvents(sid, pageSize = 500, userAnchors = []) {
+    _replaying = true
+    try {
     let after = 0
     // 当前轮用户消息 → 本轮的工具卡片插在它后面（对应实时侧的 _lastMessageKey）
     let anchor = ''
@@ -742,6 +827,9 @@ export const useChatStore = defineStore('chat', () => {
       const lastSeq = events[events.length - 1]._seq || 0
       if (events.length < pageSize || !lastSeq || lastSeq <= after) return
       after = lastSeq
+    }
+    } finally {
+      _replaying = false
     }
   }
 
@@ -892,12 +980,13 @@ export const useChatStore = defineStore('chat', () => {
 
   return {
     messages, processing, currentModel, streamingIdx, hint, elapsed,
-    stopped: _stopped, processingSid, runners, traces, streamTail, processFlow, processSnapshot,
+    stopped: _stopped, processingSid, runners, traces, streamTail, processFlow, processSnapshot, trajectory,
     projections, todos, tokenUsage, contextTokens, contextWindowSize,
     applyProjection, applyRunnerSnapshot, loadProjections, resetProjections,
     pendingRequests, hasPendingRequest, applyPendingRequests, resetPending,
     init, switchToSession, addMessage, addThinkingStep, addProcessStep,
     addExpertMessage, addToolCall, addToolResult, replayToolEvents, consumeThinking, dispatchThinking, classifyThinking,
+    addSkillStep, addMentalStep, markTurnDone,
     appendStreamChunk, clearStream,
     finalizeStream, finalizeSession, sendMessage, retryLastInput, stop, clearMessages,
     setProcessSnapshot,

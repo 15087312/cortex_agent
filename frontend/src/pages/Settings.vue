@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { endpoints } from '@/api.js'
 import { useConfigStore } from '@/stores/config.js'
 import { useToastStore } from '@/stores/toast.js'
@@ -129,34 +129,11 @@ const searxngUrl = txtCfg('SEARXNG_URL', '')
 const ttsEnabled = boolCfg('OUTPUT_TTS_ENABLED', false)
 const mentalEnabled = boolCfg('MENTAL_ACTIVITY_ENABLED', true)
 const memorySummaryEnabled = boolCfg('MEMORY_SUMMARY_ENABLED', true)
-const petEnabled = boolCfg('DESKTOP_PET_ENABLED', true)
+// DESKTOP_PET_ENABLED 开关已统一移至桌宠页面（Pet.vue）
 
-// ── 桌宠状态（实时显示 + 重置）──
-const petState = ref({})
-const petStateText = ref('')
-const petStateLabels = { mood: 'settings.pet.mood', satiety: 'settings.pet.satiety', energy: 'settings.pet.energy', cleanliness: 'settings.pet.cleanliness' }
-async function loadPetState() {
-  try {
-    const r = await fetch('/api/stream/pet/state', { headers: { Accept: 'application/json' } })
-    const d = await r.json()
-    if (d?.data?.values) petState.value = d.data.values
-    if (d?.data?.text) petStateText.value = d.data.text
-  } catch (e) {}
-}
-async function resetPetState() {
-  try {
-    const r = await fetch('/api/stream/pet/state/reset', { method: 'POST' })
-    const d = await r.json()
-    if (d?.data?.values) { petState.value = d.data.values; toast.show(t('settings.pet.stateReset'), 'success') }
-  } catch (e) { toast.show(t('settings.resetFailed'), 'error') }
-}
-let petPollTimer = null
 onMounted(() => {
-  loadPetState()
   loadDoctor()
-  petPollTimer = setInterval(loadPetState, 5000)
 })
-onUnmounted(() => { if (petPollTimer) { clearInterval(petPollTimer); petPollTimer = null } })
 
 /* ── 系统体检（doctor 自检，/api/system/doctor）── */
 const doctor = ref(null)
@@ -859,29 +836,12 @@ onMounted(async () => {
           <div class="settings-group-title">{{ $t('settings.pet.title') }}</div>
           <div class="setting-row">
             <div class="lbl"><div class="t">{{ $t('settings.pet.enabled') }}</div><div class="d">{{ $t('settings.pet.enabledDesc') }}</div></div>
-            <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="petEnabled" @change="petEnabled = !petEnabled" /><span class="toggle-slider"></span></label></div>
-          </div>
-          <div class="setting-row">
-            <div class="lbl"><div class="t">{{ $t('settings.pet.pageHint') }}</div><div class="d">{{ $t('settings.pet.pageHintDesc') }}</div></div>
             <div class="setting-ctl"><a class="btn btn-primary" href="#/pet">{{ $t('settings.pet.goPage') }}</a></div>
-          </div>
-          <div class="setting-row">
-            <div class="lbl"><div class="t">{{ $t('settings.pet.currentState') }}</div><div class="d">{{ $t('settings.pet.currentStateDesc') }}</div></div>
-            <div class="setting-ctl flex-wrap">
-              <span v-for="(label, key) in petStateLabels" :key="key" class="badge" :style="{ background: 'rgba(88,166,255,.12)', color: 'var(--accent)' }">
-                {{ $t(label) }} <b>{{ petState[key] ?? '-' }}</b>
-              </span>
-            </div>
-          </div>
-          <div class="setting-row">
-            <div class="lbl"><div class="t">{{ $t('settings.pet.stateText') }}</div></div>
-            <div class="setting-ctl"><span class="setting-hint-inline">{{ petStateText || '—' }}</span></div>
           </div>
           <div class="setting-row">
             <div class="lbl"></div>
             <div class="setting-ctl">
-              <button class="btn btn-sm" @click="resetPetState">{{ $t('settings.pet.resetState') }}</button>
-              <button class="btn btn-sm ml-2" @click="openFolder('pet')">{{ $t('settings.pet.openFolder') }}</button>
+              <button class="btn btn-sm" @click="openFolder('pet')">{{ $t('settings.pet.openFolder') }}</button>
             </div>
           </div>
           <p class="settings-hint">{{ $t('settings.pet.hint', { hotkey: voiceHotkey, wake: voiceWakePrefix }) }}</p>

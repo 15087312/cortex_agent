@@ -208,7 +208,6 @@ export const endpoints = {
   petMemory: (limit, signal) => request('GET', '/stream/pet/memory?limit=' + (limit || 50), undefined, signal),
   addPetMemory: (kind, text, signal) => request('POST', '/stream/pet/memory', { kind, text }, signal),
   deletePetMemory: (mid, signal) => request('DELETE', '/stream/pet/memory/' + encodeURIComponent(mid), undefined, signal),
-  petState: (signal) => request('GET', '/stream/pet/state', undefined, signal),
   petWindowStatus: (signal) => request('GET', '/stream/pet/window', undefined, signal),
   petWindowStart: (signal) => request('POST', '/stream/pet/window/start', {}, signal),
   petWindowStop: (signal) => request('POST', '/stream/pet/window/stop', {}, signal),

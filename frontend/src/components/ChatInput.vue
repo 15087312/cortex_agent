@@ -17,6 +17,8 @@ const input = ref('')
 const attachments = ref([])
 const dragging = ref(false)
 const fieldRef = ref(null)
+// 联网搜索开关：纯对话模式可据此让后端先搜索互联网再回答
+const webSearch = ref(false)
 
 // ── 语音录制 ──
 const recording = ref(false)
@@ -103,7 +105,7 @@ function handleSend() {
   const text = input.value.trim()
   const atts = attachments.value
   if (!text && atts.length === 0) return
-  emit('send', { text, attachments: atts.map(a => ({ type: a.type, name: a.name, data: a.data })) })
+  emit('send', { text, attachments: atts.map(a => ({ type: a.type, name: a.name, data: a.data })), webSearch: webSearch.value })
   input.value = ''
   attachments.value = []
   autoResize()
@@ -191,6 +193,7 @@ function removeAttachment(i) {
       <div class="chat-input-toolbar">
         <button class="chat-btn-icon" @click="$refs.fileInput.click()" :title="$t('chatInput.uploadFile')"><Icon name="paperclip" :size="16" /></button>
         <button class="chat-btn-icon" :class="{ 'chat-btn-recording': recording }" @click="toggleRecording" :title="recording ? $t('chatInput.stopRecording') : $t('chatInput.startRecording')"><Icon name="mic" :size="16" /></button>
+        <button class="chat-btn-icon" :class="{ 'chat-btn-active': webSearch }" @click="webSearch = !webSearch" :title="$t('chatInput.webSearch')"><Icon name="globe" :size="16" /></button>
         <input ref="fileInput" type="file" multiple accept="image/*,.pdf,.txt,video/*" hidden @change="handleFiles($event.target.files)" />
       </div>
       <textarea
