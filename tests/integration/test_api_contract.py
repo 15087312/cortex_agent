@@ -66,8 +66,25 @@ def _client(app, **kwargs):
     return AsyncClient(transport=transport, base_url="http://test", **kwargs)
 
 
+@pytest.fixture(autouse=True)
+def _isolate_session_registry(monkeypatch):
+    """隔离编排器的全局会话表。
+
+    /management/sessions 读的是 modules.thinking.multi_model_orchestrator 的
+    模块级 `_session_registry`。别的测试文件会整体替换这个字典（例如塞入
+    {"s1": {"session_id": "s1"}} 这种只含必填键的桩），一旦泄漏到本文件，
+    端点就会把缺 is_active 的条目返回出来，使结构断言在**混跑**时失败、
+    单跑却通过。契约测试断言的是响应结构，不应受跨文件全局状态影响，
+    故此处按已知形态固定登记表内容。
+    """
+    import modules.thinking.multi_model_orchestrator as orc
+
+    monkeypatch.setattr(orc, "_session_registry", {}, raising=False)
+    yield
+
+
 @pytest.fixture
-async def _c(_mock_lifespan, _no_auth, _reset_rate_limit):
+async def _c(_mock_lifespan, _no_auth, _reset_rate_limit, _isolate_session_registry):
     from api.main import app
     async with _client(app) as c:
         yield c
@@ -150,6 +167,33 @@ async def test_management_sessions_is_list(_c):
     for s in data["sessions"]:
         for key in ("session_id", "is_active", "dialog_size"):
             assert key in s, f"session 缺少字段 {key}（sessions.js 用这些字段）"
+
+
+@pytest.mark.asyncio
+async def test_management_sessions_serialises_registered_session(_c):
+    """登记一个会话后，端点必须把它连同前端依赖的字段一起返回。
+
+    上一条用例在空登记表下只验证了「是 list」这一弱契约；这里补上真实条目的
+    字段形态断言，确保隔离 fixture 没有把检查强度偷偷降掉。
+    """
+    import modules.thinking.multi_model_orchestrator as orc
+
+    orc._session_registry["probe-session"] = {
+        "session_id": "probe-session",
+        "state": "planning",
+        "is_active": True,
+        "turn_id": "turn-1",
+        "blackboard": None,
+    }
+    resp = await _c.get("/management/sessions")
+    assert resp.status_code == 200
+    sessions = resp.json()["data"]["sessions"]
+    entry = [s for s in sessions if s["session_id"] == "probe-session"]
+    assert entry, f"已登记的会话未出现在响应中: {sessions}"
+    s = entry[0]
+    assert s["is_active"] is True
+    assert s["dialog_size"] == 0
+    assert isinstance(s["dialog"], list)
 
 
 @pytest.mark.asyncio

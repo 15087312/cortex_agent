@@ -191,3 +191,41 @@ def test_broadcast_survives_send_failure(registry, monkeypatch):
     pr.register_from_stage_event("s1", _approval_event())
     snap = pr.broadcast("s1")
     assert [r["request_id"] for r in snap] == ["r1"]
+
+
+# ── 覆盖补全：缺失会话 / reset / 单例 ──────────────────────────────────────
+
+def test_resolve_missing_session_returns_false(registry, sent):
+    """对从未登记过的会话 resolve → False，且不推送空快照"""
+    assert registry.resolve("no-such-session", "r1") is False
+    assert sent == []
+
+
+def test_clear_only_affects_given_session(registry):
+    registry.register("s1", "r1", pr.KIND_APPROVAL)
+    registry.register("s2", "r2", pr.KIND_APPROVAL)
+    assert registry.clear("s1") == 1
+    assert registry.snapshot("s1") == []
+    assert len(registry.snapshot("s2")) == 1
+
+
+def test_registry_reset_drops_every_session(registry):
+    registry.register("s1", "r1", pr.KIND_APPROVAL)
+    registry.reset()
+    assert registry.snapshot("s1") == []
+    assert registry.has("s1", "r1") is False
+
+
+def test_get_registry_singleton(monkeypatch):
+    pr.reset_registry()
+    first = pr.get_registry()
+    assert pr.get_registry() is first
+    pr.reset_registry()
+
+
+def test_module_clear_matches_registry(registry):
+    """模块级 clear() 与会话删除/断线路径共用同一语义"""
+    registry.register("s1", "r1", pr.KIND_APPROVAL)
+    assert pr.clear("s1") == 1
+    assert registry.snapshot("s1") == []
+    assert pr.clear("s1") == 0

@@ -130,6 +130,9 @@ class EmbeddingEngine:
 
             # 从 EventStore 读取所有事件，重新向量化并写入 FAISS
             try:
+                # 惰性导入，且是**有意的**环：event_store.py 有三处（:243/:278/:388）
+                # 惰性反向导入本模块的向量化能力。向量化器与事件存储天然互调，
+                # 四条边全在函数体内，导入期互不触发；请勿提升到模块级。
                 from modules.memory.event_store import EventStore
                 store = EventStore.get_instance()
                 events = store.list_events(limit=5000)
@@ -149,7 +152,7 @@ class EmbeddingEngine:
             except Exception as e:
                 logger.warning(f"[Embedding] FAISS 索引重建失败，向量搜索暂时不可用: {e}")
 
-    # @link:block Embedding_Embed = Retrieve
+    # @link:block Embedding_Embed = Retrieve · Think
     def embed(self, text: str) -> Optional[List[float]]:
         if not self._loaded:
             self._load_model()  # 延迟加载：首次调用自动加载，避免向量检索静默失效
@@ -172,7 +175,7 @@ class EmbeddingEngine:
             logger.warning(f"[Embedding] 编码失败: {e}")
             return None
 
-    # @link:block Embedding_EmbedBatch = Retrieve
+    # @link:block Embedding_EmbedBatch = Retrieve · Think
     def embed_batch(self, texts: List[str]) -> List[Optional[List[float]]]:
         if not texts:
             return []

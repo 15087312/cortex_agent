@@ -28,7 +28,7 @@ logger = setup_logger("session_events")
 # `user_message` 只存用户消息的 id（不存正文）：回放时用它给工具事件定位
 # “发生在哪条消息之后”，刷新后工具卡片才能回到原来的位置。
 DURABLE_TYPES = frozenset({
-    "thinking", "message", "user_message", "tool", "mental", "error", "done", "todo",
+    "thinking", "message", "user_message", "tool", "mental", "error", "done", "todo", "skill",
 })
 
 _MAX_CONTENT_CHARS = 8000     # 单条事件正文上限（思考文本/消息正文）

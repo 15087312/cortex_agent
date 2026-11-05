@@ -215,3 +215,33 @@ def test_push_tool_event_swallows_send_failure(monkeypatch):
     monkeypatch.setattr(api, "connection_manager", _Boom())
     tc = SimpleNamespace(id="c", name="todo")
     _runner()._push_tool_call(tc, {})  # 不抛
+
+
+# ── 覆盖补全：容器/深度/对象兜底 ────────────────────────────────────────────
+
+def test_preview_none_is_empty():
+    assert preview(None) == ""
+
+
+def test_sanitize_args_too_deep_falls_back_to_preview():
+    """嵌套超过上限（4 层）→ 深一层直接压成字符串预览，避免无限递归"""
+    deep = {"a": {"b": {"c": {"d": {"e": {"f": "secret"}}}}}}
+    cleaned = sanitize_args(deep)
+    flattened = json.dumps(cleaned, ensure_ascii=False)
+    assert "secret" in flattened          # 内容仍可见
+    # 超过 4 层的容器被拍平成字符串预览，避免递归失控
+    assert isinstance(cleaned["a"]["b"]["c"]["d"]["e"], str)
+
+
+def test_sanitize_args_truncates_long_lists():
+    """列表超过 20 项 → 截断并显式标注剩余数量"""
+    cleaned = sanitize_args({"items": list(range(30))})
+    assert len(cleaned["items"]) == 21
+    assert cleaned["items"][-1] == "…(+10 items)"
+
+
+def test_sanitize_args_arbitrary_object_is_previewed():
+    """不可 JSON 化的对象（文件句柄等）转预览字符串，不让事件构造失败"""
+    cleaned = sanitize_args({"handle": object()})
+    assert isinstance(cleaned["handle"], str) and cleaned["handle"]
+

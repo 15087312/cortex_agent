@@ -11,6 +11,7 @@ import threading
 from typing import List, Optional
 
 from modules.memory.event_store import EventStore, MemoryEvent
+from modules.memory.event_validation import sanitize_batch
 from modules.memory.embedding import EmbeddingEngine
 from utils.logger import setup_logger
 
@@ -141,10 +142,22 @@ class EventReducer:
         if not events:
             return []
 
-        # 填充元数据 + 去重 + 存储
+        # 填充元数据 + 校验 + 去重 + 存储
         store = self._get_store()
 
-        # 去重：检查已有事件，跳过 fact 相似的
+        for ev in events:
+            ev.session_id = session_id
+            ev.owner_id = owner_id  # 标记所属模型
+
+        # 结构校验 + 批内去重：单条不合格只跳过该条，不影响同批其余事件。
+        # 只做截断/丢弃/去重，不改写已有事件——事件仍是不可变的历史记录。
+        candidates, rejected = sanitize_batch(events, conversation_text)
+        for item in rejected:
+            logger.warning(
+                f"[EventReducer] 丢弃不合格事件：{item.fact}（{'; '.join(item.reasons)}）"
+            )
+
+        # 跨会话去重：检查已有事件，跳过 fact 相似的
         existing_facts = set()
         try:
             existing = store.list_events(limit=500)
@@ -153,10 +166,8 @@ class EventReducer:
             logger.warning(f"[EventReducer] 去重查询失败: {e}")
 
         saved = []
-        for ev in events:
-            ev.session_id = session_id
-            ev.owner_id = owner_id  # 标记所属模型
-
+        failed = 0
+        for ev in candidates:
             # 跳过重复事件
             fact_key = ev.fact[:60]
             if fact_key in existing_facts:
@@ -164,11 +175,26 @@ class EventReducer:
                 continue
             existing_facts.add(fact_key)
 
-            # save_event 内部会自动向量化 + 写 FAISS
-            ev_id = store.save_event(ev)
+            # save_event 内部会自动向量化 + 写 FAISS。
+            # 单条落盘失败（DB 异常、FAISS 异常等）不得拖垮整批。
+            try:
+                ev_id = store.save_event(ev)
+            except Exception as e:
+                failed += 1
+                logger.error(
+                    f"[EventReducer] 事件保存失败，已跳过：{ev.fact[:50]}...（{e}）",
+                    exc_info=True,
+                )
+                continue
 
             saved.append(ev)
             logger.info(f"[EventReducer] 保存事件 {ev_id}: {ev.fact[:50]}... (重要性={ev.importance})")
+
+        if rejected or failed:
+            logger.info(
+                f"[EventReducer] 本批 {len(events)} 条：落盘 {len(saved)}，"
+                f"校验丢弃 {len(rejected)}，保存失败 {failed}"
+            )
 
         # 共现统计：自动发现因果边
         if saved:

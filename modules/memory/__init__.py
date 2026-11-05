@@ -10,6 +10,12 @@
    {id, fact, thought, lesson, keywords, importance, time, session_id, causal_node_ids}
 """
 from modules.memory.event_store import EventStore, MemoryEvent
+from modules.memory.event_validation import (
+    RejectedEvent,
+    SanitizedEvent,
+    sanitize_batch,
+    sanitize_event,
+)
 from modules.memory.event_reducer import EventReducer, get_reducer
 from modules.memory.event_retrieval import EventRetrieval, get_event_retrieval
 from modules.memory.embedding import EmbeddingEngine
@@ -20,6 +26,7 @@ from modules.memory.result_fusion import ResultFusion, format_deep_recall_result
 
 __all__ = [
     "EventStore", "MemoryEvent",
+    "SanitizedEvent", "RejectedEvent", "sanitize_event", "sanitize_batch",
     "EventReducer", "get_reducer",
     "EventRetrieval", "get_event_retrieval",
     "EmbeddingEngine",

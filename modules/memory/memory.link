@@ -7,6 +7,15 @@ eq MemRetrieve = Retrieve · Guard · Retrieve
 export MemSaveInner
 eq MemSaveInner = Guard · Write · Retrieve
 
+# 写入前的结构校验：只判定与就地修正（截断/丢弃/去重），不落盘。
+# 事件不可变——校验不带 status/supersedes，也不改写已有事件。
+export MemValidate
+eq MemValidate = Guard · Write
+
+# 批量清洗 = 逐条校验（Loop 内每条一次 Guard），再累加进结果集
+export MemSanitizeBatch
+eq MemSanitizeBatch = Loop(Guard) · Write
+
 # L2 数据流：retrieve(query) -> top_events；save(event) -> ok
 eq MemRetrieveFlow = Retrieve(query) · Guard(query) · Retrieve(top_events) · Write(top_events)
-eq MemSaveFlow = Retrieve(event) · Guard(event) · Write(event) · Retrieve(ok) · Write(ok)
+eq MemSaveFlow = Retrieve(event) · Guard(event) · MemValidate(event) · Write(event) · Retrieve(ok) · Write(ok)
