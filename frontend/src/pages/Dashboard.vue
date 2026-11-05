@@ -173,20 +173,30 @@ function eventToEntry(ev) {
   return null
 }
 
+let trajSeq = 0
 async function loadTrajectory(sid) {
-  if (!sid) return
+  if (!sid) {
+    trajSeq += 1  // 使在途请求失效
+    trajEntries.value = []
+    trajError.value = ''
+    trajLoading.value = false
+    return
+  }
+  const seq = ++trajSeq
   trajSid.value = sid
   trajLoading.value = true
   trajError.value = ''
   try {
     const r = await endpoints.sessionEvents(sid, 0, 2000)
+    if (seq !== trajSeq) return  // 已切到其它会话，丢弃旧响应
     const evs = r?.data?.events || []
     trajEntries.value = evs.map(eventToEntry).filter(Boolean)
   } catch (err) {
+    if (seq !== trajSeq) return
     trajError.value = String(err?.message || err)
     trajEntries.value = []
   } finally {
-    trajLoading.value = false
+    if (seq === trajSeq) trajLoading.value = false
   }
 }
 function openTrajectory(sid) {
@@ -321,16 +331,15 @@ function openTrajectory(sid) {
         <div class="card-header dash-card-header-wrap">
           <span>{{ $t('dashboard.sessionTrajectory') }}</span>
           <div class="dash-traj-bar">
-            <select v-model="trajSid" class="input w-200">
+            <select v-model="trajSid" class="input w-200" @change="loadTrajectory(trajSid)">
               <option value="">{{ $t('dashboard.selectSession') }}</option>
               <option v-for="s in sessions" :key="s.session_id" :value="s.session_id">{{ s.title || s.session_id.slice(0, 16) }}</option>
             </select>
-            <button class="btn btn-sm" :disabled="!trajSid || trajLoading" @click="loadTrajectory(trajSid)"><Icon name="activity" :size="13" /> {{ $t('dashboard.loadTrajectory') }}</button>
           </div>
         </div>
         <div v-if="trajLoading" class="dash-empty">{{ $t('app.loading') }}</div>
         <div v-else-if="trajError" class="dash-empty">{{ trajError }}</div>
-        <TrajectoryTimeline v-else :entries="trajEntries" title="会话轨迹" :open="true" empty-text="该会话暂无轨迹（请先选择会话并加载）" />
+        <TrajectoryTimeline v-else :entries="trajEntries" title="会话轨迹" :open="true" empty-text="该会话暂无轨迹" />
       </div>
 
       <!-- API 调用频率 -->

@@ -134,10 +134,25 @@ describe('Dashboard 页面', () => {
     expect(w.vm.sessions).toEqual([])
   })
 
-  it('DOM：路由卡片跳转，会话行加载轨迹、行内按钮进入对话', async () => {
+  it('DOM：路由卡片跳转，会话行加载轨迹、行内按钮进入对话，切换会话自动加载轨迹', async () => {
     routeFetch([
+      // events 路由必须放在 '/stream/sessions' 列表路由之前（includes 会先命中列表）
+      {
+        match: '/stream/sessions/abc123/events',
+        data: { data: { events: [{ type: 'thinking', event: 'thinking', data: { content: '思考 A' }, timestamp: '2024-01-01T00:00:01' }] } },
+      },
+      {
+        match: '/stream/sessions/def456/events',
+        data: { data: { events: [{ type: 'tool', event: 'tool_call', data: { name: 'read_file' }, timestamp: '2024-01-01T00:00:02' }] } },
+      },
       { match: '/management/dashboard', data: { data: {} } },
-      { match: '/stream/sessions', data: { data: [{ session_id: 'abc123', title: '会话', last_active: '2024-01-01T00:00:00' }] } },
+      {
+        match: '/stream/sessions',
+        data: { data: [
+          { session_id: 'abc123', title: '会话', last_active: '2024-01-01T00:00:00' },
+          { session_id: 'def456', title: '另一个会话', last_active: '2024-01-02T00:00:00' },
+        ] },
+      },
       { match: '/management/api-requests/stats', data: { data: {} } },
       { match: '/management/api-requests', data: { data: { items: [], total: 0 } } },
     ])
@@ -153,11 +168,23 @@ describe('Dashboard 页面', () => {
     expect(pushMock).toHaveBeenCalledWith('/memory')
     // 最近会话行 → 加载该会话轨迹（不离开仪表盘）
     pushMock.mockClear()
-    await w.find('.dash-session-row').trigger('click')
+    // 列表按 last_active 倒序，def456 在前；按文本定位 abc123
+    let row = w.findAll('.dash-session-row').find((r) => r.text().includes('abc123'))
+    await row.trigger('click')
     expect(w.vm.trajSid).toBe('abc123')
     expect(pushMock).not.toHaveBeenCalled()
+    await new Promise((r) => setTimeout(r, 10))
+    expect(w.vm.trajEntries.length).toBe(1)
+    expect(w.vm.trajEntries[0].kind).toBe('thinking')
+    // 轨迹卡片不再有手动“加载轨迹”按钮，切换下拉即自动加载
+    expect(w.find('.dash-traj-bar button').exists()).toBe(false)
+    await w.find('.dash-traj-bar select').setValue('def456')
+    await new Promise((r) => setTimeout(r, 10))
+    expect(w.vm.trajSid).toBe('def456')
+    expect(w.vm.trajEntries[0].kind).toBe('tool')
     // 行内“对话”按钮 → 进入对话页
-    await w.find('.dash-session-row button').trigger('click')
+    row = w.findAll('.dash-session-row').find((r) => r.text().includes('abc123'))
+    await row.find('button').trigger('click')
     expect(pushMock).toHaveBeenCalledWith('/chat?session=abc123')
   })
 
