@@ -108,6 +108,15 @@ def test_pet_chat_stream(gw_app, monkeypatch):
             assert '"state"' not in body and "state_text" not in body
 
 
+def test_pet_chat_disabled_returns_409(gw_app, monkeypatch):
+    """总开关关闭：/stream/pet/chat 拒绝回复"""
+    app, _ = gw_app
+    monkeypatch.setattr(settings, "DESKTOP_PET_ENABLED", False)
+    with TestClient(app) as client:
+        r = client.post("/stream/pet/chat", json={"text": "你好"})
+        assert r.status_code == 409
+
+
 def test_pet_config_idle_backoff_roundtrip(gw_app, monkeypatch, tmp_path):
     """e2e：PUT /stream/pet/config 透传 idle_backoff_max，GET 读回一致"""
     import modules.desktop_pet.store as store_mod

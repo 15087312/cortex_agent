@@ -361,6 +361,29 @@ def test_chat_uses_loop(monkeypatch, pet_db):
     assert args[1] == "你好"
 
 
+def test_chat_disabled_returns_empty(monkeypatch, pet_db):
+    """总开关关闭：chat 直接返回空，不进入 ReAct 循环"""
+    pe = _engine()
+    loop = MagicMock()
+    loop.name = "direct"
+    loop.run = AsyncMock(return_value="x")
+    pe._loop = loop
+    monkeypatch.setattr(settings, "DESKTOP_PET_ENABLED", False)
+    assert asyncio.run(pe.chat("你好")) == ""
+    loop.run.assert_not_awaited()
+
+
+def test_stream_chat_disabled_yields_nothing(monkeypatch, pet_db):
+    """总开关关闭：流式对话立即结束，不产出 token"""
+    pe = _engine()
+    monkeypatch.setattr(settings, "DESKTOP_PET_ENABLED", False)
+
+    async def _collect():
+        return [chunk async for chunk in pe.stream_chat("你好")]
+
+    assert asyncio.run(_collect()) == []
+
+
 def test_chat_frontend_down_still_runs(monkeypatch, pet_db):
     """桌宠独立页面形态：前端连接不可达也照常走循环（旧握手检查已移除）"""
     pe = _engine()

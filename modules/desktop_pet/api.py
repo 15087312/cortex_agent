@@ -11,7 +11,7 @@ import os
 import re
 from typing import Optional
 
-from fastapi import APIRouter, WebSocket
+from fastapi import APIRouter, HTTPException, WebSocket
 from pydantic import BaseModel
 
 from utils.logger import setup_logger
@@ -121,6 +121,11 @@ async def pet_move_stream():
 async def pet_chat_stream(body: PetChatRequest):
     """互动对话（SSE 流式）：互动提示词 → 独立 ReAct 循环 → 保存独立历史"""
     from sse_starlette.sse import EventSourceResponse
+    from modules.desktop_pet.pet_engine import PetEngine
+
+    # 总开关关闭：不回复（自动/手动都拒绝），前端也会禁用输入
+    if not PetEngine.get_instance().enabled:
+        raise HTTPException(status_code=409, detail="desktop pet disabled")
 
     async def gen():
         try:

@@ -82,20 +82,20 @@ describe('Pet 页面', () => {
     expect(w.text()).toContain('暂无独立记忆')
   })
 
-  it('桌宠总开关只在页眉出现一次，设置页不再重复', async () => {
+  it('桌宠总开关只在设置 Tab，页眉不再出现按钮', async () => {
     routeFetch(BASE_ROUTES())
     const w = mountPage()
     await tick()
     await w.vm.$nextTick()
-    // 页眉唯一的总开关（默认启用 → 「关闭桌面宠物」）
-    const toggles = w.findAll('.pet-header button')
-      .filter((b) => b.text().includes('桌面宠物'))
-    expect(toggles.length).toBe(1)
-    // 设置页曾有一份等价的总开关（标题「总开关」+「启用桌宠」），已合并到页眉
+    // 页眉不再有开启/关闭按钮，只保留运行状态徽标
+    expect(w.findAll('.pet-header button').filter((b) => b.text().includes('桌面宠物')).length).toBe(0)
+    // 聊天 Tab 不出现总开关
+    expect(w.find('[data-test="pet-master-toggle"]').exists()).toBe(false)
+    // 设置 Tab 有且仅有一个总开关
     w.vm.tab = 'settings'
     await w.vm.$nextTick()
-    expect(w.text()).not.toContain('总开关')
-    expect(w.text()).not.toContain('启用桌宠')
+    expect(w.find('[data-test="pet-master-toggle"]').exists()).toBe(true)
+    expect(w.text()).toContain('启用桌宠')
   })
 
   it('发送消息：SSE 逐 token 追加到回复', async () => {
@@ -210,7 +210,7 @@ describe('Pet 页面', () => {
         }
         return prevFetch(url, init)
       }
-      // 页面不再自动首轮（不再自动说话）：手动触发首轮，验证 SSE 结束后的自动续轮链路
+      // 手动触发首轮（会取消待启动的自动首轮），验证 SSE 结束后的自动续轮链路
       await w.vm.send('')
       await vi.advanceTimersByTimeAsync(100)
       expect(chatStreams.length).toBe(1)
@@ -219,6 +219,60 @@ describe('Pet 页面', () => {
       expect(chatStreams.length).toBeGreaterThanOrEqual(2)
     } finally {
       vi.useRealTimers()
+    }
+  })
+
+  it('总开关开启自动定时回复；关闭后停止且不再回复', async () => {
+    const { endpoints } = await import('@/api.js')
+    const updSpy = vi.spyOn(endpoints, 'updateConfig').mockResolvedValue({ success: true })
+    const startSpy = vi.spyOn(endpoints, 'petWindowStart').mockResolvedValue({ success: true, data: { ok: true } })
+    const stopSpy = vi.spyOn(endpoints, 'petWindowStop').mockResolvedValue({ success: true, data: { ok: true } })
+    const statusSpy = vi.spyOn(endpoints, 'petWindowStatus').mockResolvedValue({ success: true, data: { running: true } })
+    vi.useFakeTimers()
+    try {
+      routeFetch([
+        { match: '/stream/pet/history', data: { data: { items: [] } } },
+        { match: '/stream/pet/config', data: { data: { loop_type: 'custom', max_loop_rounds: 0, min_think_interval: 1 } } },
+        { match: '/stream/pet/memory', data: { data: { items: [] } } },
+        { match: '/config/DESKTOP_PET_ENABLED', data: { value: true } },
+      ])
+      const chatStreams = []
+      const prevFetch = globalThis.fetch
+      globalThis.fetch = async (url, init) => {
+        if (String(url).includes('/pet/chat')) {
+          chatStreams.push(url)
+          return sseMockResponse([])
+        }
+        return prevFetch(url, init)
+      }
+      const w = mountPage()
+      // 开启：页面加载后自动发起首轮
+      await vi.advanceTimersByTimeAsync(300)
+      expect(chatStreams.length).toBe(1)
+      // 定时续轮（min_think_interval=1s）
+      await vi.advanceTimersByTimeAsync(1100)
+      expect(chatStreams.length).toBeGreaterThanOrEqual(2)
+      // 关闭：停止自动循环，后续不再请求
+      await w.vm.setMasterEnabled(false)
+      const afterOff = chatStreams.length
+      await vi.advanceTimersByTimeAsync(3000)
+      expect(chatStreams.length).toBe(afterOff)
+      expect(w.vm.masterEnabled).toBe(false)
+      expect(w.find('.pet-input').attributes('disabled')).toBeDefined()
+      // 关闭时手动发送也不回复
+      await w.vm.send('你好')
+      await vi.advanceTimersByTimeAsync(100)
+      expect(chatStreams.length).toBe(afterOff)
+      // 重新开启：自动回复恢复
+      await w.vm.setMasterEnabled(true)
+      await vi.advanceTimersByTimeAsync(300)
+      expect(chatStreams.length).toBeGreaterThan(afterOff)
+    } finally {
+      vi.useRealTimers()
+      updSpy.mockRestore()
+      startSpy.mockRestore()
+      stopSpy.mockRestore()
+      statusSpy.mockRestore()
     }
   })
 
@@ -512,7 +566,7 @@ describe('Pet 页面', () => {
     expect(w.vm.messages[w.vm.messages.length - 1].content).toBe('喵')
   })
 
-  it('页眉桌面宠物开关：开启时显示关闭按钮，点击后调用 updateConfig(false)', async () => {
+  it('设置 Tab 桌宠开关：关闭调用 updateConfig(false)，再开启拉起进程', async () => {
     const { endpoints } = await import('@/api.js')
     const updSpy = vi.spyOn(endpoints, 'updateConfig').mockResolvedValue({ success: true })
     const startSpy = vi.spyOn(endpoints, 'petWindowStart').mockResolvedValue({ success: true, data: { ok: true, pid: 1234 } })
@@ -523,21 +577,22 @@ describe('Pet 页面', () => {
       const w = mountPage()
       await tick()
       await w.vm.$nextTick()
-      // 默认 masterEnabled=true → 显示「关闭桌面宠物」
+      w.vm.tab = 'settings'
+      await w.vm.$nextTick()
+      let toggle = w.find('[data-test="pet-master-toggle"]')
       expect(w.vm.masterEnabled).toBe(true)
-      const closeBtn = w.findAll('button').find((b) => b.text().includes('关闭桌面宠物'))
-      expect(closeBtn).toBeTruthy()
-      await closeBtn.trigger('click')
+      expect(toggle.element.checked).toBe(true)
+      // 关闭：先停窗口进程，再关引擎开关
+      await toggle.setValue(false)
       await tick()
-      // 进程级关闭：先停窗口进程，再关引擎开关
       expect(stopSpy).toHaveBeenCalled()
       expect(updSpy).toHaveBeenCalledWith('DESKTOP_PET_ENABLED', false)
       expect(w.vm.masterEnabled).toBe(false)
-      // 关闭后显示「打开桌面宠物」，点击后拉起进程 + 开引擎
       await w.vm.$nextTick()
-      const openBtn = w.findAll('button').find((b) => b.text().includes('打开桌面宠物'))
-      expect(openBtn).toBeTruthy()
-      await openBtn.trigger('click')
+      toggle = w.find('[data-test="pet-master-toggle"]')
+      expect(toggle.element.checked).toBe(false)
+      // 开启：拉起进程 + 开引擎
+      await toggle.setValue(true)
       await tick()
       expect(updSpy).toHaveBeenCalledWith('DESKTOP_PET_ENABLED', true)
       expect(startSpy).toHaveBeenCalled()

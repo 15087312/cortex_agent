@@ -20,7 +20,7 @@ const abortCtl = ref(null)
 const messagesWrap = ref(null)
 let autoTimer = null // 连续思考模式的下一轮定时器
 let stopAuto = false // 用户点「停止」后终止本页的持续思考
-let userChatted = false // 本次页面会话中用户是否手动发过消息（direct 循环续聊的前提）
+let autoStartTimer = null // 开启总开关后延迟启动自动回复（等首屏历史/配置就绪）
 const sendQueue = [] // 排队等待发送的消息（AI 输出中用户新发的消息）
 
 // ── 语音录制 ──
@@ -181,10 +181,12 @@ async function pumpSse(res, { last, onRoundStart } = {}) {
 }
 
 async function send(autoText) {
-  const isAuto = autoText === '' // 空字符串 = 主动思考模式（页面加载自动触发）
+  const isAuto = autoText === '' // 空字符串 = 主动思考模式
+  if (!masterEnabled.value) return // 桌宠关闭：不自动回复，也不接受手动对话
+  // 任何一次发送都优先于“待启动的自动首轮”，避免重复触发
+  if (autoStartTimer) { clearTimeout(autoStartTimer); autoStartTimer = null }
   if (isAuto && stopAuto) return
   if (!isAuto) {
-    userChatted = true
     stopAuto = false // 手动发消息 = 重新唤醒桌宠（自动续聊链路恢复）
   }
   const text = isAuto ? '' : input.value.trim()
@@ -208,9 +210,8 @@ async function send(autoText) {
   let roundCount = 0
   // 连续思考模式（custom 循环 + max_loop_rounds=0 或 direct 连续对话）：
   // SSE 正常结束后延迟自动发起下一轮主动思考，形成持续对话
-  const shouldContinue = () =>
-    cfg.value.max_loop_rounds === 0 &&
-    (cfg.value.loop_type === 'custom' || userChatted)
+  // 总开关开启且未设轮次上限 → 按 min_think_interval 持续自动回复
+  const shouldContinue = () => masterEnabled.value && cfg.value.max_loop_rounds === 0
   try {
     const res = await fetch('/api/stream/pet/chat', {
       method: 'POST',
@@ -315,14 +316,33 @@ async function loadMasterEnabled() {
 
 // 打开/关闭桌面宠物（进程级：拉起/停止窗口进程 + 同步引擎总开关）
 // 窗口进程由后端 window_supervisor 统一持有：崩溃自动重启、Web 页可见状态。
+function stopAutoLoop() {
+  if (autoTimer) { clearTimeout(autoTimer); autoTimer = null }
+  if (autoStartTimer) { clearTimeout(autoStartTimer); autoStartTimer = null }
+  stopAuto = true
+  if (abortCtl.value) abortCtl.value.abort()
+  stopPetAudio()
+}
+
+function startAutoLoop() {
+  if (!masterEnabled.value) return
+  stopAuto = false
+  if (autoTimer) { clearTimeout(autoTimer); autoTimer = null }
+  if (autoStartTimer) clearTimeout(autoStartTimer)
+  // 等首屏历史/配置加载完再开始，避免与初始渲染竞态
+  autoStartTimer = setTimeout(() => {
+    autoStartTimer = null
+    if (masterEnabled.value && !sending.value) send('')
+  }, 200)
+}
+
 async function setMasterEnabled(v) {
-  if (savingMaster.value) return
+  if (savingMaster.value || v === masterEnabled.value) return true
   savingMaster.value = true
   try {
     if (v) {
       const r = await endpoints.updateConfig('DESKTOP_PET_ENABLED', true)
       if (r?.success === false) throw new Error('config')
-      masterEnabled.value = true
       try {
         const w = await endpoints.petWindowStart()
         if (w?.success === false) {
@@ -338,16 +358,26 @@ async function setMasterEnabled(v) {
       try { await endpoints.petWindowStop() } catch { /* 忽略，继续 */ }
       const r = await endpoints.updateConfig('DESKTOP_PET_ENABLED', false)
       if (r?.success === false) throw new Error('config')
-      masterEnabled.value = false
       toast.show(t('pet.disabled'), 'success')
       if (abortCtl.value) abortCtl.value.abort() // 关闭时中断当前思考
     }
+    masterEnabled.value = v
+    if (v) startAutoLoop()
+    else stopAutoLoop()
     await loadWindowStatus()
+    return true
   } catch {
     toast.show(t('pet.saveFailed'), 'error')
+    return false
   } finally {
     savingMaster.value = false
   }
+}
+
+// 开关失败时把 DOM 勾选状态回滚到真实值（:checked 绑定在值未变化时不会重绘）
+async function onMasterToggle(e) {
+  const ok = await setMasterEnabled(e.target.checked)
+  if (!ok) e.target.checked = masterEnabled.value
 }
 
 // ── 桌宠窗口进程状态（后端监管：运行中/pid/崩溃重启次数）──
@@ -456,8 +486,7 @@ function actsOf(catId) {
 async function sendAction(action) {
   if (sending.value) return
   activeCat.value = ''
-  stopAuto = false
-  userChatted = true // 互动算用户发言：direct 循环的自动续聊链路恢复
+  stopAuto = false // 互动算用户发言：自动续聊链路恢复
   messages.value.push({ role: 'user', content: '', actionId: action.id, actionLabel: action.label, actionIcon: action.icon })
   messages.value.push({ role: 'assistant', content: '', thinking: '' })
   sending.value = true
@@ -528,7 +557,7 @@ async function delMemory(mid) {
 }
 
 onMounted(async () => {
-  loadHistory()
+  await loadHistory()
   await loadConfig()
   await loadMasterEnabled()
   loadMemory()
@@ -537,11 +566,13 @@ onMounted(async () => {
   // 窗口进程状态轮询（10s）：崩溃/重启后页眉徽标同步
   if (windowPollTimer) clearInterval(windowPollTimer)
   windowPollTimer = setInterval(loadWindowStatus, 10000)
-  // 不再自动说话：用户手动发送或点思考才触发
+  // 总开关开启 → 自动进入定时回复循环
+  if (masterEnabled.value) startAutoLoop()
 })
 
 onUnmounted(() => {
   if (autoTimer) { clearTimeout(autoTimer); autoTimer = null }
+  if (autoStartTimer) { clearTimeout(autoStartTimer); autoStartTimer = null }
   if (windowPollTimer) { clearInterval(windowPollTimer); windowPollTimer = null }
 })
 </script>
@@ -556,8 +587,6 @@ onUnmounted(() => {
       <div class="pet-header-right">
         <span v-if="petWindow.running" class="badge badge-green" :title="'pid ' + petWindow.pid">{{ $t('pet.windowRunning') }} · {{ petWindow.pid }}</span>
         <span v-else class="badge badge-gray">{{ $t('pet.windowStopped') }}</span>
-        <button v-if="!masterEnabled" class="btn btn-sm btn-primary" :disabled="savingMaster" @click="setMasterEnabled(true)"><Icon name="play" :size="13" /> {{ $t('pet.openPet') }}</button>
-        <button v-else class="btn btn-sm" :disabled="savingMaster" @click="setMasterEnabled(false)"><Icon name="stop" :size="13" /> {{ $t('pet.closePet') }}</button>
         <div class="seg">
           <button :class="{ on: tab === 'chat' }" @click="tab = 'chat'">{{ $t('pet.tabChat') }}</button>
           <button :class="{ on: tab === 'settings' }" @click="tab = 'settings'">{{ $t('pet.tabSettings') }}</button>
@@ -643,17 +672,41 @@ onUnmounted(() => {
         <input
           v-model="input"
           class="input pet-input"
-          :placeholder="$t('pet.inputPlaceholder')"
+          :disabled="!masterEnabled"
+          :placeholder="masterEnabled ? $t('pet.inputPlaceholder') : $t('pet.masterDisabledHint')"
           @keydown.enter="onInputEnter"
         />
-        <button class="btn btn-icon" :class="{ 'btn-recording': recording }" @click="toggleRecording" :title="recording ? $t('pet.stopRecording') : $t('pet.startRecording')"><Icon name="mic" :size="14" /></button>
-        <button class="btn btn-primary" @click="send"><Icon name="send" :size="14" /> {{ $t('pet.send') }}</button>
+        <button class="btn btn-icon" :class="{ 'btn-recording': recording }" :disabled="!masterEnabled" @click="toggleRecording" :title="recording ? $t('pet.stopRecording') : $t('pet.startRecording')"><Icon name="mic" :size="14" /></button>
+        <button class="btn btn-primary" :disabled="!masterEnabled" @click="send"><Icon name="send" :size="14" /> {{ $t('pet.send') }}</button>
         <button v-if="sending" class="btn" @click="stopSend"><Icon name="x" :size="14" /> {{ $t('pet.stop') }}</button>
       </div>
     </div>
 
     <!-- 设置 -->
     <div v-else-if="tab === 'settings'" class="pet-settings">
+      <div class="settings-group">
+        <div class="settings-group-title">{{ $t('pet.masterTitle') }}</div>
+        <div class="setting-row">
+          <div class="lbl">
+            <div class="t">{{ $t('pet.masterEnabled') }}</div>
+            <div class="d">{{ masterEnabled ? $t('pet.masterEnabledDesc') : $t('pet.masterDisabledDesc') }}</div>
+          </div>
+          <div class="setting-ctl">
+            <label class="toggle-switch">
+              <input
+                type="checkbox"
+                data-test="pet-master-toggle"
+                :checked="masterEnabled"
+                :disabled="savingMaster"
+                @change="onMasterToggle"
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-divider"></div>
       <div class="settings-group">
         <div class="settings-group-title">{{ $t('pet.personaTitle') }}</div>
         <div class="setting-row">

@@ -12,7 +12,7 @@ import asyncio
 import threading
 import time
 
-from typing import Callable, List, Optional
+from typing import Any, Callable, Dict, Optional
 
 from config.settings import settings
 from utils.logger import setup_logger
@@ -105,7 +105,6 @@ class PetEngine:
 
         配置变更时自动重建（对比配置指纹），未配置的字段回退全局 settings。
         """
-        from infra.model.large_model_client import LargeModelClient
         from infra.model.config_fingerprint import close_client_session
         cfg = self.config
         fingerprint = (
@@ -166,6 +165,8 @@ class PetEngine:
 
         语音/按键等触发与页面聊天共用同一队列，保证同一时间桌宠只跑一个模型任务。
         """
+        if not self.enabled:
+            return ""
         try:
             # @link:block Pet_Think = Think · Write
             fut = await self.task_queue.submit("chat", lambda: self.loop.run(self, text))
@@ -181,6 +182,8 @@ class PetEngine:
 
     async def stream_chat(self, text: str, extra_system: str = "", on_reasoning: Optional[Callable[[str], None]] = None):
         """流式对话：独立 ReAct 循环，逐 token 产出，思考过程逐段回调，结束后保存历史"""
+        if not self.enabled:
+            return
         # 每轮完整文本产出后注入的轮次完成标记（前端收到后结束"接收中"，准备下一轮）
         ROUND_DONE = "\x00ROUND_DONE\x00"
         queue: "asyncio.Queue" = asyncio.Queue()
