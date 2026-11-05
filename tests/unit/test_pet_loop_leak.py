@@ -56,7 +56,10 @@ class _FakeClient:
 
 def _engine(monkeypatch, cfg_patch=None):
     import modules.desktop_pet.store as store_mod
-    patch = {"loop_type": "custom", "min_think_interval": 0}
+    # max_loop_rounds=0（持续思考）是线上的默认值，但这几个用例是“调用
+    # run() N 次，每次一轮”，固定 1 轮才能让单次 run() 返回；否则每次
+    # run() 会一直思考到 8k 上下文上限，整例撞 pytest --timeout=60。
+    patch = {"loop_type": "custom", "min_think_interval": 0, "max_loop_rounds": 1}
     if cfg_patch:
         patch.update(cfg_patch)
     store_mod.PetStore.get_instance().update_config(patch)
