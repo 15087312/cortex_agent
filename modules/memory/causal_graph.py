@@ -88,6 +88,11 @@ class CausalEdge:
     label: str = ""              # 可选：关系描述
     created_at: str = ""         # 创建时间（ISO），用于时间窗口过滤
     version: int = 0             # 版本号（用于缓存失效）
+    # 边的每日置信度增强状态。event_reducer 的防膨胀逻辑早就在读写这两个
+    # 字段，但 CausalEdge 从未声明它们：读已有边时直接 AttributeError，
+    # 被外层 except 吞成“因果图保存失败”，置信度增强实际从未生效。
+    confidence_daily_count: int = 0
+    confidence_last_reset: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -100,6 +105,8 @@ class CausalEdge:
             "label": self.label,
             "created_at": self.created_at,
             "version": self.version,
+            "confidence_daily_count": self.confidence_daily_count,
+            "confidence_last_reset": self.confidence_last_reset,
         }
 
     @classmethod
@@ -114,6 +121,8 @@ class CausalEdge:
             label=d.get("label", ""),
             created_at=d.get("created_at", ""),
             version=d.get("version", 0),
+            confidence_daily_count=d.get("confidence_daily_count", 0),
+            confidence_last_reset=d.get("confidence_last_reset", ""),
         )
 
 
@@ -182,7 +191,9 @@ class CausalGraph:
                 confidence REAL DEFAULT 0.5,
                 label TEXT DEFAULT '',
                 created_at TEXT DEFAULT '',
-                version INTEGER DEFAULT 0
+                version INTEGER DEFAULT 0,
+                confidence_daily_count INTEGER DEFAULT 0,
+                confidence_last_reset TEXT DEFAULT ''
             );
             CREATE INDEX IF NOT EXISTS idx_edges_from ON edges(from_id);
             CREATE INDEX IF NOT EXISTS idx_edges_to ON edges(to_id);
@@ -315,6 +326,10 @@ class CausalGraph:
             conn.execute("ALTER TABLE edges ADD COLUMN created_at TEXT DEFAULT ''")  # pragma: no cover — created_at 缺失时 _init_db 的 idx_edges_created_at 索引先失败，该分支不可达
         if "version" not in existing:
             conn.execute("ALTER TABLE edges ADD COLUMN version INTEGER DEFAULT 0")
+        if "confidence_daily_count" not in existing:
+            conn.execute("ALTER TABLE edges ADD COLUMN confidence_daily_count INTEGER DEFAULT 0")
+        if "confidence_last_reset" not in existing:
+            conn.execute("ALTER TABLE edges ADD COLUMN confidence_last_reset TEXT DEFAULT ''")
         
         # 迁移 nodes 表
         existing_nodes = {row[1] for row in conn.execute("PRAGMA table_info(nodes)").fetchall()}
@@ -414,10 +429,12 @@ class CausalGraph:
             conn = self._get_conn()
             conn.execute(
             """INSERT OR REPLACE INTO edges
-               (id, from_id, to_id, relation, edge_type, confidence, label, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+               (id, from_id, to_id, relation, edge_type, confidence, label, created_at,
+                version, confidence_daily_count, confidence_last_reset)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (edge.id, edge.from_id, edge.to_id, edge.relation,
-             edge.edge_type, edge.confidence, edge.label, edge.created_at),
+             edge.edge_type, edge.confidence, edge.label, edge.created_at,
+             edge.version, edge.confidence_daily_count, edge.confidence_last_reset),
         )
         conn.commit()
         return edge.id

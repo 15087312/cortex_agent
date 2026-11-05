@@ -44,18 +44,39 @@ def test_edge_to_from_dict_roundtrip():
     e = CausalEdge(
         id="e1", from_id="a", to_id="b", relation="prevents",
         edge_type="causal", confidence=0.9, label="避免", created_at="t",
-        version=1,
+        version=1, confidence_daily_count=2, confidence_last_reset="2026-11-05",
     )
     d = e.to_dict()
     e2 = CausalEdge.from_dict(d)
     assert e2.relation == "prevents"
     assert e2.created_at == "t"
+    assert e2.confidence_daily_count == 2
+    assert e2.confidence_last_reset == "2026-11-05"
 
 
 def test_edge_from_dict_defaults():
     e = CausalEdge.from_dict({"id": "x", "from_id": "a", "to_id": "b"})
     assert e.relation == "causes"
     assert e.confidence == 0.5
+    # 已有边缺列时默认值必须可用（event_reducer 会直接读这两个字段）。
+    assert e.confidence_daily_count == 0
+    assert e.confidence_last_reset == ""
+
+
+def test_edge_daily_confidence_state_persists(graph):
+    """event_reducer 的防膨胀计数必须能落库并在下一次读取时还原。"""
+    a, b = CausalNode(label="A"), CausalNode(label="B")
+    graph.save_node(a)
+    graph.save_node(b)
+    eid = graph.save_edge(
+        CausalEdge(
+            from_id=a.id, to_id=b.id,
+            confidence_daily_count=3, confidence_last_reset="2026-11-05",
+        )
+    )
+    got = graph.get_edge(eid)
+    assert got.confidence_daily_count == 3
+    assert got.confidence_last_reset == "2026-11-05"
 
 
 def test_save_and_get_node(graph):
