@@ -168,6 +168,7 @@ export default {
     selectSession: 'Select session',
     loadTrajectory: 'Load trajectory',
     openTrajectory: 'Trajectory',
+    openChat: 'Chat',
     apiFreq: 'API call frequency (current page)',
     noCallRecords: 'No call records',
     apiLog: 'API request log ({count})',

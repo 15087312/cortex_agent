@@ -296,18 +296,18 @@ function openTrajectory(sid) {
                 <th class="text-left">{{ $t('dashboard.sessionTitle') }}</th>
                 <th class="text-right">{{ $t('dashboard.msgCount') }}</th>
                 <th class="text-right">{{ $t('dashboard.updatedAt') }}</th>
-                <th class="text-right">轨迹</th>
+                <th class="text-right">{{ $t('common.action') }}</th>
               </tr>
             </thead>
             <tbody>
-              <tr v-for="s in recentSessions" :key="s.session_id" @click="router.push('/chat?session=' + s.session_id)" class="dash-session-row">
+              <tr v-for="s in recentSessions" :key="s.session_id" @click="openTrajectory(s.session_id)" :title="$t('dashboard.sessionTrajectory')" class="dash-session-row">
                 <td class="dash-session-id">{{ s.session_id.slice(0, 18) }}</td>
                 <td><span class="badge" :class="s.session_id === 'chat' ? 'badge-blue' : 'badge-gray'">{{ s.session_id === 'chat' ? 'MAIN' : 'SUB' }}</span></td>
                 <td class="dash-session-title">{{ s.title || s.session_id.slice(0, 12) }}</td>
                 <td class="text-right dash-session-meta">{{ s.message_count ?? 0 }}</td>
                 <td class="text-right dash-session-time">{{ (s.last_active || '').slice(5, 16) }}</td>
                 <td class="text-right">
-                  <button class="btn btn-sm" @click.stop="openTrajectory(s.session_id)"><Icon name="activity" :size="12" /> {{ $t('dashboard.openTrajectory') }}</button>
+                  <button class="btn btn-sm" @click.stop="router.push('/chat?session=' + s.session_id)"><Icon name="message" :size="12" /> {{ $t('dashboard.openChat') }}</button>
                 </td>
               </tr>
             </tbody>

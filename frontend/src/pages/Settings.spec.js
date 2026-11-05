@@ -235,16 +235,16 @@ describe('Settings.vue', () => {
     mockApi({ config: { DEBUG: false } })
     const w = await mountSettings()
     await new Promise((r) => setTimeout(r, 30))
-    // 读取：未配置时用 fallback
-    expect(w.vm.petEnabled).toBe(true)
+    // 读取：未配置时用 fallback（DESKTOP_PET_ENABLED 已移至 Pet 页，这里用 OUTPUT_TTS_ENABLED 验证）
+    expect(w.vm.ttsEnabled).toBe(false)
     // 写入：setter → saveCfg → configStore.$patch + PUT
-    w.vm.petEnabled = false
+    w.vm.debugEnabled = true
     await new Promise((r) => setTimeout(r, 30))
-    const put = writes.find((x) => x.url.includes('/api/config/DESKTOP_PET_ENABLED'))
+    const put = writes.find((x) => x.url.includes('/api/config/DEBUG'))
     expect(put).toBeTruthy()
-    expect(put.body).toEqual({ value: false })
+    expect(put.body).toEqual({ value: true })
     // 乐观更新立即生效
-    expect(w.vm.petEnabled).toBe(false)
+    expect(w.vm.debugEnabled).toBe(true)
   })
 
   it('computed 配置包装：txtCfg/numCfg/segCfg 读写', async () => {

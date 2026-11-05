@@ -168,6 +168,7 @@ export default {
     selectSession: '选择会话',
     loadTrajectory: '加载轨迹',
     openTrajectory: '轨迹',
+    openChat: '对话',
     apiFreq: 'API 调用频率（当前页）',
     noCallRecords: '暂无调用记录',
     apiLog: 'API 请求日志 ({count})',

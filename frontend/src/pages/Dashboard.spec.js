@@ -134,7 +134,7 @@ describe('Dashboard 页面', () => {
     expect(w.vm.sessions).toEqual([])
   })
 
-  it('DOM：路由卡片/会话行触发 router.push', async () => {
+  it('DOM：路由卡片跳转，会话行加载轨迹、行内按钮进入对话', async () => {
     routeFetch([
       { match: '/management/dashboard', data: { data: {} } },
       { match: '/stream/sessions', data: { data: [{ session_id: 'abc123', title: '会话', last_active: '2024-01-01T00:00:00' }] } },
@@ -151,8 +151,13 @@ describe('Dashboard 页面', () => {
     // 记忆卡 → /memory
     await w.findAll('.health-card')[2].trigger('click')
     expect(pushMock).toHaveBeenCalledWith('/memory')
-    // 最近会话行
+    // 最近会话行 → 加载该会话轨迹（不离开仪表盘）
+    pushMock.mockClear()
     await w.find('.dash-session-row').trigger('click')
+    expect(w.vm.trajSid).toBe('abc123')
+    expect(pushMock).not.toHaveBeenCalled()
+    // 行内“对话”按钮 → 进入对话页
+    await w.find('.dash-session-row button').trigger('click')
     expect(pushMock).toHaveBeenCalledWith('/chat?session=abc123')
   })
 

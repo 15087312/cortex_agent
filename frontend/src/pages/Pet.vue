@@ -589,16 +589,6 @@ onUnmounted(() => {
               <div class="pet-thinking-text">{{ m.thinking }}</div>
             </div>
             <div v-if="m.content">{{ m.content }}</div>
-            <div v-if="m.tool" class="pet-tool">
-              <div class="pet-tool-label">
-                <span class="pet-tool-dot"></span>
-                {{ $t('pet.toolLabel') }} {{ m.tool.name }}
-              </div>
-              <div class="pet-tool-body">
-                <div class="pet-tool-progress">{{ $t('pet.toolRunning') }}</div>
-                <pre v-if="m.tool.args && Object.keys(m.tool.args).length" class="pet-tool-args">{{ JSON.stringify(m.tool.args, null, 2) }}</pre>
-              </div>
-            </div>
             <div v-else-if="!(m.role === 'user' && m.actionIcon) && sending && !m.thinking && m.role === 'assistant'" class="pet-waiting">
               <span class="pet-waiting-dots"><i></i><i></i><i></i></span>
               {{ $t('pet.thinking') }}
@@ -614,10 +604,10 @@ onUnmounted(() => {
               </div>
             </div>
           </div>
-        </div>
-        <div class="pet-tool-timeline" v-if="m.tool">
-          <span class="pet-tool-timeline-dot"></span>
-          {{ $t('pet.toolTimeline') }} {{ m.tool.name }}
+          <div class="pet-tool-timeline" v-if="m.tool">
+            <span class="pet-tool-timeline-dot"></span>
+            {{ $t('pet.toolTimeline') }} {{ m.tool.name }}
+          </div>
         </div>
       </div>
       <!-- 互动动作栏：与桌面桌宠圆环菜单同源（分类 → 动作） -->
