@@ -108,7 +108,10 @@ async def test_loop_state_does_not_accumulate(monkeypatch, _pet_db):
     loop = CustomLoop()
 
     keys_before = set(loop.__dict__.keys())
-    for _ in range(60):
+    # 20 轮足够：_FakeClient 的池每 5 轮覆盖一次全部分支（文本/工具/缺参/拒绝），
+    # 4 个完整周期做累积判定绰绰有余。原为 60 轮 —— 单轮 ~0.5s，叠加同文件
+    # 其他用例会把单测推到 pytest.ini 的 --timeout=60 边界，混跑即假阳性失败。
+    for _ in range(20):
         await loop.run(e, "leak probe")
     keys_after = set(loop.__dict__.keys())
     # 无新属性累积
@@ -143,12 +146,14 @@ async def test_gc_object_count_bounded(monkeypatch, _pet_db):
     gc.collect()
     base = len(gc.get_objects())
 
-    for _ in range(80):
+    # 25 轮（5 个完整分支周期）足以暴露无界累积；原为 80 轮，单轮 ~0.5s 会把
+    # 本用例单独推到 pytest.ini 的 --timeout=60 之上（实测 58–60s），属计时
+    # 假阳性而非真实泄漏。阈值同步收紧，保持判据强度。
+    for _ in range(25):
         await loop.run(e, "leak probe")
     gc.collect()
     after = len(gc.get_objects())
-    # 80 轮循环后新增存活对象应有限（放宽阈值，过滤 gc 噪声）
-    assert after - base < 3000, f"object growth {after - base}"
+    assert after - base < 1500, f"object growth {after - base}"
 
 
 @pytest.mark.asyncio

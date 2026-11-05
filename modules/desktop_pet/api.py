@@ -9,7 +9,6 @@ import asyncio
 import json
 import os
 import re
-import time
 from typing import Optional
 
 from fastapi import APIRouter, WebSocket
@@ -72,18 +71,6 @@ async def pet_last_reply():
         return {"success": True, "data": None}
 
 
-@router.get("/state")
-async def pet_state():
-    """桌宠当前状态（状态栏轮询）"""
-    try:
-        from modules.desktop_pet.pet_state import PetState
-        st = PetState.get_instance()
-        values = st.read()
-        return {"success": True, "data": {"values": values, "text": st.describe(values)}}
-    except Exception as e:
-        return {"success": True, "data": None}
-
-
 @router.get("/actions")
 async def pet_actions():
     """桌宠互动动作模板（圆环菜单 + Chat 图标检测统一数据源）"""
@@ -130,45 +117,28 @@ async def pet_move_stream():
     return EventSourceResponse(gen())
 
 
-@router.post("/state/reset")
-async def pet_state_reset():
-    """重置桌宠状态为默认（设置页用）"""
-    from modules.desktop_pet.pet_state import PetState, DEFAULTS
-    st = PetState.get_instance()
-    st._values = dict(DEFAULTS)
-    st._updated_at = time.time()
-    st._save()
-    return {"success": True, "data": {"values": st.read()}}
-
-
 @router.post("/chat")
 async def pet_chat_stream(body: PetChatRequest):
-    """互动对话（SSE 流式）：应用状态效果 → 状态注入提示词 → 独立 ReAct 循环 → 保存独立历史"""
+    """互动对话（SSE 流式）：互动提示词 → 独立 ReAct 循环 → 保存独立历史"""
     from sse_starlette.sse import EventSourceResponse
 
     async def gen():
         try:
-            from modules.desktop_pet.pet_state import PetState
             from modules.desktop_pet.actions import get_action
             from modules.desktop_pet.pet_engine import PetEngine
             from modules.desktop_pet.store import PetStore
 
-            state = PetState.get_instance()
             action_id = (body.action_id or "").strip()
             if action_id and get_action(action_id):
-                before = state.read()
-                state.apply(action_id)
-                prompt = get_action(action_id)["prompt"]
-                text = prompt
-                extra_system = state.describe(before)
+                text = get_action(action_id)["prompt"]
             else:
                 text = (body.text or "").strip()
-                extra_system = state.describe(state.read())
+            extra_system = ""
             if not text:
                 # 主动思考模式：空输入 = 桌宠自己决定说什么（页面加载自动触发）。
                 # 注：这个系统提示必须重申「根据上文继续、不要每次都重复同一句」——
                 # 模型熵太低时容易无限复述上一轮的话，断言「每次新内容/新方向」才能打破。
-                extra_system = (extra_system + "\n\n" if extra_system else "") + (
+                extra_system = (
                     "【主动思考——自言自语 / 延续 / 反思 / 暂停】\n"
                     "目前没有用户的新输入。这是你自己的主动思考时间，你可以：\n"
                     "- 根据当前对话历史进行自言自语的思考，梳理自己的想法\n"
@@ -240,7 +210,6 @@ async def pet_chat_stream(body: PetChatRequest):
             # 收尾：补发剩余思考片段
             while not reason_q.empty():
                 yield {"event": "thinking", "data": json.dumps({"chunk": reason_q.get_nowait()}, ensure_ascii=False)}
-            new_state = state.read()
             reply_text = "".join(reply_parts).strip()
             if voice_on and reply_text:
                 # 语音只读正文：清洗混入正文的 thinking 标签（与 react_loop 同规则），
@@ -259,10 +228,7 @@ async def pet_chat_stream(body: PetChatRequest):
                         audio_url = "/audio/" + os.path.basename(path)
                 except Exception as e:
                     logger.debug(f"[Pet] 语音合成失败（不影响文本回复）: {e}")
-            yield {"event": "done", "data": json.dumps(
-                {"state": new_state, "state_text": state.describe(new_state), "audio_url": audio_url},
-                ensure_ascii=False,
-            )}
+            yield {"event": "done", "data": json.dumps({"audio_url": audio_url}, ensure_ascii=False)}
         except Exception as e:
             yield {"event": "error", "data": json.dumps({"error": str(e)}, ensure_ascii=False)}
 

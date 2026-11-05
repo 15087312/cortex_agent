@@ -97,8 +97,8 @@ class CustomLoop(PetReactLoop):
 
     设计规格（8k 本地模型约束下）：
     - 模型：本地 8k 上下文，单次思考最大输出 512 token（max_output_tokens）。
-    - 思考间隔（min_think_interval）：每次思考之间的最短停止时间，
-      从「前一次思考开始」时刻起算（now - last_think_start >= 间隔）。
+    - 思考间隔（min_think_interval）：每轮思考结束后的静默时间，
+      从「前一次思考结束」时刻起算（now - last_think_end >= 间隔）。
     - 思考循环：思考 → 输出工具名则执行工具 → 观察结果 → 再次思考，
       最多 max_loop_rounds 轮；思考输出为纯文本时结束循环。
     - 工具系统独立管控：桌宠白名单（PET_TOOL_WHITELIST）+ tools_enabled 开关；
@@ -146,7 +146,7 @@ class CustomLoop(PetReactLoop):
     _TOOL_BRACKET_RE = re.compile(r"\[tool\s*:\s*([A-Za-z0-9_\-]+)\s*\]", re.I)
 
     def __init__(self):
-        self._last_think_start = 0.0  # 上次思考开始时刻（跨 chat 生效）
+        self._last_think_end = 0.0  # 上次思考结束时刻（跨 chat 生效）
 
     # ── 主入口 ──
 
@@ -197,6 +197,11 @@ class CustomLoop(PetReactLoop):
                     messages.append(ChatMessage(role="tool", content=obs, tool_call_id=out["tool_call_id"]))
                 else:
                     messages.append(_tool_message(f"【工具观察】{obs}"))
+                # 工具轮的 on_message(obs) 是回调上报，调用名不在 Emit 原子证据表内；
+                # 该出口已由外层 PetReactCycle 的 (Tool · Observe | Emit) 声明覆盖，
+                # 这里不再单独起块名（同名块会触发 E005，且无证据触发 E002）。
+                if on_message:
+                    on_message(obs)
                 continue  # 工具轮：不等待，立即下一 think
             text = (out.get("text") or "").strip()
             if text:
@@ -260,22 +265,24 @@ class CustomLoop(PetReactLoop):
             if self._context_overflow(messages, extra_chars=len(json.dumps(native_tools, ensure_ascii=False)) if native_tools else 0):
                 logger.info("[Pet] 上下文接近 8k 上限，停止思考循环")
                 break
-            # 轮间计时：从上轮开始起算 min_think_interval（空拍 ×退避，封顶 idle_backoff_max）；
-            # interval=0 且已有空拍时用 1s 地板，避免空转热循环
+            # 轮间计时：从上轮「结束」起算 min_think_interval（空拍 ×退避，封顶 idle_backoff_max）。
+            # 从结束时刻起算才能保证每轮之间真的有静默间隔；若从开始时刻起算，
+            # 单轮耗时超过间隔时（本地思考模型常见）等待恒为 0 → 看起来在「一直思考」，
+            # 间隔设置形同失效。interval=0 且已有空拍时用 1s 地板，避免空转热循环
             if interval > 0 or empty_streak > 0:
                 base = interval if interval > 0 else 1.0
                 backoff = self._idle_backoff_mult(empty_streak, backoff_cap)
-                wait = self._last_think_start + base * backoff - time.time()
+                wait = self._last_think_end + base * backoff - time.time()
                 if wait > 0:
                     label = f"空拍×{backoff:g}" if backoff > 1 else "正常"
                     logger.info(f"[Pet] 轮间等待（{label}），{wait:.1f}s 后开始第{cycle}轮")
                     await asyncio.sleep(wait)
-            self._last_think_start = time.time()
             # 一轮完整 ReAct（内含 think→tool→observe 微循环，无等待）
             answer = await self._react_cycle(
                 engine, messages, max_tokens, native_tools, tools_enabled,
                 on_token, on_reasoning, on_message,
             )
+            self._last_think_end = time.time()
             if not answer:
                 empty_streak += 1
                 logger.info(
@@ -291,6 +298,9 @@ class CustomLoop(PetReactLoop):
             parts.append(answer)
             if on_message:
                 on_message(answer)
+            # 汇总到 SSE 层用于 round_complete 语意检测（本轮完整回复已产出）
+            if on_token:
+                on_token("\x00ROUND_DONE\x00")
         # 汇总全部轮次产出（落库由 engine 层 on_message 通道完成，见 PetPersist）
         reply = "\n".join(parts)
         if reply:
@@ -357,11 +367,13 @@ class CustomLoop(PetReactLoop):
             if not has_tool and not has_obs_text:
                 msgs.append(_tool_message(f"【工具观察】{obs}"))
         collected: list = []
-        # 思考过程实时转发（过程性内容，无需等确认；正文 token 才延迟确认）
+        # 正文 token 实时转发到前端（与 DirectLoop 一致），边生成边显示。
+        # 若最终判定为工具调用，JSON 片段已可见但下一轮会续接同一气泡，
+        # 体验远优于"等半天突然冒出一整句"。
         response = await engine.client.chat_stream(
             messages=msgs,
             max_tokens=max_tokens,
-            on_token=lambda t: collected.append(t),
+            on_token=lambda t: (collected.append(t), on_token(t) if on_token else None),
             on_reasoning=on_reasoning,
             tools=tools or None,
         )
@@ -378,6 +390,7 @@ class CustomLoop(PetReactLoop):
         raw = re.sub(r"</?think\b[^>]*>", "", raw, flags=re.IGNORECASE).strip()
         # 原生 tool_calls：客户端已流式累积（OpenAI/Anthropic 格式）
         if response is not None and getattr(response.message, "tool_calls", None):
+            from infra.model.base_model import ChatMessage
             tc = response.message.tool_calls[0]
             params: Dict = {}
             try:
@@ -386,18 +399,23 @@ class CustomLoop(PetReactLoop):
                     params = parsed
             except Exception:
                 params = {}
+            # OpenAI 兼容协议要求 role="tool" 必须紧跟一条带 tool_calls 的
+            # assistant 消息，否则下一轮请求会被 400 拒绝（桌宠表现为一直
+            # 收不到回复）。这里回填进真实历史 messages（msgs 只是本轮请求副本）。
+            messages.append(ChatMessage(
+                role="assistant",
+                content=raw or None,
+                tool_calls=[tc],
+            ))
             return {"tool": tc.name, "params": params, "tool_call_id": tc.id, "text": ""}
         if not raw:
             return {"text": ""}
         # 解析：JSON 工具调用 / [tool: name] / 纯文本
         parsed = self._parse_tool_call(raw)
         if parsed:
-            # 工具轮：不把工具 JSON 片段流给前端
+            # 工具轮：token 已实时转发（JSON 片段可见），下一轮续接同一气泡
             return parsed
-        # 文本回复确认后才逐片段重放（真实流式粒度），避免前端一次性等待
-        if on_token is not None:
-            for t in collected:
-                on_token(t)
+        # 纯文本：token 已在 chat_stream 中实时转发，无需重放
         return {"text": raw}
 
     # ── 工具执行（独立管控：白名单 + 模板按需查询） ──

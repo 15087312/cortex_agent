@@ -14,6 +14,15 @@ from modules.desktop_pet.pet_engine import PetEngine
 from modules.desktop_pet.react_loop import CustomLoop, build_react_loop
 
 
+# 轮次完成哨兵：on_message 之后由 react_loop 注入，用于让前端知道本轮结束。
+# 它不属于回复正文，断言正文时须先剔除（与 test_pet_engine_ext.py 同一处理）。
+ROUND_DONE = "\x00ROUND_DONE\x00"
+
+
+def _strip_sentinel(tokens):
+    return "".join(t for t in tokens if t != ROUND_DONE)
+
+
 @pytest.fixture(autouse=True)
 def _cleanup_singleton():
     old = PetEngine._instance
@@ -75,6 +84,23 @@ class _FakeClient:
             if on_token:
                 on_token(ch)
         return SimpleNamespace(message=SimpleNamespace(content="".join(collected)))
+
+
+class _SlowClient(_FakeClient):
+    """单轮耗时可控的 client：记录每轮起止时刻，用于断言轮间静默间隔"""
+
+    def __init__(self, outputs=None, latency=0.4):
+        super().__init__(outputs=outputs)
+        self.latency = latency
+        self.spans = []
+
+    async def chat_stream(self, messages=None, max_tokens=None, on_token=None, **kw):
+        start = time.time()
+        try:
+            await asyncio.sleep(self.latency)
+            return await super().chat_stream(messages=messages, max_tokens=max_tokens, on_token=on_token, **kw)
+        finally:
+            self.spans.append((start, time.time()))
 
 
 class _ToolCallsClient(_FakeClient):
@@ -164,7 +190,7 @@ async def test_repeated_output_stops_loop(monkeypatch, _pet_db):
     assert len(e.client.calls) == 2
 
 
-# ── 思考间隔（从上次思考开始时刻起算） ────────────────────────────────────
+# ── 思考间隔（从上次思考结束时刻起算） ────────────────────────────────────
 
 @pytest.mark.asyncio
 async def test_think_interval_throttles_second_round(monkeypatch, _pet_db):
@@ -397,6 +423,15 @@ async def test_native_tool_call_roundtrip(monkeypatch, _pet_db):
     assert tool_msgs, "工具观察应以 role=tool 消息回填"
     assert tool_msgs[0].tool_call_id == "call_1"
     assert "calc" in tool_msgs[0].content and "2" in tool_msgs[0].content  # 观察内容包含工具结果
+    # 回归：OpenAI 协议要求 role=tool 前必须有带 tool_calls 的 assistant 消息，
+    # 否则下一次请求 400「Messages with role 'tool' must be a response to a
+    # preceding message with 'tool_calls'」→ 桌宠页面收不到任何回复。
+    roles = [getattr(m, "role", "") for m in second["messages"]]
+    tool_idx = roles.index("tool")
+    assert tool_idx > 0
+    prev = second["messages"][tool_idx - 1]
+    assert prev.role == "assistant" and prev.tool_calls
+    assert prev.tool_calls[0].id == "call_1"
 
 
 @pytest.mark.asyncio
@@ -526,7 +561,7 @@ async def test_on_token_receives_full_reply(monkeypatch, _pet_db):
     loop = CustomLoop()
     reply = await loop.run(e, "hi", on_token=lambda t: tokens.append(t))
     assert reply == "你好呀"
-    assert "".join(tokens) == "你好呀"
+    assert _strip_sentinel(tokens) == "你好呀"
 
 
 # ── 流式粒度：文本逐片段转发 / 工具轮不转发 ──────────────────────────────
@@ -541,13 +576,19 @@ async def test_on_token_streams_by_chunk(monkeypatch, _pet_db):
     reply = await loop.run(e, "hi", on_token=lambda t: tokens.append(t))
     assert reply == "你好呀"
     # 逐片段（FakeClient 逐字符回调 → 重放同粒度），非一次性
-    assert len(tokens) >= 2
-    assert "".join(tokens) == "你好呀"
+    assert len([t for t in tokens if t != ROUND_DONE]) >= 2
+    assert _strip_sentinel(tokens) == "你好呀"
 
 
 @pytest.mark.asyncio
-async def test_on_token_skips_tool_round(monkeypatch, _pet_db):
-    """工具轮：模型输出工具 JSON 时不得把片段流给前端 on_token"""
+async def test_on_token_streams_tool_round_json(monkeypatch, _pet_db):
+    """工具轮：token 实时转发（JSON 片段可见），轮次以 ROUND_DONE 划界
+
+    契约变更说明：原实现先在本地收集、判定为工具轮后**丢弃**片段，纯文本轮
+    再逐片段重放；现改为与 DirectLoop 一致的实时转发 —— 边生成边显示，工具
+    轮的 JSON 片段会短暂可见，下一轮续接同一气泡。前端凭 ROUND_DONE 判断
+    轮次边界，而非凭「是否收到过 JSON」。
+    """
     _patch_tool_manager(monkeypatch)
     e = _engine(monkeypatch)
     e._client = _FakeClient([
@@ -558,8 +599,12 @@ async def test_on_token_skips_tool_round(monkeypatch, _pet_db):
     loop = CustomLoop()
     reply = await loop.run(e, "hi", on_token=lambda t: tokens.append(t))
     assert reply == "最终答案 2"
-    assert "".join(tokens) == "最终答案 2"
-    assert '{"tool"' not in "".join(tokens)
+    # 最终回复本身正确（工具 JSON 不进 reply）
+    assert _strip_sentinel(tokens).endswith("最终答案 2")
+    # 工具轮的 JSON 片段确实透传给了前端（新契约）
+    assert '{"tool"' in "".join(tokens)
+    # 轮次边界以哨兵标记
+    assert ROUND_DONE in tokens
 
 
 # ── 思考过程透传 ──────────────────────────────────────────────────────────
@@ -594,7 +639,7 @@ async def test_on_reasoning_forwarded(monkeypatch, _pet_db):
     reply = await loop.run(e, "hi", on_token=lambda t: got_tokens.append(t), on_reasoning=lambda r: got_reason.append(r))
     assert reply == "答案"
     assert "".join(got_reason) == "先判断一下再回答"
-    assert "".join(got_tokens) == "答案"
+    assert _strip_sentinel(got_tokens) == "答案"
 
 
 # ── 持续思考循环（用户设计：每次思考之后再次思考） ──────────────────────
@@ -625,13 +670,30 @@ async def test_continuous_loop_rounds_cap(monkeypatch, _pet_db):
 
 @pytest.mark.asyncio
 async def test_interval_applies_between_rounds(monkeypatch, _pet_db):
-    """间隔从前一次思考开始时刻起算：循环内每两轮之间至少间隔 min_think_interval"""
+    """间隔从前一次思考结束时刻起算：循环内每两轮之间至少间隔 min_think_interval"""
     e = _engine(monkeypatch, {"min_think_interval": 0.3})
     e._client = _FakeClient(["r1", "r2"])
     loop = CustomLoop()
     t0 = time.time()
     await loop.run(e, "hi")
     assert time.time() - t0 >= 0.25
+
+
+@pytest.mark.asyncio
+async def test_interval_measured_from_round_end(monkeypatch, _pet_db):
+    """单轮耗时超过间隔时仍须留出完整静默间隔
+
+    回归：旧实现从「上轮开始」起算，单轮耗时 > 间隔时等待恒为 0，
+    桌宠表现为不停思考，min_think_interval 形同失效。
+    """
+    e = _engine(monkeypatch, {"min_think_interval": 0.3, "max_loop_rounds": 2})
+    slow = _SlowClient(["r1", "r2"], latency=0.4)
+    e._client = slow
+    loop = CustomLoop()
+    await loop.run(e, "hi")
+    assert len(slow.spans) == 2
+    quiet_gap = slow.spans[1][0] - slow.spans[0][1]
+    assert quiet_gap >= 0.25, f"两轮之间只静默了 {quiet_gap:.2f}s，未按间隔等待"
 
 
 @pytest.mark.asyncio
@@ -643,7 +705,9 @@ async def test_continuous_loop_tool_then_text_keeps_going(monkeypatch, _pet_db):
     got = []
     loop = CustomLoop()
     reply = await loop.run(e, "算一下", on_message=got.append)
-    assert got == ["结果是 42", "还需要别的吗"]
+    # 工具轮：工具结果以「[calc 结果] 42」作为独立消息上报，
+    # 随后文本轮各自上报一句；on_message 共 3 次。
+    assert got == ["[calc 结果] 42", "结果是 42", "还需要别的吗"]
     assert reply == "结果是 42\n还需要别的吗"
 
 
@@ -735,3 +799,211 @@ async def test_direct_loop_rounds_positive_streams_and_reports_each_round(monkey
     assert "".join(got_tokens) == "你好呀"
     assert got_msgs == ["你好呀"]
 
+
+
+# ── 覆盖补全：分支 / 兜底路径 ──────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_direct_loop_tools_enabled_without_listing(monkeypatch, _pet_db):
+    """tools_enabled 但工具清单为空（工具库不可用）→ 不注入清单，仍能直答"""
+    import modules.desktop_pet.store as store_mod
+    store_mod.PetStore.get_instance().update_config({"loop_type": "direct", "tools_enabled": True})
+    import importlib
+    tm_mod = importlib.import_module("infra.tool_manager.tool_manager")
+    monkeypatch.setattr(tm_mod, "ToolManager", lambda: (_ for _ in ()).throw(RuntimeError("no tools")))
+    from modules.desktop_pet.react_loop import DirectLoop
+    e = _engine(monkeypatch)
+    e._client = _FakeClient(["直答"])
+    reply = await DirectLoop().run(e, "hi")
+    assert reply == "直答"
+    dump = "\n".join(m.content or "" for m in e.client.calls[0]["messages"])
+    assert "【可用工具】" not in dump
+
+
+@pytest.mark.asyncio
+async def test_custom_loop_tools_enabled_without_listing(monkeypatch, _pet_db):
+    """CustomLoop 同样：清单为空时跳过注入（原生 tools 数组此时也为空）"""
+    import importlib
+    tm_mod = importlib.import_module("infra.tool_manager.tool_manager")
+    monkeypatch.setattr(tm_mod, "ToolManager", lambda: (_ for _ in ()).throw(RuntimeError("no tools")))
+    e = _engine(monkeypatch)
+    e._client = _FakeClient(["静"])
+    assert await CustomLoop().run(e, "hi") == "静"
+    dump = "\n".join(m.content or "" for m in e.client.calls[0]["messages"])
+    assert "【可用工具】" not in dump
+    assert e.client.calls[0].get("tools") in (None, [])
+
+
+@pytest.mark.asyncio
+async def test_react_cycle_stops_when_context_overflows(monkeypatch, _pet_db):
+    """ReAct 内（第 2 步起）上下文超 8k → 结束本轮，不再发起下一次模型调用"""
+    _patch_tool_manager(monkeypatch)
+    e = _engine(monkeypatch)
+    e._client = _ToolCallsClient(outputs=[])
+    loop = CustomLoop()
+    from infra.model.base_model import ChatMessage
+    big = [ChatMessage(role="user", content="x" * 25000)]
+    reply = await loop._react_cycle(e, big, 512, [], True, None, None, None)
+    assert reply == ""
+    assert len(e.client.calls) == 1  # 第一次工具轮后即因超预算退出
+
+
+@pytest.mark.asyncio
+async def test_run_breaks_when_initial_context_overflows(monkeypatch, _pet_db):
+    """首轮上下文已超预算 → run 直接返回空串（不调用模型）"""
+    from infra.model.base_model import ChatMessage
+    e = _engine(monkeypatch)
+    e._client = _FakeClient(["不该被调用"])
+    monkeypatch.setattr(PetEngine, "build_messages",
+                        lambda self, *a, **k: [ChatMessage(role="user", content="x" * 21000)])
+    assert await CustomLoop().run(e, "hi") == ""
+    assert e.client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_run_tolerates_garbage_backoff_config(monkeypatch, _pet_db):
+    """idle_backoff_max 配置成非数字 → 回退默认上限，循环不崩"""
+    e = _engine(monkeypatch, {"idle_backoff_max": "lots", "max_loop_rounds": 1})
+    e._client = _FakeClient(["好"])
+    assert await CustomLoop().run(e, "hi") == "好"
+
+
+def test_messages_chars_sums_content():
+    from infra.model.base_model import ChatMessage
+    msgs = [ChatMessage(role="user", content="abc"), ChatMessage(role="assistant", content=None),
+            ChatMessage(role="assistant", content="de")]
+    assert CustomLoop._messages_chars(msgs) == 5
+
+
+@pytest.mark.asyncio
+async def test_think_injects_observation_when_missing(monkeypatch, _pet_db):
+    """obs 存在但最近消息里既无 role=tool 也无【工具观察】→ 补一条文本观察"""
+    e = _engine(monkeypatch)
+    e._client = _FakeClient(["好的"])
+    from infra.model.base_model import ChatMessage
+    msgs = [ChatMessage(role="user", content="hi")]
+    out = await CustomLoop()._think(e, msgs, 512, 1, "工具结果 42")
+    assert out["text"] == "好的"
+    sent = "\n".join(m.content or "" for m in e.client.calls[0]["messages"])
+    assert "【工具观察】工具结果 42" in sent
+
+
+@pytest.mark.asyncio
+async def test_native_tool_call_with_invalid_arguments_defaults_empty_params(monkeypatch, _pet_db):
+    """参数不是合法 JSON → params 记空 dict，assistant(tool_calls) 仍回填（协议要求）"""
+    _patch_tool_manager(monkeypatch)
+    e = _engine(monkeypatch)
+    e._client = _ToolCallsClient(arguments="{not json", outputs=["算完了"])
+    reply = await CustomLoop().run(e, "算一下")
+    assert reply == "算完了"
+    roles = [getattr(m, "role", "") for m in e.client.calls[1]["messages"]]
+    assert "tool" in roles
+    prev = e.client.calls[1]["messages"][roles.index("tool") - 1]
+    assert prev.role == "assistant" and prev.tool_calls[0].id == "call_1"
+
+
+@pytest.mark.asyncio
+async def test_native_tool_call_without_arguments_key(monkeypatch, _pet_db):
+    """arguments 为空（无参工具）→ params {}，仍按原生协议执行"""
+    _patch_tool_manager(monkeypatch)
+    e = _engine(monkeypatch)
+    e._client = _ToolCallsClient(tool_name="noarg", arguments="", outputs=["好了"])
+    assert await CustomLoop().run(e, "跑一下") == "好了"
+
+
+@pytest.mark.asyncio
+async def test_run_tool_uses_listed_info_when_template_missing(monkeypatch, _pet_db):
+    """get_tool_info 返回 None 但 list_available_tools 里有该工具 → 用清单里的 schema"""
+    import importlib
+    tm_mod = importlib.import_module("infra.tool_manager.tool_manager")
+    fake = MagicMock()
+    fake.get_tool_info.return_value = None
+    fake.list_available_tools.return_value = {"calc": {"name": "calc", "description": "d", "params": {}}}
+    fake.call_tool = AsyncMock(return_value={"success": True, "result": "2"})
+    monkeypatch.setattr(tm_mod, "ToolManager", lambda: fake)
+    out = await CustomLoop()._run_tool(_engine(monkeypatch), "calc", {})
+    assert "2" in out and "失败" not in out
+
+
+@pytest.mark.asyncio
+async def test_run_tool_reports_unknown_tool(monkeypatch, _pet_db):
+    """工具既无模板也不在可用清单 → 明确告知模型工具不存在"""
+    import importlib
+    tm_mod = importlib.import_module("infra.tool_manager.tool_manager")
+    fake = MagicMock()
+    fake.get_tool_info.return_value = None
+    fake.list_available_tools.return_value = {}
+    monkeypatch.setattr(tm_mod, "ToolManager", lambda: fake)
+    out = await CustomLoop()._run_tool(_engine(monkeypatch), "ghost", {})
+    assert "不存在" in out
+
+
+@pytest.mark.asyncio
+async def test_run_tool_swallows_execution_errors(monkeypatch, _pet_db):
+    """工具执行抛异常 → 变成观察文本，不让循环崩掉"""
+    import importlib
+    tm_mod = importlib.import_module("infra.tool_manager.tool_manager")
+    fake = MagicMock()
+    fake.get_tool_info.return_value = {"params": {}}
+    fake.call_tool = AsyncMock(side_effect=RuntimeError("boom"))
+    monkeypatch.setattr(tm_mod, "ToolManager", lambda: fake)
+    out = await CustomLoop()._run_tool(_engine(monkeypatch), "calc", {})
+    assert "执行失败" in out and "boom" in out
+
+
+def test_fmt_result_handles_plain_and_failed_results():
+    assert CustomLoop._fmt_result("calc", "纯文本") == "[calc 结果] 纯文本"
+    assert "失败：boom" in CustomLoop._fmt_result("calc", {"success": False, "error": "boom"})
+
+    class _Exploding(dict):
+        def get(self, *a, **k):
+            raise RuntimeError("bad dict")
+
+        def __str__(self):
+            return "exploded"
+
+    # 取值本身炸了 → 退回 str(result)，不能让观察构造把循环带崩
+    assert CustomLoop._fmt_result("calc", _Exploding()) == "[calc 结果] exploded"
+
+
+def test_tool_listing_failure_returns_empty(monkeypatch):
+    import importlib
+    tm_mod = importlib.import_module("infra.tool_manager.tool_manager")
+    monkeypatch.setattr(tm_mod, "ToolManager", lambda: (_ for _ in ()).throw(RuntimeError("no tools")))
+    assert CustomLoop._tool_listing() == ""
+
+
+def test_parse_tool_call_with_invalid_json_body():
+    """命中工具 JSON 但正文不是合法 JSON → params 留空，仍识别为工具调用"""
+    out = CustomLoop()._parse_tool_call('{"tool":"calc","params":{invalid}}')
+    assert out["tool"] == "calc"
+    assert out["params"] == {}
+
+
+def test_register_loop_adds_to_registry():
+    from modules.desktop_pet.react_loop import PetReactLoop, register_loop
+
+    class _Custom(PetReactLoop):
+        name = "test_custom_loop_xyz"
+
+        async def run(self, engine, text, on_token=None, extra_system=""):
+            return "x"
+
+    assert register_loop(_Custom) is _Custom
+    assert isinstance(build_react_loop("test_custom_loop_xyz"), _Custom)
+
+
+def test_build_react_loop_falls_back_when_init_raises():
+    from modules.desktop_pet.react_loop import DirectLoop, PetReactLoop, register_loop
+
+    class _Broken(PetReactLoop):
+        name = "test_broken_loop_xyz"
+
+        def __init__(self):
+            raise RuntimeError("init boom")
+
+        async def run(self, engine, text, on_token=None, extra_system=""):
+            return ""
+
+    register_loop(_Broken)
+    assert isinstance(build_react_loop("test_broken_loop_xyz"), DirectLoop)

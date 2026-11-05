@@ -1,5 +1,11 @@
 # @link:block
+import http.client
 import http.server
+import queue as _queue
+import select
+import socket
+import threading as _threading
+import time
 import urllib.request
 import urllib.error
 import os
@@ -14,7 +20,7 @@ import sys as _sys
 import os as _os
 _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
 try:
-    from cortex.watchdog import enable as _enable_orphan_watchdog, bind_backend as _bind_backend
+    from infra.watchdog import enable as _enable_orphan_watchdog, bind_backend as _bind_backend
     _enable_orphan_watchdog()
     _bind_backend()
 except Exception:
@@ -77,68 +83,166 @@ class ProxyHandler(http.server.SimpleHTTPRequestHandler):
         else:
             self._proxy_normal(method, port, path, body)
 
+    def _client_gone(self) -> bool:
+        """浏览器端是否已断开（刷新/关闭页面）。
+
+        SSE 是单向长连接，客户端正常情况下不会再发数据；因此 socket 可读且
+        `MSG_PEEK` 读到 EOF，就说明对端已经关闭。不能用「写失败」来发现断连：
+        上游可能长时间没有新字节（比如桌宠两轮思考之间），期间根本没有写操作。
+        """
+        try:
+            readable, _, _ = select.select([self.connection], [], [], 0)
+        except (OSError, ValueError):
+            return True
+        if not readable:
+            return False
+        try:
+            return self.connection.recv(1, socket.MSG_PEEK) == b""
+        except (BlockingIOError, InterruptedError):
+            return False
+        except OSError:
+            return True
+
     def _proxy_sse(self, method, port, path, body):
         """SSE 长连接流式代理：逐 chunk 立即写出，不设读超时。
 
         链路健康保护：若上游 N 秒无任何字节（后端挂掉/僵死，如思考循环异常
         结束且未发 done），主动断开，避免浏览器请求永久挂起、页面状态卡死。
 
+        关键：浏览器刷新/关页时必须**主动关闭上游连接**，否则后端 SSE 生成器
+        永远看不到断连（uvicorn 只有在下一次 send 失败时才知道），桌宠这类
+        `max_loop_rounds=0` 的持续思考会继续空转、并占住串行队列，导致重新打开
+        页面后新请求排队拿不到任何 token（表现为「前端收不到消息」）。
+
         注意：/stream/ 路径下也有普通 JSON 接口（如 GET /stream/pet/history）。
         若按 SSE 方式转发（不发 Content-Length 且连接不关），浏览器无法判定
         响应结束 → 请求永久挂起 → 前端拿不到历史/配置。因此按上游响应的
         Content-Type 分流：JSON 一次性读全转发，event-stream 才走流式。
         """
-        import requests
-        url = f"http://127.0.0.1:{port}{path}"
         headers = {}
         for key, value in self.headers.items():
             if key.lower() not in ('host', 'content-length', 'connection'):
                 headers[key] = value
         SSE_IDLE_TIMEOUT = 300  # 上游空闲（无字节）超时；正常思考间隔远小于此值
+        conn = None
+        resp = None
+        up_sock = None
+        headers_sent = False
         try:
-            resp = requests.request(method, url, data=body, headers=headers,
-                                    stream=True, timeout=(5, SSE_IDLE_TIMEOUT))
-            ctype = (resp.headers.get('Content-Type') or '').lower()
+            conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+            conn.connect()
+            up_sock = conn.sock  # 先留一份引用：Connection: close 响应会把它从 conn 上摘掉
+            # 连接成功后放宽读超时：SSE 两帧之间可能静默数十秒（模型思考），
+            # 沿用 5s 连接超时会把正常长连接误判成上游结束。
+            if conn.sock is not None:
+                conn.sock.settimeout(SSE_IDLE_TIMEOUT)
+            conn.request(method, path, body=body, headers=headers)
+            resp = conn.getresponse()
+            ctype = (resp.getheader('Content-Type') or '').lower()
             if 'text/event-stream' not in ctype:
                 # 普通 JSON 响应：完整读出后带 Content-Length 转发（浏览器可正常结束请求）
-                data = resp.content
-                self.send_response(resp.status_code)
-                self.send_header('Content-Type', resp.headers.get('Content-Type', 'application/json'))
+                data = resp.read()
+                self.send_response(resp.status)
+                self.send_header('Content-Type', resp.getheader('Content-Type') or 'application/json')
                 self.send_header('Content-Length', str(len(data)))
                 self.send_header('Access-Control-Allow-Origin', '*')
                 self.end_headers()
+                headers_sent = True
                 self.wfile.write(data)
                 return
-            self.send_response(resp.status_code)
+            self.send_response(resp.status)
             self.send_header('Content-Type', 'text/event-stream')
             self.send_header('Cache-Control', 'no-cache')
             self.send_header('Connection', 'keep-alive')
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
+            headers_sent = True
             self.close_connection = True  # 流结束即关连接，客户端不必等 keep-alive 超时
-            for chunk in resp.iter_content(chunk_size=4096):
-                if chunk:
-                    self.wfile.write(chunk)
-                    self.wfile.flush()
+
+            # 上游在独立线程里阻塞读，本线程只做「转发 + 断连检测」。
+            # 不能用 select(resp.raw)：响应可能是 chunked / EOF 分隔，底层 socket
+            # 不一定能从 HTTPResponse 上稳定取到（Connection: close 时 conn.sock=None）。
+            chunks: "_queue.Queue" = _queue.Queue()
+
+            def _pump_upstream():
+                try:
+                    while True:
+                        chunk = resp.read1(4096)
+                        if not chunk:
+                            break
+                        chunks.put(chunk)
+                except Exception:
+                    pass
+                finally:
+                    chunks.put(None)  # 结束哨兵
+
+            _threading.Thread(target=_pump_upstream, daemon=True).start()
+            idle_deadline = time.time() + SSE_IDLE_TIMEOUT
+            while True:
+                # ① 浏览器端已断开 → 立刻退出循环，finally 关闭上游 → 后端收到断连
+                if self._client_gone():
+                    break
+                # ② 等上游数据；0.5s 轮询一次，期间持续检查浏览器端
+                try:
+                    chunk = chunks.get(timeout=0.5)
+                except _queue.Empty:
+                    if time.time() > idle_deadline:
+                        # 上游僵死：给前端一个终止帧，别让请求永久挂起
+                        try:
+                            self.wfile.write(
+                                b'event: error\ndata: {"error":"backend idle timeout (proxy)"}\n\n')
+                            self.wfile.flush()
+                        except Exception:
+                            pass
+                        break
+                    continue
+                if chunk is None:
+                    break
+                idle_deadline = time.time() + SSE_IDLE_TIMEOUT
+                self.wfile.write(chunk)
+                self.wfile.flush()
         except (BrokenPipeError, ConnectionResetError):
             pass  # 前端断开，正常结束
-        except requests.exceptions.ConnectionError:
+        except OSError:
             # 上游连接失败/重置（后端未启动或启动中）：给前端一个可解析的终止帧
-            try:
-                self.send_response(502)
-                self.send_header('Content-Type', 'text/event-stream')
-                self.send_header('Access-Control-Allow-Origin', '*')
-                self.end_headers()
-                self.wfile.write(b'event: error\ndata: {"error":"backend unreachable (proxy)"}\n\n')
-                self.wfile.flush()
-            except Exception:
-                pass
+            if not headers_sent:
+                try:
+                    self.send_response(502)
+                    self.send_header('Content-Type', 'text/event-stream')
+                    self.send_header('Access-Control-Allow-Origin', '*')
+                    self.end_headers()
+                    self.wfile.write(b'event: error\ndata: {"error":"backend unreachable (proxy)"}\n\n')
+                    self.wfile.flush()
+                except Exception:
+                    pass
         except Exception as e:
             try:
                 self.wfile.write(f'event: error\ndata: {{"error":"proxy: {e}"}}\n\n'.encode())
                 self.wfile.flush()
             except Exception:
                 pass
+        finally:
+            # 关闭上游 = 让后端 ASGI 感知断连并取消生成器（桌宠队列任务随之取消）。
+            #
+            # 先 shutdown 再 close：上游静默期间（两轮思考之间）读取线程正阻塞在
+            # resp.read1 里并握着 BufferedReader 的锁，直接 resp.close() 会等这把
+            # 锁 → 代理线程被挂住（每条断连泄漏一个线程 + 一条上游连接）。
+            # shutdown 让阻塞读立刻返回 EOF，之后 resp/conn 才能顺利关闭。
+            if up_sock is not None:
+                try:
+                    up_sock.shutdown(socket.SHUT_RDWR)
+                except Exception:
+                    pass  # 已关闭/非 socket 实现：关闭流程继续走 resp/conn
+            if resp is not None:
+                try:
+                    resp.close()
+                except Exception:
+                    pass
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
     def _proxy_normal(self, method, port, path, body):
         url = f"http://127.0.0.1:{port}{path}"

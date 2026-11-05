@@ -151,10 +151,11 @@ class PetStore:
                 "min_think_interval": 5.0, "tools_enabled": True,
                 "max_history": 8, "max_output_tokens": 512, "max_loop_rounds": 0,
                 "idle_backoff_max": 8.0, "voice_enabled": False,
+                "realtime_voice": False,
             }
         out = dict(row)
         # 布尔列统一为 bool（get_config 与 update_config 返回结构一致）
-        for key in ("memory_enabled", "tools_enabled", "voice_enabled"):
+        for key in ("memory_enabled", "tools_enabled", "voice_enabled", "realtime_voice"):
             if key in out:
                 out[key] = bool(out[key])
         return out
@@ -186,6 +187,8 @@ class PetStore:
             elif k == "tools_enabled":
                 cur[k] = 1 if v else 0
             elif k == "voice_enabled":
+                cur[k] = 1 if v else 0
+            elif k == "realtime_voice":
                 cur[k] = 1 if v else 0
             elif k in ("min_think_interval",):
                 try:
@@ -226,7 +229,7 @@ class PetStore:
                     cur["memory_enabled"], cur["min_think_interval"],
                     cur["tools_enabled"], cur["max_history"],
                     cur["max_output_tokens"], cur["max_loop_rounds"],
-                    cur["idle_backoff_max"], cur["voice_enabled"], cur.get("realtime_voice", 0),
+                    cur["idle_backoff_max"], cur["voice_enabled"], cur["realtime_voice"],
                     time.time(),
                 ),
             )
