@@ -109,8 +109,10 @@ async def test_continuous_loop_objects_bounded(monkeypatch, pet_db):
     await loop.run(e, "leak probe")
     gc.collect()
     after = len(gc.get_objects())
-    assert e._client.calls == 120
-    # 120 轮（80 空拍 + 40 产出）后新增存活对象有限（放宽阈值过滤 gc 噪声）
+    # 客户端调用节奏：第 1/4/7… 次产出，其余空拍；_react_cycle 内空拍会立即重试，
+    # 因此首轮 1 次调用即产出，之后每轮固定 3 次（空、空、产出）→ 1 + 3×(rounds-1)。
+    assert e._client.calls == 1 + 3 * (120 - 1)
+    # 120 轮后新增存活对象有限（放宽阈值过滤 gc 噪声）
     assert after - base < 3000, f"object growth {after - base}"
 
 
@@ -127,7 +129,8 @@ async def test_continuous_loop_backoff_waits_capped(monkeypatch, pet_db):
 
     monkeypatch.setattr(asyncio, "sleep", _fake_sleep)
     await CustomLoop().run(e, "hi")
-    assert e._client.calls == 60
+    # 同上：首轮 1 次产出，之后每轮 3 次调用（空、空、产出）。
+    assert e._client.calls == 1 + 3 * (60 - 1)
     assert sleeps, "应有退避等待发生"
     # 上限 = base(1.0) × cap(8) ；+0.5s 容忍时间推进误差
     assert max(sleeps) <= 8.0 + 0.5

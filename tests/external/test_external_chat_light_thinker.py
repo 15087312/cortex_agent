@@ -42,6 +42,10 @@ async def test_extract_memory_real(tmp_path, monkeypatch):
     monkeypatch.setattr(conn, "_db_manager", None)
     monkeypatch.setattr(conn, "_db_manager_lock", __import__("threading").RLock())
     conn.get_db_manager().initialize()
+    # _extract_memory 已改为从 DB 读取会话（不再接收 messages 参数），先落库再提炼。
+    repo = SessionRepository()
+    repo.create_session("s_ext")
+    for _ in range(6):
+        repo.save_message("s_ext", "user", "我们讨论了项目延期的主要原因和应对方案。")
     t = ContinuousThinker()
-    msgs = [{"role": "user", "content": "我们讨论了项目延期的主要原因和应对方案。" * 6}]
-    await t._extract_memory("s_ext", msgs)
+    await t._extract_memory("s_ext")

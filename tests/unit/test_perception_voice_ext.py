@@ -6,7 +6,6 @@
       hotkey _record_loop/_end_word_check_loop/_transcribe_raw/_process_frames。
 全部 mock 硬件/系统边界，不触碰真实麦克风。
 """
-import sys
 import threading
 import types
 from unittest.mock import MagicMock, patch
@@ -158,7 +157,9 @@ class TestVoiceDetectorExt:
         assert len(det._events) == 1
         assert det._events[0].payload["text"] == "帮我查天气"
         bus.publish.assert_called_once()
-        mock_sleep.assert_called_once_with(3.0)
+        # 只校验冷却时长；time.sleep 是全局模块，可能记录到其他后台线程的短 sleep。
+        cooldowns = [c.args[0] for c in mock_sleep.call_args_list if c.args]
+        assert cooldowns.count(3.0) == 1
 
     def test_listen_loop_no_end_word_no_cooldown(self):
         det, _ = self._make_listener(recognize="科特 你好", stop_after=2)
@@ -167,7 +168,7 @@ class TestVoiceDetectorExt:
             det._listen_loop()
         assert len(det._events) == 1
         assert det._events[0].payload["text"] == "你好"
-        mock_sleep.assert_not_called()
+        assert 3.0 not in [c.args[0] for c in mock_sleep.call_args_list if c.args]
 
     def test_listen_loop_end_word_zero_cooldown(self):
         det, _ = self._make_listener(recognize="科特 帮我查天气 完毕", stop_after=2)
@@ -176,7 +177,7 @@ class TestVoiceDetectorExt:
              patch("modules.perception.detectors.voice_detector.time.sleep") as mock_sleep:
             det._listen_loop()
         assert len(det._events) == 1
-        mock_sleep.assert_not_called()
+        assert 3.0 not in [c.args[0] for c in mock_sleep.call_args_list if c.args]
 
     def test_listen_loop_skips_invalid_texts(self):
         texts = iter(["", "普通的话", "科特", "科特 完毕"])
