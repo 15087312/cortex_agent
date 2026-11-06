@@ -117,6 +117,52 @@ def test_pet_chat_disabled_returns_409(gw_app, monkeypatch):
         assert r.status_code == 409
 
 
+def test_persona_switch_and_history_isolation(gw_app, monkeypatch, tmp_path):
+    """切换人设后历史随人设隔离；清空只影响当前人设。"""
+    from modules.desktop_pet.store import PetStore
+    store = PetStore(str(tmp_path / "pet_persona.db"))
+    monkeypatch.setattr(PetStore, "_instance", store)
+    app, _ = gw_app
+    with TestClient(app) as client:
+        data = client.get("/stream/pet/personas").json()["data"]
+        p1 = data["active_id"]
+        created = client.post(
+            "/stream/pet/personas", json={"name": "猫娘", "prompt": "你是猫娘"}
+        ).json()
+        assert created["success"]
+        pid = created["data"]["id"]
+        assert client.post(f"/stream/pet/personas/{pid}/activate").json()["success"]
+
+        store.add_history("user", "猫娘你好")
+        store.add_history("assistant", "喵")
+        hist = client.get("/stream/pet/history").json()["data"]["items"]
+        assert [m["content"] for m in hist] == ["猫娘你好", "喵"]
+
+        client.post(f"/stream/pet/personas/{p1}/activate")
+        assert client.get("/stream/pet/history").json()["data"]["items"] == []
+
+        client.post(f"/stream/pet/personas/{pid}/activate")
+        assert client.delete("/stream/pet/history").json()["success"]
+        assert client.get("/stream/pet/history").json()["data"]["items"] == []
+
+
+def test_pet_memory_stats_and_events(gw_app, monkeypatch, tmp_path):
+    """自动记忆/因果图统计接口可按当前人设返回。"""
+    from modules.desktop_pet.store import PetStore
+    store = PetStore(str(tmp_path / "pet_memory_api.db"))
+    monkeypatch.setattr(PetStore, "_instance", store)
+    app, _ = gw_app
+    with TestClient(app) as client:
+        stats = client.get("/stream/pet/memory/stats")
+        assert stats.status_code == 200
+        data = stats.json()["data"]
+        assert data["memory_events"] == 0
+        assert data["causal_nodes"] == 0
+        events = client.get("/stream/pet/memory/events")
+        assert events.status_code == 200
+        assert events.json()["data"]["items"] == []
+
+
 def test_pet_config_idle_backoff_roundtrip(gw_app, monkeypatch, tmp_path):
     """e2e：PUT /stream/pet/config 透传 idle_backoff_max，GET 读回一致"""
     import modules.desktop_pet.store as store_mod

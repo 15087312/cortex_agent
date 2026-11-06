@@ -48,6 +48,12 @@ class PetConfigRequest(BaseModel):
     idle_backoff_max: Optional[float] = None
     voice_enabled: Optional[bool] = None
     realtime_voice: Optional[bool] = None
+    active_persona_id: Optional[int] = None
+
+
+class PetPersonaRequest(BaseModel):
+    name: str = ""
+    prompt: str = ""
 
 
 class PetMemoryRequest(BaseModel):
@@ -233,7 +239,7 @@ async def pet_chat_stream(body: PetChatRequest):
                         audio_url = "/audio/" + os.path.basename(path)
                 except Exception as e:
                     logger.debug(f"[Pet] 语音合成失败（不影响文本回复）: {e}")
-            yield {"event": "done", "data": json.dumps({"audio_url": audio_url}, ensure_ascii=False)}
+            yield {"event": "done", "data": json.dumps({"audio_url": audio_url, "fallback": bool(getattr(engine, "last_fallback_reason", ""))}, ensure_ascii=False)}
         except Exception as e:
             yield {"event": "error", "data": json.dumps({"error": str(e)}, ensure_ascii=False)}
 
@@ -258,21 +264,125 @@ async def pet_get_config():
 async def pet_update_config(body: PetConfigRequest):
     """更新桌宠独立配置（仅更新传入字段）"""
     from modules.desktop_pet.store import PetStore
+    store = PetStore.get_instance()
     patch = {k: v for k, v in body.model_dump(exclude_none=True).items()}
-    cfg = PetStore.get_instance().update_config(patch)
+    pid = patch.pop("active_persona_id", None)
+    if pid is not None and store.set_active_persona(int(pid)) is None:
+        return {"success": False, "error": "persona not found"}
+    cfg = store.update_config(patch) if patch else store.get_config()
     out = dict(cfg)
     out["api_key_set"] = bool(cfg.get("api_key"))
     out.pop("api_key", None)
     return {"success": True, "data": out}
 
 
+# ── 桌宠人设（每个人设独立会话） ──
+
+@router.get("/personas")
+async def pet_personas():
+    """人设列表 + 当前人设 id"""
+    from modules.desktop_pet.store import PetStore
+    store = PetStore.get_instance()
+    return {
+        "success": True,
+        "data": {"items": store.list_personas(), "active_id": store.get_active_persona_id()},
+    }
+
+
+@router.post("/personas")
+async def pet_persona_create(body: PetPersonaRequest):
+    """新建人设（名称重复返回失败）"""
+    from modules.desktop_pet.store import PetStore
+    item = PetStore.get_instance().add_persona(body.name, body.prompt)
+    if not item:
+        return {"success": False, "error": "duplicate name"}
+    return {"success": True, "data": item}
+
+
+@router.put("/personas/{pid}")
+async def pet_persona_update(pid: int, body: PetPersonaRequest):
+    """更新人设名称/提示词"""
+    from modules.desktop_pet.store import PetStore
+    patch = {k: v for k, v in body.model_dump(exclude_none=True).items()}
+    item = PetStore.get_instance().update_persona(pid, patch)
+    if not item:
+        return {"success": False, "error": "persona not found or duplicate name"}
+    return {"success": True, "data": item}
+
+
+@router.delete("/personas/{pid}")
+async def pet_persona_delete(pid: int):
+    """删除人设及其专属会话/记忆库/因果图（禁止删除最后一个人设）"""
+    from modules.desktop_pet.store import PetStore
+    ok = PetStore.get_instance().delete_persona(pid)
+    if not ok:
+        return {"success": False, "error": "cannot delete last persona or not found"}
+    try:
+        from modules.desktop_pet.memory_bank import PetMemoryBank
+        PetMemoryBank.get_instance().delete_persona(pid)
+    except Exception as e:
+        logger.debug(f"[pet] 清理人设记忆文件失败: {e}")
+    return {"success": True}
+
+
+@router.post("/personas/{pid}/activate")
+async def pet_persona_activate(pid: int):
+    """切换当前人设；后续对话/历史都切到该人设"""
+    from modules.desktop_pet.store import PetStore
+    item = PetStore.get_instance().set_active_persona(pid)
+    if not item:
+        return {"success": False, "error": "persona not found"}
+    return {"success": True, "data": item}
+
+
+@router.get("/memory/events")
+async def pet_memory_events(limit: int = 50):
+    """当前人设的自动记忆事件（按人设隔离）"""
+    from modules.desktop_pet.store import PetStore
+    from modules.desktop_pet.memory_bank import PetMemoryBank
+    pid = PetStore.get_instance().get_active_persona_id()
+    try:
+        events = PetMemoryBank.get_instance().store(pid).list_events(
+            limit=max(1, min(200, limit))
+        )
+    except Exception as e:
+        logger.debug(f"[pet] 读取自动记忆失败: {e}")
+        events = []
+    items = [
+        {
+            "id": ev.id,
+            "fact": ev.fact,
+            "thought": ev.thought,
+            "lesson": ev.lesson,
+            "keywords": ev.keywords,
+            "importance": ev.importance,
+            "type": ev.type,
+            "time": ev.time,
+            "causal_node_ids": ev.causal_node_ids,
+        }
+        for ev in events
+    ]
+    return {"success": True, "data": {"items": items, "persona_id": pid}}
+
+
+@router.get("/memory/stats")
+async def pet_memory_stats():
+    """当前人设的自动记忆事件数 / 因果节点数 / 边数"""
+    from modules.desktop_pet.store import PetStore
+    from modules.desktop_pet.memory_bank import PetMemoryBank
+    pid = PetStore.get_instance().get_active_persona_id()
+    return {"success": True, "data": {"persona_id": pid, **PetMemoryBank.get_instance().stats(pid)}}
+
+
 # ── 桌宠独立对话历史 ──
 
 @router.get("/history")
-async def pet_history(limit: int = 50):
-    """桌宠独立对话历史（pet.db，不再是 ChatSession）"""
+async def pet_history(limit: int = 50, persona_id: Optional[int] = None):
+    """桌宠独立对话历史（默认当前人设，按 persona_id 隔离）"""
     from modules.desktop_pet.store import PetStore
-    rows = PetStore.get_instance().get_history(limit=max(1, min(200, limit)))
+    rows = PetStore.get_instance().get_history(
+        limit=max(1, min(200, limit)), persona_id=persona_id,
+    )
     return {"success": True, "data": {"items": rows}}
 
 
@@ -287,10 +397,10 @@ async def pet_history_delete(mid: int):
 
 
 @router.delete("/history")
-async def pet_history_clear():
-    """清空桌宠对话历史"""
+async def pet_history_clear(persona_id: Optional[int] = None):
+    """清空指定人设（默认当前人设）的对话历史"""
     from modules.desktop_pet.store import PetStore
-    PetStore.get_instance().clear_history()
+    PetStore.get_instance().clear_history(persona_id=persona_id)
     return {"success": True}
 
 

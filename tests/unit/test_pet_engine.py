@@ -1,6 +1,5 @@
 """PetEngine 测试（独立页面形态）：配置、独立存储、ReAct 循环、消息构建"""
 import asyncio
-import os
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -275,8 +274,6 @@ def test_auto_think_repeated_output_skipped_in_fake_engine(monkeypatch, pet_db):
     fake_store.add_history("user", "你好")
     fake_store.add_history("assistant", "你好呀")
     import asyncio
-    caught = []
-    real_on_message = env._stream_task.__wrapped__ if hasattr(env._stream_task, "__wrapped__") else None
 
     async def instrumented_stream():
         await env._stream_task("", lambda t: None, "", lambda r: None)
@@ -382,6 +379,56 @@ def test_stream_chat_disabled_yields_nothing(monkeypatch, pet_db):
         return [chunk async for chunk in pe.stream_chat("你好")]
 
     assert asyncio.run(_collect()) == []
+
+
+def test_stream_task_falls_back_to_main_api(monkeypatch, pet_db):
+    """独立 API 返回 402/余额不足时，本次请求临时回退主模型并正常落库。"""
+    pe = _engine()
+    pet_db.update_config({
+        "api_key": "bad-key",
+        "api_url": "https://api.deepseek.com",
+        "api_model": "deepseek-flash",
+    })
+    calls = {"n": 0}
+
+    class FakeLoop:
+        name = "direct"
+
+        async def run(self, engine, text, on_token=None, on_reasoning=None,
+                      on_message=None, extra_system=""):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("Stream API error 402: insufficient balance")
+            if on_message:
+                on_message("回退后的回复")
+            return "回退后的回复"
+
+    pe._loop = FakeLoop()
+    monkeypatch.setattr(PetEngine, "_build_client", staticmethod(lambda cfg: MagicMock()))
+    tokens = []
+    asyncio.run(pe._stream_task("你好", tokens.append))
+    assert calls["n"] == 2
+    assert pe.last_fallback_reason
+    assert "回退后的回复" in [m["content"] for m in pet_db.get_history()]
+
+
+def test_stream_task_persists_user_on_failure(pet_db):
+    """模型调用失败也要把用户这句话落库，避免前端刷新后消失。"""
+    pe = _engine()
+
+    class BoomLoop:
+        name = "direct"
+
+        async def run(self, engine, text, on_token=None, on_reasoning=None,
+                      on_message=None, extra_system=""):
+            raise RuntimeError("boom")
+
+    pe._loop = BoomLoop()
+    with pytest.raises(RuntimeError):
+        asyncio.run(pe._stream_task("你好", lambda t: None))
+    hist = pet_db.get_history()
+    assert hist[-1]["role"] == "user"
+    assert hist[-1]["content"] == "你好"
 
 
 def test_chat_frontend_down_still_runs(monkeypatch, pet_db):

@@ -65,9 +65,11 @@ class EventRetrieval:
     _instance: Optional["EventRetrieval"] = None
     _lock = threading.Lock()
 
-    def __init__(self):
-        self._store: Optional[EventStore] = None
-        self._embedder: Optional[EmbeddingEngine] = None
+    def __init__(self, store=None, embedder=None, graph=None):
+        # 允许注入独立存储/因果图（桌宠按人设隔离时使用）；默认仍走全局单例
+        self._store: Optional[EventStore] = store
+        self._embedder: Optional[EmbeddingEngine] = embedder
+        self._graph = graph
         self.logger = logger
 
     @classmethod
@@ -320,8 +322,7 @@ class EventRetrieval:
     def _causal_search(self, query: str) -> List[MemoryEvent]:
         """因果关系检索：通过因果图的边关系找候选事件（仅召回，仍需过语义门槛）"""
         try:
-            from modules.memory.causal_graph import CausalGraph
-            graph = CausalGraph.get_instance()
+            graph = self._get_graph()
             store = self._get_store()
 
             # 找锚点节点
@@ -413,6 +414,12 @@ class EventRetrieval:
         if self._embedder is None:
             self._embedder = EmbeddingEngine.get_instance()
         return self._embedder
+
+    def _get_graph(self):
+        if getattr(self, "_graph", None) is None:
+            from modules.memory.causal_graph import CausalGraph
+            self._graph = CausalGraph.get_instance()
+        return self._graph
 
 
 # 模块级快捷函数

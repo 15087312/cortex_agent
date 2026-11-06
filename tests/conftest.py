@@ -19,9 +19,23 @@ os.environ.setdefault("KNOWLEDGE_AUTO_INGEST", "false")
 
 import pytest
 import sys
+import tempfile
+
+# 桌宠独立记忆库测试目录：避免测试写入项目 data/pet_memory
+os.environ.setdefault("PET_MEMORY_DIR", tempfile.mkdtemp(prefix="cortex_pet_memory_"))
 
 # 确保项目根目录在 path 中
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+@pytest.fixture(autouse=True)
+def _disable_pet_memory_extraction(monkeypatch):
+    """单测不触发桌宠自动记忆提炼（避免真实 LLM 调用/后台任务）。"""
+    try:
+        from modules.desktop_pet.pet_engine import PetEngine
+        monkeypatch.setattr(PetEngine, "_get_memory_model_client", lambda self: None)
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------

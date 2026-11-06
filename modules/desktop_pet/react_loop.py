@@ -204,7 +204,7 @@ class CustomLoop(PetReactLoop):
                 # 该出口已由外层 PetReactCycle 的 (Tool · Observe | Emit) 声明覆盖，
                 # 这里不再单独起块名（同名块会触发 E005，且无证据触发 E002）。
                 if on_message:
-                    on_message(obs)
+                    on_message(obs, True)  # 工具观察：持久化但不触发记忆提炼
                 continue  # 工具轮：不等待，立即下一 think
             text = (out.get("text") or "").strip()
             if text:

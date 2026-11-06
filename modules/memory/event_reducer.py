@@ -90,16 +90,19 @@ REDUCE_PROMPT_TEMPLATE = """你是一个记忆分析专家。请分析以下对�
 class EventReducer:
     """会话 → 事件提炼器"""
 
-    def __init__(self, model_client=None, store: EventStore = None, embedder: EmbeddingEngine = None):
+    def __init__(self, model_client=None, store: EventStore = None,
+                 embedder: EmbeddingEngine = None, graph=None):
         """
         Args:
             model_client: LLM 客户端（依赖注入）
-            store: EventStore 实例（依赖注入，测试用）
+            store: EventStore 实例（依赖注入，测试/桌宠独立记忆库用）
             embedder: EmbeddingEngine 实例（依赖注入，测试用）
+            graph: CausalGraph 实例（依赖注入，桌宠按人设隔离用）
         """
         self._model_client = model_client
         self._store = store
         self._embedder = embedder
+        self._graph = graph
 
     def set_model(self, client):
         """注入 LLM 客户端（兼容旧 API）"""
@@ -135,9 +138,10 @@ class EventReducer:
             logger.debug("[EventReducer] LLM 未生成任何内容")
             return []
 
-        # 保存因果图
+        # 保存因果图（返回 label → node_id，用于事件↔节点绑定）
+        label_to_id = {}
         if causal_nodes or causal_edges:
-            self._save_causal_graph(causal_nodes, causal_edges)
+            label_to_id = self._save_causal_graph(causal_nodes, causal_edges) or {}
 
         if not events:
             return []
@@ -148,6 +152,27 @@ class EventReducer:
         for ev in events:
             ev.session_id = session_id
             ev.owner_id = owner_id  # 标记所属模型
+            # 把事件挂到本轮提取出的因果节点：label/keywords 命中即绑定。
+            # 没有这个绑定，CausalGraph 的共现/扩散检索拿不到事件（因果图与记忆库脱钩）。
+            text_for_match = " ".join(
+                [ev.fact or "", ev.thought or "", ev.lesson or "",
+                 " ".join(ev.keywords or [])]
+            ).lower()
+            node_ids = []
+            for nd in causal_nodes:
+                label = (nd.get("label") or "").strip()
+                if not label:
+                    continue
+                kws = nd.get("keywords") or []
+                if isinstance(kws, str):
+                    kws = [kws]
+                hit = (label.lower() in text_for_match) or any(
+                    len(str(k)) >= 2 and str(k).lower() in text_for_match for k in kws
+                )
+                nid = label_to_id.get(label)
+                if hit and nid and nid not in node_ids:
+                    node_ids.append(nid)
+            ev.causal_node_ids = node_ids
 
         # 结构校验 + 批内去重：单条不合格只跳过该条，不影响同批其余事件。
         # 只做截断/丢弃/去重，不改写已有事件——事件仍是不可变的历史记录。
@@ -199,12 +224,13 @@ class EventReducer:
         # 共现统计：自动发现因果边
         if saved:
             try:
-                from modules.memory.causal_graph import CausalGraph
                 from config.settings import settings
-                graph = CausalGraph.get_instance()
+                graph = self._get_graph()
                 saved_ids = [ev.id for ev in saved]
                 min_cooccur = int(getattr(settings, "CAUSAL_MIN_COOCCUR", 2) or 2)
-                graph.update_cooccurrence(event_ids=saved_ids, min_cooccur=min_cooccur)
+                graph.update_cooccurrence(
+                    event_ids=saved_ids, min_cooccur=min_cooccur, store=self._get_store(),
+                )
             except Exception as e:
                 logger.debug(f"[EventReducer] 共现统计失败 (非致命): {e}")
 
@@ -297,8 +323,8 @@ class EventReducer:
             return
 
         try:
-            from modules.memory.causal_graph import CausalGraph, CausalNode, CausalEdge
-            graph = CausalGraph.get_instance()
+            from modules.memory.causal_graph import CausalNode, CausalEdge
+            graph = self._get_graph()
 
             # 保存节点（按 label 去重，已存在的更新 confidence）
             label_to_id = {}
@@ -385,9 +411,11 @@ class EventReducer:
                     graph.save_edge(edge)
 
             logger.info(f"[EventReducer] 因果图更新: {len(nodes_data)} 节点, {len(edges_data)} 边")
+            return label_to_id
 
         except Exception as e:
             logger.warning(f"[EventReducer] 因果图保存失败 (非致命): {e}")
+            return {}
 
     def _fallback_summary(self, conversation_text: str) -> List[MemoryEvent]:
         """无 LLM 时的降级策略：规则引擎提取结构化事件"""
@@ -451,6 +479,12 @@ class EventReducer:
         if self._embedder is None:
             self._embedder = EmbeddingEngine.get_instance()
         return self._embedder
+
+    def _get_graph(self):
+        if getattr(self, "_graph", None) is None:
+            from modules.memory.causal_graph import CausalGraph
+            self._graph = CausalGraph.get_instance()
+        return self._graph
 
 
 # 模块级快捷函数

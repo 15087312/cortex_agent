@@ -5,9 +5,11 @@ import { useToastStore } from '@/stores/toast.js'
 import { endpoints, request } from '@/api.js'
 import Icon from '@/components/Icon.vue'
 import { useI18n } from 'vue-i18n'
+import { useConfirm } from '@/composables/useDialog.js'
 
 const { t } = useI18n()
 const toast = useToastStore()
+const confirm = useConfirm()
 
 // ── Tab ──
 const tab = ref('chat')
@@ -119,7 +121,7 @@ function stopPetAudio() {
 
 // SSE 帧泵：与文本聊天/互动共用（token / chunk / round_complete / error / done）。
 // 返回流结束时的最后一条消息引用（供 noReply / 失败提示写入）
-async function pumpSse(res, { last, onRoundStart } = {}) {
+async function pumpSse(res, { last, onRoundStart, onError, onFallback } = {}) {
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
   let buf = ''
@@ -151,6 +153,7 @@ async function pumpSse(res, { last, onRoundStart } = {}) {
           if (tail === last) last = messages.value[messages.value.length - 1]
         }
         if (evt.audio_url) playPetAudio(evt.audio_url)
+        if (evt.fallback && onFallback) onFallback()
       } else if (evt.token != null) {
         last.content += evt.token
         scrollDown()
@@ -173,7 +176,9 @@ async function pumpSse(res, { last, onRoundStart } = {}) {
         last = toolMsg
         scrollDown()
       } else if (evt.error) {
-        if (!last.content) last.content = t('pet.error') + '：' + evt.error
+        if (onError) onError(evt.error)
+        last.content = (last.content ? last.content + '\n' : '') + t('pet.error') + '：' + evt.error
+        scrollDown()
       }
     })
   }
@@ -220,6 +225,8 @@ async function send(autoText) {
       signal: ctl.signal,
     })
     if (!res.ok || !res.body) throw new Error('HTTP ' + res.status)
+    let streamError = ''
+    let fallbackNotified = false
     last = await pumpSse(res, {
       last,
       onRoundStart: () => {
@@ -227,34 +234,51 @@ async function send(autoText) {
         if (roundCount === 0) sending.value = false
         roundCount++
       },
+      onError: (msg) => { streamError = msg },
+      onFallback: () => {
+        if (fallbackNotified) return
+        fallbackNotified = true
+        toast.show(t('pet.apiFallback'), 'info')
+      },
     })
-    if (!isAuto && !last.content && roundCount === 0) last.content = t('pet.noReply')
-    // 正常结束后重拉历史：为已持久化的消息补上 id（支持逐条删除）
-    await loadHistory()
-    // 连续思考模式：本次思考完成后继续下一轮（间隔由后端 min_think_interval 控制）。
-    // 防重护栏：本轮产出与上一条助手消息完全相同 → 模型在复述，停止自动续聊
-    const historyAfter = messages.value
-    let lastTwo = null
-    for (let i = historyAfter.length - 1; i >= 0; i--) {
-      const m = historyAfter[i]
-      if (m.role === 'assistant' && m.content) {
-        if (lastTwo === null) { lastTwo = m.content; continue }
-        if (lastTwo === m.content) { lastTwo = false }
-        break
-      }
-    }
-    if (lastTwo === false) {
+    if (streamError) {
+      // 模型/API 失败：保留本地气泡（错误原因已写入），不要用历史覆盖；
+      // 同时停掉自动续聊，避免余额不足等错误被每 30s 反复重试。
       stopAuto = true
-      toast.show(t('pet.stoppedRepetition'), 'info')
-    }
-    if (shouldContinue()) {
-      if (autoTimer) clearTimeout(autoTimer)
-      autoTimer = setTimeout(() => { autoTimer = null; if (!sending.value) send('') }, (cfg.value.min_think_interval || 5) * 1000)
+      if (autoTimer) { clearTimeout(autoTimer); autoTimer = null }
+      if (autoStartTimer) { clearTimeout(autoStartTimer); autoStartTimer = null }
+      if (!isAuto) toast.show(t('pet.error') + '：' + streamError, 'error')
+    } else {
+      if (!isAuto && !last.content && roundCount === 0) last.content = t('pet.noReply')
+      // 正常结束后重拉历史：为已持久化的消息补上 id（支持逐条删除）
+      await loadHistory()
+      // 连续思考模式：本次思考完成后继续下一轮（间隔由后端 min_think_interval 控制）。
+      // 防重护栏：本轮产出与上一条助手消息完全相同 → 模型在复述，停止自动续聊
+      const historyAfter = messages.value
+      let lastTwo = null
+      for (let i = historyAfter.length - 1; i >= 0; i--) {
+        const m = historyAfter[i]
+        if (m.role === 'assistant' && m.content) {
+          if (lastTwo === null) { lastTwo = m.content; continue }
+          if (lastTwo === m.content) { lastTwo = false }
+          break
+        }
+      }
+      if (lastTwo === false) {
+        stopAuto = true
+        toast.show(t('pet.stoppedRepetition'), 'info')
+      }
+      if (shouldContinue()) {
+        if (autoTimer) clearTimeout(autoTimer)
+        autoTimer = setTimeout(() => { autoTimer = null; if (!sending.value) send('') }, (cfg.value.min_think_interval || 5) * 1000)
+      }
     }
   } catch (e) {
     if (e.name !== 'AbortError') {
       if (!last.content) last.content = t('pet.sendFailed')
       if (!isAuto) toast.show(t('pet.sendFailed'), 'error')
+      stopAuto = true
+      if (autoTimer) { clearTimeout(autoTimer); autoTimer = null }
     }
   } finally {
     sending.value = false
@@ -306,6 +330,13 @@ const savingCfg = ref(false)
 // 桌宠总开关（全局 DESKTOP_PET_ENABLED，运行时启停后端引擎）
 const masterEnabled = ref(true)
 const savingMaster = ref(false)
+
+// ── 人设（每个人设独立会话）──
+const personas = ref([])
+const activePersonaId = ref(null)
+const personaDraft = ref('')
+const newPersonaName = ref('')
+const personaSaving = ref(false)
 
 async function loadMasterEnabled() {
   try {
@@ -420,7 +451,6 @@ async function saveConfig() {
   savingCfg.value = true
   try {
     const patch = {
-      persona: cfg.value.persona,
       api_url: cfg.value.api_url,
       api_model: cfg.value.api_model,
       api_format: cfg.value.api_format,
@@ -457,6 +487,97 @@ async function clearHistory() {
   try {
     const r = await endpoints.clearPetHistory()
     if (r?.success) { messages.value = []; toast.show(t('pet.historyCleared'), 'success') }
+  } catch { toast.show(t('pet.saveFailed'), 'error') }
+}
+
+async function confirmClearHistory() {
+  if (!(await confirm(t('pet.clearHistoryConfirm')))) return
+  stopAuto = true
+  if (autoTimer) { clearTimeout(autoTimer); autoTimer = null }
+  if (autoStartTimer) { clearTimeout(autoStartTimer); autoStartTimer = null }
+  if (abortCtl.value) abortCtl.value.abort()
+  stopPetAudio()
+  await clearHistory()
+}
+
+// ── 人设切换 / 管理 ──
+async function loadPersonas() {
+  try {
+    const r = await endpoints.petPersonas()
+    personas.value = r?.data?.items || []
+    activePersonaId.value = r?.data?.active_id ?? (personas.value[0]?.id ?? null)
+    const cur = personas.value.find((p) => p.id === activePersonaId.value)
+    personaDraft.value = cur?.prompt || cfg.value.persona || ''
+  } catch { /* 静默 */ }
+}
+
+async function switchPersona() {
+  const pid = Number(activePersonaId.value)
+  if (!pid) return
+  // 切换前停掉旧人设的流式输出与自动循环，避免串会话
+  stopAuto = true
+  if (autoTimer) { clearTimeout(autoTimer); autoTimer = null }
+  if (autoStartTimer) { clearTimeout(autoStartTimer); autoStartTimer = null }
+  if (abortCtl.value) abortCtl.value.abort()
+  stopPetAudio()
+  try {
+    const r = await endpoints.activatePetPersona(pid)
+    if (r?.success === false) throw new Error(r?.error || 'activate failed')
+    await loadConfig()
+    const active = personas.value.find((p) => p.id === pid)
+    personaDraft.value = active?.prompt || cfg.value.persona || ''
+    await loadHistory()
+    toast.show(t('pet.personaSwitched', { name: active?.name || '' }), 'success')
+    // 恢复自动回复，但等一个正常思考间隔，让用户先看到该人设的既有会话
+    if (masterEnabled.value) {
+      stopAuto = false
+      if (autoTimer) clearTimeout(autoTimer)
+      autoTimer = setTimeout(() => {
+        autoTimer = null
+        if (!sending.value) send('')
+      }, (cfg.value.min_think_interval || 5) * 1000)
+    }
+  } catch {
+    toast.show(t('pet.personaSwitchFailed'), 'error')
+  }
+}
+
+async function savePersona() {
+  if (!activePersonaId.value) return
+  personaSaving.value = true
+  try {
+    const r = await endpoints.updatePetPersona(activePersonaId.value, { prompt: personaDraft.value })
+    if (r?.success === false) throw new Error(r?.error || 'save failed')
+    await loadPersonas()
+    toast.show(t('pet.personaSaved'), 'success')
+  } catch { toast.show(t('pet.saveFailed'), 'error') }
+  finally { personaSaving.value = false }
+}
+
+async function createPersona() {
+  const name = newPersonaName.value.trim()
+  if (!name) return
+  try {
+    const r = await endpoints.createPetPersona(name, personaDraft.value || cfg.value.persona || '')
+    if (!r?.success) { toast.show(t('pet.personaDuplicate'), 'error'); return }
+    newPersonaName.value = ''
+    await loadPersonas()
+    activePersonaId.value = r.data.id
+    await switchPersona()
+    toast.show(t('pet.personaCreated'), 'success')
+  } catch { toast.show(t('pet.saveFailed'), 'error') }
+}
+
+async function deletePersona() {
+  if (!activePersonaId.value || personas.value.length <= 1) return
+  if (!(await confirm(t('pet.personaDeleteConfirm')))) return
+  try {
+    const r = await endpoints.deletePetPersona(activePersonaId.value)
+    if (!r?.success) throw new Error(r?.error || 'delete failed')
+    await loadPersonas()
+    activePersonaId.value = personas.value[0]?.id ?? null
+    await switchPersona()
+    toast.show(t('pet.personaDeleted'), 'success')
   } catch { toast.show(t('pet.saveFailed'), 'error') }
 }
 
@@ -557,8 +678,9 @@ async function delMemory(mid) {
 }
 
 onMounted(async () => {
-  await loadHistory()
   await loadConfig()
+  await loadPersonas()
+  await loadHistory()
   await loadMasterEnabled()
   loadMemory()
   loadActions()
@@ -583,10 +705,25 @@ onUnmounted(() => {
       <div class="pet-header-left">
         <span class="pet-title"><Icon name="bot" :size="16" /> {{ $t('nav.pet') }}</span>
         <span class="pet-badge">{{ cfg.loop_type }}</span>
+        <select
+          v-if="personas.length"
+          v-model="activePersonaId"
+          class="input pet-persona-select"
+          :title="$t('pet.personaSwitch')"
+          @change="switchPersona"
+        >
+          <option v-for="p in personas" :key="p.id" :value="p.id">{{ p.name }}</option>
+        </select>
       </div>
       <div class="pet-header-right">
         <span v-if="petWindow.running" class="badge badge-green" :title="'pid ' + petWindow.pid">{{ $t('pet.windowRunning') }} · {{ petWindow.pid }}</span>
         <span v-else class="badge badge-gray">{{ $t('pet.windowStopped') }}</span>
+        <button
+          v-if="tab === 'chat' && messages.length"
+          class="chat-btn-icon"
+          :title="$t('pet.clearHistory')"
+          @click="confirmClearHistory"
+        ><Icon name="trash" :size="14" /></button>
         <div class="seg">
           <button :class="{ on: tab === 'chat' }" @click="tab = 'chat'">{{ $t('pet.tabChat') }}</button>
           <button :class="{ on: tab === 'settings' }" @click="tab = 'settings'">{{ $t('pet.tabSettings') }}</button>
@@ -710,8 +847,22 @@ onUnmounted(() => {
       <div class="settings-group">
         <div class="settings-group-title">{{ $t('pet.personaTitle') }}</div>
         <div class="setting-row">
+          <div class="lbl"><div class="t">{{ $t('pet.personaSwitch') }}</div><div class="d">{{ $t('pet.personaSwitchDesc') }}</div></div>
+          <div class="setting-ctl">
+            <select v-model="activePersonaId" class="input w-160" @change="switchPersona">
+              <option v-for="p in personas" :key="p.id" :value="p.id">{{ p.name }}</option>
+            </select>
+          </div>
+        </div>
+        <div class="setting-row">
           <div class="lbl"><div class="t">{{ $t('pet.persona') }}</div><div class="d">{{ $t('pet.personaDesc') }}</div></div>
-          <div class="setting-ctl"><textarea v-model="cfg.persona" class="input pet-persona-input" rows="5"></textarea></div>
+          <div class="setting-ctl"><textarea v-model="personaDraft" class="input pet-persona-input" rows="5"></textarea></div>
+        </div>
+        <div class="pet-settings-actions">
+          <button class="btn" :disabled="personaSaving || !activePersonaId" @click="savePersona">{{ $t('pet.personaSave') }}</button>
+          <input v-model="newPersonaName" class="input w-160" :placeholder="$t('pet.personaNewPlaceholder')" />
+          <button class="btn" @click="createPersona">{{ $t('pet.personaNew') }}</button>
+          <button class="btn btn-danger" :disabled="personas.length < 2" @click="deletePersona">{{ $t('pet.personaDelete') }}</button>
         </div>
       </div>
 
@@ -791,7 +942,7 @@ onUnmounted(() => {
 
       <div class="pet-settings-actions">
         <button class="btn btn-primary" :disabled="savingCfg" @click="saveConfig">{{ savingCfg ? $t('pet.saving') : $t('pet.save') }}</button>
-        <button class="btn" @click="clearHistory">{{ $t('pet.clearHistory') }}</button>
+        <button class="btn" @click="confirmClearHistory">{{ $t('pet.clearHistory') }}</button>
       </div>
     </div>
 
@@ -828,16 +979,18 @@ onUnmounted(() => {
   align-items: center;
   justify-content: space-between;
   padding: 10px 16px;
-  border-bottom: 1px solid var(--border-color, #E4E3DD);
+  border-bottom: 1px solid var(--border-light);
 }
 .pet-header-left { display: flex; align-items: center; gap: 8px; }
+.pet-header-right { display: flex; align-items: center; gap: 8px; }
 .pet-title { font-weight: 600; display: flex; align-items: center; gap: 6px; }
+.pet-persona-select { width: 112px; padding: 3px 8px; font-size: 12px; }
 .pet-badge {
   font-size: 11px;
   padding: 2px 8px;
-  border-radius: 999px;
-  background: rgba(88,166,255,.12);
-  color: var(--accent, #4a7dff);
+  border-radius: 6px;
+  background: var(--info-bg);
+  color: var(--info);
 }
 .pet-chat { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .pet-messages {
@@ -848,35 +1001,35 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 10px;
 }
-.pet-empty { color: var(--text-muted, #6B7280); text-align: center; padding: 40px 0; }
+.pet-empty { color: var(--text-muted); text-align: center; padding: 40px 0; }
 .pet-msg { max-width: 78%; display: flex; flex-direction: column; gap: 2px; }
 .pet-msg.user { align-self: flex-end; align-items: flex-end; }
 .pet-msg.assistant { align-self: flex-start; align-items: flex-start; }
-.pet-msg-role { font-size: 11px; color: var(--text-muted, #6B7280); display: flex; align-items: center; gap: 6px; }
+.pet-msg-role { font-size: 11px; color: var(--text-muted); display: flex; align-items: center; gap: 6px; }
 .pet-msg-del {
   border: none; background: none; cursor: pointer;
-  padding: 0 2px; color: var(--text-muted, #6B7280); opacity: .5;
+  padding: 0 2px; color: var(--text-muted); opacity: .5;
   display: inline-flex; align-items: center;
 }
-.pet-msg-del:hover { opacity: 1; color: #f85149; }
+.pet-msg-del:hover { opacity: 1; color: var(--danger); }
 .pet-msg-body {
   padding: 8px 12px;
   border-radius: 10px;
-  background: var(--card-color, #FFFFFF);
-  border: 1px solid var(--border-color, #E4E3DD);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-light);
   white-space: pre-wrap;
   word-break: break-word;
   line-height: 1.5;
 }
-.pet-msg.user .pet-msg-body { background: rgba(88,166,255,.12); }
+.pet-msg.user .pet-msg-body { background: var(--bg-tertiary); border-color: var(--border-light); }
 .pet-thinking {
   margin-bottom: 8px;
   padding: 8px 12px;
   border-radius: 8px;
-  background: rgba(99,102,241,.06);
-  border-left: 3px solid rgba(99,102,241,.4);
+  background: var(--bg-tertiary);
+  border-left: 2px solid var(--purple);
   font-size: 12px;
-  color: var(--text-secondary, #6B7280);
+  color: var(--text-secondary);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -894,7 +1047,7 @@ onUnmounted(() => {
 .pet-thinking-dot {
   width: 6px; height: 6px;
   border-radius: 50%;
-  background: rgba(99,102,241,.6);
+  background: var(--purple);
   animation: pet-thinking-pulse 1.2s ease-in-out infinite;
 }
 @keyframes pet-thinking-pulse {
@@ -903,7 +1056,7 @@ onUnmounted(() => {
 }
 .pet-thinking-text { max-height: 180px; overflow-y: auto; line-height: 1.5; }
 .pet-waiting {
-  color: var(--text-secondary, #6B7280);
+  color: var(--text-secondary);
   font-size: 13px;
   display: flex;
   align-items: center;
@@ -913,7 +1066,7 @@ onUnmounted(() => {
 .pet-waiting-dots i {
   width: 5px; height: 5px;
   border-radius: 50%;
-  background: var(--text-secondary, #6B7280);
+  background: var(--text-secondary);
   animation: pet-waiting-bounce 1.4s ease-in-out infinite;
 }
 .pet-waiting-dots i:nth-child(2) { animation-delay: .2s; }
@@ -922,9 +1075,9 @@ onUnmounted(() => {
   0%, 60%, 100% { transform: translateY(0); opacity: .4; }
   30% { transform: translateY(-4px); opacity: 1; }
 }
-.pet-input-row { display: flex; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--border-color, #E4E3DD); }
+.pet-input-row { display: flex; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--border-light); }
 .pet-input { flex: 1; }
-.btn-recording { background: var(--error-bg, rgba(239, 68, 68, 0.15)); color: var(--error, #ef4444); animation: pulse-recording 1.5s ease-in-out infinite; }
+.btn-recording { background: var(--danger-bg); color: var(--danger); animation: pulse-recording 1.5s ease-in-out infinite; }
 @keyframes pulse-recording { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
 .pet-settings { flex: 1; overflow-y: auto; padding: 16px; }
 .pet-settings .settings-group { margin-bottom: 8px; }
@@ -938,43 +1091,43 @@ onUnmounted(() => {
   gap: 10px;
   padding: 8px 10px;
   border-radius: 8px;
-  background: var(--card-color, #FFFFFF);
-  border: 1px solid var(--border-color, #E4E3DD);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-light);
   margin-bottom: 6px;
 }
 .pet-mem-text { flex: 1; word-break: break-word; }
-.pet-mem-time { font-size: 11px; color: var(--text-muted, #6B7280); white-space: nowrap; }
-.pet-mem-del { border: none; background: none; cursor: pointer; color: var(--text-muted, #6B7280); }
-.pet-mem-del:hover { color: #f85149; }
+.pet-mem-time { font-size: 11px; color: var(--text-muted); white-space: nowrap; }
+.pet-mem-del { border: none; background: none; cursor: pointer; color: var(--text-muted); }
+.pet-mem-del:hover { color: var(--danger); }
 
 /* ── 互动动作栏 ── */
-.pet-interact { border-top: 1px solid var(--border-color, #E4E3DD); padding: 8px 12px 0; }
+.pet-interact { border-top: 1px solid var(--border-light); padding: 8px 12px 0; }
 .pet-interact-cats { display: flex; gap: 6px; flex-wrap: wrap; }
 .pet-interact-cat {
   display: inline-flex; align-items: center; gap: 5px;
   padding: 5px 10px; border-radius: 999px; cursor: pointer;
-  border: 1px solid var(--border-color, #E4E3DD);
-  background: var(--card-color, #FFFFFF); color: var(--text-muted, #6B7280);
+  border: 1px solid var(--border-light);
+  background: var(--bg-secondary); color: var(--text-muted);
   font-size: 12px;
 }
-.pet-interact-cat:hover { color: var(--accent, #4a7dff); border-color: var(--accent, #4a7dff); }
-.pet-interact-cat.on { color: var(--accent, #4a7dff); border-color: var(--accent, #4a7dff); background: rgba(88,166,255,.08); }
+.pet-interact-cat:hover { color: var(--text-primary); border-color: var(--border-accent); }
+.pet-interact-cat.on { color: var(--info); border-color: var(--info); background: var(--info-bg); }
 .pet-interact-acts { display: flex; gap: 6px; flex-wrap: wrap; padding: 8px 0 4px; }
 .pet-interact-act {
   display: inline-flex; align-items: center; gap: 4px;
   padding: 4px 10px; border-radius: 999px; cursor: pointer;
-  border: 1px dashed var(--border-color, #E4E3DD);
-  background: transparent; color: var(--text-color, #1F2328);
+  border: 1px dashed var(--border-light);
+  background: transparent; color: var(--text-primary);
   font-size: 12px;
 }
-.pet-interact-act:hover:not(:disabled) { border-color: var(--accent, #4a7dff); color: var(--accent, #4a7dff); }
+.pet-interact-act:hover:not(:disabled) { border-color: var(--border-accent); color: var(--text-primary); }
 .pet-interact-act:disabled { opacity: .5; cursor: not-allowed; }
 
 /* 用户互动消息：图标 + 动作名 */
 .pet-msg-action {
   display: inline-flex; align-items: center; gap: 6px;
   padding: 4px 10px; border-radius: 999px;
-  background: rgba(88,166,255,.1); color: var(--accent, #4a7dff);
+  background: var(--info-bg); color: var(--info);
   font-size: 13px;
 }
 </style>

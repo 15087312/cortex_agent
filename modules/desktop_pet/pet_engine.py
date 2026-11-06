@@ -95,6 +95,14 @@ class PetEngine:
             except Exception as _swallowed_err:
                 logger.debug(f"[stop] ignored Exception: {_swallowed_err}")
             self._sub_id = ""
+        mem_client = getattr(self, "_memory_client", None)
+        if mem_client is not None:
+            try:
+                from infra.model.config_fingerprint import close_client_session
+                close_client_session(mem_client)
+            except Exception as _swallowed_err:
+                logger.debug(f"[stop] close memory client: {_swallowed_err}")
+            self._memory_client = None
         logger.info("[Pet] 桌宠已停止")
 
     # ── 独立 LLM client（PetConfig 的 API 配置，未配置时回退全局） ──
@@ -104,7 +112,12 @@ class PetEngine:
         """桌宠独立模型客户端：按 PetConfig 的 api_url/key/model/format 构建。
 
         配置变更时自动重建（对比配置指纹），未配置的字段回退全局 settings。
+        独立 API 鉴权/余额失败时，_stream_task 会临时设置 _client_override
+        使用主模型配置重试本次请求。
         """
+        override = getattr(self, "_client_override", None)
+        if override is not None:
+            return override
         from infra.model.config_fingerprint import close_client_session
         cfg = self.config
         fingerprint = (
@@ -236,13 +249,43 @@ class PetEngine:
                     pt.cancel()
                 task.cancel()
 
+    @staticmethod
+    def _is_auth_or_balance_error(exc: Exception) -> bool:
+        """独立 API 的鉴权/余额类错误：可回退主模型重试一次。"""
+        msg = str(exc).lower()
+        return any(k in msg for k in (
+            "402", "401", "403",
+            "insufficient balance", "insufficient_quota",
+            "invalid api key", "invalid_api_key", "authentication",
+            "unauthorized",
+        ))
+
+    def _has_independent_api(self) -> bool:
+        """是否配置了与主模型不同的独立 API（否则回退没有意义）。"""
+        try:
+            cfg = self.config
+            return bool(cfg.get("api_key") or cfg.get("api_url") or cfg.get("api_model"))
+        except Exception:
+            return False
+
     async def _stream_task(self, text: str, on_token: Callable[[str], None], extra_system: str = "", on_reasoning: Optional[Callable[[str], None]] = None) -> None:
         # 持续思考循环：每轮完整文本产出即持久化（首次连同 user 落库），
         # 不等到循环结束 —— 无限循环可能永不自然结束（由用户停止/上下文上限终止）
         user_saved = False
+        persisted = False
+        emitted = False
+        memory_scheduled = False
+        self._client_override = None
+        self.last_fallback_reason = ""
 
-        def on_message(m: str) -> None:
-            nonlocal user_saved
+        def _on_token(t: str) -> None:
+            nonlocal emitted
+            if t != "\x00ROUND_DONE\x00":
+                emitted = True
+            on_token(t)
+
+        def on_message(m: str, is_tool: bool = False) -> None:
+            nonlocal user_saved, persisted, memory_scheduled
             try:
                 # @link:block PetPersist = Retrieve · Write
                 from modules.desktop_pet.store import PetStore
@@ -259,20 +302,57 @@ class PetEngine:
                         # 跳过 assistant 落库，但任由用户历史（如有）不受影响
                         return
                 store.add_history("assistant", m)
+                persisted = True
                 self.last_reply = {"time": time.time(), "text": m}
                 logger.info(f"[Pet] 思考产出: {m[:40]}")
+                # 自动提炼：仅用户主动对话的首个最终答案，工具观察不提炼
+                if (not is_tool and not memory_scheduled and text.strip()
+                        and self.config.get("memory_enabled", True)):
+                    memory_scheduled = True
+                    try:
+                        from modules.desktop_pet.memory_bank import PetMemoryBank
+                        pid = store.get_active_persona_id()
+                        PetMemoryBank.get_instance().schedule_extract(
+                            pid, text, m, self._get_memory_model_client(),
+                        )
+                    except Exception as _mem_err:
+                        logger.debug(f"[Pet] 记忆提炼调度失败: {_mem_err}")
                 # 通知 SSE 层一轮完整回复已产出（前端结束"接收中"，准备下一轮）
                 on_token("\x00ROUND_DONE\x00")
             except Exception as ex:
                 logger.error(f"[Pet] 持久化失败: {ex}")
 
-        try:
+        async def _run_once():
             # 桌宠独立页面形态：SSE 请求即连接存在，不做 WS 握手检查
-            reply = await self.loop.run(
+            return await self.loop.run(
                 self, text,
-                on_token=on_token, on_reasoning=on_reasoning,
+                on_token=_on_token, on_reasoning=on_reasoning,
                 on_message=on_message, extra_system=extra_system,
             )
+
+        try:
+            try:
+                reply = await _run_once()
+            except Exception as e:
+                # 独立 API 鉴权/余额失败 → 本次请求临时回退主模型。
+                # 仅在尚未产出/落库时重试，避免重复追加半截回复。
+                if (not emitted and not persisted and self._has_independent_api()
+                        and self._is_auth_or_balance_error(e)):
+                    logger.warning(f"[Pet] 独立 API 不可用，临时回退主模型: {e}")
+                    override = self._build_client({})
+                    self._client_override = override
+                    self.last_fallback_reason = "独立 API 不可用，已临时使用主模型"
+                    try:
+                        reply = await _run_once()
+                    finally:
+                        self._client_override = None
+                        try:
+                            from infra.model.config_fingerprint import close_client_session
+                            close_client_session(override)
+                        except Exception as _swallowed_err:
+                            logger.debug(f"[_stream_task] close fallback client: {_swallowed_err}")
+                else:
+                    raise
             if reply:
                 logger.info(f"[Pet] 流式对话完成: {text[:30]} → {reply[:60]}")
         except asyncio.CancelledError:
@@ -280,6 +360,24 @@ class PetEngine:
         except Exception as e:
             logger.error(f"[Pet] 流式任务失败: {e}")
             raise
+        finally:
+            # 用户消息先落库：模型报错/空回复时也不会让用户这句话消失
+            if text and text.strip() and not user_saved:
+                try:
+                    from modules.desktop_pet.store import PetStore
+                    PetStore.get_instance().add_history("user", text)
+                except Exception as ex:
+                    logger.error(f"[Pet] 用户消息持久化失败: {ex}")
+
+    def _get_memory_model_client(self):
+        """记忆提炼使用的模型：统一走主模型，避免桌宠独立 key 失效导致记忆不落库。"""
+        if getattr(self, "_memory_client", None) is None:
+            try:
+                self._memory_client = self._build_client({})
+            except Exception as e:
+                logger.debug(f"[Pet] 记忆提炼模型初始化失败: {e}")
+                return None
+        return self._memory_client
 
     # ── 循环可用的能力（供 PetReactLoop 实现调用） ──
 
@@ -307,14 +405,18 @@ class PetEngine:
             extras.append(f"【屏幕画面】\n{vision}")
         try:
             from modules.desktop_pet.memory import PetMemory
+            from modules.desktop_pet.store import PetStore
             # memory_enabled 开关：关闭时跳过记忆检索
             if self.config.get("memory_enabled", True):
+                store = PetStore.get_instance()
+                pid = store.get_active_persona_id()
+                persona = store.get_persona(pid) or {}
                 # 桌宠循环设计：记忆只返回 top2（最大两条），与 8k 上下文匹配
                 mems = await PetMemory.get_instance().retrieve(
                     query=query or "用户与桌宠互动", max_results=2
                 )
                 if mems:
-                    lines = ["【桌宠记忆】（独立记忆库，仅作参考）"]
+                    lines = ["【桌宠手动记忆】（独立记忆库，仅作参考）"]
                     for i, ev in enumerate(mems, 1):
                         try:
                             from datetime import datetime
@@ -323,6 +425,39 @@ class PetEngine:
                             date = "未知日期"
                         lines.append(f"  [{i}] (日期={date}) {str(ev.get('text', ''))[:120]}")
                     extras.append("\n".join(lines))
+
+                # 独立事件记忆库 + 因果图（按人设隔离，自动提炼）
+                try:
+                    from modules.desktop_pet.memory_bank import PetMemoryBank
+                    bank = PetMemoryBank.get_instance()
+                    events = await bank.retrieve(
+                        pid, query or "用户与桌宠互动", max_results=2
+                    )
+                    if events:
+                        lines = [
+                            f"【桌宠记忆库（自动提炼 · 人设：{persona.get('name', '')}）】"
+                        ]
+                        for ev in events:
+                            fact = (
+                                getattr(ev, "fact", "")
+                                or getattr(ev, "thought", "")
+                                or getattr(ev, "lesson", "")
+                                or ""
+                            ).strip()
+                            if not fact:
+                                continue
+                            date = (getattr(ev, "time", "") or "")[:10]
+                            lines.append(f"  - [{date}] {fact[:160]}")
+                        if len(lines) > 1:
+                            extras.append("\n".join(lines))
+                    causal = bank.causal_context(pid, query or "", limit=4)
+                    if causal:
+                        extras.append(
+                            "【因果关联（自动提炼 · 按人设隔离）】\n"
+                            + "\n".join(f"  - {x}" for x in causal)
+                        )
+                except Exception as _mem_err:
+                    logger.debug(f"[build_context] 事件记忆/因果图检索失败: {_mem_err}")
         except Exception as _swallowed_err:
             logger.debug(f"[build_context] ignored Exception: {_swallowed_err}")
         return "\n\n".join(extras)

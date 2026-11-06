@@ -159,6 +159,75 @@ describe('Pet 页面', () => {
     expect(last.content).toContain('模型超时')
   })
 
+  it('SSE 错误：错误气泡保留，且不再自动重拉历史覆盖', async () => {
+    const { endpoints } = await import('@/api.js')
+    routeFetch(BASE_ROUTES())
+    const w = mountPage()
+    await tick()
+    const histSpy = vi.spyOn(endpoints, 'petHistory')
+    sseMock([
+      'event: error\ndata: {"error":"402 insufficient balance"}\n\n',
+      'event: done\ndata: {}\n\n',
+    ])
+    w.vm.input = 'hi'
+    await w.vm.send()
+    await w.vm.$nextTick()
+    const last = w.vm.messages[w.vm.messages.length - 1]
+    expect(last.content).toContain('402')
+    expect(histSpy).not.toHaveBeenCalled()
+    histSpy.mockRestore()
+  })
+
+  it('切换人设：调用 activate 并重新拉取该人设会话', async () => {
+    const { endpoints } = await import('@/api.js')
+    routeFetch([
+      { match: '/stream/pet/personas/2/activate', data: { success: true } },
+      {
+        match: '/stream/pet/personas',
+        data: { data: { items: [
+          { id: 1, name: '默认人设', prompt: 'p1' },
+          { id: 2, name: '猫娘', prompt: 'p2' },
+        ], active_id: 1 } },
+      },
+      ...BASE_ROUTES(),
+    ])
+    const w = mountPage()
+    await tick()
+    const sel = w.find('.pet-persona-select')
+    expect(sel.exists()).toBe(true)
+    expect(sel.findAll('option').length).toBe(2)
+    const histSpy = vi.spyOn(endpoints, 'petHistory')
+    await sel.setValue(2)
+    await tick()
+    expect(w.vm.activePersonaId).toBe(2)
+    expect(histSpy).toHaveBeenCalled()
+    histSpy.mockRestore()
+  })
+
+  it('一键清空：确认后清空当前人设聊天记录', async () => {
+    const { dialogState, resolveDialog } = await import('@/composables/useDialog.js')
+    routeFetch([
+      {
+        match: (u, init) => u.includes('/stream/pet/history') && init?.method === 'DELETE',
+        data: { success: true },
+      },
+      { match: '/stream/pet/history', data: { data: { items: [
+        { id: 1, role: 'user', content: '你好' },
+        { id: 2, role: 'assistant', content: '喵' },
+      ] } } },
+      ...BASE_ROUTES(),
+    ])
+    const w = mountPage()
+    await tick()
+    expect(w.vm.messages.length).toBe(2)
+    await w.find('.pet-header .chat-btn-icon').trigger('click')
+    await w.vm.$nextTick()
+    expect(dialogState().visible).toBe(true)
+    resolveDialog(true)
+    await tick()
+    expect(w.vm.messages.length).toBe(0)
+  })
+
   it('空输入不发送', async () => {
     const fetchSpy = vi.fn(async () => ({ ok: true, json: async () => ({}) }))
     globalThis.fetch = fetchSpy

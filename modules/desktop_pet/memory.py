@@ -42,7 +42,7 @@ class PetMemory:
     async def retrieve(self, query: str = "", max_results: int = 3) -> List[Dict[str, Any]]:
         """按语义相似度返回桌宠记忆（默认给最近记忆）"""
         try:
-            pool = self._store.search_memory(limit=200)
+            pool = self._store.search_memory(limit=200, persona_id=self._store.get_active_persona_id())
         except Exception:
             return []
         if not pool:

@@ -43,6 +43,7 @@ class PetStore:
         self._db_path = db_path
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         self._init_schema()
+        self._ensure_default()
 
     @classmethod
     def get_instance(cls) -> "PetStore":
@@ -83,23 +84,33 @@ class PetStore:
                     idle_backoff_max REAL NOT NULL DEFAULT 8,
                     voice_enabled INTEGER NOT NULL DEFAULT 0,
                     realtime_voice INTEGER NOT NULL DEFAULT 0,
+                    active_persona_id INTEGER NOT NULL DEFAULT 1,
                     updated_at REAL NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS pet_history (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     role TEXT NOT NULL,
                     content TEXT NOT NULL,
+                    persona_id INTEGER NOT NULL DEFAULT 1,
+                    created_at REAL NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS pet_personas (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    prompt TEXT NOT NULL DEFAULT '',
                     created_at REAL NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS pet_memory (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     kind TEXT NOT NULL DEFAULT 'fact',
                     text TEXT NOT NULL,
+                    persona_id INTEGER NOT NULL DEFAULT 1,
                     created_at REAL NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_pet_memory_created ON pet_memory(created_at DESC);
                 """
             )
+            self._migrate(conn)
             conn.commit()
         finally:
             conn.close()
@@ -116,22 +127,67 @@ class PetStore:
             ("idle_backoff_max", "REAL NOT NULL DEFAULT 8"),
             ("voice_enabled", "INTEGER NOT NULL DEFAULT 0"),
             ("realtime_voice", "INTEGER NOT NULL DEFAULT 0"),
+            ("active_persona_id", "INTEGER NOT NULL DEFAULT 1"),
         ]
         for name, ddl in additions:
             if name not in cols:
                 conn.execute(f"ALTER TABLE pet_config ADD COLUMN {name} {ddl}")
 
+        hcols = {r["name"] for r in conn.execute("PRAGMA table_info(pet_history)")}
+        if "persona_id" not in hcols:
+            conn.execute("ALTER TABLE pet_history ADD COLUMN persona_id INTEGER NOT NULL DEFAULT 1")
+        mcols = {r["name"] for r in conn.execute("PRAGMA table_info(pet_memory)")}
+        if "persona_id" not in mcols:
+            conn.execute("ALTER TABLE pet_memory ADD COLUMN persona_id INTEGER NOT NULL DEFAULT 1")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_pet_memory_persona ON pet_memory(persona_id, id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_pet_history_persona ON pet_history(persona_id, id)"
+        )
+
+        # 人设表：旧库首次升级时用当前 persona 建默认人设
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS pet_personas (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                prompt TEXT NOT NULL DEFAULT '',
+                created_at REAL NOT NULL
+            )"""
+        )
+        count = conn.execute("SELECT COUNT(*) AS c FROM pet_personas").fetchone()["c"]
+        if count == 0:
+            row = conn.execute("SELECT persona FROM pet_config WHERE id = 1").fetchone()
+            prompt = (row["persona"] if row else "") or DEFAULT_PERSONA
+            cur = conn.execute(
+                "INSERT INTO pet_personas (name, prompt, created_at) VALUES (?, ?, ?)",
+                ("默认人设", prompt, time.time()),
+            )
+            conn.execute(
+                "UPDATE pet_config SET active_persona_id = ? WHERE id = 1",
+                (cur.lastrowid,),
+            )
+        else:
+            cfg = conn.execute("SELECT active_persona_id FROM pet_config WHERE id = 1").fetchone()
+            pid = int(cfg["active_persona_id"]) if cfg and cfg["active_persona_id"] else 0
+            exists = conn.execute("SELECT id FROM pet_personas WHERE id = ?", (pid,)).fetchone()
+            if not exists:
+                first = conn.execute("SELECT id FROM pet_personas ORDER BY id LIMIT 1").fetchone()
+                if first:
+                    conn.execute("UPDATE pet_config SET active_persona_id = ? WHERE id = 1", (first["id"],))
+        conn.commit()
+
     # ── 配置（单行） ──
 
     _DEFAULT_ROW = (
-        DEFAULT_PERSONA, "", "", "", "", "", "direct", 1, 5.0, 1, 8, 512, 3, 8.0, 0, 0, 0.0,
+        DEFAULT_PERSONA, "", "", "", "", "", "direct", 1, 5.0, 1, 8, 512, 3, 8.0, 0, 0, 1, 0.0,
     )
 
     _CONFIG_KEYS = [
         "persona", "api_url", "api_key", "api_model", "api_format", "api_provider",
         "loop_type", "memory_enabled", "min_think_interval", "tools_enabled",
         "max_history", "max_output_tokens", "max_loop_rounds", "idle_backoff_max",
-        "voice_enabled", "realtime_voice",
+        "voice_enabled", "realtime_voice", "active_persona_id",
     ]
 
     def get_config(self) -> Dict[str, Any]:
@@ -151,7 +207,7 @@ class PetStore:
                 "min_think_interval": 5.0, "tools_enabled": True,
                 "max_history": 8, "max_output_tokens": 512, "max_loop_rounds": 0,
                 "idle_backoff_max": 8.0, "voice_enabled": False,
-                "realtime_voice": False,
+                "realtime_voice": False, "active_persona_id": 1,
             }
         out = dict(row)
         # 布尔列统一为 bool（get_config 与 update_config 返回结构一致）
@@ -167,8 +223,8 @@ class PetStore:
                 "INSERT OR IGNORE INTO pet_config (id, persona, api_url, api_key, api_model,"
                 " api_format, api_provider, loop_type, memory_enabled, min_think_interval,"
                 " tools_enabled, max_history, max_output_tokens, max_loop_rounds,"
-                " idle_backoff_max, voice_enabled, realtime_voice, updated_at)"
-                " VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " idle_backoff_max, voice_enabled, realtime_voice, active_persona_id, updated_at)"
+                " VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 self._DEFAULT_ROW,
             )
             conn.commit()
@@ -212,6 +268,11 @@ class PetStore:
                     cur[k] = max(0, int(v or 0))
                 except (TypeError, ValueError):
                     cur[k] = 0
+            elif k == "active_persona_id":
+                try:
+                    cur[k] = max(1, int(v or 1))
+                except (TypeError, ValueError):
+                    cur[k] = 1
             else:
                 cur[k] = str(v or "")
         self._ensure_default()
@@ -222,7 +283,7 @@ class PetStore:
                 " api_format=?, api_provider=?, loop_type=?, memory_enabled=?,"
                 " min_think_interval=?, tools_enabled=?, max_history=?,"
                 " max_output_tokens=?, max_loop_rounds=?, idle_backoff_max=?, voice_enabled=?,"
-                " realtime_voice=?, updated_at=? WHERE id=1",
+                " realtime_voice=?, active_persona_id=?, updated_at=? WHERE id=1",
                 (
                     cur["persona"], cur["api_url"], cur["api_key"], cur["api_model"],
                     cur["api_format"], cur["api_provider"], cur["loop_type"],
@@ -230,7 +291,7 @@ class PetStore:
                     cur["tools_enabled"], cur["max_history"],
                     cur["max_output_tokens"], cur["max_loop_rounds"],
                     cur["idle_backoff_max"], cur["voice_enabled"], cur["realtime_voice"],
-                    time.time(),
+                    cur.get("active_persona_id", 1), time.time(),
                 ),
             )
             conn.commit()
@@ -250,32 +311,170 @@ class PetStore:
 
     # ── 对话历史 ──
 
-    # @link:block PetHistoryWrite = Write
-    def add_history(self, role: str, content: str) -> None:
+    # ── 人设 ──
+
+    def list_personas(self) -> List[Dict[str, Any]]:
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                "SELECT id, name, prompt, created_at FROM pet_personas ORDER BY id"
+            ).fetchall()
+        finally:
+            conn.close()
+        return [dict(r) for r in rows]
+
+    def get_active_persona_id(self) -> int:
+        """当前人设 id；配置缺失/指向已删除人设时回退到最早的一个。"""
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT active_persona_id FROM pet_config WHERE id = 1"
+            ).fetchone()
+            pid = int(row["active_persona_id"]) if row and row["active_persona_id"] else 1
+            ok = conn.execute("SELECT id FROM pet_personas WHERE id = ?", (pid,)).fetchone()
+            if ok:
+                return pid
+            first = conn.execute("SELECT id FROM pet_personas ORDER BY id LIMIT 1").fetchone()
+            return int(first["id"]) if first else pid
+        finally:
+            conn.close()
+
+    def get_persona(self, pid: int) -> Optional[Dict[str, Any]]:
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT id, name, prompt, created_at FROM pet_personas WHERE id = ?",
+                (int(pid),),
+            ).fetchone()
+        finally:
+            conn.close()
+        return dict(row) if row else None
+
+    def add_persona(self, name: str, prompt: str = "") -> Optional[Dict[str, Any]]:
+        name = (name or "").strip() or "新人设"
+        prompt = (prompt or "").strip() or DEFAULT_PERSONA
+        conn = self._connect()
+        try:
+            dup = conn.execute(
+                "SELECT id FROM pet_personas WHERE lower(name) = lower(?)", (name,)
+            ).fetchone()
+            if dup:
+                return None
+            cur = conn.execute(
+                "INSERT INTO pet_personas (name, prompt, created_at) VALUES (?, ?, ?)",
+                (name, prompt, time.time()),
+            )
+            conn.commit()
+            pid = cur.lastrowid
+        finally:
+            conn.close()
+        return self.get_persona(pid)
+
+    def update_persona(self, pid: int, patch: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        cur = self.get_persona(pid)
+        if not cur:
+            return None
+        name = (patch.get("name") or cur["name"]).strip() or cur["name"]
+        prompt = patch.get("prompt")
+        prompt = cur["prompt"] if prompt is None else str(prompt)
+        conn = self._connect()
+        try:
+            dup = conn.execute(
+                "SELECT id FROM pet_personas WHERE lower(name) = lower(?) AND id != ?",
+                (name, int(pid)),
+            ).fetchone()
+            if dup:
+                return None
+            conn.execute(
+                "UPDATE pet_personas SET name = ?, prompt = ? WHERE id = ?",
+                (name, prompt, int(pid)),
+            )
+            # 当前人设的提示词即时同步到 config.persona（引擎每轮读取）
+            cfg = conn.execute("SELECT active_persona_id FROM pet_config WHERE id = 1").fetchone()
+            if cfg and int(cfg["active_persona_id"] or 0) == int(pid):
+                conn.execute(
+                    "UPDATE pet_config SET persona = ?, updated_at = ? WHERE id = 1",
+                    (prompt, time.time()),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+        return self.get_persona(pid)
+
+    def set_active_persona(self, pid: int) -> Optional[Dict[str, Any]]:
+        persona = self.get_persona(pid)
+        if not persona:
+            return None
         conn = self._connect()
         try:
             conn.execute(
-                "INSERT INTO pet_history (role, content, created_at) VALUES (?, ?, ?)",
-                (role, content, time.time()),
+                "UPDATE pet_config SET active_persona_id = ?, persona = ?, updated_at = ? WHERE id = 1",
+                (int(pid), persona["prompt"], time.time()),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        return persona
+
+    def delete_persona(self, pid: int) -> bool:
+        """删除人设及其专属会话；禁止删除最后一个人设。"""
+        personas = self.list_personas()
+        if len(personas) <= 1:
+            return False
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT id FROM pet_personas WHERE id = ?", (int(pid),)
+            ).fetchone()
+            if not row:
+                return False
+            active = conn.execute(
+                "SELECT active_persona_id FROM pet_config WHERE id = 1"
+            ).fetchone()
+            conn.execute("DELETE FROM pet_history WHERE persona_id = ?", (int(pid),))
+            conn.execute("DELETE FROM pet_memory WHERE persona_id = ?", (int(pid),))
+            conn.execute("DELETE FROM pet_personas WHERE id = ?", (int(pid),))
+            if active and int(active["active_persona_id"] or 0) == int(pid):
+                nxt = conn.execute("SELECT id, prompt FROM pet_personas ORDER BY id LIMIT 1").fetchone()
+                if nxt:
+                    conn.execute(
+                        "UPDATE pet_config SET active_persona_id = ?, persona = ?, updated_at = ? WHERE id = 1",
+                        (nxt["id"], nxt["prompt"], time.time()),
+                    )
+            conn.commit()
+            return True
+        finally:
+            conn.close()
+
+    # ── 对话历史（按人设隔离） ──
+
+    # @link:block PetHistoryWrite = Write
+    def add_history(self, role: str, content: str, persona_id: Optional[int] = None) -> None:
+        pid = int(persona_id) if persona_id else self.get_active_persona_id()
+        conn = self._connect()
+        try:
+            conn.execute(
+                "INSERT INTO pet_history (role, content, persona_id, created_at) VALUES (?, ?, ?, ?)",
+                (role, content, pid, time.time()),
             )
             conn.commit()
         finally:
             conn.close()
 
-    def get_history(self, limit: int = 20) -> List[Dict[str, Any]]:
-        """最近对话（含 id，供前端逐条删除）
+    def get_history(self, limit: int = 20, persona_id: Optional[int] = None) -> List[Dict[str, Any]]:
+        """某个人设的最近对话（默认当前人设），含 id 供前端逐条删除。
 
         取最新的 limit 条（ORDER BY id DESC 内层筛选，外层 ASC 还原时间正序）。
-        之前误用 ASC LIMIT —— 历史增长后永远返回最旧几条，模型上下文冻结在
-        旧对话上，主动思考反复产出同样的回复。
         """
+        pid = int(persona_id) if persona_id else self.get_active_persona_id()
         conn = self._connect()
         try:
             rows = conn.execute(
                 "SELECT * FROM ("
-                "  SELECT id, role, content FROM pet_history ORDER BY id DESC LIMIT ?"
+                "  SELECT id, role, content FROM pet_history"
+                "  WHERE persona_id = ? ORDER BY id DESC LIMIT ?"
                 ") ORDER BY id ASC",
-                (max(1, int(limit)),),
+                (pid, max(1, int(limit))),
             ).fetchall()
         finally:
             conn.close()
@@ -291,35 +490,40 @@ class PetStore:
         finally:
             conn.close()
 
-    def clear_history(self) -> None:
+    def clear_history(self, persona_id: Optional[int] = None) -> None:
+        """清空指定人设（默认当前人设）的对话历史。"""
+        pid = int(persona_id) if persona_id else self.get_active_persona_id()
         conn = self._connect()
         try:
-            conn.execute("DELETE FROM pet_history")
+            conn.execute("DELETE FROM pet_history WHERE persona_id = ?", (pid,))
             conn.commit()
         finally:
             conn.close()
 
     # ── 独立记忆 ──
 
-    def add_memory(self, kind: str, text: str) -> Dict[str, Any]:
+    def add_memory(self, kind: str, text: str, persona_id: Optional[int] = None) -> Dict[str, Any]:
+        pid = int(persona_id) if persona_id else self.get_active_persona_id()
         conn = self._connect()
         try:
             c = conn.execute(
-                "INSERT INTO pet_memory (kind, text, created_at) VALUES (?, ?, ?)",
-                (kind or "fact", text, time.time()),
+                "INSERT INTO pet_memory (kind, text, persona_id, created_at) VALUES (?, ?, ?, ?)",
+                (kind or "fact", text, pid, time.time()),
             )
             conn.commit()
             mid = c.lastrowid
         finally:
             conn.close()
-        return {"id": mid, "kind": kind or "fact", "text": text}
+        return {"id": mid, "kind": kind or "fact", "text": text, "persona_id": pid}
 
-    def list_memory(self, limit: int = 50) -> List[Dict[str, Any]]:
+    def list_memory(self, limit: int = 50, persona_id: Optional[int] = None) -> List[Dict[str, Any]]:
+        pid = int(persona_id) if persona_id else self.get_active_persona_id()
         conn = self._connect()
         try:
             rows = conn.execute(
                 "SELECT id, kind, text, created_at FROM pet_memory"
-                " ORDER BY created_at DESC LIMIT ?", (max(1, int(limit)),),
+                " WHERE persona_id = ? ORDER BY created_at DESC LIMIT ?",
+                (pid, max(1, int(limit))),
             ).fetchall()
         finally:
             conn.close()
@@ -334,13 +538,15 @@ class PetStore:
         finally:
             conn.close()
 
-    def search_memory(self, limit: int = 3) -> List[Dict[str, Any]]:
-        """最近记忆（向量检索由 memory.py 在内存中完成，这里只取候选池）"""
+    def search_memory(self, limit: int = 3, persona_id: Optional[int] = None) -> List[Dict[str, Any]]:
+        """某个人设的最近记忆候选池（向量排序由 memory.py 完成）。"""
+        pid = int(persona_id) if persona_id else self.get_active_persona_id()
         conn = self._connect()
         try:
             rows = conn.execute(
                 "SELECT id, kind, text, created_at FROM pet_memory"
-                " ORDER BY created_at DESC LIMIT 200",
+                " WHERE persona_id = ? ORDER BY created_at DESC LIMIT 200",
+                (pid,),
             ).fetchall()
         finally:
             conn.close()
