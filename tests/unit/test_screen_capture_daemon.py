@@ -174,6 +174,25 @@ def test_get_fresh_frame_expires(monkeypatch):
     assert len(calls) == 2  # 缓存过期 → 重新截图
 
 
+def test_get_fresh_frame_serves_stale_when_another_capture_in_progress(monkeypatch):
+    """并发截图进行中：短暂等待后返回上一帧，不重复截图、不让客户端排队超时。"""
+    d = ScreenCaptureDaemon("/tmp/t.sock")
+    img = _FakeFrame()
+    d._cached_img = img
+    d._cached_ts = time.time() - CACHE_TTL_SECONDS - 1  # 缓存已过期
+    d._capturing = True
+    monkeypatch.setattr(
+        "infra.screen_capture_daemon._screencapture_image",
+        lambda: pytest.fail("另一连接截图进行中，不应重复截图"),
+    )
+    t0 = time.time()
+    out = d._get_fresh_frame(wait_budget=0.05)
+    elapsed = time.time() - t0
+    assert out is img
+    assert elapsed >= 0.04  # 确实等待过，而不是立即返回
+    assert elapsed < 1.0
+
+
 def test_get_fresh_frame_failure_keeps_old_cache(monkeypatch):
     d = ScreenCaptureDaemon("/tmp/t.sock")
     img = _FakeFrame()

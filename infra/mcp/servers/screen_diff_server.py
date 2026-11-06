@@ -70,7 +70,7 @@ def _capture_screen() -> np.ndarray | None:
 
     # 优先从常驻截图 daemon 取帧（避免本子进程再次调用 screencapture 触发权限确认）
     try:
-        from utils.screen_capture_daemon_client import get_frame_bytes
+        from utils.screen_capture_daemon_client import get_frame_bytes, ping as daemon_ping
         daemon_png = get_frame_bytes(max_width=1280)
         if daemon_png:
             img_data = np.frombuffer(daemon_png, dtype=np.uint8)
@@ -79,6 +79,15 @@ def _capture_screen() -> np.ndarray | None:
             from PIL import Image
             pil_img = Image.open(io.BytesIO(daemon_png))
             return np.array(pil_img)[:, :, ::-1]
+        # daemon 在线但本次取帧失败/超时：不再本地 screencapture。
+        # 本地回退会再花最多 10s、争抢屏幕录制资源，并可能触发权限弹窗；
+        # 由下一轮轮询重试即可（daemon 恢复后自然拿到新帧）。
+        try:
+            if daemon_ping(timeout=1.0):
+                _log_warn("daemon 在线但取帧失败/超时，跳过本地截图回退")
+                return None
+        except Exception:
+            pass
         _log_warn("daemon 截图失败，回退本地 screencapture")
     except Exception:
         _log_warn("daemon 取帧异常，回退本地 screencapture")

@@ -103,7 +103,7 @@ class ScreenMonitorSource:
                             "params": {"protocolVersion": "2024-11-05", "capabilities": {},
                                        "clientInfo": {"name": "cortex-screen-monitor", "version": "1.0"}}}
                 self._send_request(init_req)
-                resp = self._read_response(timeout=180.0)
+                resp = self._read_response(timeout=180.0, expected_id="init_1")
                 if resp and "result" in resp:
                     self._send_request({"jsonrpc": "2.0", "method": "notifications/initialized"})
                     self._proc_restarts += 1
@@ -151,11 +151,12 @@ class ScreenMonitorSource:
 
     def _call_mcp_tool(self, tool_name: str, arguments: dict = None) -> Optional[dict]:
         ScreenMonitorSource._req_counter += 1
-        req = {"jsonrpc": "2.0", "id": f"tool_{ScreenMonitorSource._req_counter}",
+        req_id = f"tool_{ScreenMonitorSource._req_counter}"
+        req = {"jsonrpc": "2.0", "id": req_id,
                "method": "tools/call", "params": {"name": tool_name, "arguments": arguments or {}}}
         t0 = time.time()
         self._send_request(req)
-        resp = self._read_response(timeout=_RESPONSE_TIMEOUT)
+        resp = self._read_response(timeout=_RESPONSE_TIMEOUT, expected_id=req_id)
         elapsed = time.time() - t0
         if elapsed > 15:
             logger.debug(f"[{tool_name}] 响应 {elapsed:.1f}s (慢)")
@@ -177,12 +178,26 @@ class ScreenMonitorSource:
                 logger.error(f"[{tool_name}] 无响应 (超时 {_RESPONSE_TIMEOUT}s, 实际等待 {elapsed:.1f}s)")
         return None
 
-    def _read_response(self, timeout: float = 5.0) -> Optional[dict]:
-        try:
-            line = self._resp_queue.get(timeout=timeout)
-            return json.loads(line)
-        except (Empty, json.JSONDecodeError):
-            return None
+    def _read_response(self, timeout: float = 5.0, expected_id: Optional[str] = None) -> Optional[dict]:
+        """按 JSON-RPC id 取响应；丢弃超时后迟到的旧响应，避免结果错位。"""
+        deadline = time.time() + timeout
+        while True:
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                return None
+            try:
+                line = self._resp_queue.get(timeout=remaining)
+            except Empty:
+                return None
+            try:
+                resp = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(resp, dict):
+                continue
+            if expected_id is None or resp.get("id") == expected_id:
+                return resp
+            logger.debug(f"[_read_response] 丢弃过期响应 id={resp.get('id')} (期望 {expected_id})")
 
     def _read_stdout_loop(self):
         while self._reader_running:

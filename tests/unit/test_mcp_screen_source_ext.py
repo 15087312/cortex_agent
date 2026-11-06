@@ -2,6 +2,7 @@
 
 用 __new__ 手动注册弱引用表（conftest 统一 stop），不 mock _close_process 保留真实清理。
 """
+import json
 import queue
 import threading
 import time
@@ -11,6 +12,16 @@ import modules.perception.difference.sources.mcp_screen_source as mss
 from modules.perception.difference.sources.mcp_screen_source import (
     ScreenDiffSource, get_screen_diff_source,
 )
+
+
+def test_read_response_skips_stale_id():
+    """超时后迟到的旧响应必须按 id 丢弃，避免状态错位。"""
+    s = _src()
+    s._resp_queue.put(json.dumps({"id": "tool_old", "result": {"stale": True}}))
+    s._resp_queue.put(json.dumps({"id": "tool_new", "result": {"ok": True}}))
+    out = s._read_response(timeout=1.0, expected_id="tool_new")
+    assert out["id"] == "tool_new"
+    assert out["result"]["ok"] is True
 
 
 def _src(monkeypatch=None):

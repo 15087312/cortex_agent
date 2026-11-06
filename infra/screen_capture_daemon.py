@@ -31,6 +31,9 @@ SOCKET_PATH = os.environ.get(
 )
 # 截图约 1s/次；缓存 3s 可覆盖大多数并发请求，避免每个请求都重新截屏
 CACHE_TTL_SECONDS = float(os.environ.get("CORTEX_SCREEN_CAPTURE_TTL", "3.0"))
+# 并发请求排队上限：另一个连接正在截图时，最多等这么久；超时直接返回上一帧。
+# 客户端超时 8s，必须远小于它，否则一次慢截图会让所有消费者一起超时并各自回退本地截图。
+STALE_WAIT_SECONDS = float(os.environ.get("CORTEX_SCREEN_CAPTURE_WAIT", "2.0"))
 LOG_PREFIX = "[screen_capture_daemon]"
 
 
@@ -97,19 +100,37 @@ class ScreenCaptureDaemon:
         self._cached_img = None
         self._cached_ts = 0.0
         self._lock = threading.Lock()
+        self._cv = threading.Condition(self._lock)  # 保护缓存 + 截图状态
+        self._capturing = False
         self._shutdown = threading.Event()
 
     # ── 帧缓存 ──
 
-    def _get_fresh_frame(self):
-        """返回新鲜帧（缓存未过期则复用），必要时截图"""
-        now = time.time()
-        if self._cached_img is not None and (now - self._cached_ts) < CACHE_TTL_SECONDS:
-            return self._cached_img
-        img = _screencapture_image()
-        if img is not None:
-            self._cached_img = img
-            self._cached_ts = time.time()
+    def _get_fresh_frame(self, wait_budget: float = STALE_WAIT_SECONDS):
+        """返回帧；必要时截图。
+
+        并发场景：若另一个连接正在截图，最多等待 wait_budget 秒，超时直接返回
+        上一帧缓存（可能略旧），避免所有消费者排队到客户端 8s 超时后各自回退
+        本地 screencapture（会触发权限弹窗并进一步争抢截图资源）。
+        """
+        with self._cv:
+            if self._cached_img is not None and (time.time() - self._cached_ts) < CACHE_TTL_SECONDS:
+                return self._cached_img
+            if self._capturing:
+                self._cv.wait(timeout=wait_budget)
+                return self._cached_img
+            self._capturing = True
+
+        img = None
+        try:
+            img = _screencapture_image()
+        finally:
+            with self._cv:
+                if img is not None:
+                    self._cached_img = img
+                    self._cached_ts = time.time()
+                self._capturing = False
+                self._cv.notify_all()
         return img
 
     # ── 请求处理 ──
@@ -123,8 +144,7 @@ class ScreenCaptureDaemon:
 
         if method == "frame":
             params = req.get("params") or {}
-            with self._lock:
-                img = self._get_fresh_frame()
+            img = self._get_fresh_frame()
             if img is None:
                 return {"id": req_id, "error": {"code": -32001, "message": "截图失败或权限未授予"}}
             try:

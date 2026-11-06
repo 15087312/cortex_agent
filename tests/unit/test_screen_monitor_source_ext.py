@@ -156,6 +156,21 @@ def test_send_request_writes():
 
 # ── MCP 调用 ───────────────────────────────────────────────────────────
 
+def test_read_response_skips_stale_id():
+    """超时后迟到的旧响应不能被当成本次结果（id 必须匹配）。"""
+    s = _source()
+    s._resp_queue.put(json.dumps({"id": "tool_old", "result": {"stale": True}}))
+    s._resp_queue.put(json.dumps({"id": "tool_new", "result": {"ok": True}}))
+    out = s._read_response(timeout=1.0, expected_id="tool_new")
+    assert out["id"] == "tool_new"
+    assert out["result"]["ok"] is True
+
+
+def test_read_response_timeout_returns_none():
+    s = _source()
+    assert s._read_response(timeout=0.05, expected_id="missing") is None
+
+
 def test_call_mcp_tool_ui_elements(monkeypatch):
     s = _source()
     s._send_request = MagicMock()

@@ -216,7 +216,7 @@ class ScreenDiffSource(DifferenceSource):
                 }
                 self._send_request(init_req)
                 # 等待 initialize 响应
-                resp = self._read_response()
+                resp = self._read_response(timeout=10.0, expected_id="init_1")
                 if resp and "result" in resp:
                     # 发送 initialized 通知
                     self._send_request({
@@ -274,9 +274,10 @@ class ScreenDiffSource(DifferenceSource):
     def _call_mcp_tool(self, tool_name: str, arguments: dict = None) -> Optional[dict]:
         """调用 MCP 工具的简化封装"""
         ScreenDiffSource._req_counter += 1
+        req_id = f"tool_{ScreenDiffSource._req_counter}"
         req = {
             "jsonrpc": "2.0",
-            "id": f"tool_{ScreenDiffSource._req_counter}",
+            "id": req_id,
             "method": "tools/call",
             "params": {
                 "name": tool_name,
@@ -285,7 +286,7 @@ class ScreenDiffSource(DifferenceSource):
         }
         t0 = time.time()
         self._send_request(req)
-        resp = self._read_response(timeout=10.0)
+        resp = self._read_response(timeout=10.0, expected_id=req_id)
         elapsed = time.time() - t0
         if elapsed > 5:
             logger.debug(f"[{tool_name}] {elapsed:.1f}s (慢)")
@@ -344,17 +345,34 @@ class ScreenDiffSource(DifferenceSource):
             except Exception:
                 break
 
-    def _read_response(self, timeout: float = 5.0) -> Optional[dict]:
-        """从队列获取一行 JSON 响应（跨平台，无 select）"""
-        try:
-            line = self._resp_queue.get(timeout=timeout)
-            if line:
-                return json.loads(line)
-        except Empty as _swallowed_err:
-            logger.debug(f"[_read_response] ignored Empty: {_swallowed_err}")
-        except Exception as _swallowed_err:
-            logger.debug(f"[_read_response] ignored Exception: {_swallowed_err}")
-        return None
+    def _read_response(self, timeout: float = 5.0, expected_id: Optional[str] = None) -> Optional[dict]:
+        """从队列获取匹配 id 的 JSON 响应（跨平台，无 select）。
+
+        超时后迟到的旧响应会留在队列里；若直接取下一行，会把上一次的结果当成
+        本次结果（id 错位）。这里按 JSON-RPC id 过滤，丢弃过期响应。
+        """
+        deadline = time.time() + timeout
+        while True:
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                return None
+            try:
+                line = self._resp_queue.get(timeout=remaining)
+            except Empty as _swallowed_err:
+                logger.debug(f"[_read_response] ignored Empty: {_swallowed_err}")
+                return None
+            if not line:
+                continue
+            try:
+                resp = json.loads(line)
+            except Exception as _swallowed_err:
+                logger.debug(f"[_read_response] ignored Exception: {_swallowed_err}")
+                continue
+            if not isinstance(resp, dict):
+                continue
+            if expected_id is None or resp.get("id") == expected_id:
+                return resp
+            logger.debug(f"[_read_response] 丢弃过期响应 id={resp.get('id')} (期望 {expected_id})")
 
     # ── 检测主循环 ──
 

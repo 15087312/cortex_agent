@@ -257,9 +257,10 @@ class TestCaptureScreen:
 
     def test_screencapture_failure(self):
         from infra.mcp.servers.screen_diff_server import _capture_screen
-        # daemon 不可用（取帧返回 None）→ 回退本地 screencapture，本地也失败 → None
+        # daemon 不可用（取帧返回 None + ping 失败）→ 回退本地 screencapture，本地也失败 → None
         with patch("subprocess.run") as mock_run, \
-             patch("utils.screen_capture_daemon_client.get_frame_bytes", return_value=None):
+             patch("utils.screen_capture_daemon_client.get_frame_bytes", return_value=None), \
+             patch("utils.screen_capture_daemon_client.ping", return_value=False):
             mock_run.return_value.returncode = 1
             result = _capture_screen()
             assert result is None
@@ -268,10 +269,22 @@ class TestCaptureScreen:
         from infra.mcp.servers.screen_diff_server import _capture_screen
         # daemon 不可用 → 回退本地 screencapture，本地超时 → None
         with patch("subprocess.run") as mock_run, \
-             patch("utils.screen_capture_daemon_client.get_frame_bytes", return_value=None):
+             patch("utils.screen_capture_daemon_client.get_frame_bytes", return_value=None), \
+             patch("utils.screen_capture_daemon_client.ping", return_value=False):
             mock_run.side_effect = TimeoutError("timeout")
             result = _capture_screen()
         assert result is None
+
+
+    def test_daemon_alive_skips_local_fallback(self):
+        """daemon 在线但取帧超时：跳过本地 screencapture，避免二次 10s 争抢。"""
+        from infra.mcp.servers.screen_diff_server import _capture_screen
+        with patch("utils.screen_capture.SCREENSHOT_ENABLED", True), \
+             patch("utils.screen_capture_daemon_client.get_frame_bytes", return_value=None), \
+             patch("utils.screen_capture_daemon_client.ping", return_value=True), \
+             patch("subprocess.run") as mock_run:
+            assert _capture_screen() is None
+            mock_run.assert_not_called()
 
 
 class TestMain:
