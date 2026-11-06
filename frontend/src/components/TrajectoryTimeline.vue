@@ -163,7 +163,7 @@ function detailText(e) { return buildDetail(e) }
   position: relative; z-index: 1;
   width: 18px; height: 18px; border-radius: 50%;
   display: inline-flex; align-items: center; justify-content: center;
-  background: var(--bg, #1a1a1f); color: var(--accent, #8b5cf6);
+  background: #1f1f22; color: #a5b4fc;
   border: 1px solid var(--border, rgba(255, 255, 255, 0.16));
 }
 .tl-main { flex: 1 1 auto; min-width: 0; padding-bottom: 6px; }

@@ -248,7 +248,7 @@ function openTrajectory(sid) {
         </div>
         <div class="health-card" :title="$t('dashboard.apiTotalTitle')">
           <div class="health-ring">
-            <svg viewBox="0 0 72 72"><circle class="ring-bg" cx="36" cy="36" r="30"/><circle class="ring-fill" cx="36" cy="36" r="30" :style="{ strokeDasharray: 188.5, strokeDashoffset: totalApi ? 0 : 188.5, stroke: '#8b5cf6' }"/></svg>
+            <svg viewBox="0 0 72 72"><circle class="ring-bg" cx="36" cy="36" r="30"/><circle class="ring-fill" cx="36" cy="36" r="30" :style="{ strokeDasharray: 188.5, strokeDashoffset: totalApi ? 0 : 188.5, stroke: 'var(--link)' }"/></svg>
             <div class="ring-label">{{ totalApi }}</div>
           </div>
           <div class="health-name">{{ $t('dashboard.apiRequests') }}</div>
@@ -478,9 +478,9 @@ function openTrajectory(sid) {
 .dash-freq-header { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-muted); margin-bottom: 3px; }
 .dash-freq-path { font-family: var(--font-mono); max-width: 70%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dash-freq-bar { height: 6px; border-radius: 3px; background: var(--bg-secondary); overflow: hidden; }
-.dash-freq-fill { height: 100%; border-radius: 3px; background: linear-gradient(90deg, var(--purple), #ff5f8f); }
+.dash-freq-fill { height: 100%; border-radius: 3px; background: var(--link); }
 .dash-timeline-item { display: flex; gap: 10px; position: relative; padding-left: 18px; margin-bottom: 12px; }
-.dash-timeline-dot { position: absolute; left: 0; top: 5px; width: 8px; height: 8px; border-radius: 50%; background: var(--success); box-shadow: 0 0 0 3px rgba(34, 197, 94, .15); }
+.dash-timeline-dot { position: absolute; left: 0; top: 5px; width: 8px; height: 8px; border-radius: 50%; background: var(--success); }
 .dash-timeline-line { position: absolute; left: 3.5px; top: 14px; bottom: -6px; width: 1px; background: var(--border); }
 .dash-timeline-content { flex: 1; min-width: 0; }
 .dash-timeline-header { display: flex; gap: 6px; align-items: center; margin-bottom: 2px; }

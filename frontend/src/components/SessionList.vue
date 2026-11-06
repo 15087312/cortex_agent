@@ -79,7 +79,7 @@ async function handleBatchDelete() {
         </div>
       </div>
       <div class="session-list-body">
-        <button class="btn btn-primary btn-sm" style="width:100%;justify-content:center;margin-bottom:8px" @click="emit('new')">+ {{ $t('sessionList.newSession') }}</button>
+        <button class="btn btn-sm" style="width:100%;justify-content:center;margin-bottom:8px" @click="emit('new')">+ {{ $t('sessionList.newSession') }}</button>
         <div class="session-search">
           <Icon name="search" :size="14" style="color:var(--text-muted)" />
           <input class="input" v-model="search" :placeholder="$t('sessionList.searchPlaceholder')" style="border:none;background:transparent;flex:1;padding:4px 0;outline:none" />

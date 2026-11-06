@@ -456,6 +456,7 @@ onMounted(async () => {
 <template>
   <div class="settings-layout">
     <div class="settings-sidebar">
+      <div class="settings-title">{{ $t('nav.settings') }}</div>
       <template v-for="g in tabGroups" :key="g.labelKey">
         <div class="settings-group-label">{{ $t(g.labelKey) }}</div>
         <div

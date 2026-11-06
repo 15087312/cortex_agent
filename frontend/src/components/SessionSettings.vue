@@ -165,7 +165,7 @@ onMounted(loadAll)
 }
 .ss-panel {
   width: 560px; max-width: 92vw; max-height: 90vh; overflow: hidden;
-  background: var(--bg, #161b22); border: 1px solid var(--border); border-radius: 12px;
+  background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 12px;
   padding: 14px 18px; display: flex; flex-direction: column;
 }
 .ss-head { display: flex; justify-content: space-between; align-items: center; }

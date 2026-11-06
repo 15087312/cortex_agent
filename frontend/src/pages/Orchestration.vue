@@ -808,7 +808,7 @@ onMounted(() => { loadData(); loadPresets() })
 .modal-body { padding: 18px; overflow-y: auto; flex: 1; }
 .modal-footer { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--border); }
 .src-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 1000; display: flex; align-items: center; justify-content: center; }
-.src-panel { width: 640px; max-width: 92vw; max-height: 88vh; overflow: hidden; background: var(--bg,#161b22); border: 1px solid var(--border); border-radius: 12px; padding: 14px 18px; display: flex; flex-direction: column; }
+.src-panel { width: 640px; max-width: 92vw; max-height: 88vh; overflow: hidden; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 12px; padding: 14px 18px; display: flex; flex-direction: column; }
 .src-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
 .src-text { white-space: pre-wrap; word-break: break-word; font-size: 12px; line-height: 1.6; overflow-y: auto; max-height: calc(88vh - 80px); margin: 0; padding: 12px; background: var(--bg-secondary, rgba(255,255,255,0.02)); border: 1px solid var(--border); border-radius: 8px; }
 .toggle-label { display: inline-flex; align-items: center; cursor: pointer; position: relative; }
