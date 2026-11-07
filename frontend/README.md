@@ -47,6 +47,16 @@ python frontend/server.py
 | 系统信息 | 系统状态与配置 |
 | 设置 | API Key 与运行时配置 |
 
+## 布局防溢出约定
+
+- Vue 动态 `:style` 里的长度值必须带单位（如 `'260px'`、`'50%'`），不要写裸数字；只有 `opacity`、`zIndex`、`flexShrink`、`lineHeight` 等无单位属性可以传数字。
+- flex 行/列里的文本、输入框、可收缩面板补 `min-width: 0`；省略号要加在真正受约束的那一层，并确保中间 flex 父级也能收缩。
+- 输入框在 flex 行中用 `flex: 1 1 0; width: 0; min-width: 0`，右侧提示/按钮限制 `max-width`，避免提示文字按 max-content 抢空间。
+- 固定宽度侧栏同时设置 `width`、`max-width`、`flex-shrink: 0`、`min-width: 0`。
+- 修改布局后用真实浏览器在 1440 / 1024 / 800 宽度下检查 `scrollWidth` 与 `getBoundingClientRect()`，不要只跑 jsdom 单测。
+
+完整案例见 [`docs/bugfixes/05-frontend-ui.md` §108](../docs/bugfixes/05-frontend-ui.md)。
+
 ## WebSocket 协议
 
 ```

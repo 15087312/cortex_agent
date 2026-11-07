@@ -142,5 +142,5 @@ function starRating(v) { const s = Math.round(v * 5); return '★'.repeat(s) + '
 .detail-table { width: 100%; font-size: 13px; line-height: 1.8; }
 .detail-label-cell { width: 80px; color: var(--text-muted); }
 .keyword-tag { margin-right: 4px; }
-.search-input { flex: 1; }
+.search-input { flex: 1; min-width: 0; }
 </style>

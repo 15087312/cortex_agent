@@ -563,7 +563,7 @@ function handleAnswerIntent(requestId, answer) {
       @delete="handleSessionDelete"
       @rename="handleSessionRename"
       @new="handleNewSession"
-      :style="{ width: sessionListCollapsed ? 40 : 260, flexShrink: 0 }"
+      :style="{ width: (sessionListCollapsed ? 40 : 260) + 'px', maxWidth: (sessionListCollapsed ? 40 : 260) + 'px', flexShrink: 0, minWidth: 0 }"
     />
     <div class="chat-main">
       <div class="chat-header">

@@ -1133,14 +1133,14 @@ onMounted(async () => {
 .card-header-flex { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .flex-mt { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; }
 .mono-sm { font-family: var(--font-mono); font-size: 12px; }
-.flex-1 { flex: 1; }
+.flex-1 { flex: 1; min-width: 0; }
 .setting-hint-inline { font-size: 12px; color: var(--text-secondary); }
 .model-tier-block { margin: 4px 0 14px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-inset); }
 .model-tier-title { font-size: 13px; font-weight: 600; color: var(--text-primary); margin-bottom: 8px; }
 .muted-sm { font-size: 12px; color: var(--text-muted); }
 .ml-2 { margin-left: 8px; }
-.flex-1-muted { flex: 1; font-size: 12px; color: var(--text-muted); }
-.key-input { flex: 1; }
+.flex-1-muted { flex: 1; min-width: 0; font-size: 12px; color: var(--text-muted); }
+.key-input { flex: 1; min-width: 0; }
 .licenses-pre { white-space: pre-wrap; word-break: break-word; font-family: var(--font-mono); font-size: 12px; line-height: 1.6; color: var(--text-primary); margin: 0; }
 .key-status { margin-top: 8px; font-size: 12px; }
 .key-unconfigured { color: var(--text-muted); }
@@ -1156,7 +1156,7 @@ onMounted(async () => {
 .w-240 { width: 240px; }
 .w-280 { width: 280px; }
 .w-360 { width: 360px; }
-.w-flex-260 { flex: 1; max-width: 260px; }
+.w-flex-260 { flex: 1; min-width: 0; max-width: 260px; }
 .w-flex-220 { flex: 1; min-width: 220px; }
 .flex-gap-8 { display: flex; gap: 8px; align-items: center; }
 

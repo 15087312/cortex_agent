@@ -33,8 +33,9 @@ watch(() => props.sessionId, load)
 </template>
 
 <style scoped>
-.chat-model-tags { display: inline-flex; align-items: center; gap: 4px; }
+.chat-model-tags { display: inline-flex; align-items: center; min-width: 0; gap: 4px; overflow: hidden; }
 .chat-model-tag {
+  max-width: 160px; overflow: hidden; text-overflow: ellipsis;
   font-size: 11px; padding: 2px 8px; border-radius: 10px;
   background: rgba(139,148,158,0.12); color: var(--text-muted); white-space: nowrap;
 }

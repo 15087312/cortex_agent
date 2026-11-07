@@ -2,7 +2,7 @@
 
 [← Back to index](./README.en.md) | [简体中文](./05-frontend-ui.md)
 
-> Split from `docs/ERRORS_AND_FIXES.en.md` by module; section numbers are unchanged (§104–§107 fix duplicated numbers in the original—see the index). 6 sections: §6、§7、§14、§22、§23、§75.
+> Split from `docs/ERRORS_AND_FIXES.en.md` by module; section numbers are unchanged (§104–§107 fix duplicated numbers in the original—see the index). 7 sections: §6、§7、§14、§22、§23、§75、§108.
 
 ---
 ## 6. Native confirm/prompt blocks Qt WebEngine (frontend)
@@ -133,3 +133,40 @@ Extract all frontend `XxxCfg('KEY')` / `updateConfig('KEY')` / CK mapping keys; 
 **Verification:** ChatMessage 21 tests + frontend build pass.
 
 **Lesson:** Bubble children inside flex layouts need explicit `min-width: 0` to permit shrink-and-wrap; long content (numbered lists/URLs/code identifiers) relies on `overflow-wrap: break-word` as the safety net, otherwise it bursts fixed max-width containers. CSS overflow problems are routinely missed by "logic-only, no-styling" tests — verify manually under realistic-width rendering.
+
+---
+
+## 108. Session list / input widened by long text — missing units in Vue inline sizes + flex children without min-width:0 (frontend styling)
+
+**Symptom:**
+- The chat page's left session list should stay at 260px, but long titles pushed it to 429px; the collapsed state also would not stay at 40px.
+- The AI input was squeezed or overflowed horizontally when hints, long input, or action buttons appeared; in the worst case the textarea width became 0.
+
+**Root cause:**
+1. **Missing units in Vue inline styles**: `Chat.vue` used `:style="{ width: sessionListCollapsed ? 40 : 260 }"`, passing a raw number to the DOM. Vue does not append `px` to dynamic style length properties; the browser rejects `width: 260` and drops it. The sidebar had no fixed width and fell back to max-content.
+2. **Flex children without `min-width: 0`**: `.session-list`, `.session-item`, the intermediate title wrapper, and `.chat-input-actions` default to `min-width: auto`; long titles/hints contribute their min-content width. The `textarea` only had `flex: 1`, without `width: 0; min-width: 0`, so the right-side action area squeezed it to zero and overflowed.
+
+**Fix:**
+- `frontend/src/pages/Chat.vue`: sidebar `width`/`maxWidth` now use `(sessionListCollapsed ? 40 : 260) + 'px'`, plus `minWidth: 0`.
+- `frontend/src/components/SessionList.vue`: title row uses `.session-item-main` / `.session-item-text` instead of uncontrolled inline flex styles.
+- `frontend/css/components.css`:
+  - Session list/body/item/search/manage bar gain `min-width: 0` and `overflow: hidden`; title/time gain ellipsis.
+  - Input area/wrapper gain `width: 100%; min-width: 0; overflow: hidden`; the `textarea` uses `flex: 1 1 0; width: 0; min-width: 0`; the action area is capped at `max-width: 40%` and the hint ellipsizes.
+- `frontend/css/layout.css`: `app-body`, `main-content`, `page-view`, and page roots gain `min-width: 0`, so long content cannot widen the whole page.
+- **Similar-issue sweep fixed**: pet input/memory input, memory timeline, settings-page `flex: 1` inputs, tool-card title/code lines, trace args, RunnerNode model names, and the session-settings dialog title all gained `min-width: 0`/ellipsis rules.
+
+**Verification:** Playwright on the real Vue app with injected long session titles and long input, at 1440/1024/800 widths: sidebar stayed at 260px (40px collapsed), input width did not change with text, and `document.body.scrollWidth === innerWidth`; 585 frontend tests passed and `npm run build` succeeded.
+
+**Lessons / checklist:**
+1. **Dynamic Vue style lengths must include units**: `'260px'`, `'50%'`, `calc(...)`; only unitless properties such as `opacity`, `zIndex`, `flexShrink`, and `lineHeight` may take numbers, with `0` as the exception.
+2. **Every shrinkable text/input flex child needs `min-width: 0`**; put the ellipsis trio on the element that is actually constrained, and make sure every intermediate flex parent can shrink too.
+3. **Inputs in flex rows should use `flex: 1 1 0; width: 0; min-width: 0`**; right-side hints/buttons need `min-width: 0; max-width` so the hint's max-content does not steal the row.
+4. **Fixed sidebar recipe**: `width` + `max-width` + `flex-shrink: 0` + `min-width: 0`, regress with a long title.
+5. **Verify CSS overflow in a real-width render**: inspect `getBoundingClientRect()` and `scrollWidth/clientWidth`, not just jsdom unit tests; cover wide/medium/narrow viewports.
+6. Static sweep (confirm hits manually):
+   ```bash
+   # Numeric dimensions in dynamic styles (may lack units)
+   grep -RInE --include='*.vue' ':style="\{[^}]*\b(width|height|maxWidth|minWidth|maxHeight|minHeight)\s*:\s*[0-9]+' frontend/src
+   # flex:1 candidates that may lack min-width:0
+   grep -RInE --include='*.vue' --include='*.css' 'flex:\s*1(;|\s)' frontend/src frontend/css
+   ```

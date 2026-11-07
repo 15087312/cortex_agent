@@ -14,7 +14,7 @@
 | [后端 · 记忆 / 因果 / 心理活动 / 感知](./02-backend-memory.md) | 15 |
 | [后端 · 配置持久化与安全](./03-backend-config-security.md) | 14 |
 | [前端 · 聊天 / 气泡 / 重放 / 多会话](./04-frontend-chat.md) | 15 |
-| [前端 · 页面 / 样式 / 构建 / 按钮](./05-frontend-ui.md) | 6 |
+| [前端 · 页面 / 样式 / 构建 / 按钮](./05-frontend-ui.md) | 7 |
 | [实时链路 · WS / SSE / 推送 / 代理 / TUI](./06-realtime-streaming.md) | 8 |
 | [桌宠](./07-desktop-pet.md) | 1 |
 | [测试 / CI / 环境 / 依赖](./08-testing-ci.md) | 19 |
@@ -154,3 +154,4 @@
 | §101 | 聊天/气泡 | 重放把主管/专家多次输出合并成一个气泡 —— entry_type 没有落库（前端 + 后端，§85/§91） | [04-frontend-chat](./04-frontend-chat.md) |
 | §102 | 配置/安全 | settings.json 解析失败时静默当作 `{}` 写回 —— 一次保存抹掉全部配置（后端，§88 残留） | [03-backend-config-security](./03-backend-config-security.md) |
 | §103 | 桌宠 | 桌宠「前端收不到消息」：代理泄漏 SSE 上游 + 原生 tool_calls 缺 assistant 回填（前端代理 + 桌宠循环） | [07-desktop-pet](./07-desktop-pet.md) |
+| §108 | 页面/样式 | 会话列表/输入框被长文本撑宽 —— Vue 内联尺寸缺单位 + flex 子项未设 min-width:0（前端样式） | [05-frontend-ui](./05-frontend-ui.md) |

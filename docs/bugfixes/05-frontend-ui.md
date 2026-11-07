@@ -2,7 +2,7 @@
 
 [← 返回总索引](./README.md) | [English](./05-frontend-ui.en.md)
 
-> 由 `docs/ERRORS_AND_FIXES.md` 按模块拆分；章节编号沿用原文（§104–§107 为原文重复编号的修订，见总索引）。本文件共 6 节：§6、§7、§14、§22、§23、§75。
+> 由 `docs/ERRORS_AND_FIXES.md` 按模块拆分；章节编号沿用原文（§104–§107 为原文重复编号的修订，见总索引）。本文件共 7 节：§6、§7、§14、§22、§23、§75、§108。
 
 ---
 ## 6. 原生 confirm/prompt 阻塞 Qt WebEngine（前端）
@@ -133,3 +133,40 @@
 **验证：** ChatMessage 21 测试 + 前端构建通过。
 
 **教训：** flex 布局里的气泡子项必须显式 `min-width: 0` 才允许收缩换行；长内容（序号列表/URL/代码标识符）要靠 `overflow-wrap: break-word` 兜底，否则会撑破固定 max-width 容器。CSS 溢出类问题常被"只测逻辑不测样式"的测试忽略，需在真实宽度的渲染下人工核对。
+
+---
+
+## 108. 会话列表 / 输入框被长文本撑宽 —— Vue 内联尺寸缺单位 + flex 子项未设 min-width:0（前端样式）
+
+**现象：**
+- 对话页左侧会话列表本应固定 260px，长标题出现后被撑到 429px；收起状态也不能稳定在 40px。
+- AI 输入框在长提示文字、长输入或操作按钮出现时被挤压/横向溢出，严重时 textarea 宽度变成 0。
+
+**根因：**
+1. **Vue 内联样式长度缺单位**：`Chat.vue` 里 `:style="{ width: sessionListCollapsed ? 40 : 260 }"` 把数字直接传给 DOM。Vue 不会为动态 style 的长度属性自动补 `px`，浏览器把 `width: 260` 判为非法并丢弃；侧栏没有固定宽度，只能按内容宽度（max-content）撑开。
+2. **flex 子项没有 `min-width:0`**：`.session-list`、`.session-item`、标题中间层、`.chat-input-actions` 等 flex 子项默认 `min-width:auto`，长标题/提示的 min-content 宽度会参与布局；`textarea` 只有 `flex:1`，没有 `width:0; min-width:0`，被右侧操作区挤到 0 宽并溢出。
+
+**修复：**
+- `frontend/src/pages/Chat.vue`：侧栏 `width`/`maxWidth` 改为 `(sessionListCollapsed ? 40 : 260) + 'px'`，并补 `minWidth: 0`。
+- `frontend/src/components/SessionList.vue`：标题行改用 `.session-item-main` / `.session-item-text`，去掉不可控的内联 flex 样式。
+- `frontend/css/components.css`：
+  - 会话栏/列表体/会话项/搜索框/批量栏补 `min-width:0`、`overflow:hidden`；标题/时间加省略号。
+  - 输入区/输入框外层补 `width:100%; min-width:0; overflow:hidden`；`textarea` 用 `flex:1 1 0; width:0; min-width:0`；操作区 `max-width:40%`，提示文字省略。
+- `frontend/css/layout.css`：`app-body`、`main-content`、`page-view` 及页面根节点补 `min-width:0`，防止内部长内容反向撑开整页。
+- **同类排查已修**：宠物输入框/记忆输入、记忆时间线、设置页 `flex:1` 输入框、工具卡片标题/代码行、运行轨迹参数、RunnerNode 模型名、会话设置弹窗标题，均补 `min-width:0`/省略规则。
+
+**验证：** 用 Playwright 在真实 Vue 页面注入超长会话标题和长输入，测试 1440/1024/800 三种宽度：侧栏稳定 260px（收起 40px），输入框宽度不随文字变化，`document.body.scrollWidth === innerWidth`；前端 585 项测试通过，`npm run build` 通过。
+
+**经验 / 检查清单：**
+1. **Vue 动态 style 的长度属性必须带单位**：`'260px'`、`'50%'`、`calc(...)`；只有 `opacity`、`zIndex`、`flexShrink`、`lineHeight` 等无单位属性可以传数字，`0` 例外。
+2. **flex 里所有可收缩的文本/输入子项都要 `min-width:0`**；省略号三件套要加在真正被约束的那一层，并确保中间 flex 父级也能收缩。
+3. **输入框在 flex 行中推荐 `flex:1 1 0; width:0; min-width:0`**；右侧提示/按钮加 `min-width:0; max-width`，不要让提示的 max-content 参与抢空间。
+4. **固定侧栏四件套**：`width` + `max-width` + `flex-shrink:0` + `min-width:0`，并用长标题回归。
+5. **CSS 溢出问题必须做真实宽度渲染验证**：看 `getBoundingClientRect()`、`scrollWidth/clientWidth`，不要只跑 jsdom 单测；至少覆盖宽/中/窄三档。
+6. 静态扫描（人工确认命中项）：
+   ```bash
+   # 动态 style 里的数字尺寸（可能缺单位）
+   grep -RInE --include='*.vue' ':style="\{[^}]*\b(width|height|maxWidth|minWidth|maxHeight|minHeight)\s*:\s*[0-9]+' frontend/src
+   # flex:1 但可能缺 min-width:0 的候选
+   grep -RInE --include='*.vue' --include='*.css' 'flex:\s*1(;|\s)' frontend/src frontend/css
+   ```

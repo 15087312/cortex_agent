@@ -168,7 +168,10 @@ onMounted(loadAll)
   background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 12px;
   padding: 14px 18px; display: flex; flex-direction: column;
 }
-.ss-head { display: flex; justify-content: space-between; align-items: center; }
+.ss-head { display: flex; justify-content: space-between; align-items: center; min-width: 0; gap: 8px; }
+.ss-head > div { flex: 1; min-width: 0; }
+.ss-head > div > span { min-width: 0; }
+.ss-head > .btn { flex-shrink: 0; }
 .ss-row { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--border); }
 .ss-lbl { width: 72px; font-size: 13px; flex-shrink: 0; }
 .ss-unit { font-size: 12px; color: var(--text-muted); }

@@ -100,9 +100,9 @@ async function handleBatchDelete() {
           @click="manage ? toggleOne(s.session_id) : emit('select', s.session_id)"
           @contextmenu.prevent="manage ? null : emit('delete', s.session_id)"
         >
-          <div style="display:flex;align-items:center;gap:8px;min-width:0">
+          <div class="session-item-main">
             <input v-if="manage" type="checkbox" :checked="!!selected[s.session_id]" @click.stop="toggleOne(s.session_id)" />
-            <div style="min-width:0">
+            <div class="session-item-text">
               <div class="session-title">{{ (s.title || s.session_id || '').slice(0, 30) }}</div>
               <div class="session-time">
                 {{ (s.last_active || s.created_at || '').slice(5, 16) }}

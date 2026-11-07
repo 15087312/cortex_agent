@@ -15,7 +15,7 @@
 | [Backend · Memory / Causality / Mental Activity / Perception](./02-backend-memory.en.md) | 15 |
 | [Backend · Config Persistence & Security](./03-backend-config-security.en.md) | 14 |
 | [Frontend · Chat / Bubbles / Replay / Multi-session](./04-frontend-chat.en.md) | 15 |
-| [Frontend · Pages / Styling / Build / Buttons](./05-frontend-ui.en.md) | 6 |
+| [Frontend · Pages / Styling / Build / Buttons](./05-frontend-ui.en.md) | 7 |
 | [Realtime · WS / SSE / Push / Proxy / TUI](./06-realtime-streaming.en.md) | 8 |
 | [Desktop Pet](./07-desktop-pet.en.md) | 1 |
 | [Testing / CI / Environment / Dependencies](./08-testing-ci.en.md) | 19 |
@@ -157,3 +157,4 @@ in code comments and other docs therefore remain valid.
 | §101 | Chat/Bubbles | Replay merged multiple supervisor/expert outputs into one bubble — `entry_type` was not persisted (frontend + backend, §85/§91) | [04-frontend-chat](./04-frontend-chat.en.md) |
 | §102 | Config/Security | `settings.json` parse failure silently became `{}` — one save wiped all config (backend, §88 leftover) | [03-backend-config-security](./03-backend-config-security.en.md) |
 | §103 | Pet | Desktop pet "frontend receives no messages": proxy leaks the upstream SSE + native tool_calls missing the assistant echo (frontend proxy + pet loop) | [07-desktop-pet](./07-desktop-pet.en.md) |
+| §108 | Pages/Styling | Session list / input widened by long text — missing units in Vue inline sizes + flex children without min-width:0 (frontend styling) | [05-frontend-ui](./05-frontend-ui.en.md) |

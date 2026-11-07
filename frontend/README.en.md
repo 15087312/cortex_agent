@@ -47,6 +47,16 @@ Double-click `frontend/start.bat`
 | System | System status and configuration |
 | Settings | API Key and runtime configuration |
 
+## Layout overflow guardrails
+
+- Length values in dynamic Vue `:style` bindings must include units (for example `'260px'` or `'50%'`); never pass a bare number. Only unitless properties such as `opacity`, `zIndex`, `flexShrink`, and `lineHeight` may take numbers.
+- Add `min-width: 0` to text, input, and shrinkable-panel flex children. Put the ellipsis trio on the element that is actually constrained, and make sure every intermediate flex parent can shrink too.
+- Inputs in flex rows should use `flex: 1 1 0; width: 0; min-width: 0`; cap right-side hints/buttons with `max-width` so hint text cannot claim space at max-content width.
+- Fixed-width sidebars need `width`, `max-width`, `flex-shrink: 0`, and `min-width: 0` together.
+- After layout changes, verify `scrollWidth` and `getBoundingClientRect()` in a real browser at 1440 / 1024 / 800 widths, not only in jsdom unit tests.
+
+Full case study: [`docs/bugfixes/05-frontend-ui.en.md` §108](../docs/bugfixes/05-frontend-ui.en.md).
+
 ## WebSocket Protocol
 
 ```
