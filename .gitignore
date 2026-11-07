@@ -162,6 +162,8 @@ data/backup_test_cleanup_*
 data/memory.db
 data/memory.db.bak*
 data/*.db
+# 桌宠按人设隔离的记忆库/因果图/向量索引（本地数据，不入库）
+data/pet_memory/
 
 # venv (311)
 .venv311/
