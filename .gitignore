@@ -177,3 +177,8 @@ data/output/
 
 # logiclink generated views (regenerate with --html / --html-flow / --html-detail)
 logiclink/logiclink-*.html
+
+# Playwright UI 冒烟产物
+frontend/test-results/
+frontend/playwright-report/
+frontend/.playwright/

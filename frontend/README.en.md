@@ -47,6 +47,19 @@ Double-click `frontend/start.bat`
 | System | System status and configuration |
 | Settings | API Key and runtime configuration |
 
+## UI interaction / visual smoke testing
+
+Vitest (jsdom) covers logic and DOM state. **Real CSS, visible button feedback, computed styles, and browser media APIs** are covered by Playwright smoke tests.
+
+- Run: `cd frontend && npm run test:e2e` (first run `npx playwright install chromium`)
+- Tests live in `frontend/e2e/*.spec.js`; the minimal harness loads the real `theme.css` / `layout.css` / `components.css`
+- When adding a class toggled by JS (e.g. `chat-btn-active`):
+  1. it must have a matching CSS rule;
+  2. add a Playwright assertion for the class plus a `getComputedStyle` change;
+  3. asserting `classList` alone is not enough — jsdom stays green even when the style is missing.
+- Real microphone/camera permissions cannot be reproduced in CI: inject a fake device with `addInitScript` to verify UI state; verify real QtWebEngine/macOS permissions manually on the desktop.
+- E2E must assert that a click produces a user-perceivable change, not just the final request payload.
+
 ## Layout overflow guardrails
 
 - Length values in dynamic Vue `:style` bindings must include units (for example `'260px'` or `'50%'`); never pass a bare number. Only unitless properties such as `opacity`, `zIndex`, `flexShrink`, and `lineHeight` may take numbers.

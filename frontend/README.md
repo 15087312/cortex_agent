@@ -47,6 +47,19 @@ python frontend/server.py
 | 系统信息 | 系统状态与配置 |
 | 设置 | API Key 与运行时配置 |
 
+## UI 交互 / 可视化冒烟测试规范
+
+纯逻辑和 DOM 状态用 Vitest（jsdom）覆盖；**真实 CSS、按钮可感知反馈、计算样式、浏览器媒体 API** 用 Playwright 冒烟覆盖。
+
+- 运行：`cd frontend && npm run test:e2e`（首次先 `npx playwright install chromium`）
+- 用例位置：`frontend/e2e/*.spec.js`；最小挂载页在 `frontend/e2e/`，加载真实 `theme.css` / `layout.css` / `components.css`
+- 新增任何由 JS 切换的视觉状态类（如 `chat-btn-active`）时：
+  1. 必须有对应的 CSS 规则；
+  2. 必须有 Playwright 断言：类名 + `getComputedStyle` 前后变化；
+  3. 只断言 `classList` 不够——类存在但样式缺失时 jsdom 测试仍然会绿。
+- 麦克风/摄像头等真实设备权限无法在 CI 复现：CI 用 `addInitScript` 注入假设备验证 UI 状态；真实 QtWebEngine/macOS 权限走桌面端手工冒烟清单。
+- 端到端用例要覆盖“点击后用户能感知到变化”，而不只是最终接口载荷。
+
 ## 布局防溢出约定
 
 - Vue 动态 `:style` 里的长度值必须带单位（如 `'260px'`、`'50%'`），不要写裸数字；只有 `opacity`、`zIndex`、`flexShrink`、`lineHeight` 等无单位属性可以传数字。
