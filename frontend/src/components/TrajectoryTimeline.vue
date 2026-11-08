@@ -159,6 +159,8 @@ function detailText(e) { return buildDetail(e) }
 }
 .tl-item:first-child .tl-rail::before { top: 12px; }
 .tl-item:last-child .tl-rail::before { bottom: calc(100% - 12px); }
+.tl-item.tl-done .tl-title { color: var(--text-secondary); }
+.tl-item.tl-done .tl-dot { border-color: var(--success); }
 .tl-dot {
   position: relative; z-index: 1;
   width: 18px; height: 18px; border-radius: 50%;
