@@ -113,12 +113,12 @@ describe('ChatMessage', () => {
       expect(wrapper.find('.message-bubble').html()).toContain('<h1>标题</h1>')
     })
 
-    it('思考折叠区可展开', async () => {
+    it('思考过程不再渲染', async () => {
       const wrapper = mountMsg({ role: 'assistant', content: '答', thinking: '思考过程' })
       await flushPromises()
-      expect(wrapper.find('.think-collapse').exists()).toBe(true)
-      await wrapper.find('.think-collapse').trigger('click')
-      expect(wrapper.find('.think-collapse-text').text()).toContain('思考过程')
+      expect(wrapper.find('.think-collapse').exists()).toBe(false)
+      expect(wrapper.text()).not.toContain('思考过程')
+      expect(wrapper.text()).toContain('答')
     })
 
     it('错误消息带 error 样式', () => {
@@ -126,25 +126,20 @@ describe('ChatMessage', () => {
       expect(wrapper.find('.bubble-error').exists()).toBe(true)
     })
 
-    it('meta 思考详情展开', async () => {
+    it('思考详情不再渲染', async () => {
       const wrapper = mountMsg({ role: 'assistant', content: '答', meta: { innerMonologue: '内心', eventMemory: '事件', sessionMemory: '会话' } })
       await flushPromises()
-      await wrapper.find('.meta-collapse-btn').trigger('click')
-      expect(wrapper.text()).toContain('内心独白')
-      expect(wrapper.text()).toContain('事件记忆')
-      expect(wrapper.text()).toContain('会话记忆')
+      expect(wrapper.find('.meta-collapse').exists()).toBe(false)
+      expect(wrapper.text()).not.toContain('内心独白')
+      expect(wrapper.text()).not.toContain('事件记忆')
     })
   })
 
   describe('thinking/mental 消息', () => {
-    it('thinking 短内容直接显示，长内容可展开', async () => {
-      const wrapper = mountMsg({ kind: 'thinking', role: 'thinking', content: '思考' })
-      expect(wrapper.text()).toContain('思考')
-      expect(wrapper.text()).toContain('思考')
-      const w2 = mountMsg({ kind: 'thinking', role: 'thinking', content: 'x'.repeat(200) })
-      expect(w2.text()).toContain('展开 ▼')
-      await w2.find('.thinking-box').trigger('click')
-      expect(w2.text()).toContain('收起 ▲')
+    it('thinking 消息不再渲染', () => {
+      const wrapper = mountMsg({ kind: 'thinking', role: 'thinking', content: '思考内容' })
+      expect(wrapper.find('.message').exists()).toBe(false)
+      expect(wrapper.text()).not.toContain('思考内容')
     })
 
     it('mental 消息渲染心理活动', () => {

@@ -3,7 +3,6 @@ import { computed, ref, watch, onBeforeUnmount } from 'vue'
 import { parseMarkdownSegments } from '@/utils/markdown.js'
 import CodeBlock from '@/components/CodeBlock.vue'
 import Icon from '@/components/Icon.vue'
-import ProcessPanel from '@/components/ProcessPanel.vue'
 import { useI18n } from 'vue-i18n'
 
 const props = defineProps({
@@ -17,14 +16,6 @@ const { t } = useI18n()
 
 const isUser = computed(() => props.message.role === 'user')
 const kind = computed(() => props.message.kind || '')
-
-// 思考过程：淡化文本 + 展开/收起
-function shortOf(msg) {
-  const c = msg.content || ''
-  return c.length > 120 ? c.slice(0, 120) + '…' : c
-}
-function isThinkingLong(msg) { return (msg.content || '').length > 120 }
-function toggleThinking(msg) { msg._expanded = !msg._expanded }
 
 // ── 桌宠互动消息：content 匹配动作提示词 → 显示图标（提示词不展示） ──
 const petActions = ref([])
@@ -100,7 +91,6 @@ onBeforeUnmount(() => {
 
 // ── 提问面板：无预设选项时用输入框 ──
 const intentInput = ref('')
-const metaOpen = ref(false)
 
 function submitIntent() {
   const val = intentInput.value.trim()
@@ -110,7 +100,7 @@ function submitIntent() {
 </script>
 
 <template>
-  <div class="message" :class="messageClass">
+  <div v-if="kind !== 'process' && kind !== 'thinking'" class="message" :class="messageClass">
     <!-- 安全审批横幅 -->
     <div v-if="kind === 'approval'" class="approval-box">
       <template v-if="!message.resolved">
@@ -150,23 +140,6 @@ function submitIntent() {
       <div v-else style="opacity:.7">{{ message.stale ? $t('chatMessage.requestExpired') : ($t('chatMessage.answeredLabel') + '：' + (message.answer || '')) }}</div>
     </div>
 
-    <!-- 思考步骤：淡化文本 + 点击展开/收起 -->
-    <template v-else-if="kind === 'thinking'">
-      <div class="message-avatar" :class="message.avatarCls"></div>
-      <div class="message-body">
-        <div class="message-name"><span class="thinking-badge">{{ $t('chatMessage.thinking') }}</span></div>
-        <div class="thinking-box" @click="toggleThinking(message)">
-          <div class="thinking-text">{{ message._expanded ? message.content : shortOf(message) }}</div>
-          <div v-if="isThinkingLong(message)" class="thinking-toggle">{{ message._expanded ? $t('chatMessage.collapse') + ' ▲' : $t('chatMessage.expand') + ' ▼' }}</div>
-        </div>
-      </div>
-    </template>
-
-    <!-- 过程流面板（DSH 式时间线：技能/思考/工具/完成 按时间串成一条线） -->
-    <template v-else-if="kind === 'process'">
-      <ProcessPanel :trajectory="message.trajectory || null" :content="message.content || ''" :runners="message.runners || null" :open="false" />
-    </template>
-
     <!-- 心理活动 -->
     <template v-else-if="kind === 'mental'">
       <div class="message-avatar" :class="message.avatarCls"></div>
@@ -204,11 +177,6 @@ function submitIntent() {
       <div class="message-avatar" :class="isUser ? 'avatar-user' : 'avatar-large'"></div>
       <div class="message-body">
         <div class="message-name">{{ isUser ? $t('chatMessage.me') : (message.identity_name || $t('chatMessage.commander')) }}</div>
-        <!-- 思考折叠区（与回复同一框，顶部可折叠） -->
-        <div v-if="!isUser && message.thinking" class="think-collapse" @click="toggleThinking(message)">
-          <div class="think-collapse-title">{{ message._expanded ? $t('chatMessage.collapseThinking') + ' ▲' : $t('chatMessage.expandThinking') + ' ▼' }}</div>
-          <div v-if="message._expanded" class="think-collapse-text">{{ message.thinking }}</div>
-        </div>
         <div class="message-bubble" :class="{ 'bubble-error': message.error, 'bubble-proactive': !isUser && message.proactive }">
           <!-- 用户消息：桌宠互动 → 图标；否则纯文本 -->
           <div v-if="isUser && petAction" class="pet-interaction" :title="petAction.label">
@@ -247,28 +215,6 @@ function submitIntent() {
           <button v-if="message.id" class="msg-action" @click="emit('edit', index)" :title="$t('common.edit')"><Icon name="pencil" :size="13" /></button>
           <button class="msg-action danger" @click="emit('delete', index)" :title="$t('common.delete')"><Icon name="trash" :size="13" /></button>
           <span v-if="message.role === 'user' && !message.id" class="msg-saving" :title="$t('chatMessage.waitingSave')">{{ $t('chatMessage.saving') }}</span>
-        </div>
-
-        <!-- 思考详情展开栏（内心独白 + 相关事件记忆 + 会话记忆） -->
-        <div v-if="!isUser && message.meta && !typing && !isStreaming" class="meta-collapse">
-          <button class="meta-collapse-btn" @click="metaOpen = !metaOpen">
-            <Icon :name="metaOpen ? 'down' : 'right'" :size="12" /> {{ $t('chatMessage.thinkingDetails') }}
-          </button>
-          <div v-if="metaOpen" class="meta-detail">
-            <div v-if="message.meta.innerMonologue" class="meta-block">
-              <div class="meta-label">{{ $t('chatMessage.innerMonologue') }}</div>
-              <div class="meta-text">{{ message.meta.innerMonologue }}</div>
-            </div>
-            <div v-if="message.meta.eventMemory" class="meta-block">
-              <div class="meta-label">{{ $t('chatMessage.eventMemory') }}</div>
-              <div class="meta-text">{{ message.meta.eventMemory }}</div>
-            </div>
-            <div v-if="message.meta.sessionMemory" class="meta-block">
-              <div class="meta-label">{{ $t('chatMessage.sessionMemory') }}</div>
-              <div class="meta-text">{{ message.meta.sessionMemory }}</div>
-            </div>
-            <div v-if="!message.meta.innerMonologue && !message.meta.eventMemory && !message.meta.sessionMemory" class="meta-empty">{{ $t('chatMessage.noExtraContext') }}</div>
-          </div>
         </div>
       </div>
     </template>

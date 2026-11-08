@@ -388,29 +388,19 @@ describe('Chat 页面', () => {
 
   // ── 渲染测试：删除联动 / 分批渲染可见性 / 加载入口 ──
 
-  it('渲染：删除 AI 回复后过程流面板从 DOM 消失', async () => {
+  it('渲染：过程/思考消息不再出现在对话 DOM 中', async () => {
     const w = await mountChat()
     const chat = useChatStore()
     chat.addMessage({ role: 'user', content: '问' })
     chat.addMessage({ kind: 'process', role: 'system', content: '思考步骤A\n调度语言B', runners: null })
+    chat.addMessage({ kind: 'thinking', role: 'thinking', content: '思考步骤C' })
     chat.addMessage({ role: 'assistant', content: '最终回答X' })
-    await flushPromises()
-    // 删除前：时间线面板与回复都在渲染输出中（面板默认折叠 → 展开后显示步骤）
-    expect(w.find('.trajectory').exists()).toBe(true)
-    await w.find('.trajectory-head').trigger('click')
-    await flushPromises()
-    expect(w.text()).toContain('思考步骤A')
-    expect(w.text()).toContain('最终回答X')
-    // 删除 assistant → 确认框通过 → 联动移除上方 process 时间线，渲染同步更新
-    const p = w.vm.handleDeleteMessage(2)
-    await new Promise((r) => setTimeout(r, 10))
-    const { resolveDialog } = await import('@/composables/useDialog.js')
-    resolveDialog(true)
-    await p
     await flushPromises()
     expect(w.find('.trajectory').exists()).toBe(false)
     expect(w.text()).not.toContain('思考步骤A')
+    expect(w.text()).not.toContain('思考步骤C')
     expect(w.text()).toContain('问')
+    expect(w.text()).toContain('最终回答X')
   })
 
   it('渲染：超过渲染上限时最新一批可见、更早的不可见，加载入口显示剩余条数', async () => {
@@ -550,21 +540,16 @@ describe('Chat 页面', () => {
     expect(pct.text()).toBe('50%')
   })
 
-  it('处理中显示实时思考轨迹时间线，结束后固化为过程消息', async () => {
+  it('处理中也不再显示实时思考轨迹，但轨迹仍会固化到历史', async () => {
     const w = await mountChat()
     const chat = useChatStore()
-    // 无处理状态时即使有轨迹也不渲染（v-if 依赖 processing）
     chat.addThinkingStep({ content: '第一步思考' })
-    await flushPromises()
-    expect(w.find('.trajectory').exists()).toBe(false)
-    // 标记处理中 → 实时时间线出现，内容为当前累积轨迹
     chat.markProcessing('s1', true)
     chat.addThinkingStep({ content: '第二步思考' })
     await flushPromises()
-    expect(w.find('.trajectory').exists()).toBe(true)
-    expect(w.text()).toContain('第一步思考')
-    expect(w.text()).toContain('第二步思考')
-    // 结束处理 → 实时面板消失，轨迹固化为会话消息（持久化，刷新后可恢复）
+    expect(w.find('.trajectory').exists()).toBe(false)
+    expect(w.text()).not.toContain('第一步思考')
+    expect(w.text()).not.toContain('第二步思考')
     chat.finalizeStream('')
     await flushPromises()
     expect(chat.processing).toBe(false)

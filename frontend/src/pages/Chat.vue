@@ -14,7 +14,6 @@ import SessionList from '@/components/SessionList.vue'
 import ModelSelector from '@/components/ModelSelector.vue'
 import ThinkingIndicator from '@/components/ThinkingIndicator.vue'
 import ThinkingStatusPanel from '@/components/ThinkingStatusPanel.vue'
-import ProcessPanel from '@/components/ProcessPanel.vue'
 import ToolCard from '@/components/tools/ToolCard.vue'
 import SessionSettings from '@/components/SessionSettings.vue'
 import Icon from '@/components/Icon.vue'
@@ -608,12 +607,6 @@ function handleAnswerIntent(requestId, answer) {
         <!-- 思考循环状态面板：大循环（指挥→主管→专家）/ 连续思考 / 工具循环 -->
         <ThinkingStatusPanel v-if="chat.processing && chat.runners.length" :runners="chat.runners" :elapsed="chat.elapsed" :context-tokens="contextTokens" :context-window-size="contextWindowSize" />
 
-        <!-- 本轮实时思考轨迹（DSH 式时间线）：技能/思考/工具/完成 按时间串成一条线 -->
-        <ProcessPanel
-          v-if="chat.processing && chat.trajectory.length"
-          :live="true"
-          :open="true"
-        />
 
         <!-- 运行轨迹（未落位）：历史回放的工具/委托等中间步骤 -->
         <div v-if="detachedTraces.length" class="chat-traces">
