@@ -703,11 +703,19 @@ async def test_continuous_loop_tool_then_text_keeps_going(monkeypatch, _pet_db):
     _patch_tool_manager(monkeypatch, results={"calc": "42"})
     e._client = _FakeClient(['{"tool": "calc", "params": {"expr": "1+1"}}', "结果是 42", "还需要别的吗"])
     got = []
+    flags = []
+
+    def on_message(m, is_tool=False):
+        got.append(m)
+        flags.append(is_tool)
+
     loop = CustomLoop()
-    reply = await loop.run(e, "算一下", on_message=got.append)
+    reply = await loop.run(e, "算一下", on_message=on_message)
     # 工具轮：工具结果以「[calc 结果] 42」作为独立消息上报，
-    # 随后文本轮各自上报一句；on_message 共 3 次。
+    # 随后文本轮各自上报一句；on_message 共 3 次，且仅工具观察带 is_tool=True
+    # （engine 层据此跳过记忆提炼）。
     assert got == ["[calc 结果] 42", "结果是 42", "还需要别的吗"]
+    assert flags == [True, False, False]
     assert reply == "结果是 42\n还需要别的吗"
 
 

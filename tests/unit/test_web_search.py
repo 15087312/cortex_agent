@@ -963,14 +963,19 @@ def test_web_search_retry_sleeps(monkeypatch):
     monkeypatch.setattr(ws, "_search_ddg_lite", lambda q, lim: [{"title": "t", "url": "u", "snippet": ""}])
     monkeypatch.setattr(ws, "_fetch_results_content", lambda results, max_fetch=3: results)
     monkeypatch.setattr(ws, "_sanitize_web_content", lambda t, max_chars=300: t)
-    # 打桩要落在被测模块的 time 引用上（ws.time），而不是全局 time.sleep。
-    # 全局打桩会把进程内**任何**线程的 sleep 都计进 call_count —— 混跑时其它
-    # 用例的后台线程一睡，断言就假阳性失败。web_search 用的是 `import time`，
-    # 故按模块属性定位是精确且等价的。
-    with patch.object(ws.time, "sleep") as m:
-        r = asyncio.run(ws.web_search("q", fetch_content=False))
-    assert m.call_count == 1
-    assert m.call_args_list == [((1,), {})], m.call_args_list
+    # 打桩必须替换被测模块**自身的** `time` 引用，而不是标准库 time.sleep：
+    # web_search 里是 `import time`，所以 ws.time 就是 stdlib time 模块，
+    # patch.object(ws.time, "sleep") 会污染进程内所有线程的 sleep —— 全量套件
+    # 混跑时其它用例的后台线程一睡，call_count 断言就假阳性（曾出现 23 != 1）。
+    # 这里把 ws.time 换成本模块专用的桩对象，time.time 仍委托真实实现。
+    sleeps: list = []
+    monkeypatch.setattr(
+        ws,
+        "time",
+        types.SimpleNamespace(time=time.time, sleep=lambda s: sleeps.append(s)),
+    )
+    r = asyncio.run(ws.web_search("q", fetch_content=False))
+    assert sleeps == [1]
     assert r["source"] == "ddg_lite"
 
 

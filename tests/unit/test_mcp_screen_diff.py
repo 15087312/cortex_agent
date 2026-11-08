@@ -110,6 +110,8 @@ class TestCaptureScreen:
 
         monkeypatch.setattr("utils.screen_capture.SCREENSHOT_ENABLED", True)
         monkeypatch.setattr("utils.screen_capture_daemon_client.get_frame_bytes", lambda max_width=1280: None)
+        # daemon 离线（ping False）才允许本地 screencapture 回退；不 mock 会读到本机真实 daemon
+        monkeypatch.setattr("utils.screen_capture_daemon_client.ping", lambda timeout=1.0: False)
         monkeypatch.setattr("infra.mcp.servers.screen_diff_server.subprocess.run", fake_run)
         img = dss._capture_screen()
         assert calls["run"] == 1
@@ -141,10 +143,26 @@ class TestCaptureScreen:
 
         monkeypatch.setattr("utils.screen_capture.SCREENSHOT_ENABLED", True)
         monkeypatch.setattr("utils.screen_capture_daemon_client.get_frame_bytes", lambda max_width=1280: None)
+        monkeypatch.setattr("utils.screen_capture_daemon_client.ping", lambda timeout=1.0: False)
         monkeypatch.setattr("infra.mcp.servers.screen_diff_server.subprocess.run", fake_run)
         img = dss._capture_screen()
         assert img is not None
         assert img.shape[1] == 20
+
+    def test_daemon_online_but_frame_timeout_skips_local(self, monkeypatch):
+        """daemon 在线但取帧超时：直接返回 None，不再本地截图回退"""
+        calls = {"run": 0}
+
+        def fake_run(cmd, **kw):
+            calls["run"] += 1
+            return SimpleNamespace(returncode=0)
+
+        monkeypatch.setattr("utils.screen_capture.SCREENSHOT_ENABLED", True)
+        monkeypatch.setattr("utils.screen_capture_daemon_client.get_frame_bytes", lambda max_width=1280: None)
+        monkeypatch.setattr("utils.screen_capture_daemon_client.ping", lambda timeout=1.0: True)
+        monkeypatch.setattr("infra.mcp.servers.screen_diff_server.subprocess.run", fake_run)
+        assert dss._capture_screen() is None
+        assert calls["run"] == 0
 
     def test_local_wide_image_resized(self, monkeypatch):
         def fake_run(cmd, **kw):
@@ -154,6 +172,7 @@ class TestCaptureScreen:
 
         monkeypatch.setattr("utils.screen_capture.SCREENSHOT_ENABLED", True)
         monkeypatch.setattr("utils.screen_capture_daemon_client.get_frame_bytes", lambda max_width=1280: None)
+        monkeypatch.setattr("utils.screen_capture_daemon_client.ping", lambda timeout=1.0: False)
         monkeypatch.setattr("infra.mcp.servers.screen_diff_server.subprocess.run", fake_run)
         img = dss._capture_screen()
         assert img is not None

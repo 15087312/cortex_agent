@@ -29,6 +29,34 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 @pytest.fixture(autouse=True)
+def _isolate_mcp_servers(monkeypatch):
+    """单测不连接真实 MCP server。
+
+    开发者 ~/.cortex/settings.json 若配置了 MCP_SERVERS，工具执行时
+    get_mcp_tool_service() 会 `asyncio.create_task(start_all())` 拉起真实子进程；
+    该任务在测试结束、事件循环关闭时无法被取消，pytest-asyncio 收尾会卡满超时。
+    这里把 MCP_SERVERS 置空并重置单例，测试自身需要时再显式构造。
+    """
+    from config.settings import settings as _settings
+    saved = getattr(_settings, "MCP_SERVERS", "")
+    try:
+        setattr(_settings, "MCP_SERVERS", "")
+    except Exception:
+        object.__setattr__(_settings, "MCP_SERVERS", "")
+    try:
+        from infra.mcp import factory as _mcp_factory
+        monkeypatch.setattr(_mcp_factory, "_manager", None, raising=False)
+        monkeypatch.setattr(_mcp_factory, "_service", None, raising=False)
+    except Exception:
+        pass
+    yield
+    try:
+        setattr(_settings, "MCP_SERVERS", saved)
+    except Exception:
+        pass
+
+
+@pytest.fixture(autouse=True)
 def _disable_pet_memory_extraction(monkeypatch):
     """单测不触发桌宠自动记忆提炼（避免真实 LLM 调用/后台任务）。"""
     try:

@@ -44,6 +44,9 @@ def _daemon(**kw):
     d._cached_img = kw.get("cached_img", None)
     d._cached_ts = kw.get("cached_ts", 0.0)
     d._lock = threading.Lock()
+    # 帧缓存 + 并发截图状态（_get_fresh_frame 依赖这两个字段）
+    d._cv = threading.Condition(d._lock)
+    d._capturing = False
     d._shutdown = threading.Event()
     return d
 

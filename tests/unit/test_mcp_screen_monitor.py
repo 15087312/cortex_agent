@@ -97,6 +97,8 @@ class TestCaptureScreen:
 
         monkeypatch.setattr("utils.screen_capture.SCREENSHOT_ENABLED", True)
         monkeypatch.setattr("utils.screen_capture_daemon_client.get_frame_bytes", lambda max_width=1280: None)
+        # daemon 离线（ping False）才允许本地 screencapture 回退；不 mock 会读到本机真实 daemon
+        monkeypatch.setattr("utils.screen_capture_daemon_client.ping", lambda timeout=1.0: False)
         monkeypatch.setattr("infra.mcp.servers.screen_monitor_server.subprocess.run", fake_run)
         img = sms._capture_screen()
         assert calls["run"] == 1
@@ -130,10 +132,26 @@ class TestCaptureScreen:
 
         monkeypatch.setattr("utils.screen_capture.SCREENSHOT_ENABLED", True)
         monkeypatch.setattr("utils.screen_capture_daemon_client.get_frame_bytes", lambda max_width=1280: None)
+        monkeypatch.setattr("utils.screen_capture_daemon_client.ping", lambda timeout=1.0: False)
         monkeypatch.setattr("infra.mcp.servers.screen_monitor_server.subprocess.run", fake_run)
         img = sms._capture_screen()
         assert img is not None
         assert img.shape[1] == sms._MAX_ANALYZE_WIDTH
+
+    def test_daemon_online_but_frame_timeout_skips_local(self, monkeypatch):
+        """daemon 在线但取帧超时：直接返回 None，不再花时间本地截图（避免权限弹窗/争抢）"""
+        calls = {"run": 0}
+
+        def fake_run(cmd, **kw):
+            calls["run"] += 1
+            return SimpleNamespace(returncode=0)
+
+        monkeypatch.setattr("utils.screen_capture.SCREENSHOT_ENABLED", True)
+        monkeypatch.setattr("utils.screen_capture_daemon_client.get_frame_bytes", lambda max_width=1280: None)
+        monkeypatch.setattr("utils.screen_capture_daemon_client.ping", lambda timeout=1.0: True)
+        monkeypatch.setattr("infra.mcp.servers.screen_monitor_server.subprocess.run", fake_run)
+        assert sms._capture_screen() is None
+        assert calls["run"] == 0
 
     def test_local_capture_failure(self, monkeypatch):
         monkeypatch.setattr("utils.screen_capture.SCREENSHOT_ENABLED", True)
