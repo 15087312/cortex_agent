@@ -68,6 +68,29 @@ _pet_proc = None
 _profile = None  # 持久化 WebEngine profile（命名 profile，非 off-the-record）
 
 
+class _CortexWebPage(QWebEnginePage):
+    """本地 Web UI 页面：放行麦克风，其余特性保持拒绝。"""
+
+    def featurePermissionRequested(self, securityOrigin, feature):
+        try:
+            audio_features = {QWebEnginePage.Feature.MediaAudioCapture}
+            av_feature = getattr(QWebEnginePage.Feature, "MediaAudioVideoCapture", None)
+            if av_feature is not None:
+                audio_features.add(av_feature)
+            if feature in audio_features:
+                self.setFeaturePermission(
+                    securityOrigin, feature,
+                    QWebEnginePage.PermissionPolicy.PermissionGrantedByUser,
+                )
+            else:
+                self.setFeaturePermission(
+                    securityOrigin, feature,
+                    QWebEnginePage.PermissionPolicy.PermissionDeniedByUser,
+                )
+        except Exception:
+            super().featurePermissionRequested(securityOrigin, feature)
+
+
 # ── App Icon ──────────────────────────────────────────────
 
 def _make_app_icon():
@@ -288,7 +311,7 @@ class MainWindow(QMainWindow):
         # 绑定持久化 profile（命名 profile + persistentStoragePath），否则默认
         # off-the-record 页面不落盘 localStorage，语言/主题偏好无法持久化
         if _profile is not None:
-            self.browser.setPage(QWebEnginePage(_profile, self.browser))
+            self.browser.setPage(_CortexWebPage(_profile, self.browser))
         self.browser.setUrl(QUrl("http://localhost:8765"))
         self.setCentralWidget(self.browser)
 

@@ -25,7 +25,7 @@ ALLOWED_AUDIO_MIME = {
     "audio/wav", "audio/wave", "audio/x-wav",
     "audio/mpeg", "audio/mp3",
     "audio/flac", "audio/x-flac",
-    "audio/ogg", "audio/webm",
+    "audio/ogg", "audio/webm", "audio/mp4",
     "audio/aac", "audio/m4a", "audio/x-m4a",
 }
 ALLOWED_IMAGE_MIME = {

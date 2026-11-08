@@ -222,7 +222,9 @@ export const endpoints = {
   // ── 语音识别 ──
   recognizeSpeech: async (audioBlob) => {
     const formData = new FormData()
-    formData.append('audio_file', audioBlob, 'recording.webm')
+    const _type = String(audioBlob?.type || 'audio/webm')
+    const _ext = _type.includes('ogg') ? 'ogg' : (_type.includes('mp4') ? 'm4a' : 'webm')
+    formData.append('audio_file', audioBlob, 'recording.' + _ext)
     const r = await fetch(BASE + '/data-process/speech/recognize', {
       method: 'POST',
       headers: _memKey ? { 'X-API-Key': _memKey } : {},
@@ -235,7 +237,9 @@ export const endpoints = {
   // ── 声纹识别 / 说话人分类 ──
   identifySpeaker: async (audioBlob, threshold = 0.75, autoRegister = '') => {
     const formData = new FormData()
-    formData.append('audio_file', audioBlob, 'recording.webm')
+    const _type = String(audioBlob?.type || 'audio/webm')
+    const _ext = _type.includes('ogg') ? 'ogg' : (_type.includes('mp4') ? 'm4a' : 'webm')
+    formData.append('audio_file', audioBlob, 'recording.' + _ext)
     formData.append('threshold', String(threshold))
     if (autoRegister) formData.append('register_unknown', autoRegister)
     const r = await fetch(BASE + '/data-process/speaker/identify', {
@@ -249,7 +253,9 @@ export const endpoints = {
 
   recognizeWithSpeaker: async (audioBlob, opts = {}) => {
     const formData = new FormData()
-    formData.append('audio_file', audioBlob, 'recording.webm')
+    const _type = String(audioBlob?.type || 'audio/webm')
+    const _ext = _type.includes('ogg') ? 'ogg' : (_type.includes('mp4') ? 'm4a' : 'webm')
+    formData.append('audio_file', audioBlob, 'recording.' + _ext)
     if (opts.language) formData.append('language', opts.language)
     if (opts.threshold) formData.append('speaker_threshold', String(opts.threshold))
     if (opts.autoRegister) formData.append('auto_register', opts.autoRegister)
@@ -264,7 +270,9 @@ export const endpoints = {
 
   registerSpeaker: async (audioBlob, name) => {
     const formData = new FormData()
-    formData.append('audio_file', audioBlob, 'recording.webm')
+    const _type = String(audioBlob?.type || 'audio/webm')
+    const _ext = _type.includes('ogg') ? 'ogg' : (_type.includes('mp4') ? 'm4a' : 'webm')
+    formData.append('audio_file', audioBlob, 'recording.' + _ext)
     formData.append('name', name)
     const r = await fetch(BASE + '/data-process/speaker/register', {
       method: 'POST',

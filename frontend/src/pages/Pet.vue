@@ -6,6 +6,7 @@ import { endpoints, request } from '@/api.js'
 import Icon from '@/components/Icon.vue'
 import { useI18n } from 'vue-i18n'
 import { useConfirm } from '@/composables/useDialog.js'
+import { pickAudioMimeType } from '@/utils/audio.js'
 
 const { t } = useI18n()
 const toast = useToastStore()
@@ -37,12 +38,13 @@ async function toggleRecording() {
 async function startRecording() {
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-    petMediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' })
+    const mime = pickAudioMimeType()
+    petMediaRecorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream)
     petAudioChunks = []
     petMediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) petAudioChunks.push(e.data) }
     petMediaRecorder.onstop = async () => {
       stream.getTracks().forEach(t => t.stop())
-      const blob = new Blob(petAudioChunks, { type: 'audio/webm' })
+      const blob = new Blob(petAudioChunks, { type: petMediaRecorder?.mimeType || mime || 'audio/webm' })
       petAudioChunks = []
       await transcribeAudio(blob)
     }

@@ -170,6 +170,7 @@ app = BUNDLE(
         'CFBundleShortVersionString': APP_VERSION,
         'CFBundleVersion': APP_VERSION,
         'NSHighResolutionCapable': True,
+        'NSMicrophoneUsageDescription': 'cortex 需要麦克风用于聊天语音输入与语音唤醒。',
         'LSMinimumSystemVersion': '11.0',
         'NSPrincipalClass': 'NSApplication',
     },

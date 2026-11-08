@@ -173,6 +173,7 @@ const _onMessage = (d) => {
     return
   }
   // 最终正文到达 → 流式尾巴让位给落定的消息气泡
+  const hadStreamPreview = !!chat.streamTail?.content
   chat.clearStream()
   // 用户已主动停止：忽略后端补发的 message，避免"按了停止又冒出回复"
   if (chat.stopped) return
@@ -196,7 +197,8 @@ const _onMessage = (d) => {
       content,
       id: d.data?.message_id || '',
       identity_name: d.data?.identity_name || '',
-      typing: true,
+      // 已经用 chunk 边收边显示过 → 最终气泡直接落定，不再用打字机把同一段话重放一遍
+      typing: !hadStreamPreview,
       error: isError,
       thinking: thinkText,
       meta: {

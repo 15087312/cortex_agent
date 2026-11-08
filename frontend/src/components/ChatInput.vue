@@ -3,6 +3,7 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import Icon from '@/components/Icon.vue'
 import { useI18n } from 'vue-i18n'
 import { endpoints } from '@/api.js'
+import { pickAudioMimeType } from '@/utils/audio.js'
 
 const props = defineProps({
   processing: { type: Boolean, default: false },
@@ -36,7 +37,8 @@ async function toggleRecording() {
 async function startRecording() {
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-    mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' })
+    const mime = pickAudioMimeType()
+    mediaRecorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream)
     audioChunks = []
 
     mediaRecorder.ondataavailable = (e) => {
@@ -45,7 +47,7 @@ async function startRecording() {
 
     mediaRecorder.onstop = async () => {
       stream.getTracks().forEach(t => t.stop())
-      const blob = new Blob(audioChunks, { type: 'audio/webm' })
+      const blob = new Blob(audioChunks, { type: mediaRecorder?.mimeType || mime || 'audio/webm' })
       audioChunks = []
       await transcribeAudio(blob)
     }

@@ -1562,6 +1562,46 @@ def _cleanup_session_on_disconnect(session_id: str, tag: str = "WS") -> None:
         logger.debug(f"[{tag}] 清理待办失败 (非致命): {e}")
 
 
+async def _augment_agent_web_search(session_id: str, query: str) -> None:
+    """Agent 模式：用户开启联网搜索时，把结果作为本轮临时 system 上下文注入。
+
+    不写入用户消息/会话历史，只影响本轮 prompt；回合结束后清理。
+    """
+    try:
+        from infra.tool_manager.tools import web_search as _ws_tool
+        res = await _ws_tool.web_search(query, limit=5, fetch_content=False)
+        results = res.get("results") or []
+        if results:
+            lines = []
+            for i, r in enumerate(results[:5], 1):
+                lines.append(
+                    f"[{i}] {r.get('title', '')}\n    {r.get('snippet', '')}\n    {r.get('url', '')}"
+                )
+            text = (
+                "【联网搜索结果】（用户本轮开启了联网搜索，请优先据此回答并标注来源）\n"
+                + "\n".join(lines)
+            )
+            notice = f"【联网搜索】{query} → 找到 {len(results)} 条结果"
+        else:
+            text = "【联网搜索】用户本轮开启了联网搜索，但未找到相关结果。"
+            notice = f"【联网搜索】{query} → 未找到结果"
+        from modules.thinking.core.model_runner import _session_extra_context
+        _session_extra_context[session_id] = text
+        await connection_manager.send_json(
+            session_id,
+            _build_event(
+                session_id=session_id,
+                msg_type="thinking",
+                event="thinking_step",
+                content=notice,
+                role="thinking",
+                data={"tier": "large", "source": "web_search"},
+            ),
+        )
+    except Exception as e:
+        logger.debug(f"[web_search] Agent 联网搜索失败（忽略）: {e}")
+
+
 @router.websocket("/ws/{session_id}")
 async def websocket_chat(websocket: WebSocket, session_id: str):
     """
@@ -1671,7 +1711,20 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
                     from modules.thinking.turn_images import set_turn_images
                     set_turn_images(att_images or None)
 
-                    asyncio.create_task(_safe_think(system, session_id, user_content))
+                    if msg_data.get("web_search") and user_content:
+                        await _augment_agent_web_search(session_id, user_content)
+
+                    async def _run_turn():
+                        try:
+                            await _safe_think(system, session_id, user_content)
+                        finally:
+                            try:
+                                from modules.thinking.core.model_runner import _session_extra_context
+                                _session_extra_context.pop(session_id, None)
+                            except Exception:
+                                pass
+
+                    asyncio.create_task(_run_turn())
 
             elif msg_type == "stop":
                 await system.stop(session_id)
@@ -1928,8 +1981,11 @@ async def close_session(session_id: str):
     _event_seq.pop(session_id, None)
     # 关键修复：清理跨模块的进程内存缓存，防止重新打开/请求时仍加载旧数据
     try:
-        from modules.thinking.model_runner import _session_memory_context, _resume_context
+        from modules.thinking.model_runner import (
+            _session_memory_context, _resume_context, _session_extra_context,
+        )
         _session_memory_context.pop(session_id, None)
+        _session_extra_context.pop(session_id, None)
         if isinstance(_resume_context, dict):
             _resume_context.pop(session_id, None)
     except Exception as _swallowed_err:

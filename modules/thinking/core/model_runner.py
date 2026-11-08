@@ -2267,7 +2267,14 @@ class ModelRunner:
             except Exception as _swallowed_err:
                 logger.debug(f"[_build_system_prompt_for_mode] ignored Exception: {_swallowed_err}")
 
-            full = conversation_header + result + self._build_knowledge_prompt_section() + non_core_section
+            extra_context = ""
+            try:
+                extra_context = _session_extra_context.get(self.session_id, "")
+            except Exception:
+                extra_context = ""
+            if extra_context:
+                extra_context = extra_context.rstrip() + "\n\n---\n\n"
+            full = extra_context + conversation_header + result + self._build_knowledge_prompt_section() + non_core_section
             logger.debug(f"[ModelRunner] 系统提示词: {len(full)} 字符 (对话历史 {len(conversation_header)} + 系统 {len(result)} + 非核心工具)")
             return full
         except Exception as e:
@@ -4045,6 +4052,9 @@ _runner_managers_lock = threading.RLock()
 # 每个 session 最近一次组装的事件记忆上下文（供 api_stream 发 message 时附带给前端展开栏）
 _session_memory_context: Dict[str, str] = {}
 
+# 本轮临时上下文（如用户主动开启的联网搜索结果），只注入当前轮 system prompt
+_session_extra_context: Dict[str, str] = {}
+
 
 def get_runner_manager(
     session_id: str,
@@ -4079,8 +4089,9 @@ async def remove_runner_manager(session_id: str) -> None:
     global _runner_managers
     with _runner_managers_lock:
         mgr = _runner_managers.pop(session_id, None)
-        # 会话结束：清理事件记忆上下文缓存，防多会话无界增长
+        # 会话结束：清理事件记忆/临时上下文缓存，防多会话无界增长
         _session_memory_context.pop(session_id, None)
+        _session_extra_context.pop(session_id, None)
     # 会话结束：清理活动时钟（仍有引用的地方继续可用，只是不再被复用）
     try:
         from utils.activity import drop_activity_clock

@@ -137,7 +137,9 @@ describe('Chat 页面', () => {
     })
     await w.vm.$nextTick()
     expect(chat.streamTail).toBe(null)
-    expect(chat.messages.at(-1)).toMatchObject({ role: 'assistant', content: '你好，世界' })
+    expect(chat.messages.at(-1)).toMatchObject({
+      role: 'assistant', content: '你好，世界', typing: false,
+    })
   })
 
   it('工具调用开始 → 流式尾巴收起（不冒充最终回答）', async () => {
