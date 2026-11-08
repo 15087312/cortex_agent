@@ -212,3 +212,41 @@ describe('ChatInput 交互细节', () => {
     wrapper.unmount()
   })
 })
+
+describe('ChatInput 语音/联网搜索按钮', () => {
+  it('点击地球按钮切换联网搜索并随发送载荷提交', async () => {
+    const wrapper = mountInput()
+    const globe = wrapper.findAll('button.chat-btn-icon')[2]
+    await globe.trigger('click')
+    expect(globe.classes()).toContain('chat-btn-active')
+    await sendClick(wrapper, '查一下')
+    expect(wrapper.emitted('send')[0][0].webSearch).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('点击麦克风开始录音（MIME 不支持时回退浏览器默认）', async () => {
+    const track = { stop: vi.fn() }
+    const stream = { getTracks: () => [track] }
+    const getUserMedia = vi.fn().mockResolvedValue(stream)
+    vi.stubGlobal('navigator', { ...navigator, mediaDevices: { getUserMedia } })
+    class FakeRecorder {
+      static isTypeSupported() { return false }
+      constructor(_stream, opts) {
+        this.mimeType = opts?.mimeType || 'audio/webm'
+        this.state = 'inactive'
+        this.ondataavailable = null
+        this.onstop = null
+      }
+      start() { this.state = 'recording' }
+      stop() { this.state = 'inactive'; this.onstop?.() }
+    }
+    vi.stubGlobal('MediaRecorder', FakeRecorder)
+    const wrapper = mountInput()
+    const mic = wrapper.findAll('button.chat-btn-icon')[1]
+    await mic.trigger('click')
+    await Promise.resolve()
+    expect(getUserMedia).toHaveBeenCalled()
+    expect(mic.classes()).toContain('chat-btn-recording')
+    wrapper.unmount()
+  })
+})
