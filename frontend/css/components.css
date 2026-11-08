@@ -307,6 +307,7 @@ textarea.input { resize: vertical; min-height: 60px; font-family: var(--font-mon
 
 /* ── 会话列表 ── */
 .session-list { display: flex; flex-direction: column; height: 100%; min-width: 0; max-width: 100%; overflow: hidden; border-right: 1px solid var(--border); box-sizing: border-box; }
+.session-list.collapsed { padding: 0; }
 .session-list-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; min-width: 0; padding: 16px; border-bottom: 1px solid var(--border); }
 .session-list-header h3 { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session-list-header > div { flex-shrink: 0; min-width: 0; }
