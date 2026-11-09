@@ -865,6 +865,14 @@ class ContinuousThinker:
 
         thought = ""
         duration_ms = 0.0
+        # 当前用户输入：供 ModelRunner 从 DB 历史中剔除本轮 user 消息，避免同一句话
+        # 既出现在结构化历史又出现在本轮任务 prompt 中。
+        try:
+            runner = getattr(self, "_runner_ref", None)
+            if runner is not None:
+                runner._current_question = initial_question or ""
+        except Exception as _swallowed_err:
+            self.logger.debug(f"[think_once] 记录当前问题失败 (非致命): {_swallowed_err}")
         # 单次思考超时：优先用 runner 的 THINK_TIMEOUT（上级委托时指定），否则默认。
         # 语义是“静默超时”：AI 有产出（token/工具/控制指令）就重新计时，
         # 工具执行期间冻结计时（工具有独立的 TOOL_CALL_TIMEOUT）。

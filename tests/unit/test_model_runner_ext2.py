@@ -758,6 +758,56 @@ async def test_generate_with_tools_streams_chunk_frames(monkeypatch):
     assert "".join(pieces) == "x" * 100 + "余量\n下一行"
 
 
+def test_to_chat_role_normalizes_tiers():
+    assert ModelRunner._to_chat_role("large") == "assistant"
+    assert ModelRunner._to_chat_role("supervisor") == "assistant"
+    assert ModelRunner._to_chat_role("user") == "user"
+    assert ModelRunner._to_chat_role("system") == "system"
+    assert ModelRunner._to_chat_role("") == "user"
+
+
+def test_strip_dialog_section():
+    text = "【任务】做 A\n\n【对话记录】\n[user]: 旧问题\n\n【请开始工作】\n执行"
+    out = ModelRunner._strip_dialog_section(text)
+    assert "【对话记录】" not in out
+    assert "【任务】做 A" in out
+    assert "【请开始工作】" in out
+
+
+def test_load_structured_history_drops_current_user(monkeypatch):
+    r = _runner(tier="large")
+    r.session_id = "s1"
+    r._current_question = "当前问题"
+    import modules.thinking.context.dialog_memory as dm
+    rows = [
+        {"role": "user", "content": "旧问题"},
+        {"role": "large", "content": "旧回答"},
+        {"role": "user", "content": "当前问题"},
+    ]
+    monkeypatch.setattr(dm, "load_dialog_from_db", lambda sid: list(rows))
+    monkeypatch.setattr(dm, "budget_trim", lambda items: list(items))
+    history = r._load_structured_history()
+    assert [(m.role, m.content) for m in history] == [
+        ("user", "旧问题"),
+        ("assistant", "旧回答"),
+    ]
+
+
+async def test_generate_with_tools_uses_structured_history(monkeypatch):
+    r, _ = _tool_runner(monkeypatch, tier="large")
+    r._load_structured_history = lambda: [
+        ChatMessage(role="user", content="旧问"),
+        ChatMessage(role="assistant", content="旧答"),
+    ]
+    r._push_stream_chunk = MagicMock()
+    client = _chat_client(_resp(content="新答"))
+    out = await r._generate_with_tools("system", "当前任务", client)
+    assert out == "新答"
+    msgs = client.chat.call_args.kwargs["messages"]
+    assert [m.role for m in msgs] == ["system", "user", "assistant", "user"]
+    assert [m.content for m in msgs] == ["system", "旧问", "旧答", "当前任务"]
+
+
 async def test_generate_with_tools_flushes_short_preamble_before_tool(monkeypatch):
     """调工具前的短句（<40 字且无标点）也要补推 chunk，前端才能显示。"""
     r, _ = _tool_runner(monkeypatch, tier="large")

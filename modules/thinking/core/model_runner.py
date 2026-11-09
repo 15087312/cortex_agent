@@ -1398,6 +1398,53 @@ class ModelRunner:
     def _supports_native_tool_chat(client: Any) -> bool:
         return bool(getattr(client, 'supports_native_tools', False))
 
+    @staticmethod
+    def _to_chat_role(role: Any) -> str:
+        """DB 角色 → OpenAI messages role；large/supervisor/expert 都视为 assistant。"""
+        r = str(role or "").strip().lower()
+        if r == "user":
+            return "user"
+        if r == "system":
+            return "system"
+        if r in ("assistant", "large", "main", "supervisor", "expert"):
+            return "assistant"
+        return "assistant" if r else "user"
+
+    @staticmethod
+    def _strip_dialog_section(text: str) -> str:
+        """从 user prompt 中移除【对话记录】段（structured messages 已单独注入）。"""
+        import re
+        return re.sub(r"\n*【对话记录】\n.*?(?=\n\n【|\Z)", "", text or "", flags=re.S).strip()
+
+    def _load_structured_history(self) -> list:
+        """读取当前会话的真实多轮历史，构造 OpenAI messages 结构。
+
+        - DB 为唯一真源，过滤 thought/process/mental；
+        - 按设置页上下文口径 budget_trim；
+        - 剔除本轮 user（本轮问题由 _build_prompt 的【当前任务】承载）。
+        """
+        if not self.session_id:
+            return []
+        try:
+            from infra.model.base_model import ChatMessage
+            from modules.thinking.context.dialog_memory import budget_trim, load_dialog_from_db
+            rows = budget_trim(load_dialog_from_db(self.session_id))
+            question = str(getattr(self, "_current_question", "") or "").strip()
+            if rows and question and str(rows[-1].get("role", "")).lower() == "user":
+                last = str(rows[-1].get("content", "") or "").strip()
+                if last == question or last.endswith(question):
+                    rows = rows[:-1]
+            out = []
+            for m in rows:
+                content = str(m.get("content", "") or "")
+                if not content.strip():
+                    continue
+                out.append(ChatMessage(role=self._to_chat_role(m.get("role")), content=content))
+            return out
+        except Exception as e:
+            logger.debug(f"[ModelRunner] 结构化历史读取失败 (非致命): {e}")
+            return []
+
     GENERATE_RETRIES = 2         # 模型调用最大重试次数
     GENERATE_RETRY_DELAY = 1.0   # 重试间隔基础值 (指数退避)
 
@@ -1682,6 +1729,11 @@ class ModelRunner:
         except Exception as e:
             logger.debug(f"[ModelRunner] 握手失败 (非致命): {e}")
 
+        client = self.instance.client
+        _native_tools = self._supports_native_tool_chat(client)
+        # 原生 tool chat 使用真正的 messages 历史；非原生 generate 仍靠 system prompt 里的历史文本。
+        # 用实例标记而不是改方法签名，兼容测试/外部对 _build_system_prompt_for_mode 的打桩。
+        self._include_system_history = not _native_tools
         system_prompt = self._build_system_prompt_for_mode()
 
         # 环境感知注入（agent 模式：感知系统实时采集 → PerceptionPool → 此处注入模型上下文）
@@ -1697,7 +1749,6 @@ class ModelRunner:
         if self.tier == "large":
             system_prompt = f"{system_prompt}\n\n{self._build_time_context()}"
 
-        client = self.instance.client
         total_prompt_len = len(system_prompt) + len(prompt)
         logger.info(f"[PromptSize] {self.model_id} tier={self.tier} system={len(system_prompt)} user={len(prompt)} total={total_prompt_len} chars")
 
@@ -2249,7 +2300,12 @@ class ModelRunner:
             logger.warning(f"[ModelRunner] 自限清除失败: {e}")
 
     def _build_system_prompt_for_mode(self) -> str:
-        """根据运行模式构建系统提示词 — 委托给 PromptComposer"""
+        """根据运行模式构建系统提示词 — 委托给 PromptComposer
+
+        原生 tool chat 时不在 system prompt 里塞整段对话文本（_include_system_history=False），
+        由 _generate_with_tools 构造真正的 [user/assistant] messages 历史。
+        """
+        include_history = bool(getattr(self, "_include_system_history", True))
         from config.settings import settings as _cfg
         try:
             from config.prompts.composer import PromptComposer, PromptRequest
@@ -2277,18 +2333,20 @@ class ModelRunner:
                 except Exception as _swallowed_err:
                     logger.debug(f"[_build_system_prompt_for_mode] ignored Exception: {_swallowed_err}")
 
-            # 对话历史置于 system prompt 最前面，确保模型最先看到
+            # 非原生 tool chat 才把对话历史塞进 system prompt；原生 tool chat 由
+            # _generate_with_tools 构造真正的 messages 多轮结构。
             conversation_header = ""
-            if self.blackboard:
-                conv_obs = [o for o in self.blackboard.observations
-                           if o.tier == "system" and o.metadata.get("context_type") == "conversation_history"]
-                if conv_obs:
-                    conversation_header = conv_obs[-1].content + "\n\n---\n\n"
-                    logger.info(f"[ModelRunner] 对话历史前置: {len(conversation_header)} 字符")
+            if include_history:
+                if self.blackboard:
+                    conv_obs = [o for o in self.blackboard.observations
+                               if o.tier == "system" and o.metadata.get("context_type") == "conversation_history"]
+                    if conv_obs:
+                        conversation_header = conv_obs[-1].content + "\n\n---\n\n"
+                        logger.info(f"[ModelRunner] 对话历史前置: {len(conversation_header)} 字符")
+                    else:
+                        logger.info(f"[ModelRunner] 黑板无对话历史 (obs={len(self.blackboard.observations)})")
                 else:
-                    logger.info(f"[ModelRunner] 黑板无对话历史 (obs={len(self.blackboard.observations)})")
-            else:
-                logger.info("[ModelRunner] blackboard 为 None")
+                    logger.info("[ModelRunner] blackboard 为 None")
 
             logger.debug(f"[ModelRunner] 构建系统提示词: mode={mode}, tier={self.tier}")
             # 读取良知内心独白并注入到 system prompt 顶部
@@ -2514,10 +2572,23 @@ class ModelRunner:
         )
         tools_with_control = list(tools) + control_tool_names
 
-        messages = [
-            ChatMessage(role="system", content=system_prompt),
-            ChatMessage(role="user", content=user_prompt),
-        ]
+        # 原生 tool chat：构造真正的多轮 messages，而不是把全部历史塞进一个 user 文本。
+        # large 用 DB 结构化历史；supervisor/expert 保留原有格式化对话上下文（其 prompt 已含【对话记录】）。
+        structured_history = self._load_structured_history() if self.tier == "large" else []
+        if structured_history:
+            user_prompt = self._strip_dialog_section(user_prompt)
+            messages = [ChatMessage(role="system", content=system_prompt)]
+            messages.extend(structured_history)
+            messages.append(ChatMessage(role="user", content=user_prompt))
+            logger.info(
+                f"[ModelRunner] 结构化对话历史: {len(structured_history)} 条 "
+                f"(tier={self.tier}, session={self.session_id[:8]})"
+            )
+        else:
+            messages = [
+                ChatMessage(role="system", content=system_prompt),
+                ChatMessage(role="user", content=user_prompt),
+            ]
 
         # ── 断点续思考：上次思考被中断且保存了上下文快照时，从断点继续 ──
         _resume_ctx = getattr(self, "_resume_context", None)
