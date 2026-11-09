@@ -210,7 +210,7 @@ function removeAttachment(i) {
         @paste="handlePaste"
       ></textarea>
       <div class="chat-input-actions">
-        <span class="chat-input-hint">{{ hint || $t('chatInput.enterHint') }}</span>
+        <span v-if="hint" class="chat-input-hint">{{ hint }}</span>
         <slot name="actions" />
         <button class="chat-send-btn" :disabled="processing || blocked" @click="handleSend"><Icon name="send" :size="16" /></button>
       </div>

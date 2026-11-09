@@ -235,7 +235,7 @@ textarea.input { resize: vertical; min-height: 60px; font-family: var(--font-mon
 .chat-input-toolbar { display: flex; flex-shrink: 0; align-items: center; gap: 4px; padding-bottom: 4px; }
 .chat-input-field { flex: 1 1 0; width: 0; min-width: 0; max-width: 100%; background: transparent; border: none; color: var(--text-primary); font-size: 14px; font-family: var(--font); resize: none; outline: none; min-height: 20px; max-height: 120px; line-height: 1.5; padding: 4px 0; box-sizing: border-box; }
 .chat-input-field::placeholder { color: var(--text-muted); }
-.chat-input-actions { display: flex; align-items: center; justify-content: space-between; flex: 0 1 auto; min-width: 0; max-width: 40%; gap: 6px; padding-top: 4px; border-top: 1px solid var(--border-light); margin-top: 4px; overflow: hidden; }
+.chat-input-actions { display: flex; align-items: center; justify-content: flex-end; flex: 0 1 auto; min-width: 0; max-width: 40%; gap: 6px; padding-top: 4px; border-top: 1px solid var(--border-light); margin-top: 4px; overflow: hidden; }
 .chat-input-actions > * { min-width: 0; }
 .chat-input-actions > *:not(.chat-input-hint) { flex-shrink: 0; }
 .chat-input-actions .btn { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

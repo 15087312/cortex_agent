@@ -94,6 +94,19 @@ describe('ChatInput 发送载荷契约', () => {
 })
 
 describe('ChatInput 交互细节', () => {
+  it('默认不再显示发送键左侧的 Enter 提示；动态 hint 仍显示', () => {
+    const w = mountInput()
+    expect(w.find('.chat-input-hint').exists()).toBe(false)
+    w.unmount()
+
+    const w2 = mount(ChatInput, {
+      props: { processing: true, hint: '思考中…' },
+      global: { stubs: { Icon: true } },
+    })
+    expect(w2.find('.chat-input-hint').text()).toBe('思考中…')
+    w2.unmount()
+  })
+
   it('Enter 发送、Shift+Enter 不发送（换行）', async () => {
     const wrapper = mountInput()
     const ta = wrapper.find('textarea')
