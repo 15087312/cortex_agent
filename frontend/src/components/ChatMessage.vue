@@ -3,6 +3,7 @@ import { computed, ref, watch, onBeforeUnmount } from 'vue'
 import { parseMarkdownSegments } from '@/utils/markdown.js'
 import CodeBlock from '@/components/CodeBlock.vue'
 import Icon from '@/components/Icon.vue'
+import DeepThinking from '@/components/DeepThinking.vue'
 import { useI18n } from 'vue-i18n'
 
 const props = defineProps({
@@ -177,6 +178,8 @@ function submitIntent() {
       <div class="message-avatar" :class="isUser ? 'avatar-user' : 'avatar-large'"></div>
       <div class="message-body">
         <div class="message-name">{{ isUser ? $t('chatMessage.me') : (message.identity_name || $t('chatMessage.commander')) }}</div>
+        <!-- 模型深度思考（deepseek reasoning_content）：可折叠，默认展开 -->
+        <DeepThinking v-if="!isUser && message.thinking" :text="message.thinking" />
         <div class="message-bubble" :class="{ 'bubble-error': message.error, 'bubble-proactive': !isUser && message.proactive }">
           <!-- 用户消息：桌宠互动 → 图标；否则纯文本 -->
           <div v-if="isUser && petAction" class="pet-interaction" :title="petAction.label">

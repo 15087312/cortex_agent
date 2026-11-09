@@ -10,6 +10,7 @@ import { endpoints } from '@/api.js'
 import { useConfirm, usePrompt } from '@/composables/useDialog.js'
 import ChatMessage from '@/components/ChatMessage.vue'
 import ChatInput from '@/components/ChatInput.vue'
+import DeepThinking from '@/components/DeepThinking.vue'
 import SessionList from '@/components/SessionList.vue'
 import ModelSelector from '@/components/ModelSelector.vue'
 import ThinkingIndicator from '@/components/ThinkingIndicator.vue'
@@ -323,9 +324,10 @@ const _onChunk = (d) => {
 const _onTool = (d) => {
   if (!_isCurrent(d)) return
   if (d.event === 'tool_call') {
-    // 工具调用开始 → 上一轮正文尾巴已说完，收起来（内容仍在过程流里），
-    // 避免它留在气泡位置冒充“最终回答”
-    chat.clearStream()
+    // 工具调用开始 → 把上一轮流式正文落成一条普通助手消息，再接工具卡片。
+    // 不能直接 clearStream：模型调用工具前的说明（如“我先看看文件”）也是给用户看的，
+    // 清掉会导致这段正文彻底消失（工具轨迹面板已不在对话流展示）。
+    chat.commitStreamAsMessage()
     chat.addToolCall(d)
   } else if (d.event === 'tool_result') {
     chat.addToolResult(d)
@@ -679,6 +681,13 @@ function handleAnswerIntent(requestId, answer) {
             </template>
           </div>
         </template>
+
+        <!-- 模型深度思考（本轮流式）：最终 message 到达后并入该条回复的折叠块 -->
+        <DeepThinking
+          v-if="chat.pendingThinking"
+          :text="chat.pendingThinking"
+          live
+        />
 
         <!-- 流式正文尾巴（未落定的正文）：边生成边显示，最终 message 到达后被替换 -->
         <ChatMessage

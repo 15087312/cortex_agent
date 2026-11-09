@@ -1433,6 +1433,62 @@ class ModelRunner:
         except Exception as _swallowed_err:
             logger.debug(f"[_push_reasoning] ignored Exception: {_swallowed_err}")
 
+    def _push_reasoning_delta(self, delta: str, turn: int) -> None:
+        """流式推送 reasoning_content 片段（DeepSeek 深度思考）。"""
+        if not delta:
+            return
+        try:
+            from modules.thinking.api_stream import connection_manager, _build_event
+            identity = ""
+            tier = ""
+            try:
+                identity = getattr(self.identity, "name", "") or getattr(self.identity, "role", "")
+                tier = getattr(self.identity, "tier", "") or self.tier
+            except Exception as _swallowed_err:
+                logger.debug(f"[_push_reasoning_delta] ignored Exception: {_swallowed_err}")
+            event = _build_event(
+                session_id=self.session_id,
+                msg_type="thinking",
+                event="thinking_step",
+                content=delta,
+                role="thinking",
+                data={
+                    "source": "reasoning",
+                    "streaming": True,
+                    "turn": turn,
+                    "identity_name": identity,
+                    "tier": tier,
+                },
+            )
+            connection_manager.send_json_from_thread(self.session_id, event)
+        except Exception as _swallowed_err:
+            logger.debug(f"[_push_reasoning_delta] ignored Exception: {_swallowed_err}")
+
+    def _persist_reasoning(self, reasoning: str) -> None:
+        """把完整 reasoning 落库为 thought（source=reasoning），供会话重开后恢复。"""
+        reasoning = (reasoning or "").strip()
+        if not reasoning:
+            return
+        try:
+            from modules.database.session_repo import get_session_repo
+            repo = get_session_repo()
+            if not repo:
+                return
+            identity = ""
+            try:
+                identity = getattr(self.identity, "name", "") or getattr(self.identity, "role", "")
+            except Exception as _swallowed_err:
+                logger.debug(f"[_persist_reasoning] ignored Exception: {_swallowed_err}")
+            repo.save_message(
+                self.session_id,
+                "thought",
+                reasoning,
+                tier=self.tier,
+                metadata={"source": "reasoning", "identity_name": identity},
+            )
+        except Exception as _swallowed_err:
+            logger.debug(f"[_persist_reasoning] ignored Exception: {_swallowed_err}")
+
     def _record_usage(self, usage: Any) -> None:
         """累计一次响应的 token 用量并推送 `tokenUsage` 投影（Phase 4）。
 
@@ -2559,6 +2615,16 @@ class ModelRunner:
                     last_emit_len = 0
                     last_emitted_text = ""
                     last_chunk_len = 0
+                    reasoning_streamed = False
+                    reasoning_parts: list = []
+
+                    def _on_reasoning(chunk: str):
+                        nonlocal reasoning_streamed
+                        if not chunk:
+                            return
+                        reasoning_streamed = True
+                        reasoning_parts.append(chunk)
+                        self._push_reasoning_delta(chunk, turn)
 
                     def _on_token(chunk: str):
                         nonlocal last_emit_len, last_emitted_text, last_chunk_len
@@ -2584,7 +2650,7 @@ class ModelRunner:
 
                     if hasattr(client, 'chat_stream'):
                         response = await client.chat_stream(
-                            on_token=_on_token, **kwargs
+                            on_token=_on_token, on_reasoning=_on_reasoning, **kwargs
                         )
                     else:
                         response = await client.chat(**kwargs)
@@ -2594,8 +2660,18 @@ class ModelRunner:
                     tool_calls = response.message.tool_calls
                     # 模型本轮响应到达 → 活动计时重新开始
                     self.activity.touch("response")
-                    # 推送 deepseek 思考过程（reasoning_content）到前端
-                    self._push_reasoning(getattr(response.message, "reasoning_content", ""))
+                    # 流式 token 可能因不足 40 字符且无标点而未推送（常见于调工具前的一句说明）；
+                    # 响应结束后补推剩余正文，保证“我先看看文件”这类话不会丢。
+                    if content and last_chunk_len < len(content):
+                        self._push_stream_chunk(content[last_chunk_len:], turn)
+                        last_chunk_len = len(content)
+                    # 推送 deepseek 思考过程（reasoning_content）到前端；
+                    # 流式回调已逐段推送时不再重复推全文。
+                    reasoning_content = getattr(response.message, "reasoning_content", "") or "".join(reasoning_parts)
+                    if not reasoning_streamed:
+                        self._push_reasoning(reasoning_content)
+                    # 完整 reasoning 落库：刷新/重开会话后仍能在回复里恢复折叠块
+                    self._persist_reasoning(reasoning_content)
                     # 主管/专家的每轮循环输出 → 过程流（非气泡，entry_type='thinking'）
                     if self.tier in ("supervisor", "expert") and content and content.strip():
                         self._push_expert_output(content)

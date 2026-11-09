@@ -142,8 +142,8 @@ describe('Chat 页面', () => {
     })
   })
 
-  it('工具调用开始 → 流式尾巴收起（不冒充最终回答）', async () => {
-    await mountChat()
+  it('工具调用开始 → 调工具前的正文落成助手消息，再接工具卡片', async () => {
+    const w = await mountChat()
     const chat = useChatStore()
     wsClient._emit('chunk', {
       type: 'chunk', session_id: 's1', content: '先看看文件', data: { tier: 'large', turn: 0 },
@@ -155,6 +155,37 @@ describe('Chat 页面', () => {
     })
     expect(chat.streamTail).toBe(null)
     expect(chat.traces).toHaveLength(1)
+    // 工具前的说明不能丢：落成一条普通助手消息，工具卡片挂在它后面
+    const interim = chat.messages.at(-1)
+    expect(interim).toMatchObject({ role: 'assistant', content: '先看看文件' })
+    expect(chat.traces[0].afterKey).toBe(interim._id)
+    await w.vm.$nextTick()
+    expect(w.text()).toContain('先看看文件')
+  })
+
+  it('WS reasoning → 实时深度思考块，最终消息携带思考内容', async () => {
+    const w = await mountChat()
+    const chat = useChatStore()
+    wsClient._emit('thinking', {
+      type: 'thinking', event: 'thinking_step', session_id: 's1',
+      content: '【思考】先读文件再回答', role: 'thinking',
+      data: { source: 'reasoning', tier: 'large', identity_name: '总指挥' },
+    })
+    await w.vm.$nextTick()
+    expect(chat.pendingThinking).toBe('先读文件再回答')
+    expect(w.find('.deep-thinking').exists()).toBe(true)
+    expect(w.find('.deep-thinking-body').text()).toContain('先读文件再回答')
+
+    wsClient._emit('message', {
+      type: 'message', event: 'assistant_message', session_id: 's1',
+      content: '最终回答', data: { message_id: 'm1' },
+    })
+    await w.vm.$nextTick()
+    expect(chat.pendingThinking).toBe('')
+    const last = chat.messages.at(-1)
+    expect(last.thinking).toBe('先读文件再回答')
+    expect(w.findAll('.deep-thinking')).toHaveLength(1)
+    expect(w.find('.deep-thinking-body').text()).toContain('先读文件再回答')
   })
 
   it('工具卡片插进对话流：卡片在用户气泡下方、回复在卡片之后（Phase 3 交错）', async () => {

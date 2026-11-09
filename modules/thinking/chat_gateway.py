@@ -335,7 +335,12 @@ async def _consume_turn(
                 _thought = tok.get("content", "")
                 if _thought:
                     try:
-                        repo.save_message(session_id, "thought", _thought)
+                        repo.save_message(
+                            session_id, "thought", _thought,
+                            metadata={"source": "reasoning",
+                                      "identity_name": tok.get("identity_name", "总指挥"),
+                                      "tier": tok.get("tier", "large")},
+                        )
                     except Exception as _swallowed_err:
                         logger.debug(f"[_consume_turn] ignored Exception: {_swallowed_err}")
                     try:

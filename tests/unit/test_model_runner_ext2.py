@@ -758,6 +758,54 @@ async def test_generate_with_tools_streams_chunk_frames(monkeypatch):
     assert "".join(pieces) == "x" * 100 + "余量\n下一行"
 
 
+async def test_generate_with_tools_flushes_short_preamble_before_tool(monkeypatch):
+    """调工具前的短句（<40 字且无标点）也要补推 chunk，前端才能显示。"""
+    r, _ = _tool_runner(monkeypatch, tier="large")
+    pieces = []
+    r._push_stream_chunk = lambda delta, turn: pieces.append(delta)
+    responses = [
+        _resp(content="先看看文件", calls=[_tc("calc", '{"a":1,"op":"+","b":1}')]),
+        _resp(content="看完了"),
+    ]
+
+    async def chat_stream(on_token=None, on_reasoning=None, **kwargs):
+        if on_token:
+            on_token("先看看文件")
+        return responses.pop(0)
+
+    client = MagicMock()
+    client.supports_native_tools = True
+    client.chat_stream = chat_stream
+    out = await r._generate_with_tools("system", "user", client)
+    assert out == "看完了"
+    assert "先看看文件" in "".join(pieces)
+
+
+async def test_generate_with_tools_streams_reasoning_deltas(monkeypatch):
+    """DeepSeek reasoning 片段逐段推 thinking，且不再重复推全文。"""
+    r, _ = _tool_runner(monkeypatch, tier="large")
+    deltas = []
+    r._push_reasoning_delta = lambda delta, turn: deltas.append(delta)
+    r._push_reasoning = MagicMock()
+    r._persist_reasoning = MagicMock()
+    responses = [_resp(content="最终回答")]
+
+    async def chat_stream(on_token=None, on_reasoning=None, **kwargs):
+        if on_reasoning:
+            on_reasoning("先想")
+            on_reasoning("一下")
+        return responses.pop(0)
+
+    client = MagicMock()
+    client.supports_native_tools = True
+    client.chat_stream = chat_stream
+    out = await r._generate_with_tools("system", "user", client)
+    assert out == "最终回答"
+    assert deltas == ["先想", "一下"]
+    r._push_reasoning.assert_not_called()
+    r._persist_reasoning.assert_called_once_with("先想一下")
+
+
 async def test_generate_with_tools_tool_timeout(monkeypatch):
     """工具独立计时：工具卡住超时 → 错误回传给模型，不拖垮整轮思考"""
     import time as _time

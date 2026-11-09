@@ -1037,6 +1037,8 @@ export default {
     answeredLabel: '已回答',
     requestExpired: '该请求已失效',
     thinking: '思考',
+    deepThinking: '深度思考',
+    deepThinkingLive: '正在深度思考',
     collapse: '收起',
     expand: '展开',
     mental: '心理活动',

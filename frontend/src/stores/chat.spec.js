@@ -798,6 +798,22 @@ describe('流式正文尾巴', () => {
     expect(chat.streamTail).toBe(null)
   })
 
+  it('流式 reasoning 片段原样拼接，不插入空行', () => {
+    const chat = useChatStore()
+    chat.addThinkingStep({ content: '先想', data: { source: 'reasoning', streaming: true, tier: 'large' } })
+    chat.addThinkingStep({ content: '一下', data: { source: 'reasoning', streaming: true, tier: 'large' } })
+    expect(chat.pendingThinking).toBe('先想一下')
+  })
+
+  it('commitStreamAsMessage 把工具调用前正文落成助手消息并清空尾巴', () => {
+    const chat = useChatStore()
+    chat.appendStreamChunk({ content: '先看看文件', data: { tier: 'large', identity_name: '总指挥' } })
+    const msg = chat.commitStreamAsMessage()
+    expect(msg).toMatchObject({ role: 'assistant', content: '先看看文件', identity_name: '总指挥' })
+    expect(chat.streamTail).toBe(null)
+    expect(chat.messages.at(-1).content).toBe('先看看文件')
+  })
+
   it('空增量忽略；身份名随首个非空帧补上', () => {
     const chat = useChatStore()
     chat.appendStreamChunk({ content: '' })
@@ -938,6 +954,21 @@ describe('轨迹入流锚点', () => {
     } })
     await chat.switchToSession('s1')
     expect(chat.traces[0].afterKey).toBe('u1')
+  })
+
+  it('切换会话：reasoning thought 在过程聚合存在时仍挂到最终回复', async () => {
+    vi.spyOn(wsClient, 'connect').mockResolvedValue(true)
+    const chat = useChatStore()
+    vi.spyOn(endpoints, 'sessionMessages').mockResolvedValue({ data: [
+      { id: 'u1', role: 'user', content: '问' },
+      { id: 't1', role: 'thought', content: '先思考', tier: 'large', metadata: { source: 'reasoning' } },
+      { id: 'a1', role: 'assistant', content: '答' },
+      { id: 'p1', role: 'process', content: '过程聚合', metadata: {} },
+    ] })
+    vi.spyOn(endpoints, 'sessionEvents').mockResolvedValue({ data: { events: [], last_seq: 0 } })
+    await chat.switchToSession('s1')
+    const answer = chat.messages.find(m => m.content === '答')
+    expect(answer.thinking).toBe('先思考')
   })
 
   it('回放：老会话没有 user_message 事件时保持无锚点（不猜位置）', async () => {

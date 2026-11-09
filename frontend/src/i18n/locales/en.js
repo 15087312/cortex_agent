@@ -1019,6 +1019,8 @@ export default {
   chatMessage: {
     waitingApproval: 'Awaiting approval',
     approve: 'Approve',
+    deepThinking: 'Deep thinking',
+    deepThinkingLive: 'Thinking deeply',
     reject: 'Reject',
     approvedResult: 'Operation approved',
     rejectedResult: 'Operation rejected',

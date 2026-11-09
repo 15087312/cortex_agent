@@ -113,12 +113,16 @@ describe('ChatMessage', () => {
       expect(wrapper.find('.message-bubble').html()).toContain('<h1>标题</h1>')
     })
 
-    it('思考过程不再渲染', async () => {
+    it('深度思考折叠块渲染并可展开/收起', async () => {
       const wrapper = mountMsg({ role: 'assistant', content: '答', thinking: '思考过程' })
       await flushPromises()
-      expect(wrapper.find('.think-collapse').exists()).toBe(false)
-      expect(wrapper.text()).not.toContain('思考过程')
+      expect(wrapper.find('.deep-thinking').exists()).toBe(true)
+      expect(wrapper.find('.deep-thinking-body').text()).toContain('思考过程')
       expect(wrapper.text()).toContain('答')
+      await wrapper.find('.deep-thinking-head').trigger('click')
+      expect(wrapper.find('.deep-thinking-body').exists()).toBe(false)
+      await wrapper.find('.deep-thinking-head').trigger('click')
+      expect(wrapper.find('.deep-thinking-body').text()).toContain('思考过程')
     })
 
     it('错误消息带 error 样式', () => {

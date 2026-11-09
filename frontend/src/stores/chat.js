@@ -147,6 +147,7 @@ export const useChatStore = defineStore('chat', () => {
     processFlow.value = []
     processSnapshot.value = null
     trajectory.value = []
+    pendingThinking.value = ''
     resetProjections()
     resetPending()
     _thinkingSeen.clear()
@@ -186,6 +187,7 @@ export const useChatStore = defineStore('chat', () => {
     processFlow.value = []
     processSnapshot.value = null
     trajectory.value = []
+    pendingThinking.value = ''
     // 若会话中已有 role=process 聚合记录（新格式），则跳过逐条 thought 折叠（避免重复）
     const hasProcessAgg = msgs.some(m => m.role === 'process')
     // 用户消息 = 回放定位锚点（老会话没有 user_message 事件时按时间回退）
@@ -228,6 +230,8 @@ export const useChatStore = defineStore('chat', () => {
             identity_name: ident,
             // 必须还原 entry_type：否则主管/专家最终回复会被当成过程推理吞掉（§91/§101）
             entry_type: d.entry_type || d.metadata?.entry_type || '',
+            // reasoning 思考优先于过程流聚合恢复，刷新后仍显示深度思考块
+            source: d.metadata?.source || d.source || '',
           },
         }
         const c = classifyThinking(evt)
@@ -256,7 +260,8 @@ export const useChatStore = defineStore('chat', () => {
             if (!hasProcessAgg) addProcessStep(c.text)
             continue
           }
-          if (hasProcessAgg) continue
+          // 过程流聚合会包含普通思考；但 reasoning 是模型真实深度思考，仍要挂到最终回复
+          if (hasProcessAgg && c.source !== 'reasoning') continue
           if (c.text) pendingLargeThinking += (pendingLargeThinking ? '\n\n' : '') + c.text
           continue
         }
@@ -333,6 +338,22 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   function addThinkingStep(d) {
+    // DeepSeek reasoning 优先处理：它是模型真实思考，不能先被工具轨迹规则误判。
+    if (String(d?.data?.source || '').toLowerCase() === 'reasoning') {
+      // 流式 reasoning：逐段原样拼接，不能按整段清洗/加空行，否则每个 token 都会单独成段
+      if (d?.data?.streaming) {
+        const delta = String(d?.content || '')
+        if (delta) pendingThinking.value += delta
+        return
+      }
+      const reasoningText = _cleanThinkingText(d)
+      if (!reasoningText) return
+      if (_thinkingSeen.has(reasoningText)) return
+      _thinkingSeen.add(reasoningText)
+      pendingThinking.value += (pendingThinking.value ? '\n\n' : '') + reasoningText
+      _pushTrajectory({ ts: Date.now(), kind: 'thinking', title: reasoningText.slice(0, 200) })
+      return
+    }
     const treeRaw = String(d?.content || '')
     const isTrace = _isToolTrace(treeRaw)
     // 工具/委托等中间步骤 → 过程流（结构化轨迹由 addToolCall/addToolResult 提供）
@@ -342,15 +363,6 @@ export const useChatStore = defineStore('chat', () => {
     }
     const text = _cleanThinkingText(d)
     if (!text) return
-    // DeepSeek 自带的 reason 字段（data.source==='reasoning'）→ 折叠进最终回复的思考区（保留，仅去标签）
-    if (String(d?.data?.source || '').toLowerCase() === 'reasoning') {
-      if (_thinkingSeen.has(text)) return
-      _thinkingSeen.add(text)
-      pendingThinking.value += (pendingThinking.value ? '\n\n' : '') + text
-      // 同时作为时间线的一步（DSH 式：思考推理也纳入轨迹），与 agent 模式一致
-      _pushTrajectory({ ts: Date.now(), kind: 'thinking', title: text.slice(0, 200) })
-      return
-    }
     // 主管/专家的推理 → 过程流（不混入总思考区）
     const tier = _tierOf(d)
     if (tier === 'supervisor' || tier === 'expert') {
@@ -380,6 +392,24 @@ export const useChatStore = defineStore('chat', () => {
 
   function clearStream() {
     streamTail.value = null
+  }
+
+  // 工具调用前模型说出的正文：落成一条普通助手消息后再接工具卡片，
+  // 避免 _onTool 直接 clearStream 把这段说明丢掉。
+  function commitStreamAsMessage() {
+    const tail = streamTail.value
+    streamTail.value = null
+    const content = (tail?.content || '').trim()
+    if (!content) return null
+    const msg = {
+      _id: uid(),
+      role: 'assistant',
+      content,
+      identity_name: tail.identityName || '',
+      interim: true,
+    }
+    messages.value.push(msg)
+    return msg
   }
 
   // 流式正文增量：同一次生成（turn 相同）累加到同一个尾巴；换轮/新任务则重置
@@ -525,6 +555,7 @@ export const useChatStore = defineStore('chat', () => {
     processFlow.value = []
     processSnapshot.value = null
     trajectory.value = []
+    pendingThinking.value = ''
     // 后端清空对话时同步删除投影与待办（chat_gateway.clear_session_messages）→ 本地也清掉
     resetProjections()
     resetPending()
@@ -946,12 +977,13 @@ export const useChatStore = defineStore('chat', () => {
     // 工具/委托等中间步骤 → 运行轨迹
     if (_isToolTrace(text)) return { kind: 'tool_trace', tier, text: text.slice(0, 200) }
     // supervisor/expert：entry_type='response' → 最终回复气泡；其余 → 过程流
+    const source = String(d.data?.source || '').toLowerCase()
     if (tier === 'supervisor' || tier === 'expert') {
       if (entryType === 'response') return { kind: 'expert', tier, text, entryType: 'response' }
-      return { kind: 'thinking', tier, text, entryType: entryType || 'process' }
+      return { kind: 'thinking', tier, text, entryType: entryType || 'process', source }
     }
     // 大模型思考 → 折叠到回复
-    if (tier === 'thinking' || tier === 'large' || tier === '') return { kind: 'thinking', tier, text }
+    if (tier === 'thinking' || tier === 'large' || tier === '') return { kind: 'thinking', tier, text, source }
     return { kind: 'skip', tier }
   }
 
@@ -987,7 +1019,7 @@ export const useChatStore = defineStore('chat', () => {
     init, switchToSession, addMessage, addThinkingStep, addProcessStep,
     addExpertMessage, addToolCall, addToolResult, replayToolEvents, consumeThinking, dispatchThinking, classifyThinking,
     addSkillStep, addMentalStep, markTurnDone,
-    appendStreamChunk, clearStream,
+    appendStreamChunk, clearStream, commitStreamAsMessage, pendingThinking,
     finalizeStream, finalizeSession, sendMessage, retryLastInput, stop, clearMessages,
     setProcessSnapshot,
     deleteMessageAt, editMessageAt,
