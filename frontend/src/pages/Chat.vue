@@ -359,8 +359,36 @@ function scrollBottom(force = false) {
     if (!el) return
     // 仅在用户接近底部时自动滚到底（force=进入会话/发送消息时强制）
     if (!force && el.scrollHeight - el.scrollTop - el.clientHeight > 120) return
+
+    if (!force) {
+      el.scrollTop = el.scrollHeight
+      isNearBottom.value = true
+      return
+    }
+
+    // 打开会话时强制贴底：
+    // 1) 临时关闭 smooth，否则从顶部平滑滚动的过程会经过顶部触发“加载更早消息”，
+    //    随后 loadMoreMessages 的 scrollTop 修正会把位置拉回上方，最终停在中间/顶部。
+    // 2) 图片/代码块/字体可能在下一帧才撑开高度，连续两帧再贴一次底。
+    const prevBehavior = el.style.scrollBehavior
+    el.style.scrollBehavior = 'auto'
     el.scrollTop = el.scrollHeight
     isNearBottom.value = true
+
+    const snap = () => {
+      if (messagesWrap.value === el) el.scrollTop = el.scrollHeight
+    }
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => {
+        snap()
+        requestAnimationFrame(() => {
+          snap()
+          el.style.scrollBehavior = prevBehavior
+        })
+      })
+    } else {
+      el.style.scrollBehavior = prevBehavior
+    }
   })
 }
 
@@ -403,9 +431,10 @@ onMounted(async () => {
   loadTodos()
 })
 
-// KeepAlive 缓存下 onMounted 只首次执行——切页回来刷新会话列表
+// KeepAlive 缓存下 onMounted 只首次执行——切页回来刷新会话列表，并回到最新消息
 onActivated(() => {
   session.loadSessions()
+  if (session.sessionId && chat.messages.length) scrollBottom(true)
 })
 
 onUnmounted(() => {

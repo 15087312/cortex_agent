@@ -794,6 +794,34 @@ describe('Chat 页面', () => {
     vi.restoreAllMocks()
   })
 
+  it('打开会话时强制贴底，不被 smooth 滚动/顶部加载拉回', async () => {
+    const w = await mountChat()
+    const chat = useChatStore()
+    vi.spyOn(chat, 'switchToSession').mockImplementation(async () => {
+      for (let i = 0; i < 120; i++) chat.addMessage({ role: 'user', content: 'm' + i })
+    })
+    // 记录每次写 scrollTop 时的 scroll-behavior：强制贴底必须先切成 auto，
+    // 否则 smooth 会经过顶部触发 loadMoreMessages，最终停在中间。
+    const el = w.find('.chat-messages').element
+    let top = 0
+    const behaviors = []
+    Object.defineProperty(el, 'scrollTop', {
+      get: () => top,
+      set: (v) => { top = v; behaviors.push(el.style.scrollBehavior) },
+      configurable: true,
+    })
+    Object.defineProperty(el, 'scrollHeight', { value: 5000, configurable: true })
+    Object.defineProperty(el, 'clientHeight', { value: 600, configurable: true })
+    el.style.scrollBehavior = 'smooth'
+    await w.vm.handleSessionSelect('s2')
+    await flushPromises()
+    expect(top).toBe(5000)
+    expect(behaviors[0]).toBe('auto')
+    // 默认只渲染最近 50 条，未因强制贴底误触发“加载更早”
+    expect(w.text()).toContain('m119')
+    expect(w.text()).not.toContain('m0')
+  })
+
   it('handleSessionDelete 删除当前会话后切换到最近会话', async () => {
     const w = await mountChat()
     const session = useSessionStore()
