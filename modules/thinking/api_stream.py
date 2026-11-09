@@ -514,13 +514,19 @@ class StreamThinkingSystem:
         from modules.thinking.projections import build_runners
         return build_runners(session_id)
 
-    def _budget_trim(self, messages: List[Dict[str, Any]], ratio: float = 0.8) -> List[Dict[str, Any]]:
-        """按 token 预算从最新往回保留消息（委托公共层，纯函数不修改存储）"""
+    def _budget_trim(self, messages: List[Dict[str, Any]], ratio: Optional[float] = None) -> List[Dict[str, Any]]:
+        """按设置页的上下文口径从最新往回保留消息（委托公共层，纯函数不修改存储）
+
+        ratio 缺省时从 settings 读取（含 CONTEXT_LIMIT_MODE 的条数/token/窗口比例三种口径）。
+        """
         from modules.thinking.context.dialog_memory import budget_trim
         return budget_trim(messages, ratio=ratio)
 
-    def _load_dialog_from_db(self, session_id: str, limit: int = 100) -> List[Dict[str, Any]]:
-        """从 DB 读取真实对话（委托公共层，DB 为唯一真源）"""
+    def _load_dialog_from_db(self, session_id: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        """从 DB 读取真实对话（委托公共层，DB 为唯一真源）
+
+        limit 缺省时按设置页的上下文口径读取，不再硬编码 100 条。
+        """
         from modules.thinking.context.dialog_memory import load_dialog_from_db
         return load_dialog_from_db(session_id, limit=limit)
 

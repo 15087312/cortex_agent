@@ -784,7 +784,7 @@ async def get_context(session_id: str):
     if _resolve_mode() == "chatonly":
         from modules.thinking.context.dialog_memory import load_dialog_from_db
         repo = _get_chat_session_repo()
-        messages = load_dialog_from_db(session_id, limit=100, repo=repo)
+        messages = load_dialog_from_db(session_id, repo=repo)  # 条数上限随「上下文管理」配置
         return {
             "success": True,
             "data": {
@@ -802,7 +802,9 @@ async def get_context(session_id: str):
         repo = _get_chat_session_repo()
         if repo:
             try:
-                ctx_messages = repo.get_recent_messages(session_id, limit=20)
+                # 不再硬编码 20 条：显示/恢复条数随「上下文管理」配置（此前长会话只能看到近 20 条）
+                from modules.thinking.context.dialog_memory import load_dialog_from_db
+                ctx_messages = load_dialog_from_db(session_id, repo=repo)
             except Exception:
                 ctx_messages = []
         # 同步到 api_stream 会话缓存。模块本身没有 sessions 属性：

@@ -64,6 +64,8 @@ class Settings(BaseSettings):
         "CHAT_CONTEXT_MAX_TOKENS",   # 会话上下文最大 Token 数
         "CHAT_SUMMARY_TRIGGER_TOKENS", # 触发自动总结的上下文 Token 阈值
         "CONTEXT_WINDOW_SIZE",   # 大模型上下文窗口大小（token 数，历史裁剪预算基准）
+        "CONTEXT_COMPRESS_RATIO", # 上下文裁剪口径=窗口比例时，占用达到窗口的该比例才裁剪
+        "CONTEXT_LIMIT_MODE",     # 上下文裁剪口径: ratio(窗口比例) / messages(条数) / tokens(token 数)
 
         # ── 感知系统模块开关 ──
         "PERCEPTION_ENABLED", "PERCEPTION_SCREEN_ENABLED",
@@ -323,9 +325,14 @@ class Settings(BaseSettings):
     #   qwen-max: 128K, deepseek-v4: 128K, gpt-4o: 128K, claude-3.5: 200K
     #   按实际使用的模型设置，不要低于模型真实窗口
     CONTEXT_WINDOW_SIZE: int = 128000
-    # CONTEXT_COMPRESS_RATIO: 触发压缩时，压缩到窗口的百分比
-    #   0.2 = 压缩到窗口的 20%（如 128K 窗口 → 压缩到 ~25K）
-    CONTEXT_COMPRESS_RATIO: float = 0.2
+    # CONTEXT_LIMIT_MODE: 会话历史注入模型的裁剪口径（设置页「上下文管理」可调）
+    #   "ratio"    不设条数/token 上限，占用达到窗口的 CONTEXT_COMPRESS_RATIO 比例才裁剪（默认）
+    #   "messages" 最多注入 CHAT_CONTEXT_MAX_MESSAGES 条对话（0 = 不限）
+    #   "tokens"   最多注入 CHAT_CONTEXT_MAX_TOKENS 个 token（0 = 不限）
+    CONTEXT_LIMIT_MODE: str = "ratio"
+    # CONTEXT_COMPRESS_RATIO: ratio 模式下，上下文占用达到窗口的该比例才触发裁剪
+    #   0.8 = 用到窗口的 80% 才把更早的消息移出注入范围（不删除，前端仍可见）
+    CONTEXT_COMPRESS_RATIO: float = 0.8
 
     # API 认证
     SIMPLE_API_KEY: str = ""                   # HTTP API 认证密钥（所有外部端点统一使用 X-API-Key）
@@ -341,8 +348,8 @@ class Settings(BaseSettings):
     MODEL_MAX_TOKENS: int = 4096
     MODEL_TEMPERATURE: float = 0.7
     MEMORY_REDUCE_ENABLED: bool = True
-    CHAT_CONTEXT_MAX_MESSAGES: int = 10
-    CHAT_CONTEXT_MAX_TOKENS: int = 32000
+    CHAT_CONTEXT_MAX_MESSAGES: int = 20   # messages 模式：最多注入条数（0 = 不限）
+    CHAT_CONTEXT_MAX_TOKENS: int = 32000  # tokens 模式：最多注入 token 数（0 = 不限）
     CHAT_SUMMARY_TRIGGER_TOKENS: int = 32000  # 触发自动总结的上下文Token阈值（超出时调模型总结）
 
     # ── 因果记忆（backend 并入）──
@@ -868,6 +875,21 @@ class Settings(BaseSettings):
     def validate_compress_ratio(cls, v: float) -> float:
         if not (0.05 <= v <= 0.95):
             raise ValueError(f"CONTEXT_COMPRESS_RATIO must be between 0.05 and 0.95, got {v}")
+        return v
+
+    @field_validator("CONTEXT_LIMIT_MODE")
+    @classmethod
+    def validate_context_limit_mode(cls, v: str) -> str:
+        allowed = {"ratio", "messages", "tokens"}
+        if str(v).lower() not in allowed:
+            raise ValueError(f"CONTEXT_LIMIT_MODE must be one of ratio/messages/tokens, got '{v}'")
+        return str(v).lower()
+
+    @field_validator("CHAT_CONTEXT_MAX_MESSAGES", "CHAT_CONTEXT_MAX_TOKENS")
+    @classmethod
+    def validate_context_limit_non_negative(cls, v: int) -> int:
+        if v < 0:
+            raise ValueError(f"context limit must be >= 0 (0 = unlimited), got {v}")
         return v
 
     @field_validator("EXECUTION_MODE")

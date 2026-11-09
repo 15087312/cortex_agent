@@ -265,6 +265,17 @@ const modelForm = ref({
 })
 const modelSaving = ref(false)
 const contextWindowSize = numCfg('CONTEXT_WINDOW_SIZE', 128000)
+// 上下文管理：注入口径（ratio 窗口比例 / messages 条数 / tokens 数）
+const contextLimitMode = segCfg('CONTEXT_LIMIT_MODE', 'ratio')
+const contextMaxMessages = numCfg('CHAT_CONTEXT_MAX_MESSAGES', 20)
+const contextMaxTokens = numCfg('CHAT_CONTEXT_MAX_TOKENS', 32000)
+const contextCompressPercent = computed({
+  get: () => Math.round(Number(configStore.config.CONTEXT_COMPRESS_RATIO ?? 0.8) * 100),
+  set: (v) => {
+    const pct = Math.min(95, Math.max(5, Math.round(Number(v) || 0)))
+    saveCfg('CONTEXT_COMPRESS_RATIO', pct / 100)
+  },
+})
 
 function loadModelForm() {
   const c = configStore.config
@@ -562,6 +573,33 @@ onMounted(async () => {
           <div class="setting-row">
             <div class="lbl"><div class="t">{{ $t('settings.model.contextWindow') }}</div><div class="d">{{ $t('settings.model.contextWindowDesc') }}</div></div>
             <div class="setting-ctl"><input class="input w-140" type="number" min="0" step="1000" v-model.number="contextWindowSize" /></div>
+          </div>
+        </div>
+        <div class="settings-divider"></div>
+        <div class="settings-group">
+          <div class="settings-group-title">{{ $t('settings.model.ctxTitle') }}</div>
+          <p class="settings-hint">{{ $t('settings.model.ctxHint') }}</p>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">{{ $t('settings.model.ctxMode') }}</div><div class="d">{{ $t('settings.model.ctxModeDesc') }}</div></div>
+            <div class="setting-ctl">
+              <select class="input w-220" v-model="contextLimitMode">
+                <option value="ratio">{{ $t('settings.model.ctxModeRatio') }}</option>
+                <option value="messages">{{ $t('settings.model.ctxModeMessages') }}</option>
+                <option value="tokens">{{ $t('settings.model.ctxModeTokens') }}</option>
+              </select>
+            </div>
+          </div>
+          <div v-if="contextLimitMode === 'ratio'" class="setting-row">
+            <div class="lbl"><div class="t">{{ $t('settings.model.ctxRatio') }}</div><div class="d">{{ $t('settings.model.ctxRatioDesc') }}</div></div>
+            <div class="setting-ctl"><input class="input w-140" type="number" min="5" max="95" step="1" v-model.number="contextCompressPercent" /></div>
+          </div>
+          <div v-if="contextLimitMode === 'messages'" class="setting-row">
+            <div class="lbl"><div class="t">{{ $t('settings.model.ctxMaxMessages') }}</div><div class="d">{{ $t('settings.model.ctxMaxMessagesDesc') }}</div></div>
+            <div class="setting-ctl"><input class="input w-140" type="number" min="0" step="1" v-model.number="contextMaxMessages" /></div>
+          </div>
+          <div v-if="contextLimitMode === 'tokens'" class="setting-row">
+            <div class="lbl"><div class="t">{{ $t('settings.model.ctxMaxTokens') }}</div><div class="d">{{ $t('settings.model.ctxMaxTokensDesc') }}</div></div>
+            <div class="setting-ctl"><input class="input w-160" type="number" min="0" step="1000" v-model.number="contextMaxTokens" /></div>
           </div>
           <div class="text-right">
             <button class="btn btn-sm btn-primary" :disabled="modelSaving" @click="saveModelForm">{{ modelSaving ? $t('settings.model.saving') : $t('settings.model.saveMain') }}</button>

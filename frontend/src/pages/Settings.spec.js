@@ -181,6 +181,34 @@ describe('Settings.vue', () => {
     expect(puts.some((x) => x.url.includes('LARGE_MODEL_API_URL'))).toBe(true)
   })
 
+  it('上下文管理：切换口径保存 CONTEXT_LIMIT_MODE，并持久化条数/比例', async () => {
+    const cfg = mockApi()
+    const w = await mountSettings()
+    await new Promise((r) => setTimeout(r, 20))
+    // 默认 ratio 口径 → 显示触发比例输入，不显示条数输入
+    expect(w.vm.contextLimitMode).toBe('ratio')
+    expect(w.findAll('.setting-row').some((r) => r.text().includes('触发比例'))).toBe(true)
+
+    // 切到「按消息条数」→ 保存口径，条数输入出现
+    const modeSelect = w.findAll('select').find((s) => s.findAll('option').some((o) => o.text().includes('按消息条数')))
+    await modeSelect.setValue('messages')
+    await new Promise((r) => setTimeout(r, 20))
+    expect(cfg.CONTEXT_LIMIT_MODE).toBe('messages')
+    const msgInput = w.findAll('input[type="number"]').find((i) => i.element.value === '20')
+    await msgInput.setValue('60')
+    await new Promise((r) => setTimeout(r, 20))
+    expect(cfg.CHAT_CONTEXT_MAX_MESSAGES).toBe(60)
+
+    // 比例以百分比编辑，落盘为 0–1 小数
+    w.vm.contextCompressPercent = 70
+    await new Promise((r) => setTimeout(r, 20))
+    expect(cfg.CONTEXT_COMPRESS_RATIO).toBeCloseTo(0.7)
+    // 越界收敛到 5–95
+    w.vm.contextCompressPercent = 200
+    await new Promise((r) => setTimeout(r, 20))
+    expect(cfg.CONTEXT_COMPRESS_RATIO).toBeCloseTo(0.95)
+  })
+
   it('OpenRouter：大模型 URL 为 openrouter 时显示「供应商」输入框并保存到 LARGE_MODEL_OPENROUTER_SUPPLIER', async () => {
     mockApi()
     const w = await mountSettings()

@@ -530,6 +530,22 @@ def test_update_config_success(client, reset_rate_limit, fake_settings, monkeypa
     assert body["data"]["new_value"] is True
 
 
+def test_update_config_context_limit_mode(client, reset_rate_limit, fake_settings, monkeypatch):
+    """设置页「上下文管理」：CONTEXT_LIMIT_MODE 可通过 API 修改并立即生效"""
+    from config.settings import Settings
+    _mock_method(monkeypatch, Settings, "save_user_config", return_value=None)
+    resp = client.put("/config/CONTEXT_LIMIT_MODE", json={"value": "messages"})
+    assert resp.status_code == 200
+    assert resp.json()["data"]["new_value"] == "messages"
+    assert fake_settings.CONTEXT_LIMIT_MODE == "messages"
+    # 三项上限同样可改（含 0 = 不限）
+    assert client.put("/config/CHAT_CONTEXT_MAX_MESSAGES", json={"value": 0}).status_code == 200
+    assert client.put("/config/CHAT_CONTEXT_MAX_TOKENS", json={"value": 64000}).status_code == 200
+    assert client.put("/config/CONTEXT_COMPRESS_RATIO", json={"value": 0.9}).status_code == 200
+    assert fake_settings.CHAT_CONTEXT_MAX_MESSAGES == 0
+    assert fake_settings.CONTEXT_COMPRESS_RATIO == 0.9
+
+
 def test_update_config_persists_before_apply(client, reset_rate_limit, fake_settings, monkeypatch):
     """§102：先落盘、再应用——save 收到的是待写入新值，且此时内存仍是旧值"""
     from config.settings import Settings
