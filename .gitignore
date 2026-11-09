@@ -170,6 +170,7 @@ data/pet_memory/
 
 # embedded repo
 Cortico/
+_vidres/
 
 # runtime outputs
 data/output/
