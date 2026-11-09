@@ -57,6 +57,22 @@ async def test_start_new_session_restores_history(monkeypatch):
     assert s.sessions["s1"]["messages"][0]["role"] == "user"
 
 
+async def test_start_restores_history_with_configured_limit(monkeypatch):
+    """重连恢复条数随「上下文管理」配置，不再硬编码 50 条"""
+    import sys, types
+    s = _system()
+    repo = MagicMock()
+    repo.get_recent_messages = MagicMock(return_value=[])
+    repo.create_session = MagicMock()
+    monkeypatch.setattr(s, "_get_session_repo", lambda: repo)
+    cfg = sys.modules["config.settings"]
+    monkeypatch.setattr(cfg, "settings", types.SimpleNamespace(
+        CONTEXT_LIMIT_MODE="messages", CHAT_CONTEXT_MAX_MESSAGES=42,
+        CHAT_CONTEXT_MAX_TOKENS=0, CONTEXT_COMPRESS_RATIO=0.8))
+    await s.start("s1")
+    assert repo.get_recent_messages.call_args.kwargs["limit"] == 42
+
+
 async def test_start_existing_session(monkeypatch):
     s = _system()
     s.sessions["s1"] = {"running": False, "messages": []}
@@ -157,6 +173,30 @@ async def test_budget_trim_under_threshold(monkeypatch):
 async def test_budget_trim_empty():
     s = _system()
     assert s._budget_trim([]) == []
+
+
+async def test_budget_trim_delegates_ratio(monkeypatch):
+    """ratio 缺省传 None，由公共层按设置页口径决定（不再默认 0.8）"""
+    s = _system()
+    fake = MagicMock(return_value=[])
+    monkeypatch.setattr("modules.thinking.context.dialog_memory.budget_trim", fake)
+    messages = [{"content": "x"}]
+    s._budget_trim(messages)
+    assert fake.call_args.kwargs["ratio"] is None
+    fake.reset_mock()
+    s._budget_trim(messages, ratio=0.5)
+    assert fake.call_args.kwargs["ratio"] == 0.5
+
+
+async def test_load_dialog_from_db_delegates_default_limit(monkeypatch):
+    """limit 缺省传 None，让公共层按配置决定读取条数"""
+    s = _system()
+    fake = MagicMock(return_value=[{"role": "user"}])
+    monkeypatch.setattr("modules.thinking.context.dialog_memory.load_dialog_from_db", fake)
+    assert s._load_dialog_from_db("s1") == [{"role": "user"}]
+    assert fake.call_args.kwargs["limit"] is None
+    s._load_dialog_from_db("s1", limit=7)
+    assert fake.call_args.kwargs["limit"] == 7
 
 
 # ── _emit / processing 状态 ────────────────────────────────────────────

@@ -917,6 +917,38 @@ async def test_route_get_context_db_fallback(monkeypatch):
     assert out["data"]["count"] == 1
 
 
+async def test_route_get_context_chatonly_uses_configured_limit(monkeypatch):
+    """chatonly 直读 DB 时条数上限随「上下文管理」配置（不再固定 100）"""
+    import sys, types
+    _set_chatonly(monkeypatch)
+    repo = MagicMock()
+    repo.get_messages = MagicMock(return_value=[])
+    monkeypatch.setattr(cg, "_get_chat_session_repo", lambda: repo)
+    cfg = sys.modules["config.settings"]
+    monkeypatch.setattr(cfg, "settings", types.SimpleNamespace(
+        CONTEXT_LIMIT_MODE="messages", CHAT_CONTEXT_MAX_MESSAGES=33,
+        CHAT_CONTEXT_MAX_TOKENS=0, CONTEXT_COMPRESS_RATIO=0.8))
+    out = await cg.get_context("s1")
+    assert repo.get_messages.call_args.kwargs["limit"] == 33
+    assert out["data"]["count"] == 0
+
+
+async def test_route_get_context_agent_restore_uses_public_loader(monkeypatch):
+    """agent 会话缓存为空时走公共层恢复（不再硬编码 20 条），并同步回缓存"""
+    monkeypatch.setattr(cg, "_resolve_mode", lambda: "agent")
+    monkeypatch.setattr("modules.thinking.api_stream.get_context", AsyncMock(return_value=[]))
+    repo = MagicMock()
+    monkeypatch.setattr(cg, "_get_chat_session_repo", lambda: repo)
+    fake = MagicMock(return_value=[{"role": "user", "content": "x"}])
+    monkeypatch.setattr("modules.thinking.context.dialog_memory.load_dialog_from_db", fake)
+    system = MagicMock()
+    system.sessions = {}
+    monkeypatch.setattr("modules.thinking.api_stream.get_thinking_system", lambda: system)
+    out = await cg.get_context("s1")
+    fake.assert_called_once_with("s1", repo=repo)
+    assert out["data"]["count"] == 1
+
+
 async def test_route_get_context_db_fallback_error(monkeypatch):
     _set_chatonly(monkeypatch)
     repo = MagicMock()

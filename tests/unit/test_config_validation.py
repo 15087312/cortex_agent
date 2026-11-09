@@ -73,6 +73,43 @@ class TestCompressRatioValidation:
 
 
 # ---------------------------------------------------------------------------
+# 上下文管理：CONTEXT_LIMIT_MODE / 条数 / Token 上限
+# ---------------------------------------------------------------------------
+
+class TestContextLimitValidation:
+    def test_defaults_match_settings_page(self):
+        """设置页默认展示的口径与默认值"""
+        fields = Settings.model_fields
+        assert fields["CONTEXT_LIMIT_MODE"].default == "ratio"
+        assert fields["CONTEXT_COMPRESS_RATIO"].default == 0.8
+        assert fields["CHAT_CONTEXT_MAX_MESSAGES"].default == 20
+        assert fields["CHAT_CONTEXT_MAX_TOKENS"].default == 32000
+
+    @pytest.mark.parametrize("mode", ["ratio", "messages", "tokens"])
+    def test_accepts_supported_modes(self, mode):
+        s = _make_settings(CONTEXT_LIMIT_MODE=mode)
+        assert s.CONTEXT_LIMIT_MODE == mode
+
+    def test_mode_is_case_insensitive(self):
+        s = _make_settings(CONTEXT_LIMIT_MODE="MESSAGES")
+        assert s.CONTEXT_LIMIT_MODE == "messages"
+
+    def test_rejects_unknown_mode(self):
+        with pytest.raises(Exception):
+            _make_settings(CONTEXT_LIMIT_MODE="window")
+
+    def test_zero_means_unlimited(self):
+        s = _make_settings(CHAT_CONTEXT_MAX_MESSAGES=0, CHAT_CONTEXT_MAX_TOKENS=0)
+        assert s.CHAT_CONTEXT_MAX_MESSAGES == 0
+        assert s.CHAT_CONTEXT_MAX_TOKENS == 0
+
+    @pytest.mark.parametrize("field", ["CHAT_CONTEXT_MAX_MESSAGES", "CHAT_CONTEXT_MAX_TOKENS"])
+    def test_rejects_negative_limits(self, field):
+        with pytest.raises(Exception):
+            _make_settings(**{field: -1})
+
+
+# ---------------------------------------------------------------------------
 # validate_production
 # ---------------------------------------------------------------------------
 

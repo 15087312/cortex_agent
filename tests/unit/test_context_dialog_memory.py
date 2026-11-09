@@ -95,6 +95,30 @@ def test_load_dialog_from_db_uses_config_limit(monkeypatch, settings_stub):
     assert repo.get_messages.call_args.kwargs["limit"] == 5
 
 
+def test_load_dialog_from_db_scans_all_for_token_mode(settings_stub):
+    """token 口径不预先按条数截短，交给 budget_trim 按预算裁剪"""
+    settings_stub(CONTEXT_LIMIT_MODE="tokens", CHAT_CONTEXT_MAX_TOKENS=100)
+    repo = MagicMock()
+    repo.get_messages = MagicMock(return_value=[])
+    dialog_memory.load_dialog_from_db("s1", repo=repo)
+    assert repo.get_messages.call_args.kwargs["limit"] == dialog_memory.MAX_HISTORY_SCAN
+
+
+def test_load_dialog_from_db_explicit_limit_wins(settings_stub):
+    settings_stub(CONTEXT_LIMIT_MODE="messages", CHAT_CONTEXT_MAX_MESSAGES=5)
+    repo = MagicMock()
+    repo.get_messages = MagicMock(return_value=[])
+    dialog_memory.load_dialog_from_db("s1", limit=3, repo=repo)
+    assert repo.get_messages.call_args.kwargs["limit"] == 3
+
+
+def test_load_dialog_from_db_empty_session_skips_repo(settings_stub):
+    settings_stub()
+    repo = MagicMock()
+    assert dialog_memory.load_dialog_from_db("", repo=repo) == []
+    repo.get_messages.assert_not_called()
+
+
 # ── budget_trim 三种口径 ──────────────────────────────────────────────
 
 def test_budget_trim_messages_mode(settings_stub, engine):
@@ -155,6 +179,30 @@ def test_budget_trim_explicit_overrides(settings_stub, engine):
     settings_stub(CONTEXT_LIMIT_MODE="ratio", CONTEXT_COMPRESS_RATIO=0.8)
     kept = dialog_memory.budget_trim(_msgs(10), mode="messages", max_messages=2)
     assert [m["content"] for m in kept] == ["m8", "m9"]
+
+
+def test_budget_trim_invalid_explicit_mode_falls_back_to_ratio(settings_stub, engine):
+    settings_stub(CONTEXT_LIMIT_MODE="ratio", CONTEXT_COMPRESS_RATIO=0.3)
+    kept = dialog_memory.budget_trim(_msgs(10), mode="bogus")
+    assert [m["content"] for m in kept] == ["m7", "m8", "m9"]
+
+
+def test_budget_trim_explicit_ratio_override(settings_stub, engine):
+    """显式 ratio 优先于设置页的比例（窗口 1000 × 0.5 = 500 → 5 条）"""
+    settings_stub(CONTEXT_LIMIT_MODE="ratio", CONTEXT_COMPRESS_RATIO=0.9)
+    kept = dialog_memory.budget_trim(_msgs(10), ratio=0.5)
+    assert [m["content"] for m in kept] == [f"m{i}" for i in range(5, 10)]
+
+
+def test_context_window_falls_back_to_model_tier(monkeypatch):
+    """CONTEXT_WINDOW_SIZE 未配置时用大模型上下文长度兜底"""
+    cfg_mod = sys.modules["config.settings"]
+    monkeypatch.setattr(
+        cfg_mod,
+        "settings",
+        types.SimpleNamespace(CONTEXT_WINDOW_SIZE=0, get_context_length=lambda tier: 64000),
+    )
+    assert dialog_memory._context_window_size() == 64000
 
 
 def test_budget_trim_empty():

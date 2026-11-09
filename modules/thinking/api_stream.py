@@ -375,7 +375,9 @@ class StreamThinkingSystem:
                 repo = self._get_session_repo()
                 if repo:
                     try:
-                        recent = repo.get_recent_messages(session_id, limit=50)
+                        # 恢复条数随「上下文管理」配置（不再硬编码 50 条）
+                        from modules.thinking.context.dialog_memory import history_read_limit
+                        recent = repo.get_recent_messages(session_id, limit=history_read_limit())
                         if recent:
                             # 过滤思考步骤（thought/process/mental），只恢复真实对话，避免污染模型上下文
                             recent = [m for m in recent if m["role"] not in _NON_DIALOG_ROLES]

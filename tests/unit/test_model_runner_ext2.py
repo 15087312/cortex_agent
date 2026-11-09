@@ -774,6 +774,47 @@ def test_strip_dialog_section():
     assert "【请开始工作】" in out
 
 
+def test_load_structured_history_empty_session():
+    r = _runner(tier="large")
+    r.session_id = ""
+    assert r._load_structured_history() == []
+
+
+def test_load_structured_history_error_returns_empty(monkeypatch):
+    r = _runner(tier="large")
+    r.session_id = "s1"
+    import modules.thinking.context.dialog_memory as dm
+    monkeypatch.setattr(dm, "load_dialog_from_db", lambda sid: (_ for _ in ()).throw(RuntimeError("db down")))
+    assert r._load_structured_history() == []
+
+
+def test_trim_messages_to_budget_keeps_system(monkeypatch):
+    r = _runner(tier="large")
+    import modules.thinking.context.dialog_memory as dm
+    monkeypatch.setattr(dm, "budget_trim", lambda rows: rows[-2:])
+    messages = [
+        ChatMessage(role="system", content="sys"),
+        ChatMessage(role="user", content="u1"),
+        ChatMessage(role="assistant", content="a1"),
+        ChatMessage(role="user", content="u2"),
+    ]
+    r._trim_messages_to_budget(messages)
+    assert [m.content for m in messages] == ["sys", "a1", "u2"]
+
+
+def test_system_prompt_skips_history_for_native_tool_chat(monkeypatch):
+    r = _runner(tier="large")
+    obs = MagicMock()
+    obs.tier = "system"
+    obs.metadata = {"context_type": "conversation_history"}
+    obs.content = "【对话历史】旧内容"
+    r.blackboard.observations = [obs]
+    r._include_system_history = False
+    _stub_composer(monkeypatch)
+    sp = r._build_system_prompt_for_mode()
+    assert "【对话历史】旧内容" not in sp
+
+
 def test_load_structured_history_drops_current_user(monkeypatch):
     r = _runner(tier="large")
     r.session_id = "s1"

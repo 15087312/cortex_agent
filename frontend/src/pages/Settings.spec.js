@@ -209,6 +209,26 @@ describe('Settings.vue', () => {
     expect(cfg.CONTEXT_COMPRESS_RATIO).toBeCloseTo(0.95)
   })
 
+  it('上下文管理：tokens 口径显示 Token 上限输入并持久化', async () => {
+    const cfg = mockApi()
+    const w = await mountSettings()
+    await new Promise((r) => setTimeout(r, 20))
+    // ratio 口径下没有 Token 输入框
+    expect(w.findAll('input[type="number"]').some((i) => i.element.value === '32000')).toBe(false)
+
+    const modeSelect = w.findAll('select').find((s) => s.findAll('option').some((o) => o.text().includes('按 Token')))
+    await modeSelect.setValue('tokens')
+    await new Promise((r) => setTimeout(r, 20))
+    expect(cfg.CONTEXT_LIMIT_MODE).toBe('tokens')
+    expect(w.findAll('.setting-row').some((r) => r.text().includes('触发比例'))).toBe(false)
+
+    const tokenInput = w.findAll('input[type="number"]').find((i) => i.element.value === '32000')
+    expect(tokenInput).toBeTruthy()
+    await tokenInput.setValue('64000')
+    await new Promise((r) => setTimeout(r, 20))
+    expect(cfg.CHAT_CONTEXT_MAX_TOKENS).toBe(64000)
+  })
+
   it('OpenRouter：大模型 URL 为 openrouter 时显示「供应商」输入框并保存到 LARGE_MODEL_OPENROUTER_SUPPLIER', async () => {
     mockApi()
     const w = await mountSettings()
