@@ -1420,15 +1420,17 @@ class ModelRunner:
         """读取当前会话的真实多轮历史，构造 OpenAI messages 结构。
 
         - DB 为唯一真源，过滤 thought/process/mental；
-        - 按设置页上下文口径 budget_trim；
+        - 先完整读取，超阈值由 _maybe_summarize_context 摘要（失败才 budget_trim 兜底）；
         - 剔除本轮 user（本轮问题由 _build_prompt 的【当前任务】承载）。
         """
         if not self.session_id:
             return []
         try:
             from infra.model.base_model import ChatMessage
-            from modules.thinking.context.dialog_memory import budget_trim, load_dialog_from_db
-            rows = budget_trim(load_dialog_from_db(self.session_id))
+            from modules.thinking.context.dialog_memory import load_dialog_from_db
+            # 先加载完整历史；超阈值时由 _maybe_summarize_context 做真正的摘要压缩，
+            # 只有摘要失败才退回 budget_trim（见 _trim_messages_to_budget）。
+            rows = load_dialog_from_db(self.session_id)
             question = str(getattr(self, "_current_question", "") or "").strip()
             if rows and question and str(rows[-1].get("role", "")).lower() == "user":
                 last = str(rows[-1].get("content", "") or "").strip()
@@ -1448,7 +1450,7 @@ class ModelRunner:
     GENERATE_RETRIES = 2         # 模型调用最大重试次数
     GENERATE_RETRY_DELAY = 1.0   # 重试间隔基础值 (指数退避)
 
-    MAX_CHAT_TOOL_TURNS = 300  # 工具循环防死循环兜底轮数（非 token 限制）；上下文超 90% 会自动总结后继续
+    MAX_CHAT_TOOL_TURNS = 300  # 工具循环防死循环兜底轮数（非 token 限制）；超上下文阈值会自动总结后继续
 
     MAX_NO_TOOL_REJECTIONS = 3  # 主管连续无工具调用时注入"拒绝指令"重试的上限，避免空转
 
@@ -2155,11 +2157,22 @@ class ModelRunner:
             text = "\n".join(f"{m.role}: {(m.content or '')[:500]}" for m in messages)
             estimated = engine.estimate_tokens(text)
             window = int(self.context_window_size or 128000)
-            # 使用配置阈值；未配置时回退至模型上下文的 90%
+            # 总结阈值跟随「上下文管理」口径：
+            # - ratio: 与裁剪共用 CONTEXT_COMPRESS_RATIO（默认 80%），避免两个阈值互相打架
+            # - tokens: 使用 CHAT_CONTEXT_MAX_TOKENS
+            # - messages: 用 CHAT_SUMMARY_TRIGGER_TOKENS / 90% 兜底
             from config.settings import settings as _cfg
-            _trigger_cfg = getattr(_cfg, "CHAT_SUMMARY_TRIGGER_TOKENS", 0)
-            trigger = int(_trigger_cfg) if _trigger_cfg else window * 9 // 10
-            threshold = min(window * 9 // 10, trigger)
+            from modules.thinking.context.dialog_memory import context_config
+            _ctx = context_config()
+            _mode = _ctx["mode"]
+            if _mode == "ratio":
+                trigger = int(window * _ctx["ratio"])
+            elif _mode == "tokens" and _ctx["max_tokens"] > 0:
+                trigger = int(_ctx["max_tokens"])
+            else:
+                _trigger_cfg = getattr(_cfg, "CHAT_SUMMARY_TRIGGER_TOKENS", 0)
+                trigger = int(_trigger_cfg) if _trigger_cfg else window * 9 // 10
+            threshold = min(window * 9 // 10, trigger) if trigger > 0 else window * 9 // 10
             # 同步当前上下文占用到 thinker，供前端展示真实占用（含工具历史，非仅初始 prompt）
             try:
                 if self._thinker is not None:
@@ -2169,30 +2182,73 @@ class ModelRunner:
             if estimated <= threshold:
                 return False
             logger.info(
-                f"[ModelRunner] {self.model_id} 上下文占用 {estimated}/{window} token 超 {trigger}，"
+                f"[ModelRunner] {self.model_id} 上下文占用 {estimated}/{window} token 超 {threshold}，"
                 f"调当前模型总结后继续"
             )
-            summary = await self._summarize(messages)
+            # 只总结更早部分，最近几轮完整对话原样保留。
+            # 切分点必须落在 user 消息前，避免把 assistant.tool_calls 与 tool 结果拆开。
+            if messages and messages[0].role == "system":
+                system_prompt_orig = messages[0].content or "你是智能助手。"
+                body = messages[1:]
+            else:
+                system_prompt_orig = "你是智能助手。"
+                body = messages
+
+            user_indexes = [i for i, m in enumerate(body) if m.role == "user"]
+            keep_turns = 4
+            if len(user_indexes) > 1:
+                # 至少留一个更早轮次给摘要，剩余最近 1~4 轮完整保留。
+                keep_turns = min(keep_turns, len(user_indexes) - 1)
+                split = user_indexes[-keep_turns]
+                old_messages = body[:split]
+                recent_messages = body[split:]
+            else:
+                # 只有本轮 user 时没有更早轮次可保留；总结整段工具循环，
+                # 用本轮任务作为最后一条 user 继续。
+                old_messages = body
+                recent_messages = [ChatMessage(role="user", content=user_prompt)]
+
+            summary = await self._summarize(old_messages)
             if not summary or not summary.strip():
-                logger.warning(f"[ModelRunner] {self.model_id} 自动总结失败，继续原上下文")
+                logger.warning(f"[ModelRunner] {self.model_id} 自动总结失败，回退到预算裁剪")
+                self._trim_messages_to_budget(messages)
                 return False
-            # 替换 messages：保留 system + 摘要 + 原任务，不再保留原始对话（已被摘要覆盖）
-            system_prompt_orig = messages[0].content if messages[0].role == "system" else ""
+            # 摘要单独作为 system 消息；最近几轮保持 user/assistant/tool 原结构。
             messages[:] = [
-                ChatMessage(role="system", content=system_prompt_orig or "你是智能助手。"),
-                ChatMessage(
-                    role="user",
-                    content=(
-                        f"【历史上下文已自动总结】\n{summary}\n\n"
-                        f"原任务：{user_prompt}\n请基于以上摘要继续完成当前任务，不要重复已完成的工作。"
-                    ),
-                ),
+                ChatMessage(role="system", content=system_prompt_orig),
+                ChatMessage(role="system", content=f"【更早对话摘要】\n{summary.strip()}"),
+                *recent_messages,
             ]
             self._record_context_summary(summary)
+            logger.info(
+                f"[ModelRunner] 上下文总结压缩完成: 旧消息 {len(old_messages)} 条 → 摘要, "
+                f"保留最近 {max(1, len(user_indexes)) if len(user_indexes) <= keep_turns else keep_turns} 轮"
+            )
             return True
         except Exception as e:
             logger.debug(f"[ModelRunner] 上下文总结检查失败 (非致命): {e}")
             return False
+
+    def _trim_messages_to_budget(self, messages: list) -> None:
+        """摘要失败时的安全兜底：按上下文口径截断最旧消息，保证请求不超窗。"""
+        try:
+            from infra.model.base_model import ChatMessage
+            from modules.thinking.context.dialog_memory import budget_trim
+            if not messages:
+                return
+            base = messages[0] if messages[0].role == "system" else None
+            body = messages[1:] if base is not None else messages
+            rows = [{"role": self._to_chat_role(m.role), "content": m.content or ""} for m in body]
+            kept = budget_trim(rows)
+            if len(kept) >= len(rows):
+                return
+            messages[:] = ([base] if base is not None else []) + [
+                ChatMessage(role=self._to_chat_role(m.get("role")), content=m.get("content", ""))
+                for m in kept
+            ]
+            logger.info(f"[ModelRunner] 摘要失败，已按预算兜底裁剪: {len(rows)} → {len(kept)} 条")
+        except Exception as e:
+            logger.debug(f"[ModelRunner] 兜底裁剪失败 (非致命): {e}")
 
     async def _summarize(self, messages: list) -> str:
         """调当前模型对已有工具循环上下文做精炼总结，返回摘要文本"""
@@ -2202,11 +2258,11 @@ class ModelRunner:
                 f"[{m.role}] {(m.content or '')[:2000]}" for m in messages
             )
             prompt = (
-                "你是一个上下文总结器。以下是一段工具调用/思考历史，请精炼总结：\n"
+                "你是一个上下文总结器。以下是一段更早的对话/工具调用历史，请精炼总结：\n"
                 "1. 已完成的目标和关键结论\n"
                 "2. 尚未完成的任务和下一步\n"
                 "3. 重要的工具调用结果\n"
-                "要求：保留关键信息，去掉无关细节，直接输出总结，不要客套。\n\n"
+                "要求：保留关键事实、决定和未完成事项，去掉无关细节；简洁优先，一段话即可（可以是一行），直接输出总结，不要客套。\n\n"
                 f"上下文历史：\n{text}"
             )
             client = getattr(self.instance, "client", None)

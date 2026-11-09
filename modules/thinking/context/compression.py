@@ -3,8 +3,8 @@ Token 计数器（原 CompressionEngine，现统一委托 ContextController）
 
 历史说明：本模块曾有 5 级规则压缩（去空行/头尾截断等），已按设计决策移除。
 token 控制统一交由 LLM 总结机制处理：
-- 工具循环超限：ModelRunner._maybe_summarize_context（上下文超 90% 时调当前模型总结）
-- 会话历史裁剪：chat_light/context_slicer.ContextSlicer（旧消息 LLM 总结）
+- 工具循环超限：ModelRunner._maybe_summarize_context（按上下文管理阈值调当前模型总结）
+- 会话历史裁剪：dialog_memory.budget_trim（按 context 口径截断，不做 LLM 总结）
 - TurnContext._compact 超限仅告警，不做硬裁剪
 
 现统一为 token 计数（非粗估）：

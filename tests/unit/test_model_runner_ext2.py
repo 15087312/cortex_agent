@@ -793,6 +793,37 @@ def test_load_structured_history_drops_current_user(monkeypatch):
     ]
 
 
+async def test_generate_with_tools_summarizes_large_initial_history(monkeypatch):
+    """首次加载历史超阈值 → 先摘要，再发结构化 messages（不是直接截断）。"""
+    r, _ = _tool_runner(monkeypatch, tier="large")
+    from modules.thinking.identity import ModelIdentity
+    r.instance.identity = ModelIdentity(model_id="large_primary", tier="large", context_length=100)
+    import modules.thinking.context.compression as cc
+    engine = MagicMock()
+    engine.estimate_tokens.return_value = 123
+    monkeypatch.setattr(cc, "get_compression_engine", lambda: engine)
+    history = [
+        ChatMessage(role="user", content="u1"), ChatMessage(role="assistant", content="a1"),
+        ChatMessage(role="user", content="u2"), ChatMessage(role="assistant", content="a2"),
+        ChatMessage(role="user", content="u3"), ChatMessage(role="assistant", content="a3"),
+        ChatMessage(role="user", content="u4"), ChatMessage(role="assistant", content="a4"),
+    ]
+    r._load_structured_history = lambda: list(history)
+    r._summarize = AsyncMock(return_value="旧历史摘要")
+    r._push_stream_chunk = MagicMock()
+    client = _chat_client(_resp(content="最终回答"))
+    out = await r._generate_with_tools("system", "当前问题", client)
+    assert out == "最终回答"
+    msgs = client.chat.call_args.kwargs["messages"]
+    assert msgs[0].role == "system"
+    assert msgs[1].role == "system"
+    assert "旧历史摘要" in msgs[1].content
+    # u1/a1 被摘要，最近从 u2 开始完整保留
+    assert [m.content for m in msgs[2:]] == [
+        "u2", "a2", "u3", "a3", "u4", "a4", "当前问题",
+    ]
+
+
 async def test_generate_with_tools_uses_structured_history(monkeypatch):
     r, _ = _tool_runner(monkeypatch, tier="large")
     r._load_structured_history = lambda: [
@@ -2675,12 +2706,56 @@ async def test_maybe_summarize_context_threshold(monkeypatch):
     messages = [ChatMessage(role="system", content="你是助手。"),
                 ChatMessage(role="user", content="请完成一个非常长的任务。")]
     ok = await r._maybe_summarize_context(messages, "原任务")
-    assert messages[1].role == "user"
-    assert "自动总结" in messages[1].content or "总结" in messages[1].content
+    assert messages[0].role == "system"
+    assert messages[1].role == "system"
+    assert "更早对话摘要" in messages[1].content
+    assert "总结摘要" in messages[1].content
+    assert messages[2].role == "user"
     # 落黑板 observation
     obs = [o for o in bb.observations if o.metadata.get("context_type") == "tool_loop_summary"]
     assert len(obs) == 1
     assert "总结摘要" in obs[0].content
+
+
+async def test_maybe_summarize_keeps_recent_turns(monkeypatch):
+    """摘要只压缩更早对话，最近 4 个完整 user 轮次原样保留。"""
+    r, mcp = _tool_runner(monkeypatch, tier="large")
+    from modules.thinking.identity import ModelIdentity
+    r.instance.identity = ModelIdentity(model_id="large_primary", tier="large", context_length=100)
+    r._summarize = AsyncMock(return_value="旧对话摘要")
+    messages = [ChatMessage(role="system", content="你是助手。")]
+    for i in range(1, 6):
+        messages.append(ChatMessage(role="user", content=f"u{i}"))
+        if i < 5:
+            messages.append(ChatMessage(role="assistant", content=f"a{i}"))
+    ok = await r._maybe_summarize_context(messages, "u5")
+    assert ok is True
+    assert messages[0].content == "你是助手。"
+    assert messages[1].role == "system" and "旧对话摘要" in messages[1].content
+    # 最近 4 轮从 u2 开始，u1/a1 被摘要替换
+    assert [m.content for m in messages[2:]] == [
+        "u2", "a2", "u3", "a3", "u4", "a4", "u5",
+    ]
+
+
+async def test_maybe_summarize_ratio_trigger(monkeypatch):
+    """ratio 模式：总结阈值跟随 CONTEXT_COMPRESS_RATIO，而不是固定 90%。"""
+    r, mcp = _tool_runner(monkeypatch, tier="large")
+    from modules.thinking.identity import ModelIdentity
+    r.instance.identity = ModelIdentity(model_id="large_primary", tier="large", context_length=100)
+    import modules.thinking.context.compression as cc
+    engine = MagicMock()
+    engine.estimate_tokens.return_value = 60
+    monkeypatch.setattr(cc, "get_compression_engine", lambda: engine)
+    from config.settings import settings
+    monkeypatch.setattr(settings, "CONTEXT_LIMIT_MODE", "ratio")
+    monkeypatch.setattr(settings, "CONTEXT_COMPRESS_RATIO", 0.5)
+    r._summarize = AsyncMock(return_value="摘要")
+    messages = [ChatMessage(role="system", content="s"), ChatMessage(role="user", content="u")]
+    ok = await r._maybe_summarize_context(messages, "任务")
+    assert ok is True
+    assert messages[1].role == "system"
+    assert "摘要" in messages[1].content
 
 
 async def test_maybe_summarize_context_below(monkeypatch):
