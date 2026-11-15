@@ -42,6 +42,21 @@ class PetMemoryBank:
 
     @classmethod
     def get_instance(cls) -> "PetMemoryBank":
+        """端口优先取桌宠事件记忆库：接管 ``pet_memory_bank`` 端口 = 换掉全部调用点。
+
+        内置单例挪进 ``_builtin_instance``，bootstrap 给这条端口的 provider 指的也是
+        它 —— 指回本函数就是 端口→本函数→端口 的一调用即递归，那种接线由
+        scripts/seam_catalogue.py 在生成目录时判错。
+        """
+        from infra.tool_manager.service_registry import get_capability
+
+        factory = get_capability("pet_memory_bank")
+        if factory is not None:
+            return factory()
+        return cls._builtin_instance()
+
+    @classmethod
+    def _builtin_instance(cls) -> "PetMemoryBank":
         if cls._instance is None:
             with cls._lock:
                 if cls._instance is None:

@@ -4,7 +4,6 @@
 新代码请直接 `from infra.error_bus import ...`。
 """
 from infra.error_bus import (  # noqa: F401  re-export
-    error_bus,
     get_error_bus,
     ErrorContext,
     ErrorReport,
@@ -12,4 +11,4 @@ from infra.error_bus import (  # noqa: F401  re-export
     _setup_global_logger,
 )
 
-__all__ = ["error_bus", "get_error_bus", "ErrorContext", "ErrorReport", "GlobalErrorBus", "_setup_global_logger"]
+__all__ = ["get_error_bus", "ErrorContext", "ErrorReport", "GlobalErrorBus", "_setup_global_logger"]

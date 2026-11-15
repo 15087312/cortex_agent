@@ -192,7 +192,7 @@ def test_resolve_identity_name(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_post_task_extraction(monkeypatch):
+async def test_post_task_extraction(monkeypatch, take_over):
     from modules.thinking import api_stream as ap
     import modules.memory.event_reducer as er_mod
     import modules.memory.event_store as es_mod
@@ -204,7 +204,7 @@ async def test_post_task_extraction(monkeypatch):
     reducer.reduce.return_value = {"events": []}
     monkeypatch.setattr(er_mod, "EventReducer", lambda **kw: reducer)
     monkeypatch.setattr(es_mod.EventStore, "get_instance", classmethod(lambda cls: MagicMock()))
-    monkeypatch.setattr(emb_mod.EmbeddingEngine, "get_instance", classmethod(lambda cls: MagicMock()))
+    take_over("embedding_engine", lambda: MagicMock())
     monkeypatch.setattr(ap, "asyncio", __import__("asyncio"))
     # 避免 sleep(30)：传 owner_id 后 sleep(0)
     sys = ap.StreamThinkingSystem.__new__(ap.StreamThinkingSystem)

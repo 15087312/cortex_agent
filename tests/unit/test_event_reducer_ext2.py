@@ -105,10 +105,9 @@ def test_fallback_summary_problem_and_plain():
 
 # ── 默认注入 ──────────────────────────────────────────────────────────
 
-def test_get_embedder_default(monkeypatch):
-    from modules.memory.embedding import EmbeddingEngine
+def test_get_embedder_default(monkeypatch, take_over):
     fake = MagicMock()
-    monkeypatch.setattr(EmbeddingEngine, "get_instance", staticmethod(lambda: fake))
+    take_over("embedding_engine", lambda: fake)
     r = EventReducer()
     assert r._get_embedder() is fake
 

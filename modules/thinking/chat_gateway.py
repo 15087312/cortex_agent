@@ -236,6 +236,7 @@ async def _consume_turn(
     thinker,
     content: str,
     web_search: bool = False,
+    skill_id: str = "",
 ) -> None:
     """消费一次思考回合：把 backend 简单事件翻译成统一 envelope 流式输出。
 
@@ -261,7 +262,7 @@ async def _consume_turn(
     except Exception as e:
         logger.debug(f"[chat_gateway] 对话握手失败 (非致命): {e}")
     think_task = asyncio.create_task(thinker.think(
-        session_id, content, queue, enable_web_search=web_search,
+        session_id, content, queue, enable_web_search=web_search, skill_id=skill_id,
     ))
     full_text = []
     done = False
@@ -552,7 +553,7 @@ async def _chatonly_ws(websocket: WebSocket, session_id: str) -> None:
                 from modules.thinking.turn_images import set_turn_images
                 set_turn_images(att_images or None)
                 active_task = asyncio.create_task(
-                    _consume_turn(websocket, session_id, repo, _get_chat_thinker(), content, web_search=bool(msg.get("web_search", False)))
+                    _consume_turn(websocket, session_id, repo, _get_chat_thinker(), content, web_search=bool(msg.get("web_search", False)), skill_id=str(msg.get("skill_id") or ""))
                 )
                 # 注册到全局表，供 REST /stream/stop 跨连接取消
                 _CHATONLY_TASKS[session_id] = active_task

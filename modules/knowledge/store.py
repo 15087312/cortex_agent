@@ -124,6 +124,22 @@ class KnowledgeStore:
 
     @classmethod
     def get_instance(cls, **kwargs) -> "KnowledgeStore":
+        """端口优先取知识库存储：接管 ``knowledge_store`` 端口 = 换掉全部调用点。
+
+        内置单例挪进 ``_builtin_instance``，bootstrap 给这条端口的 provider 指的也是
+        它 —— 指回本函数就是 端口→本函数→端口 的一调用即递归，那种接线由
+        scripts/seam_catalogue.py 在生成目录时判错。
+        带参数的调用点在接管后不再传参：插件自己决定用什么构造，原来的参数只喂内置实现。
+        """
+        from infra.tool_manager.service_registry import get_capability
+
+        factory = get_capability("knowledge_store")
+        if factory is not None:
+            return factory()
+        return cls._builtin_instance(**kwargs)
+
+    @classmethod
+    def _builtin_instance(cls, **kwargs) -> "KnowledgeStore":
         if cls._instance is None:
             with cls._instance_lock:
                 if cls._instance is None:
@@ -393,8 +409,8 @@ class KnowledgeStore:
                     logger.warning(f"[knowledge] 注入向量化失败: {e}")
                     out.append(None)
             return out
-        from modules.memory.embedding import EmbeddingEngine
-        return EmbeddingEngine.get_instance().embed_batch(texts)
+        from modules.memory.embedding import get_embedding_engine
+        return get_embedding_engine().embed_batch(texts)
 
     def embed_texts(self, texts: List[str]) -> List[Optional[List[float]]]:
         """批量向量化（供 ingestor 使用；失败位置为 None，不抛错）。"""

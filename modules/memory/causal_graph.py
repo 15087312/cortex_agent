@@ -149,6 +149,22 @@ class CausalGraph:
 
     @classmethod
     def get_instance(cls, **kwargs) -> "CausalGraph":
+        """端口优先取因果图：接管 ``causal_graph`` 端口 = 换掉全部调用点。
+
+        内置单例挪进 ``_builtin_instance``，bootstrap 给这条端口的 provider 指的也是
+        它 —— 指回本函数就是 端口→本函数→端口 的一调用即递归，那种接线由
+        scripts/seam_catalogue.py 在生成目录时判错。
+        带参数的调用点在接管后不再传参：插件自己决定用什么构造，原来的参数只喂内置实现。
+        """
+        from infra.tool_manager.service_registry import get_capability
+
+        factory = get_capability("causal_graph")
+        if factory is not None:
+            return factory()
+        return cls._builtin_instance(**kwargs)
+
+    @classmethod
+    def _builtin_instance(cls, **kwargs) -> "CausalGraph":
         if cls._instance is None:
             with cls._lock:
                 if cls._instance is None:
@@ -587,8 +603,8 @@ class CausalGraph:
         # ── 2. 语义相似度（新增）──
         semantic_scores: Dict[str, float] = {}
         try:
-            from modules.memory.embedding import EmbeddingEngine
-            embedder = EmbeddingEngine.get_instance()
+            from modules.memory.embedding import get_embedding_engine
+            embedder = get_embedding_engine()
 
             # 获取所有节点（用于批量向量化）
             all_rows = conn.execute("SELECT * FROM nodes").fetchall()

@@ -696,9 +696,20 @@ def main():
             # 打包版不内置桌宠进程（避免额外打包一个 Qt 可执行文件）
             print("[..] 打包版跳过独立桌宠进程")
             return
+        import json as _json
+        import urllib.request as _urlreq
         try:
-            import json as _json
-            import urllib.request as _urlreq
+            # 遵循上次的设置：~/.cortex/settings.json 里 DESKTOP_PET_ENABLED=false 时
+            # 不自动拉起桌宠，避免用户每次打开项目都被重新弹出桌宠。
+            with _urlreq.urlopen(_backend_base() + "/config", timeout=5) as resp:
+                _cfg = (_json.loads(resp.read().decode("utf-8") or "{}") or {}).get("data") or {}
+            if _cfg.get("DESKTOP_PET_ENABLED") is False:
+                print("[..] 桌宠已关闭（遵循上次设置），不自动启动", flush=True)
+                return
+        except Exception:
+            # 读不到配置时继续走下面的启动请求，由后端 window_supervisor 再校验一次
+            pass
+        try:
             req = _urlreq.Request(
                 _backend_base() + "/stream/pet/window/start",
                 data=_json.dumps({}).encode("utf-8"),

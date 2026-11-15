@@ -102,6 +102,21 @@ _service: Optional[KnowledgeService] = None
 
 
 def get_knowledge_service() -> KnowledgeService:
+    """端口优先取知识库服务：接管 ``knowledge_base`` 端口 = 换掉全部调用点。
+
+    取不到端口才回退内置单例（脚本、没跑过 bootstrap 的入口）。bootstrap 注册
+    的 provider 必须是 ``_default_knowledge_service`` 而不是本函数，否则端口→本函数→端口
+    一调用就递归。
+    """
+    from infra.tool_manager.service_registry import get_capability
+
+    factory = get_capability("knowledge_base")
+    if factory is None:
+        return _default_knowledge_service()
+    return factory()
+
+
+def _default_knowledge_service() -> KnowledgeService:
     global _service
     if _service is None:
         _service = KnowledgeService()

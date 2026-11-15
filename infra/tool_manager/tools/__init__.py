@@ -4,13 +4,14 @@
 设计意图：
   新增工具只需在 tools/ 下创建 .py 文件并使用 @ToolRegistry.register 装饰器，
   无需手动 import，自动发现并注册。
+
+这里是 import 期注册的**唯一**允许范围：内置工具声明自己拥有的槽，随模块 import
+一次生效、进程生命周期内不换。凡是「持久化的 / 模型自己写的 / 需要能卸掉」的
+注册都不许写在这里——import 期的副作用不可撤销，见文件末尾两条迁移记录。
 """
 import importlib
 import pkgutil
 from pathlib import Path
-
-from utils.logger import get_logger
-logger = get_logger(__name__)
 
 _package_dir = Path(__file__).parent
 
@@ -29,11 +30,8 @@ for _module_info in pkgutil.iter_modules([str(_package_dir)]):
 # memory_match / memory_score / memory_batch_filter / event_query 取代。
 # 此处不再尝试导入，避免误导性告警日志。
 
-# 启动时恢复 AI 自创工具（从 data/ai_tools.json 持久化存储）
-try:
-    from .ai_tools import restore_ai_tools
-    restore_ai_tools()
-except Exception as e:
-    logger.warning(f"AI 自创工具恢复失败: {e}")
+# AI 自创工具的恢复（读 data/ai_tools.json 并 exec 模型自己写的源码）同样已移到
+# bootstrap.register_business_capabilities()：import 期做的注册不可撤销，而且它把
+# 「谁覆盖了谁」交给了一次不保证顺序的副作用。
 
 __all__ = _imported

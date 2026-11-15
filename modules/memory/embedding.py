@@ -33,6 +33,21 @@ class EmbeddingEngine:
 
     @classmethod
     def get_instance(cls) -> "EmbeddingEngine":
+        """端口优先取向量化引擎：接管 ``embedding_engine`` 端口 = 换掉全部调用点。
+
+        内置单例挪进 ``_builtin_instance``，bootstrap 给这条端口的 provider 指的也是
+        它 —— 指回本函数就是 端口→本函数→端口 的一调用即递归，那种接线由
+        scripts/seam_catalogue.py 在生成目录时判错。
+        """
+        from infra.tool_manager.service_registry import get_capability
+
+        factory = get_capability("embedding_engine")
+        if factory is not None:
+            return factory()
+        return cls._builtin_instance()
+
+    @classmethod
+    def _builtin_instance(cls) -> "EmbeddingEngine":
         if cls._instance is None:
             with cls._lock:
                 if cls._instance is None:
@@ -197,3 +212,17 @@ class EmbeddingEngine:
         except Exception as e:
             logger.warning(f"[Embedding] 批量编码失败: {e}")
             return [None] * len(texts)
+
+
+def get_embedding_engine() -> "EmbeddingEngine":
+    """端口优先取向量化引擎：接管 ``embedding_engine`` 端口 = 换掉全部调用点。
+
+    取不到端口才回退内置单例（脚本、没跑过 bootstrap 的入口）。bootstrap 那边注册
+    的 provider 必须是内置访问器而不是本函数，否则端口→本函数→端口 一调用就递归。
+    """
+    from infra.tool_manager.service_registry import get_capability
+
+    factory = get_capability("embedding_engine")
+    if factory is None:
+        return EmbeddingEngine.get_instance()
+    return factory()

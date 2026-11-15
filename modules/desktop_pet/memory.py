@@ -31,6 +31,21 @@ class PetMemory:
 
     @classmethod
     def get_instance(cls) -> "PetMemory":
+        """端口优先取桌宠记忆：接管 ``pet_memory`` 端口 = 换掉全部调用点。
+
+        内置单例挪进 ``_builtin_instance``，bootstrap 给这条端口的 provider 指的也是
+        它 —— 指回本函数就是 端口→本函数→端口 的一调用即递归，那种接线由
+        scripts/seam_catalogue.py 在生成目录时判错。
+        """
+        from infra.tool_manager.service_registry import get_capability
+
+        factory = get_capability("pet_memory")
+        if factory is not None:
+            return factory()
+        return cls._builtin_instance()
+
+    @classmethod
+    def _builtin_instance(cls) -> "PetMemory":
         if cls._instance is None:
             with cls._lock:
                 if cls._instance is None:
@@ -51,8 +66,8 @@ class PetMemory:
 
         # 向量检索
         try:
-            from modules.memory.embedding import EmbeddingEngine
-            engine = EmbeddingEngine.get_instance()
+            from modules.memory.embedding import get_embedding_engine
+            engine = get_embedding_engine()
             qv = engine.embed(query) if query else None
             if qv is not None:
                 rows = self._rank_by_vector(pool, qv)
@@ -83,8 +98,8 @@ class PetMemory:
             if not text:
                 continue
             try:
-                from modules.memory.embedding import EmbeddingEngine
-                mv = EmbeddingEngine.get_instance().embed(text)
+                from modules.memory.embedding import get_embedding_engine
+                mv = get_embedding_engine().embed(text)
             except Exception:
                 mv = None
             if not mv:

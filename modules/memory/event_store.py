@@ -115,6 +115,22 @@ class EventStore:
 
     @classmethod
     def get_instance(cls, **kwargs) -> "EventStore":
+        """端口优先取事件存储：接管 ``event_store`` 端口 = 换掉全部调用点。
+
+        内置单例挪进 ``_builtin_instance``，bootstrap 给这条端口的 provider 指的也是
+        它 —— 指回本函数就是 端口→本函数→端口 的一调用即递归，那种接线由
+        scripts/seam_catalogue.py 在生成目录时判错。
+        带参数的调用点在接管后不再传参：插件自己决定用什么构造，原来的参数只喂内置实现。
+        """
+        from infra.tool_manager.service_registry import get_capability
+
+        factory = get_capability("event_store")
+        if factory is not None:
+            return factory()
+        return cls._builtin_instance(**kwargs)
+
+    @classmethod
+    def _builtin_instance(cls, **kwargs) -> "EventStore":
         if cls._instance is None:
             with cls._lock:
                 if cls._instance is None:
@@ -240,8 +256,8 @@ class EventStore:
         # 自动向量化 — 确保每个事件都有 FAISS 向量
         if event.embedding is None:
             try:
-                from modules.memory.embedding import EmbeddingEngine
-                eng = EmbeddingEngine.get_instance()
+                from modules.memory.embedding import get_embedding_engine
+                eng = get_embedding_engine()
                 # 模型已加载时直接向量化；未加载时跳过（由 EventReducer 或后台线程处理）
                 if eng._loaded:
                     text = f"{event.fact} {event.thought} {event.lesson} {' '.join(event.keywords)}".strip()
@@ -275,8 +291,8 @@ class EventStore:
             try:
                 import time
                 time.sleep(2)  # 等待模型可能加载完成
-                from modules.memory.embedding import EmbeddingEngine
-                eng = EmbeddingEngine.get_instance()
+                from modules.memory.embedding import get_embedding_engine
+                eng = get_embedding_engine()
                 if not (eng._loaded or eng._attempted):
                     self._embedding_worker_started = False
                     return
@@ -385,8 +401,8 @@ class EventStore:
     def _get_embedding_dim(self) -> int:
         """获取实际 embedding 维度"""
         if self._embedding_dim is None:
-            from modules.memory.embedding import EmbeddingEngine
-            eng = EmbeddingEngine.get_instance()
+            from modules.memory.embedding import get_embedding_engine
+            eng = get_embedding_engine()
             # 触发模型加载以获取维度
             if not eng._load_model():
                 raise RuntimeError("Embedding 模型加载失败，无法获取向量维度")

@@ -220,7 +220,7 @@ def test_health_ok(client, reset_rate_limit, monkeypatch):
     db = MagicMock()
     db.get_session.return_value = MagicMock()
     monkeypatch.setattr("modules.thinking.model_factory.get_model_factory", lambda: mf)
-    monkeypatch.setattr("modules.database.connection.db_manager", db)
+    monkeypatch.setattr("modules.database.connection.get_db_manager", lambda: db)
     resp = client.get("/health")
     assert resp.status_code == 200
     body = resp.json()
@@ -235,7 +235,7 @@ def test_health_degraded(client, reset_rate_limit, monkeypatch):
     db = MagicMock()
     db.get_session.side_effect = RuntimeError("db down")
     monkeypatch.setattr("modules.thinking.model_factory.get_model_factory", lambda: mf)
-    monkeypatch.setattr("modules.database.connection.db_manager", db)
+    monkeypatch.setattr("modules.database.connection.get_db_manager", lambda: db)
     resp = client.get("/health")
     assert resp.status_code == 200
     body = resp.json()
@@ -249,7 +249,7 @@ def test_health_factory_exception(client, reset_rate_limit, monkeypatch):
         "modules.thinking.model_factory.get_model_factory", MagicMock(side_effect=RuntimeError("no factory"))
     )
     db = MagicMock()
-    monkeypatch.setattr("modules.database.connection.db_manager", db)
+    monkeypatch.setattr("modules.database.connection.get_db_manager", lambda: db)
     resp = client.get("/health")
     assert resp.json()["data"]["checks"]["model_manager"] == "unavailable"
     assert resp.json()["data"]["status"] == "degraded"
@@ -410,9 +410,9 @@ def test_validation_error_handler(client, reset_rate_limit):
     assert resp.json()["error"]["message"]
 
 
-def test_general_exception_handler(client, no_auth, reset_rate_limit, monkeypatch):
+def test_general_exception_handler(client, no_auth, reset_rate_limit, monkeypatch, take_over):
     from api.main import app
-    monkeypatch.setattr("modules.management.core.error_bus.error_bus", MagicMock())
+    take_over("error_bus", MagicMock)
 
     @app.get("/__generr__")
     async def _boom():
@@ -1079,7 +1079,7 @@ def test_api_log_empty_response_body(client, reset_rate_limit, no_auth, _mock_ap
 # lifespan（生命周期）
 # ---------------------------------------------------------------------------
 
-def _patch_lifespan(monkeypatch, tmp_path):
+def _patch_lifespan(monkeypatch, tmp_path, take_over):
     import pathlib
     from config.settings import Settings
     import api.main as m
@@ -1098,7 +1098,7 @@ def _patch_lifespan(monkeypatch, tmp_path):
     eng = MagicMock()
     eng._load_model.return_value = True
     eng.dim = 128
-    monkeypatch.setattr("modules.memory.embedding.EmbeddingEngine.get_instance", staticmethod(lambda: eng))
+    take_over("embedding_engine", lambda: eng)
     mocks["eng"] = eng
 
     analyzer = AsyncMock()
@@ -1121,7 +1121,7 @@ def _patch_lifespan(monkeypatch, tmp_path):
     mocks["cm"] = cm
 
     bus = MagicMock()
-    monkeypatch.setattr("infra.error_bus.error_bus", bus)
+    take_over("error_bus", lambda: bus)
     mocks["bus"] = bus
 
     ps = MagicMock()
@@ -1150,14 +1150,25 @@ def _patch_lifespan(monkeypatch, tmp_path):
     monkeypatch.setattr("utils.autostart.apply", mocks["autostart"])
 
     db = MagicMock()
-    monkeypatch.setattr("modules.database.connection.db_manager", db)
+    monkeypatch.setattr("modules.database.connection.get_db_manager", lambda: db)
     mocks["db"] = db
+
+    # 自制插件恢复这一段不 mock：它是 B5 接的入口，mock 掉就等于下面 133 条用例
+    # 全都在走一条不存在的路径。真实执行的前提是「盘上没东西」——把存储文件挪到
+    # tmp，并且把单例 reset：不 reset 的话别的用例留下的实例还指着仓库 data/，
+    # 测试就会读到（并挂上）别人写的源码。
+    import modules.shared.plugin_authoring as pa
+
+    monkeypatch.setenv("CORTEX_AUTHORED_PLUGINS_FILE", str(tmp_path / "authored.json"))
+    monkeypatch.setattr(pa, "_default_store", None)
+    mocks["pa"] = pa
+    mocks["authored_file"] = tmp_path / "authored.json"
     return mocks
 
 
 @pytest.fixture
-def life(monkeypatch, tmp_path):
-    return _patch_lifespan(monkeypatch, tmp_path)
+def life(monkeypatch, tmp_path, take_over):
+    return _patch_lifespan(monkeypatch, tmp_path, take_over)
 
 
 def test_lifespan_startup_success(life):
@@ -1356,6 +1367,149 @@ def test_lifespan_perception_and_diff_disabled(life):
     assert not life["src"].start.called
     assert not life["hb"].start.called
     assert not life["ps"].stop.called
+
+
+# ---------------------------------------------------------------------------
+# lifespan 退出栈：上面 133 条已经证明重构保住了旧语义，下面三条证明新语义 ——
+# 配对由结构保证、撤销必然逆序、启动中途失败也要回滚已起的部分。
+# ---------------------------------------------------------------------------
+
+def _patch_pet_and_tasks(monkeypatch, life):
+    """桌宠引擎与会话定时任务换成可断言的 mock（fixture 默认走真实单例）。"""
+    pet = MagicMock()
+    monkeypatch.setattr(
+        "modules.desktop_pet.pet_engine.PetEngine.get_instance",
+        staticmethod(lambda event_bus=None: pet),
+    )
+    tasks = MagicMock()
+    monkeypatch.setattr("modules.thinking.scheduled_tasks.get_task_manager", lambda: tasks)
+    life["pet"] = pet
+    life["tasks"] = tasks
+    return life
+
+
+def test_lifespan_pairs_every_started_component(life, monkeypatch):
+    from api.main import app
+    _patch_pet_and_tasks(monkeypatch, life)
+    life["settings"].DESKTOP_PET_ENABLED = True
+    with TestClient(app) as c:
+        c.get("/")
+    assert life["pi"].start.called and life["pi"].stop.called
+    assert life["pet"].start.called and life["pet"].stop.called
+    assert life["tasks"].start.called and life["tasks"].stop.called
+    assert life["sms"].start.called and life["sms"].stop.called
+    # handler 装在事件循环上，不摘就会跟着 loop 活到下一个入口（测试、嵌入式起停）
+    assert life["bus"].setup_asyncio_handler.called
+    assert life["bus"].restore_asyncio_handler.called
+
+
+def test_lifespan_unwinds_in_reverse_start_order(life):
+    from api.main import app
+    order = []
+    life["hb"].stop.side_effect = lambda *a: order.append("heartbeat")
+    life["ps"].stop.side_effect = lambda *a: order.append("perception")
+    life["mf"].shutdown.side_effect = lambda *a: order.append("model_factory")
+    life["db"].close.side_effect = lambda *a: order.append("database")
+    with TestClient(app) as c:
+        c.get("/")
+    # 启动顺序 模型工厂 → 感知 → 心跳；数据库池懒打开、无启动步，故最早登记、最后撤销。
+    # 旧清单是反的：模型工厂先关，还在用它的感知/心跳后关。
+    assert order == ["heartbeat", "perception", "model_factory", "database"]
+
+
+def test_lifespan_startup_failure_unwinds_what_already_started(life):
+    from api.main import app
+    life["eng"]._load_model.return_value = False
+    with pytest.raises(RuntimeError, match="Embedding 模型加载失败"):
+        with TestClient(app):
+            pass
+    assert life["db"].close.called        # 失败点之前已登记的收尾仍然执行
+    assert not life["ps"].start.called    # 失败点之后的组件没起来
+    assert not life["ps"].stop.called     # 也就不会「停一个没启动过的组件」
+
+
+# ---------------------------------------------------------------------------
+# lifespan × 运行期自制插件（B5 的第一条入口：启动恢复 + 收尾撤销）
+# ---------------------------------------------------------------------------
+
+_PLUGIN_SOURCE = (
+    "def apply(ctx):\n"
+    "    def lifespan_hello() -> str:\n"
+    "        return 'up'\n"
+    "    ctx.provide_tool('lifespan_hello', lifespan_hello, description='启动恢复用')\n"
+)
+
+
+def _visible_tool_names() -> set:
+    from infra.tool_manager.tool_registry import ToolRegistry
+    return {s["function"]["name"] for s in ToolRegistry.get_tools_for_api(["*"])}
+
+
+def test_lifespan_restores_authored_plugins_and_undoes_them(life):
+    """盘上提交过的源码在启动时挂回来，收尾时一定被卸掉。
+
+    这是「装配对称」判据的运行版本：模型重启前后看到的工具集要能对上，而重启后
+    还在跑的自制插件必须是这一条把它挂上来的——不是某个 import 副作用。
+    """
+    from api.main import app
+    import modules.shared.plugin_authoring as pa
+
+    pa.AuthoredPluginStore(life["authored_file"]).upsert("greeter", _PLUGIN_SOURCE)
+    before = _visible_tool_names()
+    with TestClient(app) as c:
+        c.get("/")
+        assert "lifespan_hello" in _visible_tool_names()   # 起来了，模型看得见
+        assert pa.MOUNTED["greeter"].tools == {"lifespan_hello"}
+    assert "lifespan_hello" not in _visible_tool_names()   # 收尾撤干净
+    assert "greeter" not in pa.MOUNTED
+    assert _visible_tool_names() == before                 # 没多出谁，也没少掉内置
+
+
+def test_lifespan_registers_the_unload_before_mounting(life, monkeypatch):
+    """挂载走到一半失败，已经挂上的那部分仍然有人卸 —— 登记在挂载之前才做得到。
+
+    load_authored 自己不抛（坏行记在自己那一行）；这里模拟的是它之外炸掉的情况
+    （机件被改坏、存储被换掉），那种时候「启动降级继续」不能变成「半挂载留着」。
+    """
+    from api.main import app
+    import modules.shared.plugin_authoring as pa
+
+    async def _explode(store):
+        await pa.mount_source(name="half", source=_PLUGIN_SOURCE, replace=True)
+        raise RuntimeError("装配到一半炸了")
+
+    monkeypatch.setattr(pa, "load_authored", _explode)
+    with TestClient(app) as c:                     # 非致命：进程照样起来
+        c.get("/")
+        assert "lifespan_hello" in _visible_tool_names()
+    assert "lifespan_hello" not in _visible_tool_names()
+    assert "half" not in pa.MOUNTED
+
+
+def test_lifespan_withdraws_authored_tools_after_their_consumers_stopped(life, monkeypatch):
+    """撤工具排在所有会调用工具的组件之后：注册在它们之前，于是撤销在它们之后。
+
+    插件的工具是模型在调的。收尾时若先把工具抽走，感知/心跳那边正跑着的调用会
+    解析回内置实现——不报错，但行为悄悄变了。逆序展开让这件事没有发生的窗口。
+    """
+    from api.main import app
+    import modules.shared.plugin_authoring as pa
+
+    order = []
+    real_unload = pa.unload_authored
+
+    async def _unload_and_record():
+        order.append("authored")
+        return await real_unload()
+
+    monkeypatch.setattr(pa, "unload_authored", _unload_and_record)
+    life["hb"].stop.side_effect = lambda *a: order.append("heartbeat")
+    life["ps"].stop.side_effect = lambda *a: order.append("perception")
+    life["mf"].shutdown.side_effect = lambda *a: order.append("model_factory")
+    life["db"].close.side_effect = lambda *a: order.append("database")
+    with TestClient(app) as c:
+        c.get("/")
+    assert order == ["heartbeat", "perception", "model_factory", "authored", "database"]
 
 
 # ---------------------------------------------------------------------------

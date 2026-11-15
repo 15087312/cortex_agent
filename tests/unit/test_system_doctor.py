@@ -40,7 +40,8 @@ class TestDoctor:
         assert res["data"]["healthy"] is True
         names = {c["name"] for c in res["data"]["checks"]}
         assert {"ffmpeg", "llm_keys", "vision_keys", "embedding_models",
-                "whisper", "pyaudio", "pyautogui", "flac", "whisper_weights"} <= names
+                "whisper", "pyaudio", "pynput", "pyautogui", "pyserial",
+                "flac", "whisper_weights"} <= names
 
     def test_ffmpeg_missing_is_required_with_fix(self, healthy_env, monkeypatch):
         import infra.data_process.core.video_analyzer as va
@@ -121,7 +122,7 @@ class TestDoctor:
         assert res["data"]["healthy"] is True   # 可选项不拉低总体
 
     def test_check_never_raises(self, monkeypatch):
-        """单项检查炸了也要兜住，结果仍 9 项齐全。"""
+        """单项检查炸了也要兜住，结果仍 11 项齐全。"""
         import infra.data_process.core.video_analyzer as va
 
         def _explode(n):
@@ -129,5 +130,5 @@ class TestDoctor:
 
         monkeypatch.setattr(va, "find_ffmpeg_tool", _explode)
         res = _run()
-        assert len(res["data"]["checks"]) == 9
+        assert len(res["data"]["checks"]) == 11
         assert res["success"] is True

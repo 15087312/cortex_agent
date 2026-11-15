@@ -16,8 +16,27 @@ except Exception:
 
 # 新系统（按需导入）
 def get_perception_system():
+    """端口优先取感知系统：接管 ``perception.system`` = 连本包内部的用法一起换。
+
+    两个入口都得在端口路上才谈得上切换：管理面本来就经端口取，而 ``integration.py``
+    是直接 import 本访问器的。之前端口只覆盖前者，插件接管后桌宠/集成器还在跑内置那
+    套感知系统——同一个能力两套行为。provider 必须是 ``_builtin_perception_system``
+    而不是本函数，否则端口→本函数→端口一调用就递归。
+    """
+    from infra.ports import resolve as _resolve_port
+
+    system = _resolve_port("perception.system")
+    if system is not None:
+        return system
+    return _builtin_perception_system()
+
+
+def _builtin_perception_system():
+    """内置实现（端口 provider 指向它）。按需导入，避免包根拖上重型子模块。"""
     from .setup import get_perception_system as _get
+
     return _get()
+
 
 # 向后兼容：perception_manager 代理指向新系统
 def _get_compat_proxy():
@@ -44,6 +63,7 @@ def _get_compat_proxy():
 
     return _CompatProxy()
 
+
 perception_manager = _get_compat_proxy()
 
 __all__ = [
@@ -62,8 +82,11 @@ from infra.ports import as_factory, register as _register_port
 
 
 def _register_perception_ports() -> None:
-    _register_port("perception.system", as_factory(lambda: get_perception_system()))
-    _register_port("perception.manager", perception_manager)
+    _register_port("perception.system", as_factory(_builtin_perception_system))
+    # manager 登记成工厂而不是现成的代理对象：代理在构造那一刻就把感知系统抓进了闭包，
+    # 而 __all__ 里那个模块级 ``perception_manager`` 是本包 import 期就抓住的旧实现。
+    # 登记工厂之后，接管 perception.system 的人不必再另外接管 perception.manager。
+    _register_port("perception.manager", as_factory(_get_compat_proxy))
     # 供 thinking 侧取用（避免 thinking → perception 的模块边；thinking 的扫描根
     # 已回到包根，这条边会如实被 E302 检出，故必须走端口而非 import）
     _register_port("perception.integrator", as_factory(lambda: _get_integrator()))

@@ -1,6 +1,6 @@
 <script setup>
 defineOptions({ name: 'Pet' })
-import { ref, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useToastStore } from '@/stores/toast.js'
 import { endpoints, request } from '@/api.js'
 import Icon from '@/components/Icon.vue'
@@ -333,17 +333,32 @@ const savingCfg = ref(false)
 const masterEnabled = ref(true)
 const savingMaster = ref(false)
 
-// ── 人设（每个人设独立会话）──
+// ── 人设（每个人设独立会话；编辑态与启用态分开，避免误切会话）──
 const personas = ref([])
-const activePersonaId = ref(null)
-const personaDraft = ref('')
-const newPersonaName = ref('')
+const activePersonaId = ref(null)   // 当前启用的人设（引擎正在用）
+const editingPersonaId = ref(null)  // 编辑器里正在编辑的人设
+const headerPersonaId = ref(null)   // 页眉快捷切换
+const personaNameDraft = ref('')
+const personaPromptDraft = ref('')
+const personaCreating = ref(false)  // 新建模式（不污染当前人设内容）
 const personaSaving = ref(false)
+
+const personaDirty = computed(() => {
+  if (personaCreating.value) {
+    return !!(personaNameDraft.value.trim() || personaPromptDraft.value.trim())
+  }
+  const cur = personas.value.find((p) => p.id === editingPersonaId.value)
+  if (!cur) return false
+  return personaNameDraft.value !== (cur.name || '') || personaPromptDraft.value !== (cur.prompt || '')
+})
 
 async function loadMasterEnabled() {
   try {
-    const r = await request('GET', '/config/DESKTOP_PET_ENABLED')
-    masterEnabled.value = r?.value !== false && r?.value !== 0
+    // 后端只提供 GET /config（整体配置），无 GET /config/{key}；
+    // 读整体配置才能拿到上次保存的桌宠总开关（刷新/重启后遵循上次设置）。
+    const r = await endpoints.config()
+    const d = r?.data || {}
+    masterEnabled.value = d.DESKTOP_PET_ENABLED !== false
   } catch { /* 静默，保持默认 true */ }
 }
 
@@ -502,85 +517,164 @@ async function confirmClearHistory() {
   await clearHistory()
 }
 
-// ── 人设切换 / 管理 ──
+// ── 人设管理：列表 + 独立编辑器（编辑不切会话，启用才切）──
+function _fillEditor(p) {
+  editingPersonaId.value = p?.id ?? null
+  personaNameDraft.value = p?.name || ''
+  personaPromptDraft.value = p?.prompt || ''
+  personaCreating.value = false
+}
+
 async function loadPersonas() {
   try {
     const r = await endpoints.petPersonas()
     personas.value = r?.data?.items || []
     activePersonaId.value = r?.data?.active_id ?? (personas.value[0]?.id ?? null)
-    const cur = personas.value.find((p) => p.id === activePersonaId.value)
-    personaDraft.value = cur?.prompt || cfg.value.persona || ''
+    headerPersonaId.value = activePersonaId.value
+    // 编辑器跟随：没在新建、且编辑对象不存在时，回到当前启用的人设
+    if (!personaCreating.value && !personas.value.some((p) => p.id === editingPersonaId.value)) {
+      _fillEditor(personas.value.find((p) => p.id === activePersonaId.value) || personas.value[0])
+    }
   } catch { /* 静默 */ }
 }
 
-async function switchPersona() {
-  const pid = Number(activePersonaId.value)
+async function editPersona(p) {
+  if (!p) return
+  if (!personaCreating.value && p.id === editingPersonaId.value) return
+  if (personaDirty.value && !(await confirm(t('pet.personaDiscardConfirm')))) return
+  _fillEditor(p)
+}
+
+function startCreatePersona() {
+  editingPersonaId.value = null
+  personaNameDraft.value = ''
+  personaPromptDraft.value = ''
+  personaCreating.value = true
+}
+
+async function cancelPersonaEdit() {
+  if (personaDirty.value && !(await confirm(t('pet.personaDiscardConfirm')))) return
+  _fillEditor(personas.value.find((p) => p.id === activePersonaId.value) || personas.value[0])
+}
+
+async function savePersona() {
+  const name = personaNameDraft.value.trim()
+  const prompt = personaPromptDraft.value.trim()
+  if (!name) { toast.show(t('pet.personaEmptyName'), 'error'); return }
+  if (!prompt) { toast.show(t('pet.personaPromptEmpty'), 'error'); return }
+  personaSaving.value = true
+  try {
+    if (personaCreating.value) {
+      const r = await endpoints.createPetPersona(name, prompt)
+      if (!r?.success) { toast.show(t('pet.personaDuplicate'), 'error'); return }
+      await loadPersonas()
+      _fillEditor(r.data)
+      // 新建后直接启用：少一步点击，也避免“建好了却仍用旧人设”的困惑
+      await activatePersona(r.data.id, { silent: true })
+      toast.show(t('pet.personaCreated'), 'success')
+    } else {
+      if (!editingPersonaId.value) return
+      const r = await endpoints.updatePetPersona(editingPersonaId.value, { name, prompt })
+      if (r?.success === false) { toast.show(t('pet.personaDuplicate'), 'error'); return }
+      await loadPersonas()
+      await loadConfig()
+      toast.show(t('pet.personaSaved'), 'success')
+    }
+  } catch { toast.show(t('pet.saveFailed'), 'error') }
+  finally { personaSaving.value = false }
+}
+
+// 启用人设：停掉旧人设的流式输出与自动循环，避免串会话
+async function activatePersona(pid, { silent = false } = {}) {
   if (!pid) return
-  // 切换前停掉旧人设的流式输出与自动循环，避免串会话
   stopAuto = true
   if (autoTimer) { clearTimeout(autoTimer); autoTimer = null }
   if (autoStartTimer) { clearTimeout(autoStartTimer); autoStartTimer = null }
   if (abortCtl.value) abortCtl.value.abort()
   stopPetAudio()
-  try {
-    const r = await endpoints.activatePetPersona(pid)
-    if (r?.success === false) throw new Error(r?.error || 'activate failed')
-    await loadConfig()
+  const r = await endpoints.activatePetPersona(pid)
+  if (r?.success === false) throw new Error(r?.error || 'activate failed')
+  activePersonaId.value = pid
+  headerPersonaId.value = pid
+  await loadConfig()
+  await loadHistory()
+  if (!silent) {
     const active = personas.value.find((p) => p.id === pid)
-    personaDraft.value = active?.prompt || cfg.value.persona || ''
-    await loadHistory()
     toast.show(t('pet.personaSwitched', { name: active?.name || '' }), 'success')
-    // 恢复自动回复，但等一个正常思考间隔，让用户先看到该人设的既有会话
-    if (masterEnabled.value) {
-      stopAuto = false
-      if (autoTimer) clearTimeout(autoTimer)
-      autoTimer = setTimeout(() => {
-        autoTimer = null
-        if (!sending.value) send('')
-      }, (cfg.value.min_think_interval || 5) * 1000)
+  }
+  // 恢复自动回复，但等一个正常思考间隔，让用户先看到该人设的既有会话
+  if (masterEnabled.value) {
+    stopAuto = false
+    if (autoTimer) clearTimeout(autoTimer)
+    autoTimer = setTimeout(() => {
+      autoTimer = null
+      if (!sending.value) send('')
+    }, (cfg.value.min_think_interval || 5) * 1000)
+  }
+}
+
+// 页眉下拉：切换到该人设（失败回滚选中项）
+async function switchPersona() {
+  const pid = Number(headerPersonaId.value)
+  if (!pid || pid === activePersonaId.value) return
+  try {
+    await activatePersona(pid)
+    if (!personaDirty.value) _fillEditor(personas.value.find((p) => p.id === pid))
+  } catch {
+    headerPersonaId.value = activePersonaId.value
+    toast.show(t('pet.personaSwitchFailed'), 'error')
+  }
+}
+
+async function deletePersona(p) {
+  if (!p || personas.value.length <= 1) {
+    toast.show(t('pet.personaLastCannotDelete'), 'error')
+    return
+  }
+  if (!(await confirm(t('pet.personaDeleteConfirm', { name: p.name })))) return
+  try {
+    const r = await endpoints.deletePetPersona(p.id)
+    if (!r?.success) throw new Error(r?.error || 'delete failed')
+    const wasActive = p.id === activePersonaId.value
+    if (p.id === editingPersonaId.value) editingPersonaId.value = null
+    await loadPersonas()
+    if (wasActive) {
+      await activatePersona(activePersonaId.value, { silent: true })
+      headerPersonaId.value = activePersonaId.value
     }
+    toast.show(t('pet.personaDeleted'), 'success')
+  } catch { toast.show(t('pet.saveFailed'), 'error') }
+}
+
+// ── 显示：<say> 是发声标记，气泡里不展示标签 ──
+function stripSay(text) {
+  return String(text || '').replace(/<\/?\s*say\s*>/gi, '').trim()
+}
+
+async function activateEditingPersona() {
+  try {
+    await activatePersona(editingPersonaId.value)
   } catch {
     toast.show(t('pet.personaSwitchFailed'), 'error')
   }
 }
 
-async function savePersona() {
-  if (!activePersonaId.value) return
-  personaSaving.value = true
-  try {
-    const r = await endpoints.updatePetPersona(activePersonaId.value, { prompt: personaDraft.value })
-    if (r?.success === false) throw new Error(r?.error || 'save failed')
-    await loadPersonas()
-    toast.show(t('pet.personaSaved'), 'success')
-  } catch { toast.show(t('pet.saveFailed'), 'error') }
-  finally { personaSaving.value = false }
-}
+// ── 实时监听状态（后端麦克风）──
+const voiceStatus = ref({ running: false, state: 'idle', tts_backend: '', pending: 0, cooldown: 0, last_error: '' })
+let voicePollTimer = null
 
-async function createPersona() {
-  const name = newPersonaName.value.trim()
-  if (!name) return
-  try {
-    const r = await endpoints.createPetPersona(name, personaDraft.value || cfg.value.persona || '')
-    if (!r?.success) { toast.show(t('pet.personaDuplicate'), 'error'); return }
-    newPersonaName.value = ''
-    await loadPersonas()
-    activePersonaId.value = r.data.id
-    await switchPersona()
-    toast.show(t('pet.personaCreated'), 'success')
-  } catch { toast.show(t('pet.saveFailed'), 'error') }
-}
+const voiceStateLabel = computed(() => {
+  // 未运行时不能显示「空闲」——那会让人以为在听、只是没说话
+  if (!voiceStatus.value.running) return t('pet.voiceOff')
+  const s = voiceStatus.value.state
+  return t(s === 'listening' ? 'pet.voiceListening' : s === 'transcribing' ? 'pet.voiceTranscribing' : 'pet.voiceIdle')
+})
 
-async function deletePersona() {
-  if (!activePersonaId.value || personas.value.length <= 1) return
-  if (!(await confirm(t('pet.personaDeleteConfirm')))) return
+async function loadVoiceStatus() {
   try {
-    const r = await endpoints.deletePetPersona(activePersonaId.value)
-    if (!r?.success) throw new Error(r?.error || 'delete failed')
-    await loadPersonas()
-    activePersonaId.value = personas.value[0]?.id ?? null
-    await switchPersona()
-    toast.show(t('pet.personaDeleted'), 'success')
-  } catch { toast.show(t('pet.saveFailed'), 'error') }
+    const r = await request('GET', '/stream/pet/voice/status')
+    if (r?.data) voiceStatus.value = { ...voiceStatus.value, ...r.data }
+  } catch { /* 静默 */ }
 }
 
 // ── 互动（与桌面桌宠圆环菜单同源：/stream/pet/actions + /state）──
@@ -687,9 +781,13 @@ onMounted(async () => {
   loadMemory()
   loadActions()
   loadWindowStatus()
+  loadVoiceStatus()
   // 窗口进程状态轮询（10s）：崩溃/重启后页眉徽标同步
   if (windowPollTimer) clearInterval(windowPollTimer)
   windowPollTimer = setInterval(loadWindowStatus, 10000)
+  // 实时监听状态轮询（5s）：是否在听 / 待唤醒段数 / 发声后端
+  if (voicePollTimer) clearInterval(voicePollTimer)
+  voicePollTimer = setInterval(loadVoiceStatus, 5000)
   // 总开关开启 → 自动进入定时回复循环
   if (masterEnabled.value) startAutoLoop()
 })
@@ -698,6 +796,7 @@ onUnmounted(() => {
   if (autoTimer) { clearTimeout(autoTimer); autoTimer = null }
   if (autoStartTimer) { clearTimeout(autoStartTimer); autoStartTimer = null }
   if (windowPollTimer) { clearInterval(windowPollTimer); windowPollTimer = null }
+  if (voicePollTimer) { clearInterval(voicePollTimer); voicePollTimer = null }
 })
 </script>
 
@@ -709,7 +808,7 @@ onUnmounted(() => {
         <span class="pet-badge">{{ cfg.loop_type }}</span>
         <select
           v-if="personas.length"
-          v-model="activePersonaId"
+          v-model="headerPersonaId"
           class="input pet-persona-select"
           :title="$t('pet.personaSwitch')"
           @change="switchPersona"
@@ -756,7 +855,7 @@ onUnmounted(() => {
               </div>
               <div class="pet-thinking-text">{{ m.thinking }}</div>
             </div>
-            <div v-if="m.content">{{ m.content }}</div>
+            <div v-if="m.content" class="pet-msg-text">{{ stripSay(m.content) }}</div>
             <div v-else-if="!(m.role === 'user' && m.actionIcon) && sending && !m.thinking && m.role === 'assistant'" class="pet-waiting">
               <span class="pet-waiting-dots"><i></i><i></i><i></i></span>
               {{ $t('pet.thinking') }}
@@ -846,25 +945,77 @@ onUnmounted(() => {
       </div>
 
       <div class="settings-divider"></div>
-      <div class="settings-group">
-        <div class="settings-group-title">{{ $t('pet.personaTitle') }}</div>
-        <div class="setting-row">
-          <div class="lbl"><div class="t">{{ $t('pet.personaSwitch') }}</div><div class="d">{{ $t('pet.personaSwitchDesc') }}</div></div>
-          <div class="setting-ctl">
-            <select v-model="activePersonaId" class="input w-160" @change="switchPersona">
-              <option v-for="p in personas" :key="p.id" :value="p.id">{{ p.name }}</option>
-            </select>
+      <div class="settings-group persona-manager">
+        <div class="settings-group-title">{{ $t('pet.personaManage') }}</div>
+        <div class="persona-grid">
+          <!-- 左：人设列表（点击只编辑，不改会话） -->
+          <div class="persona-list">
+            <button
+              v-for="p in personas"
+              :key="p.id"
+              class="persona-item"
+              :class="{ on: !personaCreating && p.id === editingPersonaId, using: p.id === activePersonaId }"
+              data-test="persona-item"
+              @click="editPersona(p)"
+            >
+              <span class="persona-item-name">{{ p.name }}</span>
+              <span v-if="p.id === activePersonaId" class="persona-item-tag">{{ $t('pet.personaInUse') }}</span>
+            </button>
+            <button class="persona-add" data-test="persona-add" @click="startCreatePersona">
+              <Icon name="plus" :size="13" /> {{ $t('pet.personaNew') }}
+            </button>
           </div>
-        </div>
-        <div class="setting-row">
-          <div class="lbl"><div class="t">{{ $t('pet.persona') }}</div><div class="d">{{ $t('pet.personaDesc') }}</div></div>
-          <div class="setting-ctl"><textarea v-model="personaDraft" class="input pet-persona-input" rows="5"></textarea></div>
-        </div>
-        <div class="pet-settings-actions">
-          <button class="btn" :disabled="personaSaving || !activePersonaId" @click="savePersona">{{ $t('pet.personaSave') }}</button>
-          <input v-model="newPersonaName" class="input w-160" :placeholder="$t('pet.personaNewPlaceholder')" />
-          <button class="btn" @click="createPersona">{{ $t('pet.personaNew') }}</button>
-          <button class="btn btn-danger" :disabled="personas.length < 2" @click="deletePersona">{{ $t('pet.personaDelete') }}</button>
+
+          <!-- 右：编辑器（新建与编辑分开，不互相污染） -->
+          <div class="persona-editor">
+            <div class="persona-editor-head">
+              <span class="persona-editor-title">
+                {{ personaCreating ? $t('pet.personaNewTitle') : $t('pet.personaEditTitle') }}
+              </span>
+              <span v-if="personaDirty" class="persona-dirty" data-test="persona-dirty">{{ $t('pet.personaDirty') }}</span>
+            </div>
+            <label class="persona-field">
+              <span class="persona-field-lbl">{{ $t('pet.personaNameLabel') }}</span>
+              <input
+                v-model="personaNameDraft"
+                class="input"
+                data-test="persona-name-input"
+                maxlength="40"
+                :placeholder="$t('pet.personaNamePlaceholder')"
+              />
+            </label>
+            <label class="persona-field">
+              <span class="persona-field-lbl">{{ $t('pet.personaPromptLabel') }}</span>
+              <textarea
+                v-model="personaPromptDraft"
+                class="input pet-persona-input"
+                data-test="persona-prompt-input"
+                rows="8"
+                :placeholder="$t('pet.personaPromptPlaceholder')"
+              ></textarea>
+            </label>
+            <div class="persona-actions">
+              <button class="btn btn-primary" data-test="persona-save" :disabled="personaSaving" @click="savePersona">
+                {{ personaCreating ? $t('pet.personaCreate') : $t('pet.personaSaveChanges') }}
+              </button>
+              <button class="btn" data-test="persona-cancel" :disabled="personaSaving" @click="cancelPersonaEdit">{{ $t('pet.personaCancel') }}</button>
+              <button
+                v-if="!personaCreating && editingPersonaId && editingPersonaId !== activePersonaId"
+                class="btn"
+                data-test="persona-activate"
+                :disabled="personaSaving"
+                @click="activateEditingPersona"
+              >{{ $t('pet.personaActivate') }}</button>
+              <button
+                v-if="!personaCreating && editingPersonaId && personas.length > 1"
+                class="btn btn-danger"
+                data-test="persona-delete"
+                :disabled="personaSaving"
+                @click="deletePersona(personas.find((p) => p.id === editingPersonaId))"
+              >{{ $t('pet.personaDelete') }}</button>
+            </div>
+            <div class="persona-hint">{{ $t('pet.personaDesc') }}</div>
+          </div>
         </div>
       </div>
 
@@ -938,7 +1089,20 @@ onUnmounted(() => {
         </div>
         <div class="setting-row">
           <div class="lbl"><div class="t">{{ $t('pet.realtimeVoice') }}</div><div class="d">{{ $t('pet.realtimeVoiceDesc') }}</div></div>
-          <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" v-model="cfg.realtime_voice" /><span class="toggle-slider"></span></label></div>
+          <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" v-model="cfg.realtime_voice" data-test="realtime-voice-toggle" /><span class="toggle-slider"></span></label></div>
+        </div>
+        <div class="setting-row voice-status">
+          <div class="lbl">
+            <div class="t">{{ $t('pet.voiceStatusTitle') }}</div>
+            <div class="d voice-status-line">
+              <span class="voice-chip" :class="voiceStatus.running ? 'on' : 'off'" data-test="voice-state">{{ voiceStateLabel }}</span>
+              <span v-if="voiceStatus.tts_backend">{{ $t('pet.voiceTts') }} {{ voiceStatus.tts_backend }}</span>
+              <span v-if="voiceStatus.pending">{{ $t('pet.voicePending', { n: voiceStatus.pending }) }}</span>
+              <span>{{ $t('pet.voiceCooldownHint', { sec: voiceStatus.cooldown || cfg.min_think_interval || 0 }) }}</span>
+            </div>
+            <div v-if="voiceStatus.last_error" class="voice-err">{{ $t('pet.voiceMicError', { err: voiceStatus.last_error }) }}</div>
+            <div class="voice-say-hint">{{ $t('pet.sayHint') }}</div>
+          </div>
         </div>
       </div>
 
@@ -987,6 +1151,43 @@ onUnmounted(() => {
 .pet-header-right { display: flex; align-items: center; gap: 8px; }
 .pet-title { font-weight: 600; display: flex; align-items: center; gap: 6px; }
 .pet-persona-select { width: 112px; padding: 3px 8px; font-size: 12px; }
+.pet-msg-text { white-space: pre-wrap; }
+/* ── 人设管理：左列表 + 右编辑器 ── */
+.persona-grid { display: grid; grid-template-columns: 200px 1fr; gap: 14px; align-items: start; }
+.persona-list { display: flex; flex-direction: column; gap: 6px; }
+.persona-item {
+  display: flex; align-items: center; gap: 6px; width: 100%; text-align: left;
+  padding: 8px 10px; border: 1px solid var(--border-light); border-radius: 8px;
+  background: var(--bg-secondary); color: var(--text); cursor: pointer; font-size: 13px;
+}
+.persona-item:hover { border-color: var(--border); }
+.persona-item.on { border-color: var(--primary); background: var(--bg); }
+.persona-item-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.persona-item-tag {
+  font-size: 10px; padding: 1px 6px; border-radius: 6px;
+  background: var(--info-bg); color: var(--info); flex-shrink: 0;
+}
+.persona-add {
+  display: flex; align-items: center; justify-content: center; gap: 4px;
+  padding: 7px 10px; border: 1px dashed var(--border); border-radius: 8px;
+  background: none; color: var(--text-muted); cursor: pointer; font-size: 12px;
+}
+.persona-add:hover { color: var(--primary); border-color: var(--primary); }
+.persona-editor { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.persona-editor-head { display: flex; align-items: center; gap: 8px; }
+.persona-editor-title { font-size: 13px; font-weight: 600; }
+.persona-dirty { font-size: 11px; color: var(--warning, #d97706); }
+.persona-field { display: flex; flex-direction: column; gap: 4px; }
+.persona-field-lbl { font-size: 12px; color: var(--text-muted); }
+.persona-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.persona-hint { font-size: 11px; color: var(--text-muted); }
+/* ── 实时监听状态 ── */
+.voice-status-line { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.voice-chip { font-size: 11px; padding: 1px 8px; border-radius: 999px; }
+.voice-chip.on { background: var(--success-bg, #dcfce7); color: var(--success, #15803d); }
+.voice-chip.off { background: var(--border-light); color: var(--text-muted); }
+.voice-err { font-size: 11px; color: var(--danger, #dc2626); margin-top: 4px; }
+.voice-say-hint { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
 .pet-badge {
   font-size: 11px;
   padding: 2px 8px;

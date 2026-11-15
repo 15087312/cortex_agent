@@ -11,7 +11,7 @@ pytestmark = pytest.mark.external
 
 
 @pytest.fixture(autouse=True)
-def deterministic_embedder(monkeypatch):
+def deterministic_embedder(monkeypatch, take_over):
     """注入确定性嵌入，避免加载真实 SentenceTransformer"""
     from modules.memory.embedding import EmbeddingEngine
     eng = EmbeddingEngine()
@@ -26,7 +26,7 @@ def deterministic_embedder(monkeypatch):
 
     eng.embed = _embed
     eng.embed_batch = lambda texts: [_embed(t) for t in texts]
-    monkeypatch.setattr(EmbeddingEngine, "get_instance", classmethod(lambda cls: eng))
+    take_over("embedding_engine", lambda: eng)
     return eng
 
 

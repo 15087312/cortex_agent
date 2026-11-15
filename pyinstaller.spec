@@ -51,6 +51,14 @@ for pkg in ("uvicorn", "fastapi", "starlette", "sqlalchemy", "redis", "httpx", "
     except Exception:
         pass
 
+# ── pip：设置页「下载」组件在打包态没法 `python -m pip`，改为进程内 pip --target。
+# 运行时才 import，静态分析发现不了，必须显式收集。──
+try:
+    hiddenimports += collect_submodules("pip")
+    datas += collect_data_files("pip")
+except Exception:
+    pass
+
 # ── 重量级第三方库：连数据/二进制/子模块一起收集 ──────────
 for pkg in (
     "torch",

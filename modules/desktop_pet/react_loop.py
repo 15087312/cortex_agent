@@ -18,9 +18,12 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Type
 
 from utils.logger import setup_logger
 
+# on_message 有两种调用约定：普通一轮回复 on_message(text)，工具观察
+# on_message(obs, is_tool=True)（见 pet_engine.stream_chat 的同名回调）
+OnMessage = Callable[..., None]
+
 if TYPE_CHECKING:
     from modules.desktop_pet.pet_engine import PetEngine
-    from infra.model.base_model import ChatMessage
 
 logger = setup_logger("pet_react_loop")
 
@@ -37,7 +40,7 @@ class PetReactLoop(ABC):
         text: str,
         on_token: Optional[Callable[[str], None]] = None,
         on_reasoning: Optional[Callable[[str], None]] = None,
-        on_message: Optional[Callable[[str], None]] = None,
+        on_message: Optional[OnMessage] = None,
         extra_system: str = "",
     ) -> str:
         """执行一次完整循环，返回桌宠回复文本（空串表示放弃回复）。
@@ -66,7 +69,7 @@ class DirectLoop(PetReactLoop):
         text: str,
         on_token: Optional[Callable[[str], None]] = None,
         on_reasoning: Optional[Callable[[str], None]] = None,
-        on_message: Optional[Callable[[str], None]] = None,
+        on_message: Optional[OnMessage] = None,
         extra_system: str = "",
     ) -> str:
         """单轮 ReAct：一次完整 think→tool→observe→answer，不计时不循环"""
@@ -150,6 +153,9 @@ class CustomLoop(PetReactLoop):
 
     def __init__(self):
         self._last_think_end = 0.0  # 上次思考结束时刻（跨 chat 生效）
+        # 用户连续无回复计数：用户说了话、本轮却没产出任何回复 → +1；
+        # 一旦回复用户 → 复位 0。退避倍率按这个计数增长（空拍不再计入）。
+        self._no_reply_streak = 0
 
     # ── 主入口 ──
 
@@ -163,7 +169,7 @@ class CustomLoop(PetReactLoop):
         tools_enabled: bool,
         on_token: Optional[Callable[[str], None]] = None,
         on_reasoning: Optional[Callable[[str], None]] = None,
-        on_message: Optional[Callable[[str], None]] = None,
+        on_message: Optional[OnMessage] = None,
         max_steps: int = 10,
     ) -> str:
         """标准 ReAct 单轮：think → tool → observe → think → … → 纯文本答案返回。
@@ -222,7 +228,7 @@ class CustomLoop(PetReactLoop):
         text: str,
         on_token: Optional[Callable[[str], None]] = None,
         on_reasoning: Optional[Callable[[str], None]] = None,
-        on_message: Optional[Callable[[str], None]] = None,
+        on_message: Optional[OnMessage] = None,
         extra_system: str = "",
     ) -> str:
         cfg = engine.config
@@ -258,8 +264,9 @@ class CustomLoop(PetReactLoop):
         # max_loop_rounds=0（默认）= 无限轮，直到外部停止/上下文满/内容重复。
         # 空轮（无产出）不终止，触发空拍退避后继续。
         parts: list = []
-        empty_streak = 0
+        is_user_turn = bool((text or "").strip())
         cycle = 0
+        backoff = self._idle_backoff_mult(self._no_reply_streak, backoff_cap)
         while True:
             cycle += 1
             if rounds and cycle > rounds:
@@ -268,16 +275,19 @@ class CustomLoop(PetReactLoop):
             if self._context_overflow(messages, extra_chars=len(json.dumps(native_tools, ensure_ascii=False)) if native_tools else 0):
                 logger.info("[Pet] 上下文接近 8k 上限，停止思考循环")
                 break
-            # 轮间计时：从上轮「结束」起算 min_think_interval（空拍 ×退避，封顶 idle_backoff_max）。
+            # 轮间计时：从上轮「结束」起算 min_think_interval × 退避倍率。
+            # 退避倍率按「用户连续无回复次数」增长（2^n，封顶 idle_backoff_max）：
+            # 用户连着几次说话都没得到回应时，桌宠的下一轮思考间隔逐次拉长；
+            # 一旦给出回复就复位。空拍（模型自己没话说）不再影响倍率。
             # 从结束时刻起算才能保证每轮之间真的有静默间隔；若从开始时刻起算，
             # 单轮耗时超过间隔时（本地思考模型常见）等待恒为 0 → 看起来在「一直思考」，
-            # 间隔设置形同失效。interval=0 且已有空拍时用 1s 地板，避免空转热循环
-            if interval > 0 or empty_streak > 0:
+            # 间隔设置形同失效。interval=0 且退避 >1 时用 1s 地板，避免空转热循环
+            backoff = self._idle_backoff_mult(self._no_reply_streak, backoff_cap)
+            if interval > 0 or backoff > 1:
                 base = interval if interval > 0 else 1.0
-                backoff = self._idle_backoff_mult(empty_streak, backoff_cap)
                 wait = self._last_think_end + base * backoff - time.time()
                 if wait > 0:
-                    label = f"空拍×{backoff:g}" if backoff > 1 else "正常"
+                    label = f"用户连续无回复×{backoff:g}" if backoff > 1 else "正常"
                     logger.info(f"[Pet] 轮间等待（{label}），{wait:.1f}s 后开始第{cycle}轮")
                     await asyncio.sleep(wait)
             # 一轮完整 ReAct（内含 think→tool→observe 微循环，无等待）
@@ -287,23 +297,32 @@ class CustomLoop(PetReactLoop):
             )
             self._last_think_end = time.time()
             if not answer:
-                empty_streak += 1
                 logger.info(
-                    f"[Pet] 第{cycle}轮无产出（空拍第{empty_streak}次），"
-                    f"下次间隔 ×{self._idle_backoff_mult(empty_streak, backoff_cap):g}"
+                    f"[Pet] 第{cycle}轮无产出（本轮先不说），"
+                    f"当前用户连续无回复 {self._no_reply_streak} 次"
                 )
                 continue
             # 重复护栏：与上一轮答案完全相同 → 模型陷入复述，终止
             if parts and answer == parts[-1]:
                 logger.info("[Pet] 本轮答案与上一轮重复，停止思考循环")
                 break
-            empty_streak = 0
             parts.append(answer)
             if on_message:
                 on_message(answer)
             # 汇总到 SSE 层用于 round_complete 语意检测（本轮完整回复已产出）
             if on_token:
                 on_token("\x00ROUND_DONE\x00")
+        # 用户回合结算：这轮用户说话，究竟有没有被回应 → 决定下一轮的退避倍率。
+        # 注意「有没有回复」以整轮是否有产出判定，而不是单次空拍。
+        if is_user_turn:
+            if parts:
+                self._no_reply_streak = 0
+            else:
+                self._no_reply_streak += 1
+                logger.info(
+                    f"[Pet] 用户本轮未得到回复（连续 {self._no_reply_streak} 次），"
+                    f"下次轮间等待 ×{self._idle_backoff_mult(self._no_reply_streak, backoff_cap):g}"
+                )
         # 汇总全部轮次产出（落库由 engine 层 on_message 通道完成，见 PetPersist）
         reply = "\n".join(parts)
         if reply:

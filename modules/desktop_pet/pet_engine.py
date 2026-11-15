@@ -9,6 +9,7 @@
   + 广播 pet_reply（桌宠窗口/前端展示气泡）
 """
 import asyncio
+import os
 import threading
 import time
 
@@ -18,7 +19,6 @@ from config.settings import settings
 from utils.logger import setup_logger
 
 logger = setup_logger("pet_engine")
-
 
 class PetEngine:
     """桌宠对话引擎（单例，感知系统启动时创建）"""
@@ -40,9 +40,31 @@ class PetEngine:
         #   _vision_fail_at 连续失败后短暂静默，避免每次回复被坏后端拖慢
         self._vision_cache: Dict[str, Any] = {"time": 0.0, "text": ""}
         self._vision_fail_at: float = 0.0
+        # 实时语音：转写文字先进缓冲，等冷却（min_think_interval）到了再合并唤醒
+        self._loop_async = None
+        self._pending_voice: list = []
+        self._wake_task = None
+        self._mic = None
+        self._player = _AudioPlayer()
 
     @classmethod
     def get_instance(cls, event_bus=None):
+        """端口优先取桌宠引擎：接管 ``pet_engine`` 端口 = 换掉全部调用点。
+
+        内置单例挪进 ``_builtin_instance``，bootstrap 给这条端口的 provider 指的也是
+        它 —— 指回本函数就是 端口→本函数→端口 的一调用即递归，那种接线由
+        scripts/seam_catalogue.py 在生成目录时判错。
+        带参数的调用点在接管后不再传参：插件自己决定用什么构造，原来的参数只喂内置实现。
+        """
+        from infra.tool_manager.service_registry import get_capability
+
+        factory = get_capability("pet_engine")
+        if factory is not None:
+            return factory()
+        return cls._builtin_instance(event_bus)
+
+    @classmethod
+    def _builtin_instance(cls, event_bus=None):
         if cls._instance is None:
             with cls._lock:
                 if cls._instance is None:
@@ -75,6 +97,12 @@ class PetEngine:
         if self._running or not self.enabled:
             return
         self._running = True
+        try:
+            self._loop_async = asyncio.get_running_loop()
+        except RuntimeError:
+            self._loop_async = None
+        # 实时监听：后端直读本机麦克风（与浏览器/窗口无关）
+        self.refresh_voice()
         if self._event_bus:
             from modules.shared.events import PerceptionEventType
             self._sub_id = self._event_bus.subscribe(
@@ -89,12 +117,38 @@ class PetEngine:
         if not self._running:
             return
         self._running = False
+        # 实时语音收尾：取消待唤醒任务、关麦、停掉正在播的 TTS
+        wake = getattr(self, "_wake_task", None)
+        if wake is not None:
+            try:
+                wake.cancel()
+            except Exception:
+                pass
+            self._wake_task = None
+        getattr(self, "_pending_voice", []).clear()
+        mic = getattr(self, "_mic", None)
+        if mic is not None:
+            try:
+                mic.stop()
+            except Exception as _mic_err:
+                logger.debug(f"[Pet] 停止麦克风失败: {_mic_err}")
+        player = getattr(self, "_player", None)
+        if player is not None:
+            try:
+                player.stop()
+            except Exception:
+                pass
         if self._event_bus and self._sub_id:
             try:
                 self._event_bus.unsubscribe(self._sub_id)
             except Exception as _swallowed_err:
                 logger.debug(f"[stop] ignored Exception: {_swallowed_err}")
             self._sub_id = ""
+        # 串行任务队列的 worker 也要收尾，否则循环关闭后它会变成 pending task
+        try:
+            self.task_queue.shutdown()
+        except Exception as _q_err:
+            logger.debug(f"[Pet] 关闭任务队列失败: {_q_err}")
         mem_client = getattr(self, "_memory_client", None)
         if mem_client is not None:
             try:
@@ -143,10 +197,127 @@ class PetEngine:
             api_url=cfg.get("api_url") or None,
             api_format=cfg.get("api_format") or "",
             model_name=cfg.get("api_model") or None,
-            api_provider=cfg.get("api_provider") or "",
-            enable_thinking=settings.LARGE_MODEL_ENABLE_THINKING,
+            api_provider=cfg.get("api_provider") or "",            enable_thinking=settings.LARGE_MODEL_ENABLE_THINKING,
             timeout=180,
         )
+
+    # ── 实时语音（后端麦克风）：转写累积 + 冷却唤醒 ──
+
+    def submit_utterance(self, text: str, source: str = "mic") -> None:
+        """接收一段转写文字：入缓冲，等冷却后合并唤醒（线程安全）
+
+        冷却时间 = 桌宠配置的 min_think_interval（用户自己设的那个间隔）。
+        每来一句就重新计时，所以是「说完最后一句、静默满 N 秒」才唤醒。
+        """
+        text = (text or "").strip()
+        if not text or not self._running:
+            return
+        # 用户在说话 → 立刻停掉正在播的 TTS（打断）
+        player = getattr(self, "_player", None)
+        if player is not None:
+            try:
+                player.stop()
+            except Exception:
+                pass
+        loop = self._loop_async
+        if loop is None or loop.is_closed():
+            self._pending_voice.append(text)
+            return
+        try:
+            loop.call_soon_threadsafe(self._queue_utterance, text)
+        except RuntimeError as e:
+            logger.debug(f"[Pet] 转写入队失败（循环已关闭）: {e}")
+
+    def _queue_utterance(self, text: str) -> None:
+        self._pending_voice.append(text)
+        self._reschedule_wake()
+
+    def _cooldown_seconds(self) -> float:
+        try:
+            return max(0.0, float(self.config.get("min_think_interval") or 0))
+        except (TypeError, ValueError):
+            return 5.0
+
+    def _reschedule_wake(self) -> None:
+        if not getattr(self, "_pending_voice", None):
+            return
+        wake = getattr(self, "_wake_task", None)
+        if wake is not None and not wake.done():
+            wake.cancel()
+        delay = self._cooldown_seconds()
+        self._wake_task = asyncio.create_task(self._wake_after(delay))
+
+    async def _wake_after(self, delay: float) -> None:
+        """冷却到期：把缓冲里所有转写合并注入上下文，唤醒一轮
+
+        冷却期间只累积、不调模型；多句一次性合并成一条用户消息，
+        避免用户说三句、桌宠回三次（也避免只听到最后一句）。
+        """
+        try:
+            if delay > 0:
+                await asyncio.sleep(delay)
+        except asyncio.CancelledError:
+            return
+        texts, self._pending_voice = self._pending_voice, []
+        merged = "\n".join(t for t in texts if t)
+        if not merged:
+            return
+        logger.info(
+            f"[Pet] 语音唤醒（{len(texts)} 段，冷却 {delay:g}s）: {merged[:60]}"
+        )
+        try:
+            reply = await self.chat(merged)
+            if reply:
+                await self._after_reply(reply, user_turn=True)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"[Pet] 语音唤醒失败: {e}")
+
+    def interrupt_speech(self) -> None:
+        """打断当前 TTS 播放（麦克风检测到用户开口时调用）"""
+        player = getattr(self, "_player", None)
+        if player is not None:
+            try:
+                player.stop()
+            except Exception:
+                pass
+
+    def refresh_voice(self) -> None:
+        """按 realtime_voice 开关启停麦克风（配置变更 / 启动时调用）"""
+        if not self._running:
+            return
+        want = False
+        try:
+            want = bool(self.config.get("realtime_voice"))
+        except Exception:
+            want = False
+        mic = getattr(self, "_mic", None)
+        if want:
+            if mic is None:
+                from modules.desktop_pet.voice.mic_listener import BackendMicListener
+                mic = BackendMicListener(
+                    on_utterance=self.submit_utterance,
+                    on_speech_start=self.interrupt_speech,
+                )
+                self._mic = mic
+            if not mic.running and not mic.start():
+                logger.warning(f"[Pet] 麦克风监听启动失败: {mic.last_error}")
+        elif mic is not None and mic.running:
+            mic.stop()
+
+    def voice_status(self) -> dict:
+        """实时语音状态（给前端显示“正在听/识别中”）"""
+        mic_obj = getattr(self, "_mic", None)
+        mic = mic_obj.status() if mic_obj is not None else {
+            "running": False, "state": "idle", "last_error": "",
+            "energy_threshold": 0, "silence_duration": 0, "heard_anything": False,
+        }
+        return {
+            **mic,
+            "pending": len(getattr(self, "_pending_voice", [])),
+            "cooldown": self._cooldown_seconds(),
+        }
 
     # ── 语音触发 ──
 
@@ -187,7 +358,9 @@ class PetEngine:
                 return ""
             reply = await fut
             if reply:
-                self.save_pair(text, reply)
+                from modules.desktop_pet.speech import split_speech
+                visible, _ = split_speech(reply)
+                self.save_pair(text, visible or reply)
             return reply or ""
         except Exception as e:
             logger.error(f"[Pet] 对话失败: {e}")
@@ -296,6 +469,10 @@ class PetEngine:
                     user_saved = True
                 # 防重护栏：主动思考产出与库内最近一条 assistant 完全相同 →
                 # 模型在复述旧话，不落库（否则重开页面历史里全是同一句）
+                # <say> 只是发声标记，不写入历史/气泡
+                from modules.desktop_pet.speech import split_speech
+                visible, _ = split_speech(m)
+                m = visible or m
                 if not text.strip():
                     if PetEngine._last_assistant_same_as(None, m, store):
                         logger.info("[Pet] 主动思考产出与上一条重复，跳过落库")
@@ -534,6 +711,15 @@ class PetEngine:
             "性格友善、可爱、贴心。回答要简短自然（通常一两句话），适合语音朗读。"
             "用中文回答。"
         )
+        # 发声规则：让模型自己决定哪部分说出口（<say> 外的都是内心独白）
+        system = system + (
+            "\n\n【发声规则】你有一个发声开关，由你自己控制：\n"
+            "- 想让用户听到的句子，包在 <say>…</say> 里（会被语音朗读）；\n"
+            "- 只在心里想、不打算说出口的（观察、回忆、计划、犹豫），不要加标签；\n"
+            "- 用户正在跟你说话时，你可以直接整段回答（系统会朗读），不必加标签；\n"
+            "- 自己安静思考时，只有 <say> 里的内容会被读出来，其余保持安静。\n"
+            "示例：<say>你今天看起来好累，要不要休息一下？</say>（内心：他连着加班三天了。）"
+        )
         if extra_system:
             system = system + "\n\n" + extra_system
         msgs = [ChatMessage(role="system", content=system)] + history
@@ -575,21 +761,30 @@ class PetEngine:
         except Exception as e:
             logger.debug(f"[Pet] 广播回复失败: {e}")
 
-    async def _after_reply(self, reply: str) -> None:
-        """回复后：TTS 语音播放 + 广播 pet_reply（桌宠窗口/前端气泡）"""
-        # 缓存最近回复（桌宠窗口轮询）
-        self.last_reply = {"time": time.time(), "text": reply}
-        # TTS
-        try:
-            from modules.output_system.tts import TTSEngine
-            tts = TTSEngine()
-            if tts.enabled or True:
-                path = tts.synthesize_sync(reply)
-                if path:
-                    await asyncio.to_thread(_play_audio, path)
-        except Exception as e:
-            logger.debug(f"[Pet] TTS 失败: {e}")
-        await self.emit_reply(reply)
+    async def _after_reply(self, reply: str, user_turn: bool = True) -> None:
+        """回复后：只朗读 <say> 内容 + 广播完整文本（气泡显示全部）
+
+        发声规则（桌宠自己决定）：
+        - 打了 <say> 标签 → 只读标签内的内容，其余是内心独白
+        - 没打标签 + 用户刚说话 → 整段当回答读出来
+        - 没打标签 + 自己思考 → 内心独白，不朗读
+        """
+        from modules.desktop_pet.speech import clean_for_tts, has_say, split_speech
+        visible, spoken = split_speech(reply)
+        if not has_say(reply):
+            spoken = visible if user_turn else ""
+        self.last_reply = {"time": time.time(), "text": visible or reply}
+        tts_text = clean_for_tts(spoken)
+        if tts_text:
+            try:
+                from modules.desktop_pet.voice import tts as pet_tts
+                path = await asyncio.to_thread(pet_tts.synthesize, tts_text)
+                player = getattr(self, "_player", None)
+                if path and player is not None:
+                    player.play_async(path)
+            except Exception as e:
+                logger.debug(f"[Pet] TTS 失败: {e}")
+        await self.emit_reply(visible or reply)
 
     def is_active(self) -> bool:
         return self._running
@@ -632,6 +827,72 @@ class PetEngine:
         except Exception:
             return None
 
+class _AudioPlayer:
+    """可打断的 TTS 播放器
+
+    macOS 用 afplay 子进程（可以 terminate 实现「用户一开口就闭嘴」）；
+    Windows/其他平台退回到系统默认播放器（不可打断）。
+    """
+
+    def __init__(self):
+        self._proc = None
+        self._lock = threading.Lock()
+        self._thread = None
+
+    @property
+    def playing(self) -> bool:
+        with self._lock:
+            return self._proc is not None and self._proc.poll() is None
+
+    def play_async(self, path: str) -> None:
+        if not path or not os.path.exists(path):
+            return
+        self.stop()
+        self._thread = threading.Thread(target=self._play, args=(path,), name="pet-tts-play", daemon=True)
+        self._thread.start()
+
+    def _play(self, path: str) -> None:
+        try:
+            if os.name == "nt":
+                os.startfile(path)  # type: ignore[attr-defined]  # noqa: S606
+                return
+            import subprocess
+            proc = subprocess.Popen(
+                ["afplay", path],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            with self._lock:
+                self._proc = proc
+            proc.wait()
+        except Exception as e:
+            logger.debug(f"[Pet] 播放失败: {e}")
+        finally:
+            with self._lock:
+                self._proc = None
+
+    def stop(self) -> None:
+        with self._lock:
+            proc = self._proc
+        if proc is not None and proc.poll() is None:
+            try:
+                proc.terminate()
+            except Exception as e:
+                logger.debug(f"[Pet] 停止播放失败: {e}")
+
+def get_running_pet_engine() -> Optional[PetEngine]:
+    """已经在跑的桌宠引擎；没启动就返回 None —— **不**顺手创建一个。
+
+    端口被插件接管时「在跑的那个」归插件说了算，所以先问端口。但内置的 provider 就是
+    ``_builtin_instance``，问它一次就当场建实例：这两个调用点都是高频只读轮询，凭空创建
+    一个没绑事件总线的单例会吞掉后续 start() 的语音订阅。所以认得出 provider 还是内置
+    那个时，直接读 ``_instance``。
+    """
+    from infra.tool_manager.service_registry import get_capability
+
+    factory = get_capability("pet_engine")
+    if factory is not None and factory != PetEngine._builtin_instance:
+        return factory()
+    return PetEngine._instance
 
 def _play_audio(path: str) -> None:
     """播放音频（macOS afplay / 通用）"""

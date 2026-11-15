@@ -22,6 +22,21 @@ _manager_lock = threading.Lock()
 
 # @link:block get_server_manager_Emit = Emit
 def get_server_manager() -> MCPServerManager:
+    """端口优先取 MCP server 管理器：接管 ``mcp_server_manager`` 端口 = 换掉全部调用点。
+
+    取不到端口才回退内置单例（脚本、没跑过 bootstrap 的入口）。bootstrap 注册
+    的 provider 必须是 ``_default_server_manager`` 而不是本函数，否则端口→本函数→端口
+    一调用就递归。
+    """
+    from infra.tool_manager.service_registry import get_capability
+
+    factory = get_capability("mcp_server_manager")
+    if factory is None:
+        return _default_server_manager()
+    return factory()
+
+
+def _default_server_manager() -> MCPServerManager:
     """获取全局 MCPServerManager 单例"""
     global _manager
     if _manager is None:
@@ -35,6 +50,21 @@ def get_server_manager() -> MCPServerManager:
 
 # @link:block get_mcp_tool_service_Emit = Emit · Think
 def get_mcp_tool_service() -> MCPToolService:
+    """端口优先取全局 MCP 工具服务：接管 ``mcp_tool_service`` 端口 = 换掉全部调用点。
+
+    取不到端口才回退内置单例（脚本、没跑过 bootstrap 的入口）。bootstrap 注册
+    的 provider 必须是 ``_default_mcp_tool_service`` 而不是本函数，否则端口→本函数→端口
+    一调用就递归。
+    """
+    from infra.tool_manager.service_registry import get_capability
+
+    factory = get_capability("mcp_tool_service")
+    if factory is None:
+        return _default_mcp_tool_service()
+    return factory()
+
+
+def _default_mcp_tool_service() -> MCPToolService:
     """获取全局 MCPToolService 单例（连接本地 ToolRegistry + 远程 MCP server）"""
     global _service
     if _service is None:

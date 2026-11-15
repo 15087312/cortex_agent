@@ -253,7 +253,7 @@
   /* ═══════════ 麦克风按钮（实时语音） ═══════════ */
   if (window.lucide) lucide.createIcons();
   var micBtn = document.getElementById('mic-btn');
-  if (micBtn) micBtn.addEventListener('click', toggleRealtimeVoice);
+  if (micBtn) micBtn.addEventListener('click', showVoiceStatus);
 
   /* ═══════════ 圆环菜单 ═══════════ */
   var CATS = [];
@@ -458,110 +458,41 @@
     postMove({ active: false });
   });
 
-  /* ═══════════ 实时语音（全双工 WebSocket） ═══════════ */
-  var rtWs = null;
-  var rtStream = null;
-  var rtAudioCtx = null;
-  var rtProcessor = null;
+  /* ═══════════ 实时监听状态（后端常驻麦克风，窗口只显示状态） ═══════════ */
+  /* 麦克风由后端直接采集：窗口/浏览器不再抢麦，也不会因 QWebEngine 权限被拒 */
   var rtActive = false;
 
-  function toggleRealtimeVoice() {
-    if (rtActive) {
-      stopRealtimeVoice();
-    } else {
-      startRealtimeVoice();
-    }
-  }
-
-  function startRealtimeVoice() {
-    if (rtActive) return;
-    // 检查后端是否启用实时语音
-    fetch('/config', { headers: { 'Accept': 'application/json' } })
+  function refreshVoiceStatus() {
+    fetch('/stream/pet/voice/status', { headers: { 'Accept': 'application/json' } })
       .then(function (r) { return r.json(); })
       .then(function (d) {
-        var cfg = (d && d.data) || {};
-        if (!cfg.PERCEPTION_VOICE_REALTIME) {
-          showBubble('实时语音未开启，请在设置中启用 PERCEPTION_VOICE_REALTIME');
+        var v = (d && d.data) || {};
+        rtActive = !!(v.running && v.state !== 'idle');
+        updateMicBtn();
+        var btn = document.getElementById('mic-btn');
+        if (btn) {
+          btn.title = v.running
+            ? ('实时监听：' + (v.state === 'listening' ? '正在听' : v.state === 'transcribing' ? '识别中' : '空闲'))
+            : '实时监听未开启（桌宠页 → 设置 → 实时监听）';
+        }
+      })
+      .catch(function () {});
+  }
+
+  function showVoiceStatus() {
+    fetch('/stream/pet/voice/status', { headers: { 'Accept': 'application/json' } })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        var v = (d && d.data) || {};
+        if (!v.running) {
+          showBubble('实时监听未开启：桌宠页 → 设置 → 实时监听');
           return;
         }
-        startMicCapture();
+        var label = v.state === 'listening' ? '正在听…' : v.state === 'transcribing' ? '识别中…' : '空闲（等待你说话）';
+        var extra = v.pending ? ('，待唤醒 ' + v.pending + ' 段') : '';
+        showBubble(label + extra);
       })
       .catch(function () { showBubble('无法连接后端'); });
-  }
-
-  function startMicCapture() {
-    navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 16000 }
-    }).then(function (stream) {
-      rtStream = stream;
-      rtAudioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
-      var source = rtAudioCtx.createMediaStreamSource(stream);
-      // ScriptProcessor 兼容性好，虽然已废弃但仍广泛支持
-      rtProcessor = rtAudioCtx.createScriptProcessor(4096, 1, 1);
-      rtProcessor.onaudioprocess = function (e) {
-        if (!rtWs || rtWs.readyState !== WebSocket.OPEN) return;
-        var float32 = e.inputBuffer.getChannelData(0);
-        // Float32 → Int16 PCM
-        var int16 = new Int16Array(float32.length);
-        for (var i = 0; i < float32.length; i++) {
-          var s = Math.max(-1, Math.min(1, float32[i]));
-          int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
-        }
-        rtWs.send(int16.buffer);
-      };
-      source.connect(rtProcessor);
-      rtProcessor.connect(rtAudioCtx.destination);
-
-      // WebSocket 连接
-      var wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      rtWs = new WebSocket(wsProto + '//' + location.host + '/stream/pet/voice');
-      rtWs.binaryType = 'arraybuffer';
-      rtWs.onopen = function () {
-        rtActive = true;
-        updateMicBtn();
-        showBubble('麦克风已开启…');
-      };
-      rtWs.onmessage = function (ev) {
-        try {
-          var data = JSON.parse(ev.data);
-          handleVoiceMessage(data);
-        } catch (e) {}
-      };
-      rtWs.onclose = function () {
-        stopRealtimeVoice();
-      };
-      rtWs.onerror = function () {
-        stopRealtimeVoice();
-      };
-    }).catch(function (err) {
-      showBubble('麦克风权限被拒绝: ' + err.message);
-    });
-  }
-
-  function handleVoiceMessage(data) {
-    if (data.state === 'listening') {
-      showBubble('正在听…');
-    } else if (data.partial_text) {
-      showBubble('🎤 ' + data.partial_text);
-    } else if (data.final_text) {
-      showBubble('你说: ' + data.final_text);
-    } else if (data.tts_url) {
-      var audio = new Audio(data.tts_url);
-      audio.play().catch(function () {});
-    } else if (data.action === 'interrupt_tts') {
-      // 用户打断，停止当前播放
-      var audios = document.querySelectorAll('audio');
-      audios.forEach(function (a) { a.pause(); });
-    }
-  }
-
-  function stopRealtimeVoice() {
-    rtActive = false;
-    if (rtProcessor) { rtProcessor.disconnect(); rtProcessor = null; }
-    if (rtAudioCtx) { rtAudioCtx.close().catch(function(){}); rtAudioCtx = null; }
-    if (rtStream) { rtStream.getTracks().forEach(function(t) { t.stop(); }); rtStream = null; }
-    if (rtWs) { rtWs.close(); rtWs = null; }
-    updateMicBtn();
   }
 
   function updateMicBtn() {
@@ -574,6 +505,9 @@
       }
     }
   }
+
+  setInterval(refreshVoiceStatus, 5000);
+  refreshVoiceStatus();
 
   /* ═══════════ 回复轮询（语音/排队中动作的回复显示；互动 SSE 直显 token） ═══════════ */
   /* 只显示页面打开后产生的新回复：首次轮询仅同步基线不展示，避免每次打开都刷一次旧对话 */

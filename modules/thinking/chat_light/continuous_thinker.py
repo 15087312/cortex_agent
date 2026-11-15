@@ -58,6 +58,7 @@ class ContinuousThinker:
         user_message: str,
         message_queue: asyncio.Queue,
         enable_web_search: bool = False,
+        skill_id: str = "",
     ) -> None:
         """Main thinking entry point.
 
@@ -65,6 +66,8 @@ class ContinuousThinker:
             session_id: Session ID
             user_message: User's message text
             message_queue: Async queue for streaming tokens to client
+            enable_web_search: 本轮是否联网搜索
+            skill_id: 用户在会话页显式选择的技能，注入其全文；为空则不注入（由模型自行 request_skill）
         """
         # 每会话串行：防止打断时旧 think 异步收尾与新一轮 think 并发写回会话导致乱序
         async with self._session_lock(session_id):
@@ -150,6 +153,30 @@ class ContinuousThinker:
                             })
                     except Exception as e:
                         logger.debug(f"[ChatLight] 联网搜索失败（忽略，不影响回答）: {e}")
+
+                # 3.8 用户显式选择的技能（可选）：会话页下拉选择 → 全文注入 system prompt。
+                # 这是唯一由用户手动触发的注入路径；自动关键词匹配已改为只发建议（见 multi_model_orchestrator）。
+                if skill_id and getattr(settings, "SKILLS_ENABLED", True):
+                    try:
+                        # get_capability 返回的是工厂 callable，需调用后才拿到 SkillManager
+                        from infra.tool_manager.service_registry import get_capability
+                        _factory = get_capability("skill_manager")
+                        _mgr = _factory() if _factory else None
+                        if _mgr is not None and not _mgr._loaded:
+                            _mgr.load_skills()
+                        _skill = _mgr.get_skill(skill_id) if _mgr else None
+                        if _skill and getattr(_skill, "enabled", True):
+                            system_prompt += "\n\n" + _skill.to_prompt_block()
+                            message_queue.put_nowait({
+                                "type": "thinking",
+                                "content": f"【技能注入】已激活技能「{_skill.name}」（用户选择）",
+                                "identity_name": "总指挥",
+                                "tier": "large",
+                            })
+                        else:
+                            logger.warning(f"[ChatLight] 技能 {skill_id!r} 不存在或已禁用，跳过注入")
+                    except Exception as e:
+                        logger.warning(f"[ChatLight] 技能注入失败（不影响回答）: {e}")
 
                 # 4. Stream response
                 full_response = []

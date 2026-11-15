@@ -6,6 +6,12 @@
 2. 插件动态注册
 3. 自动发现和加载
 4. XML schema 生成 (Claude 风格工具定义)
+
+两种行为，规则不同（模块级契约层见 modules.shared.plugin_api）：
+* ``@ToolRegistry.register("add")`` 是**内置声明自己占的槽**。同名第二次声明
+  是 bug，所以直接报错而不是静默覆盖——静默覆盖让两个都声称 ``add`` 的模块
+  在下游无法分辨。
+* :meth:`ToolRegistry.provide` 是**插件有意接管一个槽**，总是返回放回去的操作。
 """
 from typing import Callable, Dict, Any, Optional, List, Union, Tuple
 from dataclasses import dataclass, field
@@ -15,6 +21,19 @@ import threading
 from utils.logger import setup_logger
 
 logger = setup_logger("tool_registry")
+
+
+class DuplicateToolError(ValueError):
+    """同一个工具名被两处注册各自占用（插件互不知情）。
+
+    ``name``/``owner`` 是给代码用的：报错文本给人看，而「现在谁在位」是上层
+    （运行期自制插件的冲突报告）要说清楚的东西，不该靠解析字符串拿到。
+    """
+
+    def __init__(self, message: str, *, name: str = "", owner: str = "") -> None:
+        super().__init__(message)
+        self.name = name
+        self.owner = owner
 
 
 @dataclass
@@ -279,6 +298,7 @@ class ToolRegistry:
         tags: List[str] = None,
         priority: int = 0,
         core: bool = False,
+        replace: bool = False,
     ):
         """
         工具注册装饰器
@@ -287,12 +307,24 @@ class ToolRegistry:
             @ToolRegistry.register("add", description="加法计算", tags=["math"])
             def add(a: int, b: int):
                 return a + b
+
+        同名已存在时报 DuplicateToolError：这是内置自己的槽，两处声明同一个名字
+        是 bug 而不是配置，静默覆盖会让下游分辨不出谁赢了。插件换实现走
+        :meth:`provide`；确实要覆盖内置（例如热替换测试）传 ``replace=True``。
         """
         def decorator(func: Callable) -> Callable:
             tool_name = name or func.__name__
 
             # CONC-5: Protect tool registration with lock
             with cls._tools_lock:
+                existing = cls._tools.get(tool_name)
+                if existing is not None and not replace:
+                    raise DuplicateToolError(
+                        f"工具 {tool_name!r} 已由 "
+                        f"{getattr(existing.func, '__qualname__', existing.func)!r} 注册，"
+                        f"拒绝被 {getattr(func, '__qualname__', func)!r} 覆盖"
+                        "（插件接管请用 ToolRegistry.provide，明确覆盖传 replace=True）"
+                    )
                 cls._tools[tool_name] = ToolInfo(
                     name=tool_name,
                     func=func,
@@ -361,7 +393,81 @@ class ToolRegistry:
 
             cls._logger.debug(f"注册工具: {name} (来源: {source}, 插件: {plugin_name}, 标签: {tags or []}, 优先级: {priority})")
         return True
-    
+
+    @classmethod
+    def provide(
+        cls,
+        name: str,
+        func: Callable,
+        description: str = "",
+        params: Dict[str, Any] = None,
+        plugin_name: str = "",
+        risk_level: str = "LOW",
+        category: str = "query",
+        tags: List[str] = None,
+        priority: int = 0,
+        core: bool = False,
+        replace: bool = False,
+    ):
+        """占一个工具槽，返回把自己放回去的操作。
+
+        与 ``register_tool`` 的区别就是「接管」和「添加」的区别：这里盖掉的是什
+        么原实现不需要调用方记住，撤销操作自带。遮蔽内置工具是**有意的**（这就
+        是换实现的机制）；盖掉另一个插件占用的同名工具则报
+        :class:`DuplicateToolError`——两个互不知情的提交抢同一个工具名是 bug。
+        ``replace=True`` 是那句「明确覆盖传 replace=True」：调用方知道自己是在按
+        持久化的顺序重新接管（重启恢复就是这种情况），拒绝就不再是它要的保护。
+
+        撤销按身份判断：如果这个名字后来又被别的挂载改写，本次撤销什么都不做，
+        而不是把别人的实现换成自己的（半撤销比不撤销更糟）。
+        """
+        with cls._tools_lock:
+            previous = cls._tools.get(name)
+            if (
+                previous is not None
+                and not replace
+                and previous.source == "plugin"
+                and previous.plugin_name
+                and previous.plugin_name != plugin_name
+            ):
+                raise DuplicateToolError(
+                    f"工具 {name!r} 已被插件 {previous.plugin_name!r} 占用，"
+                    f"插件 {plugin_name!r} 不能盖在它上面（先卸前者，或换名字）",
+                    name=name,
+                    owner=previous.plugin_name,
+                )
+            info = ToolInfo(
+                name=name,
+                func=func,
+                description=description or func.__doc__ or "",
+                params=params or {},
+                source="plugin",
+                plugin_name=plugin_name,
+                risk_level=risk_level,
+                category=category,
+                tags=tags or [],
+                priority=priority,
+                core=core,
+            )
+            cls._tools[name] = info
+
+        cls._logger.info(
+            f"接管工具: {name}"
+            + (f"（原实现来源 {previous.source}）" if previous is not None else "（新槽）")
+            + (f" 插件={plugin_name}" if plugin_name else "")
+        )
+
+        def undo() -> None:
+            with cls._tools_lock:
+                if cls._tools.get(name) is not info:
+                    return
+                if previous is None:
+                    del cls._tools[name]
+                else:
+                    cls._tools[name] = previous
+
+        return undo
+
     @classmethod
     def unregister(cls, name: str) -> bool:
         """注销工具"""

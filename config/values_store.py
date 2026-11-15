@@ -229,3 +229,22 @@ class ValueSystem:
 
 
 value_system = ValueSystem()
+
+
+def get_value_system() -> ValueSystem:
+    """端口优先取价值体系：接管 ``value_system`` 端口 = 换掉全部调用点。
+
+    取不到端口才回退模块级那个实例（脚本、没跑过 bootstrap 的入口）。bootstrap
+    注册的 provider 必须是 ``_default_value_system`` 而不是本函数，否则端口→本函数
+    →端口一调用就递归。
+    """
+    from infra.tool_manager.service_registry import get_capability
+
+    factory = get_capability("value_system")
+    if factory is None:
+        return _default_value_system()
+    return factory()
+
+
+def _default_value_system() -> ValueSystem:
+    return value_system

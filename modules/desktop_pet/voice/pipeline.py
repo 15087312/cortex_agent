@@ -10,9 +10,7 @@
 向后兼容：PERCEPTION_VOICE_REALTIME=false 时不创建此管线，
 使用现有 VoiceDetector（半双工）。
 """
-import asyncio
 import threading
-import time
 from typing import Any, Callable, Optional
 
 from modules.desktop_pet.voice.vad import SileroVAD

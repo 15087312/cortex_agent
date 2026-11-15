@@ -1398,7 +1398,7 @@ class StreamThinkingSystem:
             # 获取 EventReducer（依赖注入）
             from modules.memory.event_reducer import EventReducer
             from modules.memory.event_store import EventStore
-            from modules.memory.embedding import EmbeddingEngine
+            from modules.memory.embedding import get_embedding_engine
             
             # 尝试创建模型客户端
             model_client = None
@@ -1416,7 +1416,7 @@ class StreamThinkingSystem:
             reducer = EventReducer(
                 model_client=model_client,
                 store=EventStore.get_instance(),
-                embedder=EmbeddingEngine.get_instance(),
+                embedder=get_embedding_engine(),
             )
             # 同步到模块级单例，供 Conscience 反馈闭环复用
             if model_client:
@@ -1473,6 +1473,21 @@ _main_event_loop: Optional[asyncio.AbstractEventLoop] = None
 
 
 def get_thinking_system() -> StreamThinkingSystem:
+    """端口优先取流式思考系统：接管 ``thinking_system`` 端口 = 换掉全部调用点。
+
+    取不到端口才回退内置单例（脚本、没跑过 bootstrap 的入口）。bootstrap 注册
+    的 provider 必须是 ``_default_thinking_system`` 而不是本函数，否则端口→本函数→端口
+    一调用就递归。
+    """
+    from infra.tool_manager.service_registry import get_capability
+
+    factory = get_capability("thinking_system")
+    if factory is None:
+        return _default_thinking_system()
+    return factory()
+
+
+def _default_thinking_system() -> StreamThinkingSystem:
     global _thinking_system
     if _thinking_system is None:
         with _thinking_system_lock:

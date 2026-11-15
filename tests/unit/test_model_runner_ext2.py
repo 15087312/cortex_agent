@@ -163,6 +163,10 @@ def _fake_gate(monkeypatch, allowed=(True, "")):
 
 def _tool_runner(monkeypatch, tier="large", tools=None, control_tools=None, gate_allowed=(True, "")):
     r = _runner(tier=tier)
+    # 默认不读真实数据库的结构化历史：本机会话库里可能有历史，导致
+    # messages 变成 [system, <历史>, user]，断言 sent[1].role == "user" 随本机数据飘移。
+    # 需要历史的用例（如 test_generate_with_tools_uses_structured_history）自己覆盖。
+    r._load_structured_history = lambda: []
     r._thinker = MagicMock()
     r._visible_tool_whitelist = lambda: [t["function"]["name"] for t in (tools or [])] or ["calc"]
     mcp = _fake_mcp(monkeypatch, tools=tools, control_tools=control_tools)
@@ -1491,7 +1495,7 @@ async def test_generate_with_tools_todo_inject_session(monkeypatch):
         _resp(content="", calls=[_tc("todo", '{"action": "create", "items": "[]"}')]),
         _resp(content="完成"),
     )
-    out = await r._generate_with_tools("system", "user", client)
+    await r._generate_with_tools("system", "user", client)
     assert captured["args"].get("session_id") == "s1"
 
 
@@ -1794,7 +1798,6 @@ def _mk_manager(monkeypatch, identities=None):
 
 
 def _make_identity_kwargs(monkeypatch, tier="expert"):
-    import modules.thinking.identity as ident_mod
     ident = MagicMock(tier=tier, model_id="x", name="n", role="r", default_skill="")
     return ident
 
@@ -2462,8 +2465,12 @@ def test_push_expert_output_supervisor():
     from unittest.mock import MagicMock, patch
     from modules.thinking.core.model_runner import ModelRunner
     r = ModelRunner.__new__(ModelRunner)
-    r.model_id = "sup_1"; r.session_id = "s1"; r.tier = "supervisor"
-    r.identity = MagicMock(); r.identity.name = "代码主管"; r.identity.tier = "supervisor"
+    r.model_id = "sup_1"
+    r.session_id = "s1"
+    r.tier = "supervisor"
+    r.identity = MagicMock()
+    r.identity.name = "代码主管"
+    r.identity.tier = "supervisor"
 
     sent = []
     fake_cm = MagicMock()
@@ -2484,8 +2491,12 @@ def test_push_expert_output_expert():
     from unittest.mock import MagicMock, patch
     from modules.thinking.core.model_runner import ModelRunner
     r = ModelRunner.__new__(ModelRunner)
-    r.model_id = "expert_1"; r.session_id = "s1"; r.tier = "expert"
-    r.identity = MagicMock(); r.identity.name = "实现专家"; r.identity.tier = "expert"
+    r.model_id = "expert_1"
+    r.session_id = "s1"
+    r.tier = "expert"
+    r.identity = MagicMock()
+    r.identity.name = "实现专家"
+    r.identity.tier = "expert"
 
     sent = []
     fake_cm = MagicMock()
@@ -2646,7 +2657,7 @@ async def test_resume_delegation_explicit_return_to(monkeypatch):
                               caller_model_id="large_primary",
                               return_to_model_id="large_primary")
     r.blackboard = bb
-    out = await r._handle_resume_delegation(
+    await r._handle_resume_delegation(
         {"delegation_id": did, "return_to_model_id": "another_001"}
     )
     assert captured["request"].return_to_model_id == "another_001"
@@ -2746,7 +2757,7 @@ async def test_maybe_summarize_context_threshold(monkeypatch):
     r.instance.client = client
     messages = [ChatMessage(role="system", content="你是助手。"),
                 ChatMessage(role="user", content="请完成一个非常长的任务。")]
-    ok = await r._maybe_summarize_context(messages, "原任务")
+    await r._maybe_summarize_context(messages, "原任务")
     assert messages[0].role == "system"
     assert messages[1].role == "system"
     assert "更早对话摘要" in messages[1].content

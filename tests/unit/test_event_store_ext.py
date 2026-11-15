@@ -172,13 +172,13 @@ def test_migrate_schema_columns_exist_skip(tmp_path):
     assert c is not None
 
 
-def test_save_event_preserves_id_and_last_accessed(store, monkeypatch):
+def test_save_event_preserves_id_and_last_accessed(store, monkeypatch, take_over):
     """id 与 last_accessed 已存在 → 跳过生成分支（202->204, 207->210）"""
     from modules.memory import embedding as emb_mod
     fake = MagicMock()
     fake._loaded = False
     fake._attempted = True
-    monkeypatch.setattr(emb_mod.EmbeddingEngine, "get_instance", staticmethod(lambda: fake))
+    take_over("embedding_engine", lambda: fake)
     ev = _event(fact="预设", id="custom-id", time="2026-01-01T00:00:00",
                 last_accessed="2026-01-02T00:00:00")
     eid = store.save_event(ev)
@@ -194,26 +194,26 @@ def test_save_event_with_embedding_skips_vectorize(store):
     assert eid == ev.id
 
 
-def test_save_event_embed_empty_text(store, monkeypatch):
+def test_save_event_embed_empty_text(store, monkeypatch, take_over):
     """eng 已加载但文本为空 → 跳过向量化直接保存（243->256）"""
     from modules.memory import embedding as emb_mod
     fake = MagicMock()
     fake._loaded = True
     fake.embed = MagicMock()
-    monkeypatch.setattr(emb_mod.EmbeddingEngine, "get_instance", staticmethod(lambda: fake))
+    take_over("embedding_engine", lambda: fake)
     ev = _event(fact="", thought="", lesson="", keywords=[])
     eid = store.save_event(ev)
     assert eid == ev.id
     fake.embed.assert_not_called()
 
 
-def test_save_event_embed_returns_none(store, monkeypatch):
+def test_save_event_embed_returns_none(store, monkeypatch, take_over):
     """eng 已加载但 embed 返回 None → 不写 FAISS（245->256）"""
     from modules.memory import embedding as emb_mod
     fake = MagicMock()
     fake._loaded = True
     fake.embed = MagicMock(return_value=None)
-    monkeypatch.setattr(emb_mod.EmbeddingEngine, "get_instance", staticmethod(lambda: fake))
+    take_over("embedding_engine", lambda: fake)
     store._add_embedding_inner = MagicMock()
     ev = _event(fact="内容")
     eid = store.save_event(ev)
@@ -221,13 +221,13 @@ def test_save_event_embed_returns_none(store, monkeypatch):
     store._add_embedding_inner.assert_not_called()
 
 
-def test_save_event_engine_attempted_not_loaded(store, monkeypatch):
+def test_save_event_engine_attempted_not_loaded(store, monkeypatch, take_over):
     """eng 已尝试过但未加载成功 → 不入队也不向量化（249 分支不成立）"""
     from modules.memory import embedding as emb_mod
     fake = MagicMock()
     fake._loaded = False
     fake._attempted = True
-    monkeypatch.setattr(emb_mod.EmbeddingEngine, "get_instance", staticmethod(lambda: fake))
+    take_over("embedding_engine", lambda: fake)
     ev = _event(fact="内容")
     eid = store.save_event(ev)
     assert eid == ev.id
@@ -236,7 +236,7 @@ def test_save_event_engine_attempted_not_loaded(store, monkeypatch):
 
 # ── 后台 worker ─────────────────────────────────────────────────────────────
 
-def test_embedding_worker_engine_not_loaded(store, monkeypatch):
+def test_embedding_worker_engine_not_loaded(store, monkeypatch, take_over):
     from config.settings import settings
     from modules.memory import embedding as emb_mod
     import time
@@ -244,7 +244,7 @@ def test_embedding_worker_engine_not_loaded(store, monkeypatch):
     fake = MagicMock()
     fake._loaded = False
     fake._attempted = False
-    monkeypatch.setattr(emb_mod.EmbeddingEngine, "get_instance", staticmethod(lambda: fake))
+    take_over("embedding_engine", lambda: fake)
     store._embedding_worker_started = False
     store._pending_embeddings = ["x"]
     monkeypatch.setattr(threading, "Thread", SyncThread)
@@ -253,7 +253,7 @@ def test_embedding_worker_engine_not_loaded(store, monkeypatch):
     assert store._embedding_worker_started is False
 
 
-def test_embedding_worker_processes_pending(store, monkeypatch):
+def test_embedding_worker_processes_pending(store, monkeypatch, take_over):
     from config.settings import settings
     from modules.memory import embedding as emb_mod
     import time
@@ -262,7 +262,7 @@ def test_embedding_worker_processes_pending(store, monkeypatch):
     fake._loaded = True
     fake._attempted = True
     fake.embed = MagicMock(return_value=[0.1, 0.2])
-    monkeypatch.setattr(emb_mod.EmbeddingEngine, "get_instance", staticmethod(lambda: fake))
+    take_over("embedding_engine", lambda: fake)
     ev = _event(fact="内容")
     monkeypatch.setattr(store, "get_event", lambda eid: ev)
     store.add_embedding = MagicMock()
@@ -275,7 +275,7 @@ def test_embedding_worker_processes_pending(store, monkeypatch):
     assert store._embedding_worker_started is False
 
 
-def test_embedding_worker_embed_exception(store, monkeypatch):
+def test_embedding_worker_embed_exception(store, monkeypatch, take_over):
     from config.settings import settings
     from modules.memory import embedding as emb_mod
     import time
@@ -284,7 +284,7 @@ def test_embedding_worker_embed_exception(store, monkeypatch):
     fake._loaded = True
     fake._attempted = True
     fake.embed = MagicMock(side_effect=RuntimeError("boom"))
-    monkeypatch.setattr(emb_mod.EmbeddingEngine, "get_instance", staticmethod(lambda: fake))
+    take_over("embedding_engine", lambda: fake)
     ev = _event(fact="内容")
     monkeypatch.setattr(store, "get_event", lambda eid: ev)
     store.add_embedding = MagicMock()
@@ -297,7 +297,7 @@ def test_embedding_worker_embed_exception(store, monkeypatch):
     assert store._embedding_worker_started is False
 
 
-def test_embedding_worker_skip_branches(store, monkeypatch):
+def test_embedding_worker_skip_branches(store, monkeypatch, take_over):
     """worker 循环内的跳过分支：无事件/有向量/空文本/向量为空（283/285/287 的 False 分支）"""
     from config.settings import settings
     from modules.memory import embedding as emb_mod
@@ -307,7 +307,7 @@ def test_embedding_worker_skip_branches(store, monkeypatch):
     fake._loaded = True
     fake._attempted = True
     fake.embed = MagicMock(return_value=None)
-    monkeypatch.setattr(emb_mod.EmbeddingEngine, "get_instance", staticmethod(lambda: fake))
+    take_over("embedding_engine", lambda: fake)
 
     ev_with_vec = _event(fact="已有向量", embedding=[0.1, 0.2])
     ev_empty_text = _event(fact="", thought="", lesson="", keywords=[])
@@ -328,22 +328,22 @@ def test_embedding_worker_skip_branches(store, monkeypatch):
 
 # ── FAISS 维度 & 加载 ───────────────────────────────────────────────────────
 
-def test_get_embedding_dim_raises(store, monkeypatch):
+def test_get_embedding_dim_raises(store, monkeypatch, take_over):
     from modules.memory import embedding as emb_mod
     fake = MagicMock()
     fake._load_model = MagicMock(return_value=False)
-    monkeypatch.setattr(emb_mod.EmbeddingEngine, "get_instance", staticmethod(lambda: fake))
+    take_over("embedding_engine", lambda: fake)
     store._embedding_dim = None
     with pytest.raises(RuntimeError):
         store._get_embedding_dim()
 
 
-def test_get_embedding_dim_success(store, monkeypatch):
+def test_get_embedding_dim_success(store, monkeypatch, take_over):
     from modules.memory import embedding as emb_mod
     fake = MagicMock()
     fake._load_model = MagicMock(return_value=True)
     fake.dim = 8
-    monkeypatch.setattr(emb_mod.EmbeddingEngine, "get_instance", staticmethod(lambda: fake))
+    take_over("embedding_engine", lambda: fake)
     store._embedding_dim = None
     assert store._get_embedding_dim() == 8
     assert store._embedding_dim == 8

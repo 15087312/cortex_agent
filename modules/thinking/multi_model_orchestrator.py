@@ -320,10 +320,13 @@ class MultiModelOrchestrator:
             user_input, owner_id=model_id
         )
 
-        # ---- 3.5 技能匹配：基于关键词自动匹配用户输入与技能标题 ----
-        skill_id = self._match_skill(user_input)
-        if skill_id:
-            logger.info(f"[编排器] 自动匹配技能: {skill_id}")
+        # ---- 3.5 技能匹配：不自动注入 ----
+        # 关键词匹配只是猜测（match_skill 靠字面加权，min_score 默认 1），
+        # 把它当作确定结果会把技能全文套到模型身上，而模型并不知道为什么。
+        # 因此这里不再产出 skill_id；真正的「建议」由 _build_prompt 里的
+        # skill_suggestion 上下文片段发出（模型可自行 request_skill 激活），
+        # 用户显式设置的 forced_skill 仍由下游 ModelRunnerManager 直接生效。
+        skill_id = ""
 
         # @link:block Orch_Think = Think
         # ---- 4. 多模型思考 (核心) ----
@@ -441,8 +444,8 @@ class MultiModelOrchestrator:
         except Exception as e:
             logger.debug(f"[编排器] 读取强制技能失败 (非致命): {e}")
         try:
-            from modules.thinking.skills import skill_manager
-            skill = skill_manager.match_skill(user_input, role=resolve_active_large_role())
+            from modules.thinking.skills import get_skill_manager
+            skill = get_skill_manager().match_skill(user_input, role=resolve_active_large_role())
             if skill:
                 logger.info(f"[编排器] 技能匹配: {skill.id} ({skill.name})")
                 return skill.id

@@ -43,6 +43,21 @@ _init_lock = _threading.Lock()
 
 
 def get_compression_engine() -> CompressionEngine:
+    """端口优先取压缩引擎：接管 ``compression_engine`` 端口 = 换掉全部调用点。
+
+    取不到端口才回退内置单例（脚本、没跑过 bootstrap 的入口）。bootstrap 注册的
+    provider 必须是 ``_default_compression_engine`` 而不是本函数，否则端口→本函数
+    →端口一调用就递归。
+    """
+    from infra.tool_manager.service_registry import get_capability
+
+    factory = get_capability("compression_engine")
+    if factory is None:
+        return _default_compression_engine()
+    return factory()
+
+
+def _default_compression_engine() -> CompressionEngine:
     global _instance
     if _instance is None:
         with _init_lock:

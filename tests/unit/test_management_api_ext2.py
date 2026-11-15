@@ -460,12 +460,11 @@ def test_get_causal_what_if(tmp_causal):
 # ── 感知 / 数据库 / 信息处理 / 安全 ────────────────────────────────────────
 
 def test_get_perception_full(monkeypatch):
-    import modules.perception as perc_mod
-
     ps = MagicMock()
     ps._started = True
     ps.get_status.return_value = {"pipeline": "ok", "voice_available": True, "world_state": {}, "event_bus": {}}
-    monkeypatch.setattr(perc_mod, "get_perception_system", lambda: ps)
+    # 端点是直接 resolve 端口的，打 perception_mod 的访问器名换不到任何东西
+    _override_port(monkeypatch, "perception.system", ps)
     out = _run(api_mod.get_perception_full())
     assert out["success"] is True
     assert out["data"]["status"] == "running"
@@ -473,23 +472,23 @@ def test_get_perception_full(monkeypatch):
 
 def test_get_perception_full_no_file_perception(monkeypatch):
     """无 file_perception 子系统 → watch_paths 为空"""
-    import modules.perception as perc_mod
-
     ps = MagicMock()
     ps._started = True
     ps.file_perception = None
     ps.get_status.return_value = {}
-    monkeypatch.setattr(perc_mod, "get_perception_system", lambda: ps)
+    _override_port(monkeypatch, "perception.system", ps)
     out = _run(api_mod.get_perception_full())
     assert out["data"]["watch_paths"] == []
 
 
 def test_get_perception_full_error(monkeypatch):
-    import modules.perception as perc_mod
+    from infra.ports import as_factory
 
-    monkeypatch.setattr(
-        perc_mod, "get_perception_system", lambda: (_ for _ in ()).throw(RuntimeError("fail"))
-    )
+    def boom():
+        raise RuntimeError("fail")
+
+    # 登记成工厂：让 resolve 那一刻就抛，才是这个端点真正的取用失败分支
+    _override_port(monkeypatch, "perception.system", as_factory(boom))
     with pytest.raises(Exception):
         _run(api_mod.get_perception_full())
 

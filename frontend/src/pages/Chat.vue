@@ -457,10 +457,10 @@ onUnmounted(() => {
   if (watchTimer) clearInterval(watchTimer)
 })
 
-function handleSend({ text, attachments, webSearch }) {
+function handleSend({ text, attachments, webSearch, skillId }) {
   // 有待审批/待回答时输入区被接管：先处理横幅，避免消息插到等待中间
   if (chat.processing || chat.hasPendingRequest) return
-  chat.sendMessage(text, attachments, webSearch)
+  chat.sendMessage(text, attachments, webSearch, skillId || '')
   const images = (attachments || [])
     .filter(a => a && String(a.type || '').startsWith('image/'))
     .map(a => a.data)

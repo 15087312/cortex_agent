@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import Icon from '@/components/Icon.vue'
 import { useI18n } from 'vue-i18n'
 import { endpoints } from '@/api.js'
@@ -20,6 +20,32 @@ const dragging = ref(false)
 const fieldRef = ref(null)
 // 联网搜索开关：纯对话模式可据此让后端先搜索互联网再回答
 const webSearch = ref(false)
+// 技能选择（用户手动注入）：仅在用户显式选择时全文注入该技能，默认空 = 不注入
+const skillId = ref('')
+const skillList = ref([])
+const skillOpen = ref(false)
+const skillLabel = computed(() => {
+  if (!skillId.value) return t('chatInput.skillNone')
+  const s = skillList.value.find(x => x.id === skillId.value)
+  return s ? s.name : skillId.value
+})
+
+async function loadSkills() {
+  try {
+    const r = await fetch('/api/management/skills', { headers: { Accept: 'application/json' } })
+    const d = await r.json()
+    if (d.success) skillList.value = (d.data?.skills || []).filter(s => s.enabled !== false)
+  } catch {}
+}
+
+function pickSkill(id) {
+  skillId.value = id
+  skillOpen.value = false
+}
+
+function _onDocClick(e) {
+  if (skillOpen.value && !e.target.closest?.('.chat-skill-picker')) skillOpen.value = false
+}
 
 // ── 语音录制 ──
 const recording = ref(false)
@@ -98,16 +124,21 @@ function _onFocusRequest() { _focusField() }
 
 onMounted(() => {
   window.addEventListener('cortex-focus-input', _onFocusRequest)
+  document.addEventListener('click', _onDocClick)
+  loadSkills()
   autoResize()
 })
-onUnmounted(() => window.removeEventListener('cortex-focus-input', _onFocusRequest))
+onUnmounted(() => {
+  window.removeEventListener('cortex-focus-input', _onFocusRequest)
+  document.removeEventListener('click', _onDocClick)
+})
 
 function handleSend() {
   if (props.processing || props.blocked) return
   const text = input.value.trim()
   const atts = attachments.value
   if (!text && atts.length === 0) return
-  emit('send', { text, attachments: atts.map(a => ({ type: a.type, name: a.name, data: a.data })), webSearch: webSearch.value })
+  emit('send', { text, attachments: atts.map(a => ({ type: a.type, name: a.name, data: a.data })), webSearch: webSearch.value, skillId: skillId.value })
   input.value = ''
   attachments.value = []
   autoResize()
@@ -196,6 +227,21 @@ function removeAttachment(i) {
         <button class="chat-btn-icon" @click="$refs.fileInput.click()" :title="$t('chatInput.uploadFile')"><Icon name="paperclip" :size="16" /></button>
         <button class="chat-btn-icon" :class="{ 'chat-btn-recording': recording }" @click="toggleRecording" :title="recording ? $t('chatInput.stopRecording') : $t('chatInput.startRecording')"><Icon name="mic" :size="16" /></button>
         <button class="chat-btn-icon" :class="{ 'chat-btn-active': webSearch }" @click="webSearch = !webSearch" :title="$t('chatInput.webSearch')"><Icon name="globe" :size="16" /></button>
+        <div class="chat-skill-picker">
+          <button class="chat-btn-icon" :class="{ 'chat-btn-active': !!skillId }" @click.stop="skillOpen = !skillOpen" :title="$t('chatInput.skillPick')"><Icon name="sparkles" :size="16" /></button>
+          <div v-if="skillOpen" class="chat-skill-menu">
+            <button class="chat-skill-item" :class="{ 'is-active': !skillId }" @click="pickSkill('')">{{ $t('chatInput.skillNone') }}</button>
+            <button
+              v-for="s in skillList"
+              :key="s.id"
+              class="chat-skill-item"
+              :class="{ 'is-active': skillId === s.id }"
+              :title="s.description"
+              @click="pickSkill(s.id)"
+            >{{ s.name }}</button>
+            <div v-if="skillList.length === 0" class="chat-skill-empty">{{ $t('chatInput.skillEmpty') }}</div>
+          </div>
+        </div>
         <input ref="fileInput" type="file" multiple accept="image/*,.pdf,.txt,video/*" hidden @change="handleFiles($event.target.files)" />
       </div>
       <textarea

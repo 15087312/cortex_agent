@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse, RedirectResponse, HTMLResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 import os
 import sys
 import time
@@ -21,7 +21,16 @@ from infra.errors import (
     ErrorCode, error_response, AppError,
 )
 from cortex.version import __version__ as _CORTEX_VERSION
+from infra.component_paths import ensure_components_on_path as _ensure_components_on_path
 from infra.watchdog import enable as _enable_orphan_watchdog
+
+# 用户下载的前置组件（~/.cortex/components）注入 sys.path：打包态没有可写安装目录，
+# 组件由设置页「下载」按钮装到用户目录，须在其余模块导入前生效。
+try:
+    _ensure_components_on_path()
+except OSError as _swallowed_err:
+    import logging as _logging
+    _logging.getLogger("api_main").debug("[module] ignored OSError: %s", _swallowed_err)
 
 # 防残留: 若启动本后端的 cortex 父进程被强杀，自动退出避免孤儿进程
 try:
@@ -39,6 +48,7 @@ from modules.management.api import router as management_router
 from modules.output_system.api import router as output_router
 from modules.output_system.tts import get_tts_output_dir as _get_tts_dir
 from modules.security_system.api import router as security_router
+from modules.shared.plugin_authoring_api import router as authored_plugin_router
 from config.settings import settings
 
 # 装配：向 infra 能力端口注册业务服务（消除 infra → modules 逆向依赖）
@@ -53,300 +63,413 @@ from utils.logger import setup_logger
 logger = setup_logger("api_main")
 
 
+def _push(stack: AsyncExitStack, dispose) -> None:
+    """登记一个收尾回调，异常吞在回调内。
+
+    卸载路径逐步独立：一个组件停不下来不能挡住后面的组件。原 lifespan 的收尾
+    清单是每个条目各写一份 try/except，这里把那个约定收到一处。
+    """
+
+    def _runner() -> None:
+        try:
+            dispose()
+        except Exception as e:
+            logger.debug(
+                f"[lifespan] 收尾失败 (非致命) "
+                f"{getattr(dispose, '__qualname__', '?')}: {e}"
+            )
+
+    stack.callback(_runner)
+
+
+def _push_async(stack: AsyncExitStack, dispose) -> None:
+    """登记一个协程收尾回调 — 与 ``_push`` 同一条约定，只是回调是 awaitable。
+
+    ``stack.callback`` 只收同步函数，而自制插件的卸载是协程（作用域效应可以是
+    async）。失败同样吞在回调内：一个插件卸不下来不能挡住后面的组件。
+    """
+
+    async def _runner() -> None:
+        try:
+            await dispose()
+        except Exception as e:
+            logger.debug(
+                f"[lifespan] 收尾失败 (非致命) "
+                f"{getattr(dispose, '__qualname__', '?')}: {e}"
+            )
+
+    stack.push_async_callback(_runner)
+
+
+def _apply_prevent_sleep(enabled: bool) -> None:
+    """应用防休眠设置，并把实现拉起的常驻子进程交给进程登记表收编。
+
+    子进程登记由装配层负责（``utils.power`` 不 import infra，否则 utils ⇄ infra
+    成环）；收尾已在 shutdown 里统一处理（shutdown_all_children），这里只把孩子交出去。
+    实现经 ``prevent_sleep`` 端口取：插件换了机制后，登记收编的必须是新实现那个进程，
+    否则内置 caffeinate 的残留会一直留在机器上。
+    """
+    from utils.power import get_prevent_sleep
+
+    manager = get_prevent_sleep()
+    manager.apply(enabled)
+    proc = manager.process()
+    if proc is not None:
+        from infra.process_registry import register
+
+        register(manager.name, proc)
+
+
 @asynccontextmanager
 # @link:block App
 async def lifespan(app: FastAPI):
-    """应用生命周期管理"""
+    """应用生命周期管理 — 每一步把「怎么撤」登记在「怎么起」旁边。
+
+    原先是 250 行顺序启动 + 一份手写的收尾清单，两份清单对不上：收尾顺序不是启动
+    的逆序（模型工厂先关，还在用它的感知/心跳后关），有 5 个组件只有启动没有收尾
+    （感知集成器、桌宠引擎、会话定时任务、屏幕内容分析、错误总线装在 loop 上的
+    handler），且启动走到一半失败时整段收尾被异常跳过。AsyncExitStack 让配对由结构
+    保证：登记即时效，卸载必然逆序，中途失败也把已起的部分撤干净。
+
+    每步的 try/except 与日志级别保持原语义——哪些失败致命（API Key、Embedding）、
+    哪些降级继续（视觉预加载、感知、MCP），是这一步的约定，不是巧合。
+    """
     logger.info("Starting Humanoid AGI...")
+    async with AsyncExitStack() as stack:
+        # 数据库连接池是被业务懒打开的，没有对应的启动步骤，所以它作为最早登记
+        # 的时效放上栈 —— 于是它在所有组件都停下之后才关（原清单里也排最后）。
+        def _close_database() -> None:
+            from modules.database.connection import get_db_manager
+            get_db_manager().close()
+            logger.info("✓ 数据库连接已关闭")
 
-    # 进程锚定: 把自身 PID 写入发现文件，所有卫星进程（前端代理/Qt/桌宠/
-    # 截图 daemon/MCP server）通过它绑定后端；后端退出时全体随之退出。
-    try:
-        from infra.watchdog import write_backend_pid_file
-        write_backend_pid_file(os.getpid())
-    except Exception as _swallowed_err:
-        logger.debug(f"[lifespan] ignored Exception: {_swallowed_err}")
+        _push(stack, _close_database)
 
-    # SEC-2: 生产环境必须配置 API Key
-    # @link:block App_Guard = Guard
-    if settings.APP_ENV == "production" and not _SIMPLE_API_KEY:
-        logger.error("FATAL: API Key not configured in production mode. Set SIMPLE_API_KEY environment variable.")
-        raise RuntimeError("API Key must be configured in production mode")
-
-    # 校验生产环境关键配置
-    settings.validate_production()
-
-    # 初始化 ~/.cordex/ 本地存储目录
-    try:
-        from pathlib import Path
-        base = Path.home() / ".cordex"
-        for sub in ("debug", "skills", "plans", "todos", "edits", "memories", "projects"):
-            (base / sub).mkdir(parents=True, exist_ok=True)
-        logger.info("✓ ~/.cordex/ 本地存储目录已就绪")
-    except Exception as e:
-        logger.warning(f"~/.cordex/ 目录初始化失败 (非致命): {e}")
-
-    # 检测屏幕录制权限（一次检测，全局生效）
-    try:
-        from utils.screen_capture import init_screen_permission
-        init_screen_permission()
-    except Exception as e:
-        logger.debug(f"屏幕权限检测跳过: {e}")
-
-    # 启动时应用当前记忆库（含同步 backend 纯对话链路的记忆路径）。
-    # 主 settings 构造期因循环 import 跳过了 backend 同步，此处补上。
-    try:
-        settings._apply_current_memory_lib()
-    except Exception as e:
-        logger.debug(f"应用当前记忆库失败: {e}")
-
-    # 预加载 Embedding 模型（阻塞启动，加载失败则启动失败）
-    # @link:block App_Retrieve = Retrieve
-    from modules.memory.embedding import EmbeddingEngine
-    eng = EmbeddingEngine.get_instance()
-    print("[DEBUG] 开始加载 Embedding 模型...", flush=True)
-    if not eng._load_model():
-        raise RuntimeError("Embedding 模型加载失败，无法启动（请检查网络或代理，模型自动下载需要访问 huggingface.co）")
-    print(f"[DEBUG] Embedding 模型加载完成，dim={eng.dim}", flush=True)
-    logger.info(f"✓ Embedding 模型已预加载 (dim={eng.dim})")
-    print("[DEBUG] 继续后续初始化...", flush=True)
-
-    # 知识库启动预热：Embedding 就绪后后台按哈希增量摄取 KNOWLEDGE_ROOTS，
-    # 保证模型第一次调用 knowledge_search 就有内容可引用；不阻塞启动。
-    try:
-        from modules.knowledge.warmup import start_background_ingest
-        if start_background_ingest() is not None:
-            logger.info("✓ 知识库后台增量摄取已启动")
-    except Exception as e:
-        logger.warning(f"知识库后台增量摄取启动失败 (非致命): {e}")
-
-    # 预加载视觉模型（同步加载，先加载再启动，避免运行中首次调用才加载）
-    # auto/mlx/transformers/api 均为真实视觉后端；mock 为模拟，无需加载
-    # 上限 60s：模型加载过慢（或首次下载）时降级为按需加载，不拖垮整体启动
-    if settings.VISION_BACKEND and settings.VISION_BACKEND.lower() != "mock":
+        # 进程锚定: 把自身 PID 写入发现文件，所有卫星进程（前端代理/Qt/桌宠/
+        # 截图 daemon/MCP server）通过它绑定后端；后端退出时全体随之退出。
         try:
-            from infra.data_process.core.image_analyzer import ImageAnalyzer
-            analyzer = ImageAnalyzer(model_type="auto")
-            await asyncio.wait_for(analyzer.initialize(), timeout=60)
-            logger.info(f"✓ 视觉模型预加载完成 (type={analyzer.model_type})")
-        except asyncio.TimeoutError:
-            logger.warning("视觉模型预加载超时(60s)，降级为运行中按需加载")
-        except Exception as e:
-            logger.warning(f"视觉模型预加载失败 (降级，运行中按需加载): {e}")
+            from infra.watchdog import clear_backend_pid_file, write_backend_pid_file
+            write_backend_pid_file(os.getpid())
 
-    # 初始化模型调度管理器
-    try:
-        from modules.thinking.model_factory import get_model_factory
-        get_model_factory().ensure_ready()
-        print("[DEBUG] 模型实例工厂就绪", flush=True)
-        logger.info("✓ 模型实例工厂已就绪")
-    except Exception as e:
-        logger.error(f"✗ 模型调度管理器初始化失败: {e}")
+            def _unanchor_pid_file() -> None:
+                # kill -9 时文件残留，卫星进程靠「PID 不存在」探测自动退出。
+                clear_backend_pid_file(os.getpid())
 
-    # 初始化流式思考系统
-    # @link:block App_Think = Think
-    try:
-        from modules.thinking.api_stream import initialize_system
-        print("[DEBUG] 开始初始化流式思考系统...", flush=True)
-        await initialize_system()
-        print("[DEBUG] 流式思考系统就绪", flush=True)
-        logger.info("✓ 流式思考系统已初始化")
-    except Exception as e:
-        logger.error(f"✗ 流式思考系统初始化失败: {e}")
+            _push(stack, _unanchor_pid_file)
+        except Exception as _swallowed_err:
+            logger.debug(f"[lifespan] ignored Exception: {_swallowed_err}")
 
-    # 初始化全局错误总线的asyncio处理器
-    # @link:block App_Write = Write
-    try:
-        from infra.error_bus import error_bus
-        loop = asyncio.get_running_loop()
-        error_bus.setup_asyncio_handler(loop)
-        logger.info("✓ 全局错误总线已初始化")
-    except Exception as e:
-        logger.error(f"✗ 全局错误总线初始化失败: {e}")
-
-    # 注册错误总线 WebSocket 回调 — 枚举可推送出口（Retrieve）后逐个发送（Emit）
-    # @link:block App_Emit = Retrieve · Emit
-    try:
-        from infra.error_bus import error_bus
-        from modules.thinking.api_stream import connection_manager
-
-        def _on_error(error_type: str, error_msg: str, ctx: dict):
-            """错误回调：推送到所有活跃前端出口（WebSocket ∪ SSE）"""
-            from modules.thinking.api_stream import _build_event
-            for session_id in connection_manager.push_sessions():
-                envelope = _build_event(
-                    session_id=session_id,
-                    msg_type="error",
-                    event="system_error",
-                    content=error_msg,
-                    role="system",
-                    data={
-                        "error_type": error_type,
-                        "error_message": f"[{error_type}] {error_msg}",
-                        "module": ctx.get("module", ""),
-                        "function": ctx.get("function", ""),
-                        "phase": "error",
-                    },
-                )
-                connection_manager.send_json_from_thread(session_id, envelope)
-        error_bus.set_ws_callback(_on_error)
-        logger.info("✓ 错误总线 WebSocket 回调已注册")
-    except Exception as e:
-        logger.debug(f"错误总线 WebSocket 回调注册失败 (非致命): {e}")
-
-    # 启动感知系统（统一由 PerceptionSystem 管理：屏幕/文件/对话/语音+主动触发）
-    if settings.PERCEPTION_ENABLED:
+        # 自己拉起的子进程（截图 daemon/MCP server/caffeinate…）随本进程收编。
+        # 排在 PID 之前撤销：先收编孩子，再放开锚点。
         try:
-            from modules.perception.setup import get_perception_system
-            ps = get_perception_system()
-            ps.setup()
-            ps.start()
-            logger.info("✓ 感知系统已启动")
+            from cortex.process_registry import shutdown_all_children
+            _push(stack, shutdown_all_children)
+        except Exception as _swallowed_err:
+            logger.debug(f"[lifespan] ignored Exception: {_swallowed_err}")
 
-            # 启动感知集成器（订阅事件并注入模型上下文）
-            from modules.perception.integration import get_perception_integrator
-            get_perception_integrator().start()
+        # 桌宠窗口监管器收尾：停监控线程 + 终止 adopt 的外来窗口 + 清
+        # pet_window_pid.json（shutdown_all_children 只收编 Popen 登记，收编来的
+        # adopted_pid 与残留 pid 文件要这里清）。它不受桌宠开关约束：单例可能被
+        # pet_launch / desktop_pet 路由摸到过，没启动桌宠也得收一次。
+        def _shutdown_pet_windows() -> None:
+            from modules.desktop_pet.window_supervisor import get_pet_window_supervisor
+            get_pet_window_supervisor().shutdown()
+            logger.info("✓ 桌宠窗口监管器已关闭")
 
-            # 桌面宠物（语音触发 + 主会话对话；由装配层拉起，
-            # 不挂在感知系统内部以保持 perception 不反向依赖 desktop_pet）
-            if settings.DESKTOP_PET_ENABLED:
-                try:
-                    from modules.desktop_pet.pet_engine import PetEngine
-                    PetEngine.get_instance(ps.event_bus).start()
-                    logger.info("✓ 桌宠已启动")
-                except Exception as e:
-                    logger.warning(f"桌面宠物启动失败: {e}")
-        except Exception as e:
-            logger.error(f"✗ 感知系统启动失败: {e}")
+        _push(stack, _shutdown_pet_windows)
 
-    # 会话定时任务（每会话独立，到点调用逻辑）
-    # 由装配层拉起：定时任务属思考侧生命周期，若挂在 perception.start() 内会让
-    # perception 反向依赖 thinking，与 thinking → perception 形成逻辑循环。
-    # 同时放在感知开关之外，使「关掉感知」不再连带禁用定时任务。
-    try:
-        from modules.thinking.scheduled_tasks import get_task_manager
-        get_task_manager().start()
-        logger.info("✓ 会话定时任务已启动")
-    except Exception as e:
-        logger.warning(f"会话定时任务启动失败: {e}")
+        # SEC-2: 生产环境必须配置 API Key
+        # @link:block App_Guard = Guard
+        if settings.APP_ENV == "production" and not _SIMPLE_API_KEY:
+            logger.error("FATAL: API Key not configured in production mode. Set SIMPLE_API_KEY environment variable.")
+            raise RuntimeError("API Key must be configured in production mode")
 
-    # MCP 屏幕差异检测（独立子进程，像素级帧差）
-    if settings.SCREEN_DIFF_ENABLED and settings.DIFFERENCE_DETECTOR_ENABLED and settings.PERCEPTION_MCP_ENABLED:
+        # 校验生产环境关键配置
+        settings.validate_production()
+
+        # 初始化 ~/.cordex/ 本地存储目录
         try:
-            from modules.perception.difference.sources.mcp_screen_source import get_screen_diff_source
-            src = get_screen_diff_source()
-            # 从 settings 读取配置（interval 在运行时可通过 REST API 调整）
-            src.interval = settings.SCREEN_DIFF_INTERVAL
-            src.start()
-            logger.info("✓ MCP 屏幕差异检测已启动 (screen_diff_server)")
+            from pathlib import Path
+            base = Path.home() / ".cordex"
+            for sub in ("debug", "skills", "plans", "todos", "edits", "memories", "projects"):
+                (base / sub).mkdir(parents=True, exist_ok=True)
+            logger.info("✓ ~/.cordex/ 本地存储目录已就绪")
         except Exception as e:
-            logger.warning(f"MCP 屏幕差异检测启动失败: {e}")
+            logger.warning(f"~/.cordex/ 目录初始化失败 (非致命): {e}")
 
-        # 屏幕内容分析（OCR + 视觉，独立于像素差）
+        # 检测屏幕录制权限（一次检测，全局生效）
         try:
-            from modules.perception.difference.sources.screen_monitor_source import get_screen_monitor_source
-            get_screen_monitor_source().start()
-            logger.info("✓ 屏幕内容分析已启动 (screen_monitor_server)")
+            from utils.screen_capture import init_screen_permission
+            init_screen_permission()
         except Exception as e:
-            logger.warning(f"屏幕内容分析启动失败: {e}")
+            logger.debug(f"屏幕权限检测跳过: {e}")
 
-    # 启动差异检测器心跳（1Hz 扫描 TimeDifferenceSource — 空闲检测/时间差异）
-    if settings.DIFFERENCE_DETECTOR_ENABLED and settings.PERCEPTION_INTERNAL_ENABLED:
+        # 启动时应用当前记忆库（含同步 backend 纯对话链路的记忆路径）。
+        # 主 settings 构造期因循环 import 跳过了 backend 同步，此处补上。
         try:
-            from modules.perception.difference import get_heartbeat
-            get_heartbeat().start()
-            logger.info("✓ 差异检测器心跳已启动 (1Hz)")
+            settings._apply_current_memory_lib()
         except Exception as e:
-            logger.warning(f"差异检测器心跳启动失败: {e}")
+            logger.debug(f"应用当前记忆库失败: {e}")
 
-    # 启动时应用系统级设置（真实生效，非摆设）：
-    # 防休眠（caffeinate 保系统不睡）+ 开机启动（LaunchAgent）
-    try:
-        from utils.power import apply as _apply_power, get_process as _power_proc
-        _apply_power(bool(getattr(settings, "prevent_sleep", False)))
-        # caffeinate 是后端拉起的常驻子进程：登记以随 shutdown 收编，
-        # 否则后端重启后会残留。登记由装配层负责，utils.power 不 import infra。
-        if _power_proc() is not None:
-            from infra.process_registry import register as _reg_proc
-            _reg_proc("caffeinate", _power_proc())
-    except Exception as e:
-        logger.debug(f"防休眠应用失败 (非致命): {e}")
-    try:
-        from utils.autostart import apply as _apply_autostart
-        if getattr(settings, "launch_at_startup", False):
-            _apply_autostart(True)
-    except Exception as e:
-        logger.debug(f"开机启动应用失败 (非致命): {e}")
+        # 预加载 Embedding 模型（阻塞启动，加载失败则启动失败）
+        # @link:block App_Retrieve = Retrieve
+        from modules.memory.embedding import get_embedding_engine
+        eng = get_embedding_engine()
+        print("[DEBUG] 开始加载 Embedding 模型...", flush=True)
+        if not eng._load_model():
+            raise RuntimeError("Embedding 模型加载失败，无法启动（请检查网络或代理，模型自动下载需要访问 huggingface.co）")
+        print(f"[DEBUG] Embedding 模型加载完成，dim={eng.dim}", flush=True)
+        logger.info(f"✓ Embedding 模型已预加载 (dim={eng.dim})")
+        print("[DEBUG] 继续后续初始化...", flush=True)
 
-    yield
-    logger.info("Shutting down Humanoid AGI...")
-
-    # 进程锚定收尾: 正常退出时清 PID 文件（kill -9 时文件残留，
-    # 卫星进程靠「PID 不存在」探测自动退出），并收编自己拉起的子进程。
-    try:
-        from infra.watchdog import clear_backend_pid_file
-        clear_backend_pid_file(os.getpid())
-    except Exception as _swallowed_err:
-        logger.debug(f"[lifespan] ignored Exception: {_swallowed_err}")
-    try:
-        from cortex.process_registry import shutdown_all_children
-        shutdown_all_children()
-    except Exception as _swallowed_err:
-        logger.debug(f"[lifespan] ignored Exception: {_swallowed_err}")
-
-    # 桌宠窗口监管器收尾：停监控线程 + 终止 adopt 的外来窗口 + 清 pet_window_pid.json
-    # （shutdown_all_children 只收编 Popen 登记，收编的 adopted_pid 与残留 pid 文件需要这里清）
-    try:
-        from modules.desktop_pet.window_supervisor import get_pet_window_supervisor
-        get_pet_window_supervisor().shutdown()
-        logger.info("✓ 桌宠窗口监管器已关闭")
-    except Exception as _swallowed_err:
-        logger.debug(f"[lifespan] ignored Exception: {_swallowed_err}")
-
-    # 关闭模型调度管理器
-    try:
-        from modules.thinking.model_factory import get_model_factory
-        get_model_factory().shutdown()
-        logger.info("✓ 模型实例已关闭")
-    except Exception as e:
-        logger.debug(f"模型调度管理器关闭失败 (非致命): {e}")
-
-    # 停止 MCP 屏幕差异检测
-    if settings.SCREEN_DIFF_ENABLED and settings.DIFFERENCE_DETECTOR_ENABLED:
+        # 知识库启动预热：Embedding 就绪后后台按哈希增量摄取 KNOWLEDGE_ROOTS，
+        # 保证模型第一次调用 knowledge_search 就有内容可引用；不阻塞启动。
+        # 无收尾：daemon 线程跑完 ingest_once 自己结束，不会挡住进程退出。
         try:
-            from modules.perception.difference.sources.mcp_screen_source import get_screen_diff_source
-            get_screen_diff_source().stop()
-            logger.info("✓ MCP 屏幕差异检测已停止")
+            from modules.knowledge.warmup import start_background_ingest
+            if start_background_ingest() is not None:
+                logger.info("✓ 知识库后台增量摄取已启动")
         except Exception as e:
-            logger.debug(f"MCP 屏幕差异检测停止失败 (非致命): {e}")
+            logger.warning(f"知识库后台增量摄取启动失败 (非致命): {e}")
 
-    # 停止差异检测器心跳
-    if settings.DIFFERENCE_DETECTOR_ENABLED and settings.PERCEPTION_INTERNAL_ENABLED:
+        # 预加载视觉模型（同步加载，先加载再启动，避免运行中首次调用才加载）
+        # auto/mlx/transformers/api 均为真实视觉后端；mock 为模拟，无需加载
+        # 上限 60s：模型加载过慢（或首次下载）时降级为按需加载，不拖垮整体启动
+        if settings.VISION_BACKEND and settings.VISION_BACKEND.lower() != "mock":
+            try:
+                from infra.data_process.core.image_analyzer import ImageAnalyzer
+                analyzer = ImageAnalyzer(model_type="auto")
+                await asyncio.wait_for(analyzer.initialize(), timeout=60)
+                logger.info(f"✓ 视觉模型预加载完成 (type={analyzer.model_type})")
+            except asyncio.TimeoutError:
+                logger.warning("视觉模型预加载超时(60s)，降级为运行中按需加载")
+            except Exception as e:
+                logger.warning(f"视觉模型预加载失败 (降级，运行中按需加载): {e}")
+
+        # 运行期自制插件（模型自己提交源码挂上的那一批）：按创建顺序挂回来。
+        #
+        # 收尾登记排在挂载**之前** — AsyncExitStack 登记即生效，所以挂载走到一半
+        # 失败（第三条源码炸了）也已经有人把挂上的那部分卸干净。这一层的
+        # load_authored 自己不抛：单条失败记在它自己那一行上然后跳过；这里的
+        # try/except 兜的是「机件 import 不动」那种起不来，按降级继续算——一个插件
+        # 不该是进程起不来的理由。
+        #
+        # 位置在致命校验之后、第一个会调用工具的组件之前：撤销走逆序，于是模型工厂、
+        # 感知、心跳、桌宠、定时任务都先停下，工具才从它们脚下抽走。同名接管的
+        # 「谁在位」也因此重启前后一致（挂载与撤销都按创建顺序的逆序回来）。
         try:
-            from modules.perception.difference import get_heartbeat
-            get_heartbeat().stop()
-            logger.info("✓ 差异检测器心跳已停止")
-        except Exception as e:
-            logger.debug(f"差异检测器心跳停止失败 (非致命): {e}")
+            from modules.shared.plugin_authoring import (
+                get_default_store,
+                load_authored,
+                unload_authored,
+            )
 
-    # 停止感知系统
-    if settings.PERCEPTION_ENABLED:
+            async def _unload_authored() -> None:
+                count = await unload_authored()
+                if count:
+                    logger.info(f"✓ 自制插件已卸载 {count} 个")
+
+            _push_async(stack, _unload_authored)
+            _authored = await load_authored(get_default_store())
+            logger.info(f"✓ 自制插件已恢复 {len(_authored)} 个")
+        except Exception as e:
+            logger.warning(f"自制插件恢复失败 (非致命): {e}")
+
+        # 初始化模型调度管理器
         try:
-            from modules.perception.setup import get_perception_system
-            ps = get_perception_system()
-            ps.stop()
-            logger.info("✓ 感知系统已停止")
+            from modules.thinking.model_factory import get_model_factory
+            get_model_factory().ensure_ready()
+            print("[DEBUG] 模型实例工厂就绪", flush=True)
+            logger.info("✓ 模型实例工厂已就绪")
+            _push(stack, lambda: (get_model_factory().shutdown(),
+                                  logger.info("✓ 模型实例已关闭")))
         except Exception as e:
-            logger.debug(f"感知系统停止失败 (非致命): {e}")
+            logger.error(f"✗ 模型调度管理器初始化失败: {e}")
 
+        # 初始化流式思考系统
+        # @link:block App_Think = Think
+        try:
+            from modules.thinking.api_stream import initialize_system
+            print("[DEBUG] 开始初始化流式思考系统...", flush=True)
+            await initialize_system()
+            print("[DEBUG] 流式思考系统就绪", flush=True)
+            logger.info("✓ 流式思考系统已初始化")
+        except Exception as e:
+            logger.error(f"✗ 流式思考系统初始化失败: {e}")
 
-    # 关闭数据库连接
-    try:
-        from modules.database.connection import db_manager
-        db_manager.close()
-        logger.info("✓ 数据库连接已关闭")
-    except Exception as e:
-        logger.warning(f"数据库连接关闭失败: {e}")
+        # 初始化全局错误总线的asyncio处理器
+        # @link:block App_Write = Write
+        try:
+            from infra.error_bus import get_error_bus
+            bus = get_error_bus()
+            loop = asyncio.get_running_loop()
+            bus.setup_asyncio_handler(loop)
+            logger.info("✓ 全局错误总线已初始化")
+            # 这个 handler 是装在事件循环上的，原来没人摘：Loop 之后被别的
+            # 入口复用时（测试、嵌入式起停）还带着本进程的 error_bus。
+            _push(stack, lambda: (bus.restore_asyncio_handler(loop),
+                                  logger.info("✓ 全局错误总线 handler 已摘除")))
+        except Exception as e:
+            logger.error(f"✗ 全局错误总线初始化失败: {e}")
+
+        # 注册错误总线 WebSocket 回调 — 枚举可推送出口（Retrieve）后逐个发送（Emit）
+        # @link:block App_Emit = Retrieve · Emit
+        try:
+            from infra.error_bus import get_error_bus
+            from modules.thinking.api_stream import connection_manager
+
+            def _on_error(error_type: str, error_msg: str, ctx: dict):
+                """错误回调：推送到所有活跃前端出口（WebSocket ∪ SSE）"""
+                from modules.thinking.api_stream import _build_event
+                for session_id in connection_manager.push_sessions():
+                    envelope = _build_event(
+                        session_id=session_id,
+                        msg_type="error",
+                        event="system_error",
+                        content=error_msg,
+                        role="system",
+                        data={
+                            "error_type": error_type,
+                            "error_message": f"[{error_type}] {error_msg}",
+                            "module": ctx.get("module", ""),
+                            "function": ctx.get("function", ""),
+                            "phase": "error",
+                        },
+                    )
+                    connection_manager.send_json_from_thread(session_id, envelope)
+            get_error_bus().set_ws_callback(_on_error)
+            logger.info("✓ 错误总线 WebSocket 回调已注册")
+        except Exception as e:
+            logger.debug(f"错误总线 WebSocket 回调注册失败 (非致命): {e}")
+
+        # 启动感知系统（统一由 PerceptionSystem 管理：屏幕/文件/对话/语音+主动触发）
+        if settings.PERCEPTION_ENABLED:
+            try:
+                from modules.perception.setup import get_perception_system
+                ps = get_perception_system()
+                ps.setup()
+                ps.start()
+                logger.info("✓ 感知系统已启动")
+
+                def _stop_perception() -> None:
+                    ps.stop()
+                    logger.info("✓ 感知系统已停止")
+
+                _push(stack, _stop_perception)
+
+                # 启动感知集成器（订阅事件并注入模型上下文）
+                # 原来只有 start，没有配对的 stop：主动注入的订阅在收尾时一直挂着。
+                from modules.perception.integration import get_perception_integrator
+                integrator = get_perception_integrator()
+                integrator.start()
+
+                def _stop_integrator() -> None:
+                    integrator.stop()
+                    logger.info("✓ 感知集成器已停止")
+
+                _push(stack, _stop_integrator)
+
+                # 桌面宠物（语音触发 + 主会话对话；由装配层拉起，
+                # 不挂在感知系统内部以保持 perception 不反向依赖 desktop_pet）
+                if settings.DESKTOP_PET_ENABLED:
+                    try:
+                        from modules.desktop_pet.pet_engine import PetEngine
+                        pet = PetEngine.get_instance(ps.event_bus)
+                        pet.start()
+                        logger.info("✓ 桌宠已启动")
+
+                        def _stop_pet() -> None:
+                            pet.stop()
+                            logger.info("✓ 桌宠已停止")
+
+                        _push(stack, _stop_pet)
+                    except Exception as e:
+                        logger.warning(f"桌面宠物启动失败: {e}")
+            except Exception as e:
+                logger.error(f"✗ 感知系统启动失败: {e}")
+
+        # 会话定时任务（每会话独立，到点调用逻辑）
+        # 由装配层拉起：定时任务属思考侧生命周期，若挂在 perception.start() 内会让
+        # perception 反向依赖 thinking，与 thinking → perception 形成逻辑循环。
+        # 同时放在感知开关之外，使「关掉感知」不再连带禁用定时任务。
+        try:
+            from modules.thinking.scheduled_tasks import get_task_manager
+            task_manager = get_task_manager()
+            task_manager.start()
+            logger.info("✓ 会话定时任务已启动")
+
+            def _stop_scheduled_tasks() -> None:
+                task_manager.stop()
+                logger.info("✓ 会话定时任务已停止")
+
+            _push(stack, _stop_scheduled_tasks)
+        except Exception as e:
+            logger.warning(f"会话定时任务启动失败: {e}")
+
+        # MCP 屏幕差异检测（独立子进程，像素级帧差）
+        if settings.SCREEN_DIFF_ENABLED and settings.DIFFERENCE_DETECTOR_ENABLED and settings.PERCEPTION_MCP_ENABLED:
+            try:
+                from modules.perception.difference.sources.mcp_screen_source import get_screen_diff_source
+                src = get_screen_diff_source()
+                # 从 settings 读取配置（interval 在运行时可通过 REST API 调整）
+                src.interval = settings.SCREEN_DIFF_INTERVAL
+                src.start()
+                logger.info("✓ MCP 屏幕差异检测已启动 (screen_diff_server)")
+
+                def _stop_screen_diff() -> None:
+                    src.stop()
+                    logger.info("✓ MCP 屏幕差异检测已停止")
+
+                _push(stack, _stop_screen_diff)
+            except Exception as e:
+                logger.warning(f"MCP 屏幕差异检测启动失败: {e}")
+
+            # 屏幕内容分析（OCR + 视觉，独立于像素差）
+            try:
+                from modules.perception.difference.sources.screen_monitor_source import get_screen_monitor_source
+                monitor = get_screen_monitor_source()
+                monitor.start()
+                logger.info("✓ 屏幕内容分析已启动 (screen_monitor_server)")
+
+                def _stop_screen_monitor() -> None:
+                    monitor.stop()
+                    logger.info("✓ 屏幕内容分析已停止")
+
+                _push(stack, _stop_screen_monitor)
+            except Exception as e:
+                logger.warning(f"屏幕内容分析启动失败: {e}")
+
+        # 启动差异检测器心跳（1Hz 扫描 TimeDifferenceSource — 空闲检测/时间差异）
+        if settings.DIFFERENCE_DETECTOR_ENABLED and settings.PERCEPTION_INTERNAL_ENABLED:
+            try:
+                from modules.perception.difference import get_heartbeat
+                heartbeat = get_heartbeat()
+                heartbeat.start()
+                logger.info("✓ 差异检测器心跳已启动 (1Hz)")
+
+                def _stop_heartbeat() -> None:
+                    heartbeat.stop()
+                    logger.info("✓ 差异检测器心跳已停止")
+
+                _push(stack, _stop_heartbeat)
+            except Exception as e:
+                logger.warning(f"差异检测器心跳启动失败: {e}")
+
+        # 启动时应用系统级设置（真实生效，非摆设）：
+        # 防休眠（caffeinate 保系统不睡）+ 开机启动（LaunchAgent）
+        try:
+            _apply_prevent_sleep(bool(getattr(settings, "prevent_sleep", False)))
+        except Exception as e:
+            logger.debug(f"防休眠应用失败 (非致命): {e}")
+        try:
+            from utils.autostart import apply as _apply_autostart
+            if getattr(settings, "launch_at_startup", False):
+                _apply_autostart(True)
+        except Exception as e:
+            logger.debug(f"开机启动应用失败 (非致命): {e}")
+
+        yield
+        logger.info("Shutting down Humanoid AGI...")
 
 
 # ---------------------------------------------------------------------------
@@ -693,6 +816,8 @@ def register_module_routers(app: FastAPI) -> None:
     app.include_router(management_router)
     app.include_router(output_router)
     app.include_router(security_router)
+    # 自制插件（运行期提交源码那一层）的 HTTP 入口
+    app.include_router(authored_plugin_router)
     if settings.DIFFERENCE_DETECTOR_ENABLED:
         app.include_router(difference_router)
 
@@ -755,8 +880,8 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 async def general_exception_handler(request: Request, exc: Exception):
     """未预期异常 → 500 通用响应，过滤敏感信息"""
     logger.error(f"[未处理异常] {request.method} {request.url.path}: {type(exc).__name__}: {exc}")
-    from infra.error_bus import error_bus, ErrorContext
-    error_bus.report_error(
+    from infra.error_bus import ErrorContext, get_error_bus
+    get_error_bus().report_error(
         exc,
         ErrorContext(
             module="api.main",
@@ -799,12 +924,12 @@ async def health_check():
 
     # 检查数据库
     try:
-        from modules.database.connection import db_manager
+        from modules.database.connection import get_db_manager
         from sqlalchemy import text
         # get_session 是 @contextmanager 生成器，必须用 with 进入
         # （错误用法 get_session().close() 会抛 AttributeError，误报 unavailable）
         # 执行真实查询：确保每次检查都真正验证数据库可用（session 惰性连接）
-        with db_manager.get_session() as session:
+        with get_db_manager().get_session() as session:
             session.execute(text("SELECT 1"))
         checks["database"] = "ok"
     except Exception as e:
@@ -1457,11 +1582,7 @@ async def update_config(key: str, body: PutConfigRequest):
         # 系统级配置：变更时立即生效（防休眠 caffeinate / 开机启动 LaunchAgent / 感知系统开关）
         try:
             if key_upper == "PREVENT_SLEEP":
-                from utils.power import apply as _apply_power, get_process as _power_proc
-                _apply_power(bool(validated))
-                if _power_proc() is not None:
-                    from infra.process_registry import register as _reg_proc
-                    _reg_proc("caffeinate", _power_proc())
+                _apply_prevent_sleep(bool(validated))
             elif key_upper == "LAUNCH_AT_STARTUP":
                 from utils.autostart import apply as _apply_autostart
                 _apply_autostart(bool(validated))

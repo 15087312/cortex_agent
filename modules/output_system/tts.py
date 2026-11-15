@@ -23,10 +23,30 @@ from utils.logger import setup_logger
 logger = setup_logger("tts_engine")
 
 # 默认输出目录（供 api/main.py 静态挂载引用）
+# 相对路径一律按项目根解析：静态挂载若按 cwd 解析，从别的目录启动服务时
+# /audio 就指向了别处——合成的文件存在、前端却 404（「没声音」的静默形态）。
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_TTS_OUTPUT_DIR = Path(getattr(settings, "OUTPUT_TTS_OUTPUT_DIR", "data/output"))
+if not DEFAULT_TTS_OUTPUT_DIR.is_absolute():
+    DEFAULT_TTS_OUTPUT_DIR = _PROJECT_ROOT / DEFAULT_TTS_OUTPUT_DIR
 
 
 def get_tts_output_dir() -> Path:
+    """端口优先取TTS 输出目录：接管 ``tts_output_dir`` 端口 = 换掉全部调用点。
+
+    取不到端口才回退内置单例（脚本、没跑过 bootstrap 的入口）。bootstrap 注册
+    的 provider 必须是 ``_default_tts_output_dir`` 而不是本函数，否则端口→本函数→端口
+    一调用就递归。
+    """
+    from infra.tool_manager.service_registry import get_capability
+
+    factory = get_capability("tts_output_dir")
+    if factory is None:
+        return _default_tts_output_dir()
+    return factory()
+
+
+def _default_tts_output_dir() -> Path:
     """公开访问器：TTS 输出目录（api 静态挂载等外部消费者经此获取，不直接引用内部常量）。"""
     return DEFAULT_TTS_OUTPUT_DIR
 
@@ -43,10 +63,10 @@ class TTSEngine:
     }
 
     def __init__(self, output_dir: Optional[str] = None):
-        self.output_dir = Path(cast(str,
-            output_dir
-            or getattr(settings, "OUTPUT_TTS_OUTPUT_DIR", "data/output")
-        ))
+        resolved = Path(cast(str, output_dir)) if output_dir else DEFAULT_TTS_OUTPUT_DIR
+        if not resolved.is_absolute():
+            resolved = _PROJECT_ROOT / resolved
+        self.output_dir = resolved
         self.language = getattr(settings, "OUTPUT_TTS_LANGUAGE", "zh")
         self._available: Optional[bool] = None
 
@@ -106,12 +126,13 @@ class TTSEngine:
 
             # 如果已在事件循环内，用线程池避免嵌套
             try:
-                loop = asyncio.get_running_loop()
+                asyncio.get_running_loop()
+            except RuntimeError:
+                asyncio.run(_do())
+            else:
                 import concurrent.futures
                 with concurrent.futures.ThreadPoolExecutor() as pool:
                     pool.submit(lambda: asyncio.run(_do())).result()
-            except RuntimeError:
-                asyncio.run(_do())
 
             if file_path.exists() and file_path.stat().st_size > 0:
                 logger.info(f"TTS 合成成功: {file_path} ({file_path.stat().st_size} bytes)")

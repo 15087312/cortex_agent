@@ -76,6 +76,26 @@ def test_duplicate_persona_name_rejected(store):
     assert store.add_persona(" 猫娘 ", "b") is None
 
 
+def test_rename_persona_keeps_prompt_and_active(store):
+    """新页面允许改名：改名不能顺手把提示词/启用状态改掉（旧页面的坑）"""
+    pid = store.get_active_persona_id()
+    before = store.get_persona(pid)
+    renamed = store.update_persona(pid, {"name": "新名字"})
+    assert renamed["name"] == "新名字"
+    assert renamed["prompt"] == before["prompt"]
+    assert store.get_active_persona_id() == pid
+    assert store.get_config()["persona"] == before["prompt"]
+
+
+def test_rename_to_existing_name_rejected(store):
+    store.add_persona("猫娘", "a")
+    pid = store.get_active_persona_id()
+    assert store.update_persona(pid, {"name": "猫娘"}) is None
+    assert store.get_persona(pid)["name"] == "默认人设"
+    # 大小写/空白视为同名
+    assert store.update_persona(pid, {"name": " 猫娘 "}) is None
+
+
 def test_manual_memory_isolated_per_persona(store):
     p1 = store.get_active_persona_id()
     p2 = store.add_persona("猫娘", "你是猫娘")

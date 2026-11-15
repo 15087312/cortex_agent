@@ -3,16 +3,23 @@
 覆盖：配置写入回读 → SSE 对话流（token/done）→ 独立历史落库 →
 工具调用（真实 ToolManager 执行 calc）→ 白名单拦截。
 """
-import asyncio
 import json
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from modules.desktop_pet.pet_engine import PetEngine
+
+
+@pytest.fixture(autouse=True)
+def _pet_enabled(monkeypatch):
+    """桌宠总开关钉成开：真实 `~/.cortex/settings.json` 里用户可能关着，
+    否则 SSE 对话端点直接 409、全部 E2E 变空流（§20/§110）。
+    """
+    from config.settings import settings
+    monkeypatch.setattr(settings, "DESKTOP_PET_ENABLED", True)
 
 
 @pytest.fixture(autouse=True)

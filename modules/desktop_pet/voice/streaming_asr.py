@@ -104,31 +104,17 @@ class StreamingASR:
             return None
 
     def _transcribe_wav(self, wav_data: bytes) -> Optional[str]:
-        from config.settings import settings
-        backend = getattr(settings, "PERCEPTION_VOICE_BACKEND", "local")
-
-        if backend == "api":
-            return self._transcribe_api(wav_data)
-        return self._transcribe_local(wav_data)
-
-    def _transcribe_local(self, wav_data: bytes) -> Optional[str]:
-        import whisper
-        from config.settings import settings
-        model_size = getattr(settings, "PERCEPTION_VOICE_MODEL", "tiny")
-        model = whisper.load_model(model_size)
-        import tempfile, os
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-            f.write(wav_data)
-            tmp_path = f.name
+        """WAV → 文本（复用带缓存的 ASR，避免每次重新 load_model）"""
         try:
-            result = model.transcribe(tmp_path, language=self._language)
-            return result.get("text", "").strip() or None
-        finally:
-            os.unlink(tmp_path)
-
-    def _transcribe_api(self, wav_data: bytes) -> Optional[str]:
-        from infra.data_process.core.speech_recognizer import transcribe_with_api
-        return transcribe_with_api(wav_data, self._language, self._sample_rate)
+            import io
+            import wave
+            with wave.open(io.BytesIO(wav_data), "rb") as wf:
+                pcm = wf.readframes(wf.getnframes())
+            from modules.desktop_pet.voice.asr import transcribe_pcm
+            return transcribe_pcm(pcm, sample_rate=self._sample_rate, language=self._language)
+        except Exception as e:
+            logger.debug(f"WAV 转写失败: {e}")
+            return None
 
     @staticmethod
     def _pcm_to_wav(pcm_data: bytes, sample_rate: int = 16000) -> bytes:

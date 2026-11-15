@@ -2,7 +2,7 @@
 
 [← 返回总索引](./README.md) | [English](./08-testing-ci.en.md)
 
-> 由 `docs/ERRORS_AND_FIXES.md` 按模块拆分；章节编号沿用原文（§104–§107 为原文重复编号的修订，见总索引）。本文件共 19 节：§20、§27、§30、§31、§32、§33、§34、§35、§36、§37、§44、§45、§52、§53、§54、§55、§58、§66、§81。
+> 由 `docs/ERRORS_AND_FIXES.md` 按模块拆分；章节编号沿用原文（§104–§107 为原文重复编号的修订，见总索引）。本文件共 20 节：§20、§27、§30、§31、§32、§33、§34、§35、§36、§37、§44、§45、§52、§53、§54、§55、§58、§66、§81、§110。
 
 ---
 ## 20. 测试假对象与真实模型字段脱节（后端）
@@ -679,3 +679,113 @@ help: `pyaudio` (v0.2.14) was included because `cortex-agent` depends on `pyaudi
 **验证：** `test_detectors.py`/`test_voice_hotkey.py`/`test_perception.py` 107 测试通过；requirements.txt 语法合法；语音/桌面模块均函数内延迟 import。
 
 **教训：** 服务端部署（Vercel 等沙箱构建）不能包含依赖系统 C 库/无 wheel 的本地硬件包。此类依赖应独立成可选文件（如 requirements-voice.txt），并在代码层做延迟导入 + ImportError 优雅降级，让"装了有功能、没装不崩溃"。
+
+---
+## 110. 全绿却全坏：替身替到了结论层 / 前端 mock 把 404 变成 `{}` / 真机能力被 conftest 关死（测试方法论）
+
+**现象：** §109 的桌宠语音、TTS、人设页、总开关四处功能对用户全不可用，但当时
+`pytest tests/unit`（166 个桌宠相关用例）与 `vitest`（647 个前端用例）全绿。
+
+**根因（五条方法论层面的漏洞）：**
+
+1. **替身替到了「结论」这一层。** `tests/unit/test_tts.py` 用 `FakeCommunicate.save()`
+   往路径写 12 字节 `b"FAKE_MP3_DATA"`，然后断言「合成成功、文件存在」。
+   真实 edge-tts 返回 403 这件事，从这个假对象里永远看不到——测试验证的是
+   「我们自己写的 fake 会写文件」。
+2. **合成数据与实现共享同一错误假设。** VAD 用例手工构造「响帧 / 静帧」并显式传
+   `energy_threshold=500`，于是阈值是否低于真实环境底噪（375 > 300）根本无法暴露。
+   测试数据由实现者按实现的假设生成，等于自己给自己判卷。
+3. **前端 mock 未命中 URL 时返回 `{}` + 200。** `routeFetch()` 的默认分支让
+   `GET /config/{key}`（后端不存在）也「成功」返回空对象，组件静默采用默认值。
+   没有任何测试把前端请求路径和后端真实路由表对一遍。
+4. **真机能力被测试基建关死。** `tests/conftest.py::block_real_native_libs`（会话级
+   autouse）把 `torch`/`transformers` 置为 `None` 防止 OpenMP/GIL 死锁；副作用是
+   「真实 Whisper」在 pytest 里永远加载不了。于是语音链路只剩假实现可测，而
+   `external` 标记下也没有一条真机音频用例——没有地方能发现「没声音」。
+5. **只测操作路径，不测状态不变量。** 旧人设页的测试只断言「点了下拉 → 调了
+   activate API」，不检查「编辑器当前内容属于哪个实体」「新建是否污染当前人设」
+   「删除目标是不是正在编辑的那个」。结构性 UI 缺陷因此全部漏过。
+
+**修复（把验证下沉到产物与契约，分四层）：**
+
+| 层 | 文件 | 守什么 |
+|----|------|--------|
+| 产物级单测 | `tests/unit/test_pet_voice_tts_chain.py` | 假后端也写**真实 WAV**；用 `wav_is_audible()` 校验时长/峰值；静音、只有 WAV 头、0 帧、Piper 崩溃都必须落到下一后端并清掉半成品；输出目录必须是后端挂 `/audio` 的那个目录 |
+| 跨端契约 | `tests/unit/test_frontend_api_contract.py` | 扫前端源码里的 `request('GET', …)` / `fetch(BASE + …)` / `fetch('/api/…')` 字面量（`/api` 按 vite 代理剥掉），与 `api.main.app.routes` 逐段比对（`*` 只对路由参数）；自带「能抓出 `GET /config/{key}`」「fetch 说解」「三元后缀」「查询串变量」自测，并断言未解析调用为空、抽取条数 ≥100 |
+| 真机集成（`external`） | `tests/integration/test_pet_voice_real_audio.py` | 真 `say` 出声（时长 0.5–20s + 非静音）；真 Whisper 回环的字符覆盖率 ≥0.6；真麦克风能打开且 `last_error` 可读。ASR 放**子进程**跑：既避开 conftest 的 `torch=None`，也避开真 torch + faiss 双 OpenMP 死锁。缺后端/缺模型一律 failed，不用 skip |
+| UI 状态不变量 | `frontend/src/pages/Pet.spec.js` | 编辑器跟随「正在编辑」而非「当前启用」；改名不丢提示词；未保存切换要二次确认且草稿不丢；删除作用于编辑对象；气泡剥离 `<say>`；未监听 ≠ 空闲；空名称/空提示词不发请求 |
+
+**顺带修掉的真实缺陷（由新测试直接抓出）：**
+
+- `voiceStateLabel` 不看 `running`，未监听时显示「空闲」→ 新增 `pet.voiceOff`
+  （未监听 / Not listening）。
+- `BackendMicListener.stop()` 先关流/terminate，采集线程仍阻塞在 `read()` →
+  真机用例结束时报 `Bus error`。改为「先 join 线程再关设备」，并补一条断言
+  「terminate 时采集线程必须已退出」的单测。
+- 噪声底 EMA 在绝对安静时会衰减到次正规数 → 阈值退回配置下限，反而更易误触发；
+  加下限 1.0，并补「恒定 375 底噪必须判 idle」回归用例。
+- `wav_is_audible()` 让 `say`/Piper 的静音输出不再被当成成功；但只校验了 16bit
+  （`width != 2` 直接返回 True），**8bit 静音 WAV（421 个字节的 128）也被判成「有声」**
+  → 补 8bit 分支（相对 128 判峰值）与回归用例。
+- TTS 输出目录原来是相对路径（按 cwd 解析），而 `/audio` 是 `StaticFiles` 挂载同一字符串：
+  从别的目录启动服务时首页/桌宠拿到 404、合成却显示成功。改为按项目根绝对化，
+  并加「桌宠输出目录 == `/audio` 挂载目录」的断言。
+- `PetTaskQueue` 的 worker 从不随 `PetEngine.stop()` 收尾，事件循环关闭后留下
+  `Task was destroyed but it is pending` + `Event loop is closed`，单例还引用死循环。
+  新增 `shutdown()`（取消 worker + 清空排队任务 + 让 Future 快速失败），`stop()` 调用它。
+
+**验证：** 改动相关 355 项全过；`pytest tests/unit` 全量 **6749 passed**（修复前 4 failed：3 个本机配置/历史依赖 + 1 个同类历史污染）；`pytest tests/integration` 全量 **446 passed**（修复前 9 failed，全是本机开关关闭导致 409/空 SSE）；`-m external` **5 passed**（真 `say` 出声、真 Whisper 覆盖率 0.87、真麦克风采集 1.2s 并干净退出）；`vitest` **652 passed**；`mypy modules infra config utils api` 与 `mypy logiclink/src` **0 errors**；`logiclink . --strict` **0 error**。
+
+**验证方式（日常只跑改动相关）：**
+
+```
+python -m pytest tests/unit/test_pet_voice.py tests/unit/test_pet_voice_tts_chain.py \
+  tests/unit/test_frontend_api_contract.py tests/unit/test_pet_store_personas.py \
+  tests/unit/test_pet_task_queue.py -q
+python -m pytest tests/integration/test_pet_voice_real_audio.py -m external -q
+cd frontend && npx vitest run src/pages/Pet.spec.js
+```
+
+**教训 / 新增测试约定：**
+
+1. **替身要替在边界，不能替在结论。** 外部服务（TTS/ASR/网络）可以 mock 传输，
+   但产物必须由测试自己生成并校验（音频看时长+波形，图片看尺寸+像素，文件看 schema）。
+2. **合成数据必须来自真实采样。** 阈值/能量/尺寸这类与环境相关的参数，用例里至少要
+   有一条「用本机实测值」的回归（本机底噪 375 对阈值 300）。
+3. **跨进程/跨端调用要有契约测试。** 前端的 fetch mock 未命中必须显式失败，或由
+   后端路由表统一校验；否则 404 会伪装成「空数据」。
+4. **真机能力单独分层。** `external` 标记 + 子进程隔离，既不拖慢默认 CI，也不因为
+   测试基建（torch=None、无显示、无麦克风）而永远测不到。
+5. **UI 测试要断言状态不变量**（哪个实体、脏标记、目标 id），而不只是「点了按钮调了
+   哪个 API」。
+6. **契约检查器自己也要被检查（自查抽出条数）。** 第一版 `test_frontend_api_contract.py`
+   有两个静默漏洞，跑起来全绿、实际漏掉大半调用：
+   - `fetch(` 的表达式起点少算一个引号（`line.index(raw)` 少了 `-1`），
+     `_STRING_LIT` 匹配不到路径字面量 → **每一条 `fetch(...)` 都被丢弃**；
+   - 只认 `/stream`、`/config` 等前缀，不认 `/api` 前缀，而 `frontend/vite.config.js`
+     的代理是 `rewrite: ^/api → ''`，于是页面上写 `/api/...` 的调用（Skills、
+     Orchestration、Pet 聊天、Chat 待办等）全部看不见。
+   - 第三个更隐蔽：**反引号模板串 `fetch(`/stream/x/${id}`)` 和 `fetch(url)` 根本不在
+     正则覆盖内**，连「没抽出来」都不会报——这是同类漏洞里最危险的一种。
+   修复后抽取条数 71 → 114，且新增 `test_no_silently_dropped_calls`：任何
+   `request(`/`fetch(` 调用若抽不出路径，必须属于「路径由参数传入」的泛化封装，
+   否则测试失败；非字面量 `fetch(` 也逐条检查，只允许两张显式白名单
+   （`api.js` 的 `BASE + path` 泛化转发、`ws/client.js` 的 `/backend-port` 端口发现），
+   第三方 `frontend/pet/lib` 不参与扫描。每条规则都有自测，包括「反引号 fetch 必须被报出」。
+   **教训：静态检查类测试必须断言「检查了多少」，并让「没检查到」
+   变成红色；否则它只是又一个自我安慰的绿灯。**
+7. **`external` 层不允许用 `skip` 冒充防线。** 真机用例缺 TTS 后端 / 缺 Whisper 模型 /
+   子进程加载失败时原本走 `pytest.skip`，`-m external` 会显示一串 skipped，看起来
+   「跑过了」。改为 `assert`/`pytest.fail` 并给出修复提示；要跳过整层，用 marker
+   不选它，而不是让单条用例自己悄悄退出。识别回环也从「命中任意关键字」改为
+   **归一化字符覆盖率 ≥ 0.6**（本机实测 0.87，把「桌宠」听成「捉蟲」），并补一条
+   「无关文本必须过不了这条线」的自测。
+8. **测试不能依赖本机用户配置/数据库。** 全量跑时 3 个用例挂掉，原因都不是代码：
+   ① `~/.cortex/settings.json` 里用户把 `DESKTOP_PET_ENABLED` 关着，`chat()` 直接返回 `""`；
+   ② `_load_structured_history()` 读到了本机会话库里的历史，`messages` 从
+   `[system, user]` 变成 `[system, <历史>, user]`。这类断言在作者机器上绿、在用户机器上红，
+   与 §20「测试假对象/真实配置脱节」同源。修法：模块级 autouse fixture 钉住总开关，
+   `_tool_runner()` 这类 helper 默认把数据库读取 stub 成空，需要历史的用例自己覆盖。
+   集成层同样中招：`tests/integration/test_pet.py`、`test_pet_custom_loop_e2e.py`、
+   `test_frontend_proxy_stream.py` 共 **9 个用例**因 `409 desktop pet disabled` / 空 SSE
+   流挂掉——同样用模块级 fixture 钉开关，而不是把断言改宽。

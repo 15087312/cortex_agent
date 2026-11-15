@@ -18,6 +18,14 @@ class _FakeRepo:
 
 
 @pytest.fixture(autouse=True)
+def _pet_enabled(monkeypatch):
+    """桌宠总开关钉成开：真实 `~/.cortex/settings.json` 里用户可能关着，
+    否则所有桌宠端点直接 409（测试结果随本机配置漂移，§20/§110）。
+    """
+    monkeypatch.setattr(settings, "DESKTOP_PET_ENABLED", True)
+
+
+@pytest.fixture(autouse=True)
 def chatonly_mode(monkeypatch):
     monkeypatch.setenv("CORTEX_MODE", "chatonly")
 

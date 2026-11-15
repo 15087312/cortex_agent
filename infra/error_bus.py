@@ -170,6 +170,21 @@ _error_bus_lock = _threading.Lock()
 
 
 def get_error_bus() -> GlobalErrorBus:
+    """端口优先取全局错误总线：接管 ``error_bus`` 端口 = 换掉全部调用点。
+
+    取不到端口才回退内置单例（脚本、没跑过 bootstrap 的入口）。bootstrap 注册
+    的 provider 必须是 ``_default_error_bus`` 而不是本函数，否则端口→本函数→端口
+    一调用就递归。
+    """
+    from infra.tool_manager.service_registry import get_capability
+
+    factory = get_capability("error_bus")
+    if factory is None:
+        return _default_error_bus()
+    return factory()
+
+
+def _default_error_bus() -> GlobalErrorBus:
     global _error_bus
     if _error_bus is None:
         with _error_bus_lock:
@@ -178,6 +193,6 @@ def get_error_bus() -> GlobalErrorBus:
     return _error_bus
 
 
-error_bus = get_error_bus()
-
-__all__ = ["error_bus", "get_error_bus", "ErrorContext", "ErrorReport"]
+# 这里原有 ``error_bus = get_error_bus()``：import 期把实例冻进模块名，而读者全部
+# 走 ``get_error_bus()``，于是它成了接管不到、也只会被测试误 patch 的第二条路。
+__all__ = ["get_error_bus", "ErrorContext", "ErrorReport"]

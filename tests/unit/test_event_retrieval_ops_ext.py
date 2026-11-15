@@ -51,21 +51,21 @@ def test_get_instance_inner_check(monkeypatch):
     assert EventRetrieval.get_instance() is fake
 
 
-def test_get_event_retrieval_inner_check(monkeypatch):
-    import modules.memory.event_retrieval as mod
-    monkeypatch.setattr(mod, "_retrieval_instance", None)
+def test_accessor_and_class_share_one_builtin(take_over, drop_capability):
+    """模块访问器与类访问器必须指向**同一个**内置实例。
+
+    这里原来测的是模块级 ``_retrieval_instance`` 的双检锁竞态——那套单例已经删了：
+    同一个服务两份实例，切记忆库要重置两处，漏一处就读旧库。合并之后端口接管、
+    内置回退、重置都只有 ``_builtin_instance`` 一条路，于是这个用例改成钉住
+    「只剩一条路」，而不是复述一个不存在的锁。
+    """
+    drop_capability("event_retrieval")
+    assert get_event_retrieval() is EventRetrieval.get_instance()
+
     fake = EventRetrieval()
-
-    class RacingLock:
-        def __enter__(self):
-            mod._retrieval_instance = fake
-            return self
-
-        def __exit__(self, *a):
-            return False
-
-    monkeypatch.setattr(mod, "_retrieval_lock", RacingLock())
+    take_over("event_retrieval", lambda: fake)
     assert get_event_retrieval() is fake
+    assert EventRetrieval.get_instance() is fake
 
 
 # ── retrieve 合并去重 ──────────────────────────────────────────────────

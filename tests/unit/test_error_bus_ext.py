@@ -169,7 +169,21 @@ def test_handle_asyncio_exception_without_exception():
 # ── get_error_bus 单例（含双检锁分支）────────────────────────────────────────
 
 def test_get_error_bus_existing_singleton():
-    assert get_error_bus() is eb.error_bus
+    """已有单例时访问器复用，不再 new 一个（原来这里断言的是模块级快照别名）。
+
+    ``eb.error_bus`` 那份 import 期快照已经删了：读者全走 ``get_error_bus()``，
+    快照成了接管不到、也只会被测试误 patch 的第二条路。
+    """
+    first = get_error_bus()
+    assert eb._error_bus is first
+    assert get_error_bus() is first
+
+
+def test_error_bus_port_takeover(take_over):
+    """接管 error_bus 端口后访问器给出插件那份——装配层不再拿内置实例。"""
+    plugin_bus = GlobalErrorBus()
+    take_over("error_bus", lambda: plugin_bus)
+    assert get_error_bus() is plugin_bus
 
 
 def test_get_error_bus_creates():

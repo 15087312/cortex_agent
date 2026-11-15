@@ -496,6 +496,21 @@ _conscience_instance: Optional[Conscience] = None
 
 
 def get_conscience() -> Conscience:
+    """端口优先取良知：接管 ``conscience`` 端口 = 换掉全部调用点。
+
+    取不到端口才回退内置单例（脚本、没跑过 bootstrap 的入口）。bootstrap 注册
+    的 provider 必须是 ``_default_conscience`` 而不是本函数，否则端口→本函数→端口
+    一调用就递归。
+    """
+    from infra.tool_manager.service_registry import get_capability
+
+    factory = get_capability("conscience")
+    if factory is None:
+        return _default_conscience()
+    return factory()
+
+
+def _default_conscience() -> Conscience:
     global _conscience_instance
     if _conscience_instance is None:
         _conscience_instance = Conscience()

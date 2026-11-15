@@ -7,7 +7,7 @@
 > `docs/ERRORS_AND_FIXES.md §N` in code comments and other docs still land here.
 > Section numbers are unchanged (the duplicated §40/§41/§42/§43 follow-ups are now §104–§107).
 
-**Full index (all 107 sections)**: [`docs/bugfixes/README.en.md`](./bugfixes/README.en.md)
+**Full index (all 110 sections)**: [`docs/bugfixes/README.en.md`](./bugfixes/README.en.md)
 
 ## Jump by module
 
@@ -19,8 +19,8 @@
 | §3–§5、§8、§17、§26、§69、§71–§74、§85、§91、§94、§101 | Frontend · Chat / Bubbles / Replay / Multi-session | [04-frontend-chat.en.md](./bugfixes/04-frontend-chat.en.md) |
 | §6–§7、§14、§22–§23、§75 | Frontend · Pages / Styling / Build / Buttons | [05-frontend-ui.en.md](./bugfixes/05-frontend-ui.en.md) |
 | §12、§24、§68、§82、§98–§100、§104 | Realtime · WS / SSE / Push / Proxy / TUI | [06-realtime-streaming.en.md](./bugfixes/06-realtime-streaming.en.md) |
-| §103 | Desktop Pet | [07-desktop-pet.en.md](./bugfixes/07-desktop-pet.en.md) |
-| §20、§27、§30–§37、§44–§45、§52–§55、§58、§66、§81 | Testing / CI / Environment / Dependencies | [08-testing-ci.en.md](./bugfixes/08-testing-ci.en.md) |
+| §103、§109 | Desktop Pet | [07-desktop-pet.en.md](./bugfixes/07-desktop-pet.en.md) |
+| §20、§27、§30–§37、§44–§45、§52–§55、§58、§66、§81、§110 | Testing / CI / Environment / Dependencies | [08-testing-ci.en.md](./bugfixes/08-testing-ci.en.md) |
 | §15、§38 | Process · Audit Methodology / Doc Governance | [09-process-docs.en.md](./bugfixes/09-process-docs.en.md) |
 
 ## Other bug documents

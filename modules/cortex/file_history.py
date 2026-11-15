@@ -260,4 +260,19 @@ class FileHistory:
 
 # 全局单例
 def get_file_history() -> FileHistory:
+    """端口优先取文件历史：接管 ``file_history`` 端口 = 换掉全部调用点。
+
+    取不到端口才回退内置单例（脚本、没跑过 bootstrap 的入口）。bootstrap 注册的
+    provider 必须是 ``_default_file_history`` 而不是本函数，否则端口→本函数→端口
+    一调用就递归。
+    """
+    from infra.tool_manager.service_registry import get_capability
+
+    factory = get_capability("file_history")
+    if factory is None:
+        return _default_file_history()
+    return factory()
+
+
+def _default_file_history() -> FileHistory:
     return FileHistory.get_instance()

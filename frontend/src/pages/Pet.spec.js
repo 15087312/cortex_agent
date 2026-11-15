@@ -98,6 +98,19 @@ describe('Pet 页面', () => {
     expect(w.text()).toContain('启用桌宠')
   })
 
+  it('总开关按上次保存的配置初始化：DESKTOP_PET_ENABLED=false → 关闭', async () => {
+    routeFetch([
+      ...BASE_ROUTES(),
+      { match: (u) => u.endsWith('/api/config'), data: { data: { DESKTOP_PET_ENABLED: false } } },
+    ])
+    const w = mountPage()
+    await tick()
+    w.vm.tab = 'settings'
+    await w.vm.$nextTick()
+    expect(w.vm.masterEnabled).toBe(false)
+    expect(w.find('[data-test="pet-master-toggle"]').element.checked).toBe(false)
+  })
+
   it('发送消息：SSE 逐 token 追加到回复', async () => {
     routeFetch(BASE_ROUTES())
     const w = mountPage()
@@ -303,7 +316,7 @@ describe('Pet 页面', () => {
         { match: '/stream/pet/history', data: { data: { items: [] } } },
         { match: '/stream/pet/config', data: { data: { loop_type: 'custom', max_loop_rounds: 0, min_think_interval: 1 } } },
         { match: '/stream/pet/memory', data: { data: { items: [] } } },
-        { match: '/config/DESKTOP_PET_ENABLED', data: { value: true } },
+        { match: (u) => u.endsWith('/api/config'), data: { data: { DESKTOP_PET_ENABLED: true } } },
       ])
       const chatStreams = []
       const prevFetch = globalThis.fetch
@@ -673,6 +686,270 @@ describe('Pet 页面', () => {
       stopSpy.mockRestore()
       statusSpy.mockRestore()
     }
+  })
+
+  // ── 人设管理（列表 + 独立编辑器） ──
+
+  const PERSONAS = {
+    data: { items: [
+      { id: 1, name: '默认人设', prompt: '默认提示词' },
+      { id: 2, name: '猫娘', prompt: '喵喵喵' },
+    ], active_id: 1 },
+  }
+
+  it('人设列表：渲染全部人设并标出「使用中」', async () => {
+    routeFetch([{ match: '/stream/pet/personas', data: PERSONAS }, ...BASE_ROUTES()])
+    const w = mountPage()
+    await tick()
+    w.vm.tab = 'settings'
+    await w.vm.$nextTick()
+    const items = w.findAll('[data-test="persona-item"]')
+    expect(items.length).toBe(2)
+    expect(items[0].text()).toContain('默认人设')
+    expect(items[0].text()).toContain('使用中')
+    // 编辑器默认打开当前启用的人设
+    expect(w.find('[data-test="persona-name-input"]').element.value).toBe('默认人设')
+    expect(w.vm.personaDirty).toBe(false)
+  })
+
+  it('点击其他人设只编辑、不改会话；「启用」才切换', async () => {
+    const { endpoints } = await import('@/api.js')
+    routeFetch([
+      { match: '/stream/pet/personas/2/activate', data: { success: true } },
+      { match: '/stream/pet/personas', data: PERSONAS },
+      ...BASE_ROUTES(),
+    ])
+    const actSpy = vi.spyOn(endpoints, 'activatePetPersona')
+    const w = mountPage()
+    await tick()
+    w.vm.tab = 'settings'
+    await w.vm.$nextTick()
+
+    await w.findAll('[data-test="persona-item"]')[1].trigger('click')
+    await tick()
+    expect(w.vm.editingPersonaId).toBe(2)
+    expect(w.vm.activePersonaId).toBe(1)      // 没切会话
+    expect(actSpy).not.toHaveBeenCalled()
+    expect(w.find('[data-test="persona-name-input"]').element.value).toBe('猫娘')
+
+    await w.find('[data-test="persona-activate"]').trigger('click')
+    await tick()
+    expect(actSpy).toHaveBeenCalledWith(2)
+    expect(w.vm.activePersonaId).toBe(2)
+    actSpy.mockRestore()
+  })
+
+  it('编辑后出现未保存提示，保存提交 name+prompt', async () => {
+    const { endpoints } = await import('@/api.js')
+    let putBody = null
+    routeFetch([
+      {
+        match: (u, init) => u.includes('/stream/pet/personas/1') && init?.method === 'PUT',
+        data: (u, init) => { putBody = JSON.parse(init.body); return { success: true } },
+      },
+      { match: '/stream/pet/personas', data: PERSONAS },
+      ...BASE_ROUTES(),
+    ])
+    const updSpy = vi.spyOn(endpoints, 'updatePetPersona')
+    const w = mountPage()
+    await tick()
+    w.vm.tab = 'settings'
+    await w.vm.$nextTick()
+
+    expect(w.find('[data-test="persona-dirty"]').exists()).toBe(false)
+    await w.find('[data-test="persona-name-input"]').setValue('新名字')
+    await w.find('[data-test="persona-prompt-input"]').setValue('新的提示词')
+    expect(w.vm.personaDirty).toBe(true)
+    expect(w.find('[data-test="persona-dirty"]').exists()).toBe(true)
+
+    await w.find('[data-test="persona-save"]').trigger('click')
+    await tick()
+    expect(updSpy).toHaveBeenCalledWith(1, { name: '新名字', prompt: '新的提示词' })
+    expect(putBody.name).toBe('新名字')
+    updSpy.mockRestore()
+  })
+
+  it('新建人设：独立表单创建并自动启用', async () => {
+    const { endpoints } = await import('@/api.js')
+    routeFetch([
+      { match: '/stream/pet/personas/3/activate', data: { success: true } },
+      {
+        match: (u, init) => u.endsWith('/stream/pet/personas') && init?.method === 'POST',
+        data: { success: true, data: { id: 3, name: '新宠', prompt: '新的' } },
+      },
+      { match: '/stream/pet/personas', data: PERSONAS },
+      ...BASE_ROUTES(),
+    ])
+    const createSpy = vi.spyOn(endpoints, 'createPetPersona')
+    const actSpy = vi.spyOn(endpoints, 'activatePetPersona')
+    const w = mountPage()
+    await tick()
+    w.vm.tab = 'settings'
+    await w.vm.$nextTick()
+
+    await w.find('[data-test="persona-add"]').trigger('click')
+    expect(w.vm.personaCreating).toBe(true)
+    // 新建模式：编辑器是空的，不复制当前人设内容
+    expect(w.find('[data-test="persona-name-input"]').element.value).toBe('')
+    expect(w.find('[data-test="persona-prompt-input"]').element.value).toBe('')
+
+    await w.find('[data-test="persona-name-input"]').setValue('新宠')
+    await w.find('[data-test="persona-prompt-input"]').setValue('新的')
+    await w.find('[data-test="persona-save"]').trigger('click')
+    await tick()
+    expect(createSpy).toHaveBeenCalledWith('新宠', '新的')
+    expect(actSpy).toHaveBeenCalledWith(3)
+    createSpy.mockRestore()
+    actSpy.mockRestore()
+  })
+
+  it('删除人设：确认后调用 DELETE，并禁止删除最后一个人设', async () => {
+    const { resolveDialog } = await import('@/composables/useDialog.js')
+    const { endpoints } = await import('@/api.js')
+    routeFetch([
+      { match: '/stream/pet/config', data: { data: {} } },
+      { match: '/stream/pet/personas', data: PERSONAS },
+      { match: '/stream/pet/history', data: { data: { items: [] } } },
+      { match: '/stream/pet/memory', data: { data: { items: [] } } },
+    ])
+    const delSpy = vi.spyOn(endpoints, 'deletePetPersona').mockResolvedValue({ success: true })
+    const w = mountPage()
+    await tick()
+    w.vm.tab = 'settings'
+    await w.vm.$nextTick()
+
+    await w.find('[data-test="persona-delete"]').trigger('click')
+    await tick()
+    expect(delSpy).not.toHaveBeenCalled()   // 等确认
+    resolveDialog(true)
+    await tick()
+    expect(delSpy).toHaveBeenCalledWith(1)
+
+    // 只剩一个时不再渲染删除按钮
+    w.vm.personas = [{ id: 9, name: '唯一', prompt: 'x' }]
+    await w.vm.$nextTick()
+    expect(w.find('[data-test="persona-delete"]').exists()).toBe(false)
+    delSpy.mockRestore()
+  })
+
+  it('保存校验：名称/提示词为空不发请求', async () => {
+    const { endpoints } = await import('@/api.js')
+    routeFetch([{ match: '/stream/pet/personas', data: PERSONAS }, ...BASE_ROUTES()])
+    const updSpy = vi.spyOn(endpoints, 'updatePetPersona')
+    const createSpy = vi.spyOn(endpoints, 'createPetPersona')
+    const w = mountPage()
+    await tick()
+    w.vm.tab = 'settings'
+    await w.vm.$nextTick()
+
+    await w.find('[data-test="persona-name-input"]').setValue('   ')
+    await w.find('[data-test="persona-save"]').trigger('click')
+    await tick()
+    expect(updSpy).not.toHaveBeenCalled()
+
+    await w.find('[data-test="persona-name-input"]').setValue('有新名字')
+    await w.find('[data-test="persona-prompt-input"]').setValue('  ')
+    await w.find('[data-test="persona-save"]').trigger('click')
+    await tick()
+    expect(updSpy).not.toHaveBeenCalled()
+
+    // 新建模式同样校验，且不会误发 create
+    await w.find('[data-test="persona-add"]').trigger('click')
+    await w.find('[data-test="persona-save"]').trigger('click')
+    await tick()
+    expect(createSpy).not.toHaveBeenCalled()
+    updSpy.mockRestore()
+    createSpy.mockRestore()
+  })
+
+  it('未保存修改时切换人设：取消则保留草稿，确认才切换', async () => {
+    const { resolveDialog } = await import('@/composables/useDialog.js')
+    routeFetch([{ match: '/stream/pet/personas', data: PERSONAS }, ...BASE_ROUTES()])
+    const w = mountPage()
+    await tick()
+    w.vm.tab = 'settings'
+    await w.vm.$nextTick()
+
+    await w.find('[data-test="persona-name-input"]').setValue('改了一半')
+    await w.findAll('[data-test="persona-item"]')[1].trigger('click')
+    await tick()
+    expect(w.vm.editingPersonaId).toBe(1)             // 等确认，先不切
+    resolveDialog(false)
+    await tick()
+    expect(w.vm.editingPersonaId).toBe(1)
+    expect(w.vm.personaNameDraft).toBe('改了一半')     // 草稿没丢
+
+    await w.findAll('[data-test="persona-item"]')[1].trigger('click')
+    await tick()
+    resolveDialog(true)
+    await tick()
+    expect(w.vm.editingPersonaId).toBe(2)
+    expect(w.vm.personaNameDraft).toBe('猫娘')
+  })
+
+  it('删除作用于「正在编辑」的人设，而不是当前启用的人设', async () => {
+    const { resolveDialog } = await import('@/composables/useDialog.js')
+    const { endpoints } = await import('@/api.js')
+    routeFetch([{ match: '/stream/pet/personas', data: PERSONAS }, ...BASE_ROUTES()])
+    const delSpy = vi.spyOn(endpoints, 'deletePetPersona').mockResolvedValue({ success: true })
+    const w = mountPage()
+    await tick()
+    w.vm.tab = 'settings'
+    await w.vm.$nextTick()
+
+    await w.findAll('[data-test="persona-item"]')[1].trigger('click')
+    await tick()
+    await w.find('[data-test="persona-delete"]').trigger('click')
+    await tick()
+    resolveDialog(true)
+    await tick()
+    expect(delSpy).toHaveBeenCalledWith(2)
+    delSpy.mockRestore()
+  })
+
+  it('气泡不展示 <say> 标记（只去掉标签，保留独白）', async () => {
+    routeFetch([
+      { match: '/stream/pet/history', data: { data: { items: [
+        { role: 'assistant', content: '（有点困）<say>我先眯一会儿</say>' },
+      ] } } },
+      ...BASE_ROUTES(),
+    ])
+    const w = mountPage()
+    await tick()
+    await w.vm.$nextTick()
+    expect(w.text()).toContain('我先眯一会儿')
+    expect(w.text()).toContain('有点困')
+    expect(w.text()).not.toContain('<say>')
+  })
+
+  it('实时监听失败：展示可读错误，而不是假装在听', async () => {
+    routeFetch([
+      {
+        match: '/stream/pet/voice/status',
+        data: { data: { running: false, state: 'idle', tts_backend: 'say', last_error: '麦克风打开失败: 无设备' } },
+      },
+      ...BASE_ROUTES(),
+    ])
+    const w = mountPage()
+    await tick()
+    w.vm.tab = 'settings'
+    await w.vm.$nextTick()
+    expect(w.find('[data-test="voice-state"]').text()).toBe('未监听')
+    expect(w.text()).toContain('麦克风打开失败: 无设备')
+  })
+
+  it('实时监听状态：展示麦克风状态与 TTS 后端', async () => {
+    routeFetch([
+      { match: '/stream/pet/voice/status', data: { data: { running: true, state: 'listening', tts_backend: 'piper', pending: 2, cooldown: 5 } } },
+      ...BASE_ROUTES(),
+    ])
+    const w = mountPage()
+    await tick()
+    w.vm.tab = 'settings'
+    await w.vm.$nextTick()
+    expect(w.find('[data-test="voice-state"]').text()).toBe('正在听')
+    expect(w.text()).toContain('piper')
+    expect(w.text()).toContain('待唤醒 2 段')
   })
 })
 

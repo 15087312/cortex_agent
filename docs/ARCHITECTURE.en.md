@@ -34,10 +34,19 @@ The entry point `chat_gateway` (`/stream/ws/{sid}`) routes by `_resolve_mode()`:
 
 ### 0.3 Testing
 
-`tests/` holds 137 test files (unit/integration/external), 1700+ tests in total. Isolation principles:
+`tests/` holds 387 test files (unit/integration/external), 6700+ tests in total. Isolation principles:
 temporary SQLite + monkeypatched singletons (production databases untouched), relaxed timeouts for heavy
 library loading, background thread classes provide `stop()`, `except: pass` error swallowing is forbidden,
 and test fakes must match real model fields exactly.
+
+**Verification layers (pick one per new test; see §110):**
+
+| Layer | Location | Applies to |
+|-------|----------|------------|
+| Artifact-level unit tests | `tests/unit/` | Doubles for external services must sit at the **boundary**: a fake backend still produces a real artifact (audio duration + waveform, image size + pixels, file schema), never just "file exists / returns non-empty" |
+| Cross-boundary contract | `tests/unit/test_frontend_api_contract.py` | Every request path in frontend sources must exist in `api.main.app.routes` (method + path), including the `/api` proxy prefix, so `fetch` mocks cannot turn a 404 into `{}`; a call whose path cannot be extracted **fails** rather than being skipped |
+| Real-device integration | `tests/integration/` + `@pytest.mark.external` | Features needing a real microphone/system speech/display/local model use the `external` marker (skipped by default, run with `-m external`); when real torch is required, run it in a subprocess (conftest sets `torch=None` session-wide). Once selected, a missing backend/model **fails**, never skips |
+| UI state invariants | `frontend/src/**/*.spec.js` | Assert the currently edited entity, dirty flag, delete target, etc. — not just which API a click called |
 
 ---
 
@@ -577,8 +586,10 @@ The plugin system has been removed entirely; its ecological niche is now filled 
 ┌─────────┐    ┌──────────────┐    ┌────────────┐
 │ Built-in│    │  MCP remote  │    │ AI-created │
 │ToolReg. │    │  stdio/SSE   │    │ create_tool│
-│ 85 tools│    │  7+ servers  │    │ at runtime │
-└─────────┘    └──────────────┘    └────────────┘
+│ 85 tools│    │  7+ servers  │    │ +authored  │
+└─────────┘    └──────────────┘    │  plugins   │
+                                   │ (§10.3.1)  │
+                                   └────────────┘
 ```
 
 ### 10.2 MCP Integration Architecture
@@ -624,13 +635,19 @@ Decoupling between the tool layer and business modules is achieved via **Service
 ```
 infra/tool_manager/service_registry.py
 ├── register_capability(name, provider)   # registered on the modules side (bootstrap assembly layer)
+├── provide_capability(name, provider)    # take over a port; returns the undo (see §12)
 └── get_capability(name)                  # fetched by the tool layer; returns None for graceful degradation when missing
 
 bootstrap.py  register_business_capabilities()
-   └── 9 capabilities: blackboard_query / skill_manager / event_retrieval /
+   └── 13 capabilities: blackboard_query / skill_manager / event_retrieval /
        file_history / touchpoint_detector / detector_router /
-       value_formatter / tool_security_gate / turn_images
+       value_formatter / tool_security_gate / turn_images / context_controller /
+       event_store / causal_graph / knowledge_base
    └── Startup-time validation: _report_capability_status reports missing/failed capabilities (fail-fast)
+   └── Triggers tool-door registration: probe_tools, plugin_authoring_tools (see §10.3.1) —
+       decorator self-registration is an import side effect, so only the assembly layer may
+       trigger it, otherwise infra would import modules back
+   └── Then restores AI-created tools (ai_tools.restore_ai_tools; formerly an import side effect — see §12.2)
 ```
 
 - Dependency direction: `modules → infra` (the reverse dependency `infra→modules` has been reduced to zero)
@@ -640,17 +657,191 @@ bootstrap.py  register_business_capabilities()
 ### 10.3 AI-Created Tools
 
 ```
-infra/tool_manager/tools/create_tool.py
+infra/tool_manager/tools/ai_tools.py
 ├── create_tool(name, code, description, params)   # create a new tool
 ├── list_my_tools()                                 # list all self-created tools
-├── delete_tool(name)                               # delete a self-created tool
-└── edit_tool(name, code, description, params)      # edit an existing tool
+├── delete_tool(tool_name)                          # delete a self-created tool
+├── edit_tool(name, code, description, params)      # edit an existing tool
+└── restore_ai_tools()                              # rebuild from persisted records (assembly layer calls it)
 ```
 
 - Self-created tools persist as `.py` files under `data/user_tools/`
 - Dynamically registered at runtime via `ToolRegistry.register`
 - Automatic syntax checking on creation/editing (`compile()` + `ast.parse()`)
 - Supports offline creation and execution without network access
+
+#### 10.3.1 Runtime-authored plugins (L5): three doors
+
+`create_tool` builds one tool at a time, and what it builds is already the final form. One
+level more freedom — **submit a whole plugin source file that both provides tools and takes
+over capability ports, with failure undone on the spot** — is carried by two door modules in
+`modules/shared/`; the machine semantics live in §12.4:
+
+```
+modules/shared/plugin_authoring.py          # machine semantics (mount/unmount/observation/conflict/storage)
+modules/shared/plugin_authoring_tools.py    # door 1: model-facing tools
+├── mount_plugin(name, source, trial, replace)  # mount; persists only after the trial passes
+├── unmount_plugin(name)                        # detach, keep the record (restorable)
+├── list_plugins()                              # on disk + which names each one answers today
+└── delete_plugin(name)                         # detach and drop the record
+
+modules/shared/plugin_authoring_api.py      # door 2: HTTP routes /plugins/authored
+├── POST   ""                # submit source (same trial semantics as mount_plugin)
+├── GET    ""                # full status
+├── GET    "/{name}"         # one entry: disk row + live ownership
+└── DELETE "/{name}?forget="  # forget=false detaches without deleting
+
+api/main.py  lifespan                      # door 3: restore at boot
+└── load_authored(store) / unload_authored()   # see §12.3
+```
+
+- All three doors share one set of semantics; they differ only in how an error is expressed:
+  the tool door returns `✅`/`❌` strings, the HTTP door returns 422 (the source itself is
+  broken) or 400 (conflict, or plugin code blew up) with the full traceback, and a failing
+  restore at boot only warns instead of aborting startup
+- Tool functions are synchronous while execution lands in an `asyncio.to_thread` worker (no
+  running loop there), hence the `_run()` bridge in the door: no loop → `asyncio.run`,
+  loop present → run it on a fresh thread. Never call `asyncio.run` on somebody else's loop
+- Persistence file: `data/authored_plugins.json` (env `CORTEX_AUTHORED_PLUGINS_FILE`)
+
+#### 10.3.2 Seam catalogue: takeover points are computed from code, not handwritten
+
+The ports in §10.3 are *declared* takeover points, but a declaration is not a working
+switch: as long as one more file hard-imports the original implementation, a plugin taking
+over the port only replaces half the path and the same capability runs in two versions at
+once. This project makes no plugin-safety claims (§12.5), so there is no permission list to
+consult — "what can actually be taken over today" has to be computed from the import/call
+graph. `scripts/seam_catalogue.py` does exactly that and writes `docs/SEAMS.md` (generated;
+do not hand-edit).
+
+```
+bootstrap._safe_register("name", factory)   ──▶ business port: which provider, which symbols
+                                                it wraps, which files call get_capability("name")
+infra/ports.py register("a.b", provider)    ──▶ facade port (same rules, one extra "system" column)
+module-level def get_x() returning a global  ──▶ singleton accessor
+@classmethod get_instance / instance         ──▶ singleton accessor
+any name/attribute-chain read (mgr.run() too)──▶ reference edge ──▶ attributed to accessors ∪ port-wrapped symbols
+```
+
+Tiers are by "can it really be taken over today"; current counts live in `docs/SEAMS.md`:
+
+| Tier | Test | Meaning |
+|---|---|---|
+| ✅ switchable | port exists + port has consumers + no hard-import readers | one `provide_capability` / `provide_port` replaces the whole path |
+| ❌ no port yet | hard-import readers, no port | downgrade the accessor to a port and route readers through it |
+| ⚠️ half wired | port exists, yet files still hard-import the same symbol | two behaviours coexist after takeover — harder to spot than having no port |
+
+- Three passes: module ids → each package `__init__.py`'s re-export table → per-file
+  references. Relative imports are expanded against the file's own directory and
+  `from pkg import name` is followed to its definition site; both of those bugs under-count
+  readers, and under-counting reads turns a ⚠️ into a ✅
+- One dotted chain counts as its longest segment only: `Cls.get_instance()` makes the caller
+  a reader of the *accessor*, not of the class. Counting every segment inflates the class
+  numbers and destroys the meaning of the "who touches the class directly" tier
+- Locally shadowed names do not make an accessor (`setup_logger` returns a freshly built
+  logger, not a module-level singleton); only names handed out via `global` count. Port-wrapped
+  module-level instances also enter the table — counting accessors alone misses a whole class
+  of takeover points
+- Read-only: never imports the scanned code (stdlib + ast), and a parse failure raises —
+  under-counting is worse than an error
+- Regenerate: `python scripts/seam_catalogue.py --out docs/SEAMS.md`; drift guard: `--check`
+  (exit 1 when stale)
+
+`tests/unit/test_seam_catalogue.py` (45 tests) pins every rule above. On 2026-11-14
+`/tmp/mutate_b6.py` inverted 24 claims in the generator one at a time: **0 survivors**, and
+every file byte-identical to how the run started.
+
+##### Two port registries: the catalogue used to see only half
+
+When the catalogue first reported ❌=0 that claim was **half true**: this repo has two port
+registries and the generator only knew the first.
+
+| System | Filled by | Name shape | Plugin takeover entry |
+|---|---|---|---|
+| business | `bootstrap.register_business_capabilities()` at startup via `_safe_register` | snake_case `tts_output_dir` | `ctx.provide_capability(name, provider)` |
+| facade | each provider module itself, at its own import time, via `infra/ports.py::register` | dotted `security.tool_gate` | `ctx.provide_port(name, provider)` |
+
+The facade ports carry the **cross-cutting contracts** — tool gate, permission controller,
+identity table, perception system, model factory. Before this they were neither in the
+catalogue nor takeover-able, so "every candidate seam is switchable" covered only the
+business half, and it was missing in the worst shape: *absent from the table*. The most
+consequential swap of all (replace the tool security gate) was the one nobody could do.
+
+Four things had to be added:
+
+- `infra/ports.py::provide(name, provider)` — differs from `register` in exactly one way: it
+  **returns the undo**, and the undo checks identity (if someone took the port over later,
+  it does nothing). Import-time registration is process history and needs no undo; a plugin
+  unmount must return to its predecessor, otherwise unmounting leaves the contract as a hole.
+  `ctx.provide_port` is the time-scoped wrapper and it **rejects snake_case names**: picking
+  the wrong registry does not raise, it silently swaps nothing.
+- The generator learned the second wiring: `ports.register(...)` / `resolve(...)`, where the
+  port name may be a literal **or a constant of the file** (`infra/security_gate.py` keeps all
+  nine names as `PORT_GATE = "security.tool_gate"`), and the attribute form has to be judged by
+  *module*, not by the resolved symbol (`_resolve` deliberately returns `None` for a pure
+  module reference). Either rule missing and the whole security facade vanishes from the table
+  without an error. Same-named methods are not ports: `ToolRegistry.register("x", f)` stays out.
+- A port that is only ever *resolved* still gets a row, with "(no registration site found)" in
+  the provider column, because a forwarder like `register_provider(name, provider)` is
+  invisible to static analysis. The catalogue must not turn "I cannot see it" into "it does
+  not exist".
+- L5 authored plugins **see** facade ports too: mount takes a `ports.snapshot()` before and
+  after apply and records `port:<name>` entries in that mount's diff, so a takeover gets the
+  same conflict check, `list_plugins` row and unmount log line as a tool or capability. Without
+  this, a plugin that swapped `security.tool_gate` was **entirely absent** from the conflict
+  check, `list_plugins` and the logs — a third invisible table, the same old "only watching the
+  first table" bug. Ownership is attributed by the **provider identity** in the snapshot, never
+  by calling `resolve()`: a factory port builds a fresh implementation per resolve, so
+  instantiating one just to list it would itself be wrong.
+
+Current counts: **73 ports (58 business / 15 facade, 0 dead) · 180 candidate seams ·
+✅ 137 / ❌ 0 / ⚠️ 2** — the two ⚠️ are the judged ones below. One half-wiring surfaced the
+moment facade ports became visible: `modules.perception:get_perception_system`, the package-root
+forwarder, was just `from .setup import ...`, so taking over `perception.system` did not reach
+it — and `integration.py` imports exactly that one. It is now port-first with
+`_builtin_perception_system` as the provider (otherwise port → accessor → port recurses on the
+first call), and `perception.manager` registers a *factory* instead of a ready-made proxy, so
+swapping the perception system swaps the compat proxy too.
+
+##### Completing the seams: what is left once ❌ hits zero
+
+On 2026-11-15 every ❌ was downgraded to a port-first accessor (a `_x()` provider per port in
+`bootstrap`, call sites moved onto the accessor). The catalogue now reads
+**✅ 137 / ❌ 0 / ⚠️ 2**. The earlier reading of 121/0/2 covered only the business half; with
+facade ports counted it is the number above, and neither ❌ nor ⚠️ moved — the 16 extra ✅ rows
+all sit under facade ports (8 security-facade accessors that were already port-first but
+invisible, plus 8 provider objects those ports wrap). Those last two ⚠️ are **judged,
+deliberately kept** hard imports:
+
+| Symbol | Still hard-imported by | Why routing it through the port would be wrong |
+|---|---|---|
+| `EventStore` | `config/settings.py` | switching memory libs must clear the **builtin** singleton; through the port the reset target becomes whatever a plugin installed, and the switch leaves state behind |
+| `EventStore` | `modules/desktop_pet/memory_bank.py` | the pet builds one `EventStore(...)` per persona — it wants the class, not "the current implementation" |
+| `CausalGraph` | the same two files | the causal graph follows the memory lib, same reason |
+
+The rule in one line: **hard import where the code wants *that class*, port where it wants
+*the current implementation***. Both this table and the ✅ count are locked by
+`tests/unit/test_seam_catalogue.py` — `MIGRATED` (51 rows, accessor → port plus the builtin it
+wraps) may not drift back to ❌, and any reader outside `JUDGED_BYPASS` turns the suite red. A
+call site a takeover cannot reach has to be a recorded decision, never an omission.
+
+One trap while writing this code: `_safe_register(name, loader)` registers **what `loader()`
+returns**, so for the class-singleton idiom (`Cls.get_instance()` port-first, builtin body in
+`Cls._builtin_instance`) the provider points at `_builtin_instance`. Which means
+`monkeypatch.setattr(Cls, "get_instance", ...)` in a test **does not bite** — consumers get the
+builtin straight off the port, and the symptom is "the mock ignored me, it really loaded the
+model". Stub the port instead: `take_over(name, provider)` / `drop_capability(name)` from
+`tests/conftest.py` (the latter checks the fallback branch for when no port is wired).
+
+Two registries need two sets of fixtures: dotted facade ports get
+`take_over_port(name, provider)` / `drop_port(name)`, and they ride on `ports.provide`'s undo
+operation — the very same path a plugin unmount takes. Using `take_over` on `security.tool_gate`
+**silently swaps nothing at all** (that key does not exist in that table), which is exactly the
+shape of "the test is green but the takeover never actually held". The reverse case is just as
+quiet: a call site that resolves the port directly stopped seeing a
+`monkeypatch.setattr(perc_mod, "get_perception_system", ...)` the moment that accessor became
+port-first — five management-surface tests turned red for that reason, and one of them had been
+passing vacuously long before it did.
 
 ### 10.4 Learn Mode
 
@@ -710,3 +901,165 @@ uvicorn api.main:app --workers 4
 - The rate limiter is per-process (not global)
 - Module-level singletons are independent in each worker
 - MessageBus messages do not propagate across workers
+
+---
+
+## 12. Assembly & Plugin Contract (Reversible)
+
+One sentence: **every assembly step must be able to say how it is undone.** The registration
+surface, the scoping of bindings, and the lifecycle each hold one rule, and all three come
+from the same fact — anything registered by an import side effect cannot be unmounted without
+restarting the process.
+
+### 12.1 Two registration surfaces, two duplicate-name behaviours
+
+```
+infra/tool_manager/tool_registry.py          # process-wide registry; knows nothing about scopes
+├── @ToolRegistry.register / register(replace=False)  # "the core owns this slot" → duplicate raises DuplicateToolError
+├── ToolRegistry.provide(name, func, plugin_name=…)   # "a plugin deliberately takes over" → shadowing allowed, returns undo
+├── ToolRegistry.register_tool(…)                     # legacy overwrite path (management relies on source="dynamic"); skips the duplicate check
+└── get_plugins() / list_by_source() / unregister_by_plugin()   # fed by the source/plugin_name that provide writes
+
+modules/shared/plugin_api.py                 # contract layer: adds timeliness only, never touches dependency direction
+├── Ctx                    named service slots (resolved up the parent chain) + LIFO effect stack + child scopes
+│   ├── effect(disposer)   the only way a plugin says "undo this when I leave"; accepts sync and async disposers
+│   ├── provide_tool / provide_capability    bindings pushed onto the stack, living and dying with the scope
+│   │                                        (capability = business port, snake_case name)
+│   ├── provide_port(name, provider)         take over a cross-cutting port (infra/ports.py, dotted name);
+│   │                                        rejects snake_case: writing to the wrong table only ever
+│   │                                        means "nothing was swapped"
+│   └── aclose()           unwinds LIFO; a throwing disposer does not stop the rest
+├── Plugin.apply(ctx)      the only hook allowed to bind (neither import time nor __init__ time)
+└── install / mounted / unmount              apply raising → the half-mounted scope is rolled back on the spot
+```
+
+- **Takeover vs. collision**: a plugin shadowing a builtin is the mechanism working as
+  intended (`provide` allows it); two plugins that don't know about each other claiming one
+  tool name is a bug (`provide` refuses, unless the same plugin rewrites its own binding).
+- **undo is identity-guarded** (it returns immediately when `_tools.get(name) is not info`),
+  so it only ever puts back the layer it shadowed. The price: **calling two undos out of
+  order resurrects a stale mount** — correctness depends on LIFO unwinding, which is exactly
+  why `Ctx` offers no `deactivate` hook.
+- **Ports live in two tables** (business = `service_registry`, snake_case; facade =
+  `infra/ports.py`, dotted names), so there are two takeover entry points as well. Offer only
+  one and "every candidate seam is switchable" describes half the system — see §10.3.2.
+
+### 12.2 Assembly-time registration (bootstrap)
+
+The pkgutil scan in `infra/tool_manager/tools/__init__.py` is the **only** place in the repo
+where import-time registration is allowed, and it registers builtin tool modules only.
+Restoring AI-created tools (`ai_tools.restore_ai_tools()` — reads `data/ai_tools.json` and
+execs model-authored source) used to be a side effect of that import. It now runs at the end
+of `bootstrap.register_business_capabilities()`, strictly after the builtin tools are
+imported — otherwise registration order alone would decide whether a builtin gets rejected
+by the duplicate check because a self-authored tool claimed its name first.
+
+The rule: anything persisted, model-authored, or expected to be removable must not ride on an import.
+
+### 12.3 Lifecycle: register the teardown where you start it
+
+`api/main.py`'s lifespan was ~250 lines of linear startup plus a hand-written teardown list,
+and the two lists disagreed: teardown order was not the reverse of startup (the model factory
+closed first while perception and the heartbeat were still using it), and 5 components had a
+start with no matching stop. Each startup step now registers its disposer right next to itself
+via `_push(stack, dispose)`:
+
+```
+async with AsyncExitStack() as stack:
+    start a component → _push(stack, how to stop it)
+```
+
+- **Registration is immediate**: if startup fails halfway, whatever already came up is still
+  unwound (previously the whole teardown block was skipped by the exception)
+- **Unwinding is always reverse order** — guaranteed by the structure, not by remembering a list
+- A component that failed to start never registers its disposer, so nothing gets "stopped" that never ran
+- The DB pool is opened lazily and has no startup step, so it is registered first → unwound last
+- Fatal-vs-degraded semantics are preserved per step: missing API key and Embedding load failure
+  abort startup; vision preload, perception and MCP failures degrade and continue
+- The 5 pairings added: perception integrator, desktop-pet engine, per-session scheduled tasks,
+  screen content analysis, and the `error_bus` handler installed on the event loop
+- The authored-plugin step is placed with intent: the unload is registered **before** the mount
+  (so a mount that dies halfway still gets swept), and the whole block sits **after the fatal
+  checks but before the first component that calls tools** — unwinding is reverse order, so the
+  model factory, perception, heartbeat, pet and scheduled tasks all stop before tools are
+  withdrawn from under them
+- Tests: `tests/unit/test_api_main.py`, 139 items (133 pre-existing + 3 pinning the new
+  semantics above + 3 pinning authored-plugin restore / half-mount rollback / unwind order)
+
+### 12.4 Runtime-authored plugins (L5: the model writes source, it mounts now)
+
+`modules/shared/plugin_authoring.py` is the machinery; three doors sit in front of it. The
+machinery knows exactly four rules:
+
+```
+mount_source(name, source, replace=False)      # compile → apply(ctx) → observed diff = what it provides
+author(name, source, trial, replace, store)    # the above + a trial run + write to disk only if it passed
+load_authored(store) / unload_authored()       # startup restore (creation order) / teardown unmount
+drop(name) / status()                          # unmount without forgetting / is each stored row live
+```
+
+- **Claims are observed, not declared.** Read the model-visible set once before and once after
+  the mount (`get_tools_for_api(["*"])` ∪ `registered_names()`); the diff *is* what the plugin
+  provided. There is no manifest field, so there is nothing to under-report — this is how the
+  §12.5 invariant is implemented at this layer.
+- **Two conflict gates.** `provide` refuses at bind time (it alone knows who currently answers);
+  observation catches **binds that bypass `provide`** — with no sandbox, plugin source can call
+  `register_tool` directly. Only another *authored* mount claiming the name counts as a conflict;
+  shadowing a builtin is the takeover mechanism itself. `replace=True` opens both gates, because
+  when rows are replayed in persisted order "last author wins" has to hold. Two error types:
+  `PluginConflictError` (says who answers) and `DuplicateToolError` (kept verbatim when the owner
+  is not an authored mount — there is no plugin name worth printing).
+- **Re-authoring undoes first, then installs.** The reverse leaks something invisible: the new
+  version's undo records "put back the slot I shadowed", and that slot then held the previous
+  version of itself — so unmounting restores an implementation no plugin owns, visible to the
+  model and absent from the logs. If the reinstall fails, the old version is put back on the spot
+  (`_restore`).
+- **The store row is written only after the trial passes.** Every row has succeeded at least
+  once, so nothing restored after a restart needs re-verification live. A row that will not mount
+  is recorded on itself (`status="failed"` + reason) and skipped — one plugin is not a reason for
+  the process to fail to start.
+
+The three doors **may not add policy**, only translate shape:
+
+| Door | Where | Shape |
+|---|---|---|
+| Assembly (startup restore) | `api/main.py` lifespan | `load_authored` + `_push_async(stack, unload_authored)` |
+| Model | `modules/shared/plugin_authoring_tools.py` | `mount_plugin / unmount_plugin / list_plugins / delete_plugin`, registered by a `bootstrap` import |
+| HTTP | `modules/shared/plugin_authoring_api.py` | `POST/GET/DELETE /plugins/authored`, failures carry the traceback in `error.message` |
+
+Tool functions are synchronous (tool execution runs via `asyncio.to_thread`) while mounting is a
+coroutine, so the tools module has a `_run` bridge: no loop in this thread → open one; a loop is
+already running → hand the coroutine to a thread of its own. It never calls `asyncio.run` on
+somebody else's loop.
+
+Tests: `tests/unit/test_plugin_authoring.py` (33, machinery) +
+`tests/unit/test_plugin_authoring_entries.py` (18, the two doors) + the 3 lifespan items
+(restore, half-mount rollback, undo order). On 2026-11-14 each promise was inverted one by one
+via `/tmp/mutate_b4.py` — 19 mutations for the machinery and 10 for the doors, 29 total, with
+**0 survivors**, and the script verifies afterwards that every file on disk is byte-identical
+to where it started. The 3 promises added on 2026-11-15 for the facade-port observability layer
+got the same treatment (`/tmp/mutate_b6b4_ports.py`, 4 mutations, **0 survivors**). This table
+is not "the tests happened to pass"; it is "each claim has a guard".
+
+### 12.5 What is deliberately absent
+
+No permission model, no signature checks, no sandbox, no isolation: plugin code runs inside the
+host interpreter with the interpreter's full privileges. That is the settled policy for this
+local single-user app (the governance half was built once and deleted). In place of a trust
+boundary: reversibility, no half-mounts left behind, and one invariant — **what the model can
+see == what the logs can show** (`provide` writes `source="plugin"` + `plugin_name`, which is
+what `get_plugins()` and `GET /tools/plugins/loaded` read).
+
+Known boundaries (do not read the agent side with flow-side semantics):
+- `Ctx.provide_tool` writes the process-wide registry directly; there is **no per-run frozen
+  frame** as in the flow side. More than twenty call sites across 6 modules read `_tools`.
+  Consequence: unmounting a plugin mid-run makes the remaining tool calls resolve back to the
+  builtin implementation.
+- The trial is "the author names one thing this plugin should do", not a coverage check: a trial
+  that does not point at a tool this very mount provided is refused (that would be testing the
+  builtin implementation, i.e. testing nothing).
+- Bindings a plugin leaves by calling `register_tool` directly are not reachable by unmount
+  (undo only restores the slot `provide` registered). The second gate **rejects** such a mount,
+  but the stray binding stays behind — the test asserts this boundary as it is, not as we'd like
+  it.
+

@@ -80,6 +80,12 @@ class Settings(BaseSettings):
         "SEARCH_ENGINE_PRIORITY",    # 搜索引擎优先级（逗号分隔）
         "SEARXNG_URL",               # 自部署 searXNG 实例地址
 
+        # ── CortexFlow 工作流引擎 ──
+        "CORTEXFLOW_URL",            # 工作流服务地址
+        "CORTEXFLOW_USERNAME",       # 登录账号（换取 JWT）
+        "CORTEXFLOW_PASSWORD",
+        "CORTEXFLOW_TOKEN",          # 或直接给现成 token
+
         # ── 语音识别（Whisper）──
         "PERCEPTION_VOICE_ENABLED",
         "PERCEPTION_VOICE_MODEL", "PERCEPTION_VOICE_MODE", "PERCEPTION_VOICE_HOTKEY",
@@ -364,7 +370,7 @@ class Settings(BaseSettings):
     ASSISTANT_NAME: str = "Cortex"
 
     # ── 桌面宠物（桌宠）──
-    DESKTOP_PET_ENABLED: bool = True            # 是否启用桌宠（独立页面形态；人设/API/记忆见桌宠页配置）
+    DESKTOP_PET_ENABLED: bool = False            # 是否启用桌宠（默认关闭；需要时在桌宠页开启；独立页面形态，人设/API/记忆见桌宠页配置）
 
     # ── 前端 UI 设置（原 backend ~/.cortex-mini/settings.json 持久化，并入主 settings）──
     launch_at_startup: bool = True
@@ -948,6 +954,15 @@ class Settings(BaseSettings):
     SEARCH_EXA_KEY: str = ""
     SEARCH_BOCHA_KEY: str = ""
 
+    # ── CortexFlow 工作流引擎 ─────────────────────────────
+    # 外部工作流编排服务地址（写成 http://host:9000 即可，工具会自动补 /api）
+    CORTEXFLOW_URL: str = "http://127.0.0.1:9000"
+    # 认证：cortexflow 默认开启 JWT 登录。填账号密码由工具自动换取并缓存 token；
+    # 或直接填现成 token。服务端以 CORTEXFLOW_DISABLE_AUTH=1 运行时三者都可留空。
+    CORTEXFLOW_USERNAME: str = ""
+    CORTEXFLOW_PASSWORD: str = ""
+    CORTEXFLOW_TOKEN: str = ""
+
     # @link:block Settings_GetSearchEngines = Think
     def get_search_engines(self) -> "list[str]":
         """解析搜索引擎优先级配置为有序列表（去重、过滤非法项）"""
@@ -1280,8 +1295,8 @@ class Settings(BaseSettings):
         try:
             import modules.memory.event_retrieval as er_mod
             er_mod.EventRetrieval._instance = None
-            # 生产检索单例（get_event_retrieval() 返回），漏重置会导致切库后仍读旧库
-            er_mod._retrieval_instance = None
+            # 检索单例只剩这一份（get_event_retrieval() 与类访问器同一个对象），
+            # 以前那套模块级 _retrieval_instance 已经并进来，不用再各重置一次
         except Exception as _swallowed_err:
             logger.debug(f"[_reset_memory_singletons] ignored Exception: {_swallowed_err}")
         # Embedding 模型与记忆库无关（同一个模型），切库保留实例，避免反复重载模型

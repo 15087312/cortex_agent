@@ -569,7 +569,7 @@ class TestMemoryLibs:
         import modules.memory.event_retrieval as er_mod
         import modules.memory.event_reducer as red_mod
         assert es_mod.EventStore._instance is None
-        assert er_mod._retrieval_instance is None
+        assert er_mod.EventRetrieval._instance is None
         assert red_mod._reducer_instance is None
 
     def test_switch_memory_lib(self, tmp_path, monkeypatch):

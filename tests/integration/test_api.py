@@ -92,8 +92,9 @@ async def test_root_returns_app_info(_mock_lifespan, _no_auth, _reset_rate_limit
 @pytest.mark.asyncio
 async def test_health_returns_status(_mock_lifespan, _no_auth, _reset_rate_limit):
     """Health endpoint should return success with a status field and checks dict."""
+    mock_db = MagicMock()
     with patch("modules.thinking.model_factory.get_model_factory") as mock_factory, \
-         patch("modules.database.connection.db_manager") as mock_db:
+         patch("modules.database.connection.get_db_manager", return_value=mock_db):
         mock_factory.return_value.is_ready = True
         mock_db.get_session.return_value = MagicMock()
 
@@ -118,7 +119,7 @@ async def test_health_degraded_when_subsystem_unavailable(_mock_lifespan, _no_au
     mock_db.get_session.side_effect = RuntimeError("db down")  # → "unavailable"
 
     with patch("modules.thinking.model_factory.get_model_factory", return_value=mock_factory), \
-         patch("modules.database.connection.db_manager", mock_db):
+         patch("modules.database.connection.get_db_manager", return_value=mock_db):
 
         from api.main import app
         async with _client(app) as client:

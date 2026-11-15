@@ -8,11 +8,11 @@ EventReducer — 会话结束 → LLM 总结 → 生成 MemoryEvent
 """
 import json
 import threading
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from modules.memory.event_store import EventStore, MemoryEvent
 from modules.memory.event_validation import sanitize_batch
-from modules.memory.embedding import EmbeddingEngine
+from modules.memory.embedding import EmbeddingEngine, get_embedding_engine
 from utils.logger import setup_logger
 
 logger = setup_logger("event_reducer")
@@ -139,7 +139,7 @@ class EventReducer:
             return []
 
         # 保存因果图（返回 label → node_id，用于事件↔节点绑定）
-        label_to_id = {}
+        label_to_id: Dict[str, Any] = {}
         if causal_nodes or causal_edges:
             label_to_id = self._save_causal_graph(causal_nodes, causal_edges) or {}
 
@@ -477,7 +477,7 @@ class EventReducer:
 
     def _get_embedder(self) -> EmbeddingEngine:
         if self._embedder is None:
-            self._embedder = EmbeddingEngine.get_instance()
+            self._embedder = get_embedding_engine()
         return self._embedder
 
     def _get_graph(self):
@@ -493,6 +493,21 @@ _reducer_lock = threading.Lock()
 
 
 def get_reducer() -> EventReducer:
+    """端口优先取事件归并器：接管 ``event_reducer`` 端口 = 换掉全部调用点。
+
+    取不到端口才回退内置单例（脚本、没跑过 bootstrap 的入口）。bootstrap 注册
+    的 provider 必须是 ``_default_reducer`` 而不是本函数，否则端口→本函数→端口
+    一调用就递归。
+    """
+    from infra.tool_manager.service_registry import get_capability
+
+    factory = get_capability("event_reducer")
+    if factory is None:
+        return _default_reducer()
+    return factory()
+
+
+def _default_reducer() -> EventReducer:
     global _reducer_instance
     if _reducer_instance is None:
         with _reducer_lock:

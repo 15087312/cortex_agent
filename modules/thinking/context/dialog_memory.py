@@ -51,6 +51,21 @@ def context_config() -> Dict[str, Any]:
 
 
 def history_read_limit() -> int:
+    """端口优先取对话历史读取条数上限：接管 ``context_history_read_limit`` 端口 = 换掉全部调用点。
+
+    取不到端口才回退内置单例（脚本、没跑过 bootstrap 的入口）。bootstrap 注册
+    的 provider 必须是 ``_default_history_read_limit`` 而不是本函数，否则端口→本函数→端口
+    一调用就递归。
+    """
+    from infra.tool_manager.service_registry import get_capability
+
+    factory = get_capability("context_history_read_limit")
+    if factory is None:
+        return _default_history_read_limit()
+    return factory()
+
+
+def _default_history_read_limit() -> int:
     """DB 读取条数上限。
 
     条数模式且配置了正数上限 → 只读该条数；token / 窗口比例 / 不限口径 →
@@ -132,6 +147,7 @@ def load_dialog_from_db(
     return dialog
 
 
+# @link:block DialogBudget_Guard = Loop(Guard)
 def _keep_from_newest(messages: List[Dict[str, Any]], threshold: int) -> List[Dict[str, Any]]:
     """按 token 阈值从最新往回保留消息；token 计数不可用时原样返回。"""
     try:
@@ -155,7 +171,6 @@ def _keep_from_newest(messages: List[Dict[str, Any]], threshold: int) -> List[Di
     return kept
 
 
-# @link:block DialogBudget_Guard = Loop(Guard)
 def budget_trim(
     messages: List[Dict[str, Any]],
     ratio: Optional[float] = None,

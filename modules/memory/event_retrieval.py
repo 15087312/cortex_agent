@@ -28,7 +28,7 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 
 from modules.memory.event_store import EventStore, MemoryEvent
-from modules.memory.embedding import EmbeddingEngine
+from modules.memory.embedding import EmbeddingEngine, get_embedding_engine
 from utils.logger import setup_logger
 
 logger = setup_logger("event_retrieval")
@@ -74,6 +74,21 @@ class EventRetrieval:
 
     @classmethod
     def get_instance(cls) -> "EventRetrieval":
+        """端口优先取事件检索：接管 ``event_retrieval`` 端口 = 换掉全部调用点。
+
+        内置单例挪进 ``_builtin_instance``，bootstrap 给这条端口的 provider 指的也是
+        它 —— 指回本函数就是 端口→本函数→端口 的一调用即递归，那种接线由
+        scripts/seam_catalogue.py 在生成目录时判错。
+        """
+        from infra.tool_manager.service_registry import get_capability
+
+        factory = get_capability("event_retrieval")
+        if factory is not None:
+            return factory()
+        return cls._builtin_instance()
+
+    @classmethod
+    def _builtin_instance(cls) -> "EventRetrieval":
         if cls._instance is None:
             with cls._lock:
                 if cls._instance is None:
@@ -412,7 +427,7 @@ class EventRetrieval:
 
     def _get_embedder(self) -> EmbeddingEngine:
         if self._embedder is None:
-            self._embedder = EmbeddingEngine.get_instance()
+            self._embedder = get_embedding_engine()
         return self._embedder
 
     def _get_graph(self):
@@ -423,14 +438,26 @@ class EventRetrieval:
 
 
 # 模块级快捷函数
-_retrieval_instance: Optional[EventRetrieval] = None
-_retrieval_lock = threading.Lock()
-
-
 def get_event_retrieval() -> EventRetrieval:
-    global _retrieval_instance
-    if _retrieval_instance is None:
-        with _retrieval_lock:
-            if _retrieval_instance is None:
-                _retrieval_instance = EventRetrieval()
-    return _retrieval_instance
+    """端口优先取事件检索：接管 ``event_retrieval`` 端口 = 换掉全部调用点。
+
+    取不到端口才回退内置单例（脚本、没跑过 bootstrap 的入口）。bootstrap 注册
+    的 provider 必须是 ``_default_event_retrieval`` 而不是本函数，否则端口→本函数→端口
+    一调用就递归。
+    """
+    from infra.tool_manager.service_registry import get_capability
+
+    factory = get_capability("event_retrieval")
+    if factory is None:
+        return _default_event_retrieval()
+    return factory()
+
+
+def _default_event_retrieval() -> EventRetrieval:
+    """内置检索单例——就是类那份 ``_builtin_instance``。
+
+    这里以前另有一套模块级 ``_retrieval_instance``：同一个服务两个实例，切记忆库时
+    两处都要重置（漏一处就读旧库，config/settings.py 里为此写了-notes）。合并成一份
+    之后只剩类单例一个入口，端口接管、重置、测试 patch 走的都是同一条路。
+    """
+    return EventRetrieval._builtin_instance()

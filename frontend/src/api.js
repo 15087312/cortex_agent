@@ -147,6 +147,8 @@ export const endpoints = {
   },
   deleteMemoryEvent: (id, signal) => request('DELETE', '/management/memory/events/' + encodeURIComponent(id), undefined, signal),
   installVoiceDeps: () => request('POST', '/management/install-voice-deps'),
+  installComponent: (component) => request('POST', '/management/install-component', { component }),
+  installAllComponents: () => request('POST', '/management/install-all-components'),
   visionModels: (signal) => request('GET', '/management/vision-models', undefined, signal),
   clearMemory: (signal) => request('POST', '/management/memory/clear', undefined, signal),
 

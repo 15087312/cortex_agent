@@ -18,8 +18,8 @@
 | §3–§5、§8、§17、§26、§69、§71–§74、§85、§91、§94、§101 | 前端 · 聊天 / 气泡 / 重放 / 多会话 | [04-frontend-chat.md](./bugfixes/04-frontend-chat.md) |
 | §6–§7、§14、§22–§23、§75 | 前端 · 页面 / 样式 / 构建 / 按钮 | [05-frontend-ui.md](./bugfixes/05-frontend-ui.md) |
 | §12、§24、§68、§82、§98–§100、§104 | 实时链路 · WS / SSE / 推送 / 代理 / TUI | [06-realtime-streaming.md](./bugfixes/06-realtime-streaming.md) |
-| §103 | 桌宠 | [07-desktop-pet.md](./bugfixes/07-desktop-pet.md) |
-| §20、§27、§30–§37、§44–§45、§52–§55、§58、§66、§81 | 测试 / CI / 环境 / 依赖 | [08-testing-ci.md](./bugfixes/08-testing-ci.md) |
+| §103、§109 | 桌宠 | [07-desktop-pet.md](./bugfixes/07-desktop-pet.md) |
+| §20、§27、§30–§37、§44–§45、§52–§55、§58、§66、§81、§110 | 测试 / CI / 环境 / 依赖 | [08-testing-ci.md](./bugfixes/08-testing-ci.md) |
 | §15、§38 | 流程 · 审计方法论 / 文档治理 | [09-process-docs.md](./bugfixes/09-process-docs.md) |
 
 ## 其它 bug 文档

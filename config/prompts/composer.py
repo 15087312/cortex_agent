@@ -217,8 +217,8 @@ class PromptComposer:
 
     def _build_skill(self, skill_id: str) -> str:
         try:
-            from modules.thinking.skills import skill_manager
-            skill = skill_manager.get_skill(skill_id)
+            from modules.thinking.skills import get_skill_manager
+            skill = get_skill_manager().get_skill(skill_id)
             if skill:
                 return skill.to_prompt_block()
         except Exception as e:

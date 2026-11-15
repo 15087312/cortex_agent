@@ -20,7 +20,7 @@ Cortex Agent is an orchestratable multi-model Agent toolkit rather than a simple
 | **Multi-client interaction** | Web / Qt desktop / desktop pet / TUI | Vue 3 Web UI, PyQt6 desktop client, Live2D desktop pet, Textual terminal |
 | **Fail-closed security** | Tiered approval + full-chain audit | Tool calls pass tiered gating (LOW/HIGH/CRITICAL); permission/interception anomalies are always rejected (never silently allowed) |
 | **Tool system** | 85 built-in + MCP + runtime self-built | File/search/perception/code execution/UI inspection; extension via MCP servers; the model can build tools at runtime |
-| **Engineering assurance** | **5800+ tests · 99% coverage · mypy 0 errors** | Memory-leak detection enabled by default + watchdog; independent MCP hot-plugging + auto-reconnect; dependency-injection ports; five CI gates |
+| **Engineering assurance** | **6700+ tests · 99% coverage · mypy 0 errors** | Memory-leak detection enabled by default + watchdog; independent MCP hot-plugging + auto-reconnect; dependency-injection ports; five CI gates |
 
 ---
 
@@ -123,7 +123,7 @@ cp .env.example .env        # Edit and fill in your API key
 | **Web UI (dev)** | `cd frontend && npm run dev` | Vite HMR, default port 5173, proxies `/api` → 8080 |
 | **Web UI (production)** | `python frontend/server.py` | Static server, default port 8765 |
 | **Qt desktop client** | `python frontend/main.py` | macOS PyQt6+QtWebEngine; auto-launches the desktop pet |
-| **Desktop pet** | Enable with `DESKTOP_PET_ENABLED=true` | Standalone process `pet_launch.py`; transparent always-on-top Live2D window |
+| **Desktop pet** | `DESKTOP_PET_ENABLED=false` (off by default; enable it on the Pet page) | Standalone process `pet_launch.py`; transparent always-on-top Live2D window |
 | **Remote connection** | `cortex --api-url http://192.168.1.100:8080` | Connect to an existing backend |
 
 **Frontend API conventions**: all requests use the `/api/` prefix (the proxy strips the prefix to port 8080); WebSocket connects directly to
@@ -260,7 +260,7 @@ ai_backend/
 
 ## Testing & Engineering Quality
 
-**All 5800+ tests pass with 99% code coverage** (unit / integration layers; 20+ core files at 100%).
+**All 6700+ tests pass with 99% code coverage** (unit / integration layers; 20+ core files at 100%).
 
 ```bash
 # Full backend suite (recommended)
@@ -283,7 +283,7 @@ cd frontend && npm test
 
 | Gate | Details |
 |---|---|
-| **Unit tests** | `pytest tests/unit` (5800+ cases; random hangs eradicated) |
+| **Unit tests** | `pytest tests/unit` (6700+ cases; random hangs eradicated) |
 | **Coverage gate** | `--cov-fail-under=70` (actual: 99%) |
 | **Type check** | `mypy` 0 errors (configured in `pyproject.toml [tool.mypy]`) |
 | **Leak detection** | Enabled by default: muppy byte-sampling trend detection + pympler type diff (including raw bytes/numpy memory) |
@@ -310,7 +310,7 @@ The **module coverage manifest** proves that all production modules (including t
 - **MCP lifecycle**: independent hot-plugging (`remove_server`/`replace_server`) + automatic reconnection with exponential backoff — aligned with the dsh mcp-client.
 - **Background thread safety**: class-level `weakref` registries for screen sources/event buses/voice detection + unified conftest cleanup, eliminating random test hangs.
 - **Isolation principle**: never touch production databases (temporary SQLite + monkeypatched singletons); relaxed timeouts when loading heavy libraries; `except: pass` error swallowing forbidden; test fakes must match real model fields.
-- **Bug log**: [docs/bugfixes/](docs/bugfixes/README.en.md) (split by module, §1-§103 including systematic pattern audits); see `docs/MEMORY_LEAK_TESTING.en.md` for the memory-safety framework.
+- **Bug log**: [docs/bugfixes/](docs/bugfixes/README.en.md) (split by module, §1-§110 including systematic pattern audits); see `docs/MEMORY_LEAK_TESTING.en.md` for the memory-safety framework.
 
 ---
 
@@ -376,7 +376,7 @@ The client bundles the Vue build output `frontend/dist` (run `cd frontend && npm
 | [docs/THINKING_ARCHITECTURE.en.md](docs/THINKING_ARCHITECTURE.en.md) | Thinking module internals (dual-layer ReAct loop) |
 | [docs/MEMORY_INJECTION.en.md](docs/MEMORY_INJECTION.en.md) | Memory system and injection pipeline |
 | [docs/CONFIG_VALUE_EVOLUTION.en.md](docs/CONFIG_VALUE_EVOLUTION.en.md) | Value-evolution configuration |
-| [docs/bugfixes/README.en.md](docs/bugfixes/README.en.md) | Error log and fix records index (split by module, §1-§103, incl. fake-test/security/coverage lessons) |
+| [docs/bugfixes/README.en.md](docs/bugfixes/README.en.md) | Error log and fix records index (split by module, §1-§110, incl. fake-test/security/coverage lessons) |
 | [frontend/ARCHITECTURE.en.md](frontend/ARCHITECTURE.en.md) | Frontend architecture |
 | [frontend/README.en.md](frontend/README.en.md) | Frontend usage/development |
 

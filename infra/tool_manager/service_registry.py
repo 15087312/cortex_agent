@@ -26,7 +26,8 @@ _capabilities: Dict[str, Callable[..., Any]] = {}
 def register_capability(name: str, provider: Callable[..., Any]) -> None:
     """注册一项业务能力。provider 为无参 callable，返回实际服务/实例。
 
-    重复注册会覆盖旧实现（用于测试 mock 或热替换）。
+    重复注册会覆盖旧实现（用于测试 mock 或热替换）。装配层的注册是不可逆的
+    import/启动副作用；需要「随作用域生灭」的接管走 :func:`provide_capability`。
     """
     _capabilities[name] = provider
     logger.debug(f"[capability] 已注册: {name}")
@@ -48,3 +49,31 @@ def registered_names() -> tuple:
 def unregister_capability(name: str) -> None:
     """注销能力（主要供测试清理使用）。"""
     _capabilities.pop(name, None)
+
+
+def provide_capability(name: str, provider: Callable[..., Any]) -> Callable[[], None]:
+    """接管一个能力端口，返回把自己放回去的操作。
+
+    ``register_capability`` 无条件覆盖，它的 docstring 就写了「用于测试 mock 或
+    热替换」——但覆盖要能退回去才叫热替换，否则「热替换」和「永久改掉」无法区分。
+    端口在 infra 侧，所以撤销操作由端口自己给出（它才知道原值是什么），调用方
+    （modules.shared.plugin_api.Ctx）只负责挂上时效。
+
+    撤销按身份判断：若这个端口后来又被别处接管，本次撤销什么都不做。
+    """
+    had = name in _capabilities
+    previous = _capabilities.get(name)
+    _capabilities[name] = provider
+    logger.info(
+        f"[capability] 接管端口: {name}" + ("（遮蔽原实现）" if had else "（新端口）")
+    )
+
+    def undo() -> None:
+        if _capabilities.get(name) is not provider:
+            return
+        if had:
+            _capabilities[name] = previous
+        else:
+            _capabilities.pop(name, None)
+
+    return undo

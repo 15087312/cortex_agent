@@ -84,6 +84,21 @@ class ApiLogStore:
 
     @classmethod
     def get_instance(cls) -> "ApiLogStore":
+        """端口优先取API 调用日志存储：接管 ``api_log_store`` 端口 = 换掉全部调用点。
+
+        内置单例挪进 ``_builtin_instance``，bootstrap 给这条端口的 provider 指的也是
+        它 —— 指回本函数就是 端口→本函数→端口 的一调用即递归，那种接线由
+        scripts/seam_catalogue.py 在生成目录时判错。
+        """
+        from infra.tool_manager.service_registry import get_capability
+
+        factory = get_capability("api_log_store")
+        if factory is not None:
+            return factory()
+        return cls._builtin_instance()
+
+    @classmethod
+    def _builtin_instance(cls) -> "ApiLogStore":
         if cls._instance is None:
             with cls._lock:
                 if cls._instance is None:

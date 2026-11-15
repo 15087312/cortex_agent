@@ -4,6 +4,7 @@
 检测项与修复建议（失败项附 fix 命令/操作指引，前端"系统体检"卡片渲染）：
   - ffmpeg/ffprobe：视频识别硬前置（打包版 > 配置 > PATH > 常见目录，见 video_analyzer）
   - 原生语音依赖：whisper（STT）/ pyaudio（采集）/ pynput（热键）— 可选，缺失即降级
+  - 桌面/硬件依赖：pyautogui（屏幕控制）/ pyserial（串口输入）— 可选，缺失即降级
   - 音频解码（SpeechRecognition 需 flac 二进制）
   - 密钥：LLM 主模型（OPENAI/LARGE_MODEL）与视觉（VISION_*）
   - Whisper 权重缓存：~/.cache/whisper 是否已下载过模型
@@ -151,7 +152,9 @@ def run_doctor() -> Dict[str, Any]:
     _add("embedding_models", _check_embedding_models)
     _add("whisper", _check_import, import_name="whisper", pkg_name="openai-whisper", capability="本地语音识别 STT")
     _add("pyaudio", _check_import, import_name="pyaudio", pkg_name="pyaudio", capability="语音输入采集")
+    _add("pynput", _check_import, import_name="pynput", pkg_name="pynput", capability="全局热键监听")
     _add("pyautogui", _check_import, import_name="pyautogui", pkg_name="pyautogui", capability="屏幕控制")
+    _add("pyserial", _check_import, import_name="serial", pkg_name="pyserial", capability="串口/硬件输入")
     _add("flac", _check_flac)
     _add("whisper_weights", _check_whisper_weights)
 

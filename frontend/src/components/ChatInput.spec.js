@@ -1,4 +1,4 @@
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import ChatInput from '@/components/ChatInput.vue'
 
@@ -260,6 +260,84 @@ describe('ChatInput 语音/联网搜索按钮', () => {
     await Promise.resolve()
     expect(getUserMedia).toHaveBeenCalled()
     expect(mic.classes()).toContain('chat-btn-recording')
+    wrapper.unmount()
+  })
+})
+
+describe('ChatInput 技能选择下拉', () => {
+  const skills = [
+    { id: 'ui_design', name: 'UI 设计', description: 'd1', enabled: true },
+    { id: 'code_review', name: '代码审查', description: 'd2', enabled: true },
+    { id: 'disabled_one', name: '已禁用', description: 'd3', enabled: false },
+  ]
+
+  function stubSkills() {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      json: () => Promise.resolve({ success: true, data: { skills } }),
+    }))
+  }
+
+  it('默认不注入技能，载荷 skillId 为空', async () => {
+    stubSkills()
+    const wrapper = mountInput()
+    await flushPromises()
+    await sendClick(wrapper, '你好')
+    expect(wrapper.emitted('send')[0][0].skillId).toBe('')
+    wrapper.unmount()
+  })
+
+  it('展开下拉后只列出已启用技能，选中后随载荷提交', async () => {
+    stubSkills()
+    const wrapper = mountInput()
+    await flushPromises()
+    await wrapper.find('.chat-skill-picker button').trigger('click')
+    const items = wrapper.findAll('.chat-skill-item')
+    // 首项为「不注入技能」，其余为已启用技能（已禁用项被过滤）
+    expect(items).toHaveLength(3)
+    expect(wrapper.text()).not.toContain('已禁用')
+    await items[1].trigger('click')
+    await sendClick(wrapper, '做个页面')
+    expect(wrapper.emitted('send')[0][0].skillId).toBe('ui_design')
+    expect(wrapper.find('.chat-skill-menu').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('选中后按钮高亮，可重新选回不注入', async () => {
+    stubSkills()
+    const wrapper = mountInput()
+    await flushPromises()
+    const trigger = wrapper.find('.chat-skill-picker button')
+    await trigger.trigger('click')
+    await wrapper.findAll('.chat-skill-item')[1].trigger('click')
+    expect(trigger.classes()).toContain('chat-btn-active')
+    await trigger.trigger('click')
+    await wrapper.findAll('.chat-skill-item')[0].trigger('click')
+    expect(trigger.classes()).not.toContain('chat-btn-active')
+    await sendClick(wrapper, '随便聊聊')
+    expect(wrapper.emitted('send')[0][0].skillId).toBe('')
+    wrapper.unmount()
+  })
+
+  it('点击页面其它区域关闭下拉', async () => {
+    stubSkills()
+    const wrapper = mountInput()
+    await flushPromises()
+    await wrapper.find('.chat-skill-picker button').trigger('click')
+    expect(wrapper.find('.chat-skill-menu').exists()).toBe(true)
+    document.body.click()
+    await flushPromises()
+    expect(wrapper.find('.chat-skill-menu').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('技能接口失败时下拉为空且不影响发送', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('boom')))
+    const wrapper = mountInput()
+    await flushPromises()
+    await wrapper.find('.chat-skill-picker button').trigger('click')
+    expect(wrapper.findAll('.chat-skill-item')).toHaveLength(1)
+    await sendClick(wrapper, '还能发')
+    expect(wrapper.emitted('send')[0][0].skillId).toBe('')
     wrapper.unmount()
   })
 })

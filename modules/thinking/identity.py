@@ -28,6 +28,21 @@ _merged_identities: Optional[Dict[str, dict]] = None
 
 
 def get_identities() -> Dict[str, dict]:
+    """端口优先取身份表：接管 ``identities`` 端口 = 换掉角色模板的来源。
+
+    取不到端口才回退内置 YAML 合并（脚本、没跑过 bootstrap 的入口）。bootstrap 注册
+    的 provider 必须是 ``_default_identities`` 而不是本函数，否则端口→本函数→端口
+    一调用就递归。
+    """
+    from infra.tool_manager.service_registry import get_capability
+
+    factory = get_capability("identities")
+    if factory is None:
+        return _default_identities()
+    return factory()
+
+
+def _default_identities() -> Dict[str, dict]:
     """获取合并后的身份字典（config/prompts/roles.yaml + 外部覆盖）"""
     global _merged_identities
     if _merged_identities is not None:
@@ -75,6 +90,26 @@ def _load_from_yaml() -> Dict[str, dict]:
 
 
 def load_external_identities(directory: str = None) -> Dict[str, dict]:
+    """端口优先取刷新实现：接管 ``external_identities`` 端口 = 换掉身份刷新的来源。
+
+    取不到端口才回退内置 YAML 合并。bootstrap 注册的 provider 必须是
+    ``_default_external_identities``（它交出内置函数本身）而不是本函数，否则
+    端口→本函数→端口 一调用就递归。
+    """
+    from infra.tool_manager.service_registry import get_capability
+
+    factory = get_capability("external_identities")
+    if factory is None:
+        return _default_external_identities()(directory)
+    return factory()(directory)
+
+
+def _default_external_identities():
+    """内置 provider：交出刷新**函数本身**，不调用它（端口取到的是可调用物）。"""
+    return _builtin_load_external_identities
+
+
+def _builtin_load_external_identities(directory: str = None) -> Dict[str, dict]:
     """加载外部 YAML 配置并合并"""
     global _merged_identities
     try:

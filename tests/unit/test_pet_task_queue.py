@@ -159,7 +159,7 @@ def test_loop_restart_abandons_pending():
         f2 = await q.submit("pending", _factory(delay=0.2, tag="pending"))
         return f2
 
-    f2 = asyncio.run(first())
+    asyncio.run(first())
 
     async def second():
         # 新循环首次 submit 触发废弃逻辑：旧队列被清空重建
@@ -170,3 +170,54 @@ def test_loop_restart_abandons_pending():
         # 生产中该循环已消亡、无人 await，不会泄漏 —— 只验证队列状态。
 
     asyncio.run(second())
+
+
+def test_shutdown_cancels_worker_and_clears_queue():
+    """shutdown() 必须把 worker 收掉：留着它会在循环关闭后变成 pending task
+
+    现象（§109 收尾时偶发）：测试输出里出现
+    `Task was destroyed but it is pending` + `Event loop is closed`，单例还引用死循环。
+    """
+    q = _fresh_queue()
+
+    async def main():
+        f1 = await q.submit("run", _factory(tag="run"))
+        assert await f1 == "done:run"
+        worker = q._worker
+        assert worker is not None and not worker.done()
+
+        f2 = await q.submit("waiting", _factory(delay=5, tag="waiting"))
+        q.shutdown()
+
+        assert q._worker is None and q._queue is None
+        assert q.pending() == 0, "shutdown 后不能还留着排队任务"
+        await asyncio.sleep(0)          # 让 worker 真正收到取消
+        assert worker.done(), "worker 未退出，循环关闭后会变成 pending task"
+        assert f2.cancelled() or f2.done(), "排队任务的 Future 必须收尾（取消/失败）"
+
+        # shutdown 后同一循环再提交 → 自动重建 worker，不能永久瘫痪
+        f3 = await q.submit("again", _factory(tag="again"))
+        assert await f3 == "done:again"
+        q.shutdown()
+
+    asyncio.run(main())
+
+
+def test_engine_stop_shuts_down_queue(monkeypatch):
+    """PetEngine.stop() 要把队列 worker 一起收掉（否则循环关闭时留下 pending task）"""
+    from modules.desktop_pet.pet_engine import PetEngine
+
+    q = _fresh_queue()
+    pe = PetEngine.__new__(PetEngine)
+    pe._running = True
+    pe._event_bus = None
+    pe._sub_id = ""
+
+    async def main():
+        f = await q.submit("run", _factory(tag="run"))
+        assert await f == "done:run"
+        pe.stop()
+        await asyncio.sleep(0)
+        assert q._worker is None
+
+    asyncio.run(main())

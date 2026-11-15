@@ -18,17 +18,14 @@ from utils.logger import setup_logger
 
 logger = setup_logger("desktop_pet_api")
 
-
 class PetChatRequest(BaseModel):
     action_id: str = ""
     text: str = ""
-
 
 class PetMoveRequest(BaseModel):
     dx: float = 0
     dy: float = 0
     active: Optional[bool] = None
-
 
 class PetConfigRequest(BaseModel):
     persona: Optional[str] = None
@@ -50,22 +47,18 @@ class PetConfigRequest(BaseModel):
     realtime_voice: Optional[bool] = None
     active_persona_id: Optional[int] = None
 
-
 class PetPersonaRequest(BaseModel):
     name: str = ""
     prompt: str = ""
-
 
 class PetMemoryRequest(BaseModel):
     kind: str = "fact"
     text: str = ""
 
-
 _pet_move = {"dx": 0.0, "dy": 0.0, "active": False}
 _pet_move_queues: set = set()  # SSE 推送连接（Qt 长连接收位移，替代轮询）
 
 router = APIRouter(prefix="/stream/pet", tags=["桌宠"])
-
 
 @router.get("/last-reply")
 async def pet_last_reply():
@@ -76,13 +69,11 @@ async def pet_last_reply():
     except Exception:
         return {"success": True, "data": None}
 
-
 @router.get("/actions")
 async def pet_actions():
     """桌宠互动动作模板（圆环菜单 + Chat 图标检测统一数据源）"""
     from modules.desktop_pet.actions import CATEGORIES, public_actions
     return {"success": True, "data": {"categories": CATEGORIES, "actions": public_actions()}}
-
 
 @router.post("/move")
 async def pet_move(body: PetMoveRequest):
@@ -102,7 +93,6 @@ async def pet_move(body: PetMoveRequest):
                 logger.debug(f"[pet_move] ignored Exception: {_swallowed_err}")
     return {"success": True}
 
-
 @router.get("/move/stream")
 async def pet_move_stream():
     """SSE 长连接：Qt 收桌宠拖动位移推送（替代 GET /pet/move 轮询）"""
@@ -121,7 +111,6 @@ async def pet_move_stream():
             _pet_move_queues.discard(queue)
 
     return EventSourceResponse(gen())
-
 
 @router.post("/chat")
 async def pet_chat_stream(body: PetChatRequest):
@@ -245,7 +234,6 @@ async def pet_chat_stream(body: PetChatRequest):
 
     return EventSourceResponse(gen())
 
-
 # ── 桌宠独立配置（人设 / API / 循环类型） ──
 
 @router.get("/config")
@@ -259,7 +247,6 @@ async def pet_get_config():
     out.pop("api_key", None)
     return {"success": True, "data": out}
 
-
 @router.put("/config")
 async def pet_update_config(body: PetConfigRequest):
     """更新桌宠独立配置（仅更新传入字段）"""
@@ -270,11 +257,20 @@ async def pet_update_config(body: PetConfigRequest):
     if pid is not None and store.set_active_persona(int(pid)) is None:
         return {"success": False, "error": "persona not found"}
     cfg = store.update_config(patch) if patch else store.get_config()
+    # 实时监听开关即时生效（打开→拉起麦克风，关闭→释放设备）
+    if "realtime_voice" in patch:
+        try:
+            from modules.desktop_pet.pet_engine import get_running_pet_engine
+            # 引擎还没启动时不要为了刷新开关而创建实例（会丢掉事件总线绑定）
+            engine = get_running_pet_engine()
+            if engine is not None:
+                engine.refresh_voice()
+        except Exception as e:
+            logger.warning(f"实时语音开关应用失败: {e}")
     out = dict(cfg)
     out["api_key_set"] = bool(cfg.get("api_key"))
     out.pop("api_key", None)
     return {"success": True, "data": out}
-
 
 # ── 桌宠人设（每个人设独立会话） ──
 
@@ -288,7 +284,6 @@ async def pet_personas():
         "data": {"items": store.list_personas(), "active_id": store.get_active_persona_id()},
     }
 
-
 @router.post("/personas")
 async def pet_persona_create(body: PetPersonaRequest):
     """新建人设（名称重复返回失败）"""
@@ -297,7 +292,6 @@ async def pet_persona_create(body: PetPersonaRequest):
     if not item:
         return {"success": False, "error": "duplicate name"}
     return {"success": True, "data": item}
-
 
 @router.put("/personas/{pid}")
 async def pet_persona_update(pid: int, body: PetPersonaRequest):
@@ -308,7 +302,6 @@ async def pet_persona_update(pid: int, body: PetPersonaRequest):
     if not item:
         return {"success": False, "error": "persona not found or duplicate name"}
     return {"success": True, "data": item}
-
 
 @router.delete("/personas/{pid}")
 async def pet_persona_delete(pid: int):
@@ -324,7 +317,6 @@ async def pet_persona_delete(pid: int):
         logger.debug(f"[pet] 清理人设记忆文件失败: {e}")
     return {"success": True}
 
-
 @router.post("/personas/{pid}/activate")
 async def pet_persona_activate(pid: int):
     """切换当前人设；后续对话/历史都切到该人设"""
@@ -333,7 +325,6 @@ async def pet_persona_activate(pid: int):
     if not item:
         return {"success": False, "error": "persona not found"}
     return {"success": True, "data": item}
-
 
 @router.get("/memory/events")
 async def pet_memory_events(limit: int = 50):
@@ -364,7 +355,6 @@ async def pet_memory_events(limit: int = 50):
     ]
     return {"success": True, "data": {"items": items, "persona_id": pid}}
 
-
 @router.get("/memory/stats")
 async def pet_memory_stats():
     """当前人设的自动记忆事件数 / 因果节点数 / 边数"""
@@ -372,7 +362,6 @@ async def pet_memory_stats():
     from modules.desktop_pet.memory_bank import PetMemoryBank
     pid = PetStore.get_instance().get_active_persona_id()
     return {"success": True, "data": {"persona_id": pid, **PetMemoryBank.get_instance().stats(pid)}}
-
 
 # ── 桌宠独立对话历史 ──
 
@@ -385,7 +374,6 @@ async def pet_history(limit: int = 50, persona_id: Optional[int] = None):
     )
     return {"success": True, "data": {"items": rows}}
 
-
 @router.delete("/history/{mid}")
 async def pet_history_delete(mid: int):
     """删除桌宠对话中的一条消息（pet_history.id）"""
@@ -395,14 +383,12 @@ async def pet_history_delete(mid: int):
         return {"success": False, "error": "not found"}
     return {"success": True}
 
-
 @router.delete("/history")
 async def pet_history_clear(persona_id: Optional[int] = None):
     """清空指定人设（默认当前人设）的对话历史"""
     from modules.desktop_pet.store import PetStore
     PetStore.get_instance().clear_history(persona_id=persona_id)
     return {"success": True}
-
 
 # ── 桌宠独立记忆库 ──
 
@@ -412,7 +398,6 @@ async def pet_memory_list(limit: int = 50):
     from modules.desktop_pet.store import PetStore
     rows = PetStore.get_instance().list_memory(limit=max(1, min(200, limit)))
     return {"success": True, "data": {"items": rows}}
-
 
 @router.post("/memory")
 async def pet_memory_add(body: PetMemoryRequest):
@@ -424,7 +409,6 @@ async def pet_memory_add(body: PetMemoryRequest):
     item = PetStore.get_instance().add_memory(body.kind, text)
     return {"success": True, "data": item}
 
-
 @router.delete("/memory/{mid}")
 async def pet_memory_delete(mid: int):
     """删除一条桌宠独立记忆"""
@@ -434,7 +418,6 @@ async def pet_memory_delete(mid: int):
         return {"success": False, "error": "not found"}
     return {"success": True}
 
-
 # ── 桌宠窗口进程（Qt 展示进程的拉起/停止/状态/崩溃看护）──
 
 @router.get("/window")
@@ -442,7 +425,6 @@ async def pet_window_status():
     """桌宠窗口进程状态（运行中/pid/重启次数/退出码）"""
     from modules.desktop_pet.window_supervisor import get_pet_window_supervisor
     return {"success": True, "data": get_pet_window_supervisor().status()}
-
 
 @router.post("/window/start")
 async def pet_window_start():
@@ -453,7 +435,6 @@ async def pet_window_start():
         return {"success": False, "error": r.get("reason", "start failed")}
     return {"success": True, "data": r}
 
-
 @router.post("/window/stop")
 async def pet_window_stop():
     """停止桌宠窗口进程（用户主动关闭，不再自动重启）"""
@@ -461,8 +442,31 @@ async def pet_window_stop():
     r = get_pet_window_supervisor().stop()
     return {"success": True, "data": r}
 
+# ── 实时语音（后端麦克风常驻监听） ──
 
-# ── 实时语音（全双工 WebSocket） ──
+@router.get("/voice/status")
+async def pet_voice_status():
+    """实时语音状态：麦克风是否在听、待唤醒段数、冷却、TTS 后端"""
+    try:
+        from modules.desktop_pet.pet_engine import get_running_pet_engine
+        # 只读已存在的实例：这里是高频轮询，绝不能因查状态而创建
+        # 一个没有事件总线的单例（会让后续 start() 失去语音订阅）
+        engine = get_running_pet_engine()
+        data = engine.voice_status() if engine is not None else {
+            "running": False, "state": "idle", "last_error": "",
+            "energy_threshold": 0, "silence_duration": 0,
+            "heard_anything": False, "pending": 0, "cooldown": 0,
+        }
+    except Exception as e:
+        data = {"running": False, "state": "idle", "last_error": str(e)}
+    try:
+        from modules.desktop_pet.voice import tts as pet_tts
+        data["tts_backend"] = pet_tts.active_backend()
+    except Exception:
+        data["tts_backend"] = "unknown"
+    return {"success": True, "data": data}
+
+# ── 实时语音（全双工 WebSocket，浏览器麦克风备用通道） ──
 
 @router.websocket("/voice")
 async def pet_voice_websocket(websocket: WebSocket):

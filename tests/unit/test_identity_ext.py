@@ -64,6 +64,26 @@ def test_load_external_identities_error(monkeypatch):
     assert load_external_identities() == {"fallback": 1}
 
 
+# ── external_identities 端口 ──────────────────────────────────────────
+
+def test_external_identities_port_takes_over(take_over):
+    """接管端口后刷新走插件实现：内置那份 YAML 合并一次都不会跑。"""
+    seen = []
+    take_over("external_identities", lambda: (lambda d=None: seen.append(d) or {"src": "plugin"}))
+    assert load_external_identities("/tmp/plugin") == {"src": "plugin"}
+    assert seen == ["/tmp/plugin"]
+
+
+def test_external_identities_builtin_provider_is_not_accessor():
+    """bootstrap 的 provider 必须交出内置函数，不能交出端口优先访问器本身。
+
+    后者是「端口→访问器→端口」的自我递归，启动期看不出来，第一次刷新才炸。
+    """
+    from modules.thinking.identity import _builtin_load_external_identities, _default_external_identities
+
+    assert _default_external_identities() is _builtin_load_external_identities
+
+
 # ── 启动模式 ───────────────────────────────────────────────────────────
 
 def test_startup_mode():

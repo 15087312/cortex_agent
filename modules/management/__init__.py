@@ -2,7 +2,7 @@
 管理系统 - 模块调度、全局监控、自适应优化
 """
 from .core.collector import ModuleRegistry, StatusCollector
-from .core.error_bus import error_bus, ErrorContext
+from .core.error_bus import get_error_bus, ErrorContext
 from .core.error_reporter import (
     ErrorReport,
     ErrorReporter,
@@ -12,7 +12,7 @@ from .core.error_reporter import (
 )
 
 __all__ = [
-    "error_bus",
+    "get_error_bus",
     "ErrorContext",
     "ErrorReport",
     "ErrorReporter",

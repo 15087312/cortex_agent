@@ -9,13 +9,13 @@ from modules.management.core.interfaces import (
 )
 
 
-def test_perception_status_port(monkeypatch):
+def test_perception_status_port(take_over_port):
     ps = MagicMock()
     ps._started = True
     ps.voice_detector = MagicMock()
     ps.world_state = None
-    import modules.perception as perception_mod
-    monkeypatch.setattr(perception_mod, "get_perception_system", lambda: ps)
+    # 桩打在端口上：本适配器就是经端口取感知系统的，打访问器名只会悄悄拿到内置那套
+    take_over_port("perception.system", ps)
     status = PerceptionStatusAdapter().get_status()
     assert status["started"] is True
     assert status["voice_detector"] is True

@@ -650,7 +650,7 @@ describe('Chat 页面', () => {
     const sendSpy = vi.spyOn(chat, 'sendMessage').mockResolvedValue()
     const atts = [{ type: 'image/png', data: 'data:image/png;base64,xxx', name: 'a.png' }, { type: 'text/plain', data: 'hello', name: 'b.txt' }]
     w.vm.handleSend({ text: '看图', attachments: atts })
-    expect(sendSpy).toHaveBeenCalledWith('看图', atts, undefined)
+    expect(sendSpy).toHaveBeenCalledWith('看图', atts, undefined, '')
     const userMsg = chat.messages.find(m => m.role === 'user' && m.content === '看图')
     expect(userMsg.images).toEqual(['data:image/png;base64,xxx'])
     expect(chat.hint).toBe('思考中...')

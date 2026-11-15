@@ -235,10 +235,10 @@ class StatusCollector:
     def _collect_database(self) -> Dict[str, Any]:
         """收集数据库模块状态"""
         try:
-            from modules.database.disk_cache import disk_cache
+            from modules.database.disk_cache import get_disk_cache
             import sqlite3
             
-            stats = disk_cache.get_stats()
+            stats = get_disk_cache().get_stats()
             
             db_path = str(PROJECT_ROOT / "data" / "memory.db")
             tables = []

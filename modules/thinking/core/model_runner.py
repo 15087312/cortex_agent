@@ -2380,8 +2380,8 @@ class ModelRunner:
                     else:
                         _forced = _sf.get_forced_skill()
                         if _forced:
-                            from modules.thinking.skills import skill_manager
-                            _fskill = skill_manager.get_skill(_forced)
+                            from modules.thinking.skills import get_skill_manager
+                            _fskill = get_skill_manager().get_skill(_forced)
                             if _fskill and _fskill.enabled:
                                 self._set_active_skill(_fskill)
                                 skill_id = _fskill.id
@@ -2986,11 +2986,11 @@ class ModelRunner:
                                         if _forced and _forced != skill_id:
                                             result = f"【技能切换被拒绝】系统已强制使用技能 '{_forced}'，不可切换到其他技能。使用 list_skills 查看当前可用技能。"
                                         else:
-                                            from modules.thinking.skills import skill_manager
-                                            skill = skill_manager.get_skill(skill_id)
+                                            from modules.thinking.skills import get_skill_manager
+                                            skill = get_skill_manager().get_skill(skill_id)
                                             role = getattr(self.identity, "role", "")
                                             allowed = skill and skill.enabled and (
-                                                skill in skill_manager.list_skills_for_role(role)
+                                                skill in get_skill_manager().list_skills_for_role(role)
                                             )
                                             if allowed:
                                                 self._set_active_skill(skill)
@@ -3017,8 +3017,8 @@ class ModelRunner:
                                 else:
                                     result = "【无活跃技能】当前没有激活的技能。"
                             elif tc.name == "list_skills":
-                                from modules.thinking.skills import skill_manager
-                                skills = skill_manager.list_skills_for_role(getattr(self.identity, "role", ""))
+                                from modules.thinking.skills import get_skill_manager
+                                skills = get_skill_manager().list_skills_for_role(getattr(self.identity, "role", ""))
                                 logger.info(f"[ModelRunner] 列出技能: {len(skills)} 个")
                                 result = "【可用技能】" + (
                                     "\n" + "\n".join(f"- {s.id}: {s.name} — {s.description[:80]}" for s in skills)
@@ -3255,8 +3255,8 @@ class ModelRunner:
                                     else:
                                         skill_feedback = "【无活跃技能】当前没有激活的技能。"
                                 elif tc.name == "list_skills":
-                                    from modules.thinking.skills import skill_manager
-                                    all_skills = skill_manager.list_skills()
+                                    from modules.thinking.skills import get_skill_manager
+                                    all_skills = get_skill_manager().list_skills()
                                     if all_skills:
                                         lines = [f"- {s.id}: {s.name} — {s.description}" for s in all_skills]
                                         skill_feedback = "【可用技能】\n" + "\n".join(lines)
@@ -3859,8 +3859,8 @@ class ModelRunnerManager:
                 effective_skill_id = skill_id or identity.default_skill
             if effective_skill_id:
                 try:
-                    from modules.thinking.skills import skill_manager
-                    skill = skill_manager.get_skill(effective_skill_id)
+                    from modules.thinking.skills import get_skill_manager
+                    skill = get_skill_manager().get_skill(effective_skill_id)
                     # 与 request_skill 权限路径保持一致：已禁用技能不注入
                     if skill and skill.enabled:
                         runner._active_skill = skill

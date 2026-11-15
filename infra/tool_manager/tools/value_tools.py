@@ -16,8 +16,9 @@ logger = setup_logger("value_tools")
 
 
 def _get_value_system():
-    from config.values_store import value_system
-    return value_system
+    # 经访问器取，不在这里抓模块级实例：接管 value_system 端口才换得掉本文件的行为。
+    from config.values_store import get_value_system
+    return get_value_system()
 
 
 def _get_formatter():

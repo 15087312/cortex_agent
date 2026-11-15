@@ -233,8 +233,8 @@ async def set_todo_status(task_id: str, body: dict = None, session_id: str = "")
 @router.get("/skills")
 async def list_skills():
     """技能管理列表（含 enabled/source/metadata）"""
-    from modules.thinking.skills import skill_manager
-    return {"success": True, "data": {"skills": skill_manager.to_listing()}}
+    from modules.thinking.skills import get_skill_manager
+    return {"success": True, "data": {"skills": get_skill_manager().to_listing()}}
 
 
 @router.get("/skills/forced")
@@ -244,8 +244,8 @@ async def get_forced_skill():
     skill_id = settings.get_forced_skill()
     skill = None
     if skill_id:
-        from modules.thinking.skills import skill_manager
-        s = skill_manager.get_skill(skill_id)
+        from modules.thinking.skills import get_skill_manager
+        s = get_skill_manager().get_skill(skill_id)
         if s:
             skill = {"id": s.id, "name": s.name, "description": s.description[:120]}
     return {"success": True, "data": {"forced_skill": skill_id, "skill": skill}}
@@ -258,8 +258,8 @@ async def set_forced_skill(body: dict = None):
     from config.settings import settings
     skill_id = str(body.get("skill_id") or "").strip()
     if skill_id:
-        from modules.thinking.skills import skill_manager
-        s = skill_manager.get_skill(skill_id)
+        from modules.thinking.skills import get_skill_manager
+        s = get_skill_manager().get_skill(skill_id)
         if not s:
             return {"success": False, "error": {"code": "SKILL_NOT_FOUND", "message": f"技能不存在: {skill_id}"}}
         if not s.enabled:
@@ -270,8 +270,8 @@ async def set_forced_skill(body: dict = None):
         return {"success": False, "error": {"code": "SAVE_FAILED", "message": f"保存失败: {e}"}}
     skill = None
     if skill_id:
-        from modules.thinking.skills import skill_manager
-        s = skill_manager.get_skill(skill_id)
+        from modules.thinking.skills import get_skill_manager
+        s = get_skill_manager().get_skill(skill_id)
         skill = {"id": s.id, "name": s.name} if s else None
     return {"success": True, "data": {"forced_skill": skill_id, "skill": skill}}
 
@@ -279,8 +279,8 @@ async def set_forced_skill(body: dict = None):
 @router.get("/skills/{skill_id}")
 async def get_skill_detail(skill_id: str):
     """技能详情（含原文 raw_content 供编辑回填）"""
-    from modules.thinking.skills import skill_manager
-    skill = skill_manager.get_skill(skill_id)
+    from modules.thinking.skills import get_skill_manager
+    skill = get_skill_manager().get_skill(skill_id)
     if not skill:
         return {"success": False, "error": {"code": "SKILL_NOT_FOUND", "message": f"技能不存在: {skill_id}"}}
     return {"success": True, "data": {
@@ -296,8 +296,8 @@ async def get_skill_detail(skill_id: str):
 async def create_skill(body: dict = None):
     """创建新技能（写 skills/<id>/SKILL.md）"""
     body = body or {}
-    from modules.thinking.skills import skill_manager
-    ok, msg = skill_manager.create_skill(
+    from modules.thinking.skills import get_skill_manager
+    ok, msg = get_skill_manager().create_skill(
         skill_id=str(body.get("id") or ""),
         name=str(body.get("name") or ""),
         description=str(body.get("description") or ""),
@@ -314,8 +314,8 @@ async def create_skill(body: dict = None):
 async def update_skill(skill_id: str, body: dict = None):
     """更新技能（改 frontmatter/正文并重载）"""
     body = body or {}
-    from modules.thinking.skills import skill_manager
-    ok, msg = skill_manager.update_skill(
+    from modules.thinking.skills import get_skill_manager
+    ok, msg = get_skill_manager().update_skill(
         skill_id,
         name=body.get("name") if "name" in body else None,
         description=body.get("description") if "description" in body else None,
@@ -332,8 +332,8 @@ async def update_skill(skill_id: str, body: dict = None):
 async def set_skill_enabled(skill_id: str, body: dict = None):
     """启用/禁用技能"""
     body = body or {}
-    from modules.thinking.skills import skill_manager
-    ok, msg = skill_manager.set_enabled(skill_id, bool(body.get("enabled", True)))
+    from modules.thinking.skills import get_skill_manager
+    ok, msg = get_skill_manager().set_enabled(skill_id, bool(body.get("enabled", True)))
     if not ok:
         return {"success": False, "error": {"code": "SKILL_STATE_ERROR", "message": msg}}
     return {"success": True, "data": {"id": skill_id, "enabled": bool(body.get("enabled", True))}}
@@ -342,8 +342,8 @@ async def set_skill_enabled(skill_id: str, body: dict = None):
 @router.delete("/skills/{skill_id}")
 async def delete_skill(skill_id: str):
     """删除技能（内置技能受保护）"""
-    from modules.thinking.skills import skill_manager
-    ok, msg = skill_manager.delete_skill(skill_id)
+    from modules.thinking.skills import get_skill_manager
+    ok, msg = get_skill_manager().delete_skill(skill_id)
     if not ok:
         return {"success": False, "error": {"code": "SKILL_DELETE_ERROR", "message": msg}}
     return {"success": True, "data": {"message": msg}}
@@ -352,8 +352,8 @@ async def delete_skill(skill_id: str):
 @router.post("/skills/reload")
 async def reload_skills():
     """重载全部技能"""
-    from modules.thinking.skills import skill_manager
-    n = skill_manager.reload()
+    from modules.thinking.skills import get_skill_manager
+    n = get_skill_manager().reload()
     return {"success": True, "data": {"count": n}}
 
 
@@ -515,6 +515,294 @@ async def install_voice_deps():
         "data": {
             "results": results,
             "message": "所有依赖安装成功" if all_success else "部分依赖安装失败，请查看日志"
+        }
+    }
+
+
+# ── 前置组件安装（系统体检卡片用）──────────────────────────────
+# doctor 体检发现缺失后，前端按组件名调用此端点安装/下载。
+# pip 类：pyaudio/pynput/pyautogui/pyserial/openai-whisper
+# 系统二进制：flac（brew/apt/winget）、ffmpeg（brew 或下载到用户工具目录/vendor/ffmpeg）
+# 模型权重：whisper_weights（触发 whisper.load_model 下载到 ~/.cache/whisper）
+# embedding_models：由后端启动时联网下载，不适合命令行触发 → 返回提示
+
+import shutil as _shutil
+import platform as _platform
+
+from infra.component_paths import ensure_components_on_path, tools_dir
+
+# 组件 → (安装类型, pip 包名或系统包名)
+_PIP_COMPONENTS = {
+    "pyaudio": "pyaudio",
+    "pynput": "pynput",
+    "pyautogui": "pyautogui",
+    "pyserial": "pyserial",
+    "whisper": "openai-whisper",
+}
+_PIP_IMPORTS = {
+    "pyaudio": "pyaudio",
+    "pynput": "pynput",
+    "pyautogui": "pyautogui",
+    "pyserial": "serial",
+    "whisper": "whisper",
+}
+
+# 全部可安装组件（含非 pip 类）
+_ALL_INSTALLABLE = set(_PIP_COMPONENTS.keys()) | {"flac", "ffmpeg", "whisper_weights", "embedding_models"}
+
+
+def _pip_install(pkg_name: str):
+    """安装 pip 包，返回 (ok, detail)。
+
+    打包态（PyInstaller）没有可用的 `python -m pip`；改用内置 pip 以 --target
+    装到 ~/.cortex/components（启动时已注入 sys.path）。开发态装进当前环境。
+    """
+    import io
+    import contextlib
+    import subprocess
+    import sys
+
+    if getattr(sys, "frozen", False):
+        target = ensure_components_on_path()
+        try:
+            from pip._internal.cli.main import main as _pip_main
+        except ImportError:
+            return False, "打包版未内置 pip，无法自动安装；请使用源码版或手动安装"
+        buf = io.StringIO()
+        try:
+            # windowed 打包版 sys.stdout/stderr 为 None，pip 直接写会崩，重定向兜住。
+            with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+                _pip_main([
+                    "install", "--target", target, "--upgrade", "--no-input",
+                    "--disable-pip-version-check", pkg_name,
+                ])
+            return True, ""
+        except SystemExit as e:
+            code = e.code or 0
+            return code == 0, (buf.getvalue() or f"pip 退出码 {code}")[-300:]
+        except Exception as e:
+            return False, str(e)
+
+    proc = subprocess.run(
+        [sys.executable, "-m", "pip", "install", pkg_name, "-q"],
+        capture_output=True, text=True, timeout=180,
+    )
+    if proc.returncode == 0:
+        return True, ""
+    return False, (proc.stderr or "")[:300]
+
+
+def _install_pip_pkg(pkg_name: str, import_name: str) -> dict:
+    """安装单个 pip 包，返回 {ok, status, detail}。"""
+    import importlib
+
+    # 先检查是否已安装
+    try:
+        __import__(import_name)
+        return {"ok": True, "status": "already_installed", "detail": f"{pkg_name} 已安装"}
+    except ImportError:
+        pass
+    try:
+        ok, detail = _pip_install(pkg_name)
+    except Exception as e:
+        return {"ok": False, "status": "error", "detail": str(e)}
+    if not ok:
+        return {"ok": False, "status": "install_failed", "detail": detail}
+    importlib.invalidate_caches()
+    try:
+        __import__(import_name)
+        return {"ok": True, "status": "installed", "detail": f"{pkg_name} 安装成功"}
+    except ImportError:
+        return {"ok": False, "status": "install_failed", "detail": f"{pkg_name} 安装后 import 失败"}
+
+
+def _install_flac() -> dict:
+    """安装系统 flac 二进制。"""
+    import subprocess
+    if _shutil.which("flac"):
+        return {"ok": True, "status": "already_installed", "detail": "flac 已安装"}
+    system = _platform.system()
+    try:
+        if system == "Darwin":
+            proc = subprocess.run(["brew", "install", "flac"], capture_output=True, text=True, timeout=300)
+        elif system == "Windows":
+            proc = subprocess.run(["winget", "install", "Xiph.FLAC", "--accept-package-agreements", "--accept-source-agreements"],
+                                  capture_output=True, text=True, timeout=300)
+        else:
+            proc = subprocess.run(["sudo", "apt-get", "install", "-y", "flac"], capture_output=True, text=True, timeout=300)
+        if proc.returncode == 0 and _shutil.which("flac"):
+            return {"ok": True, "status": "installed", "detail": "flac 安装成功"}
+        return {"ok": False, "status": "install_failed", "detail": (proc.stderr or proc.stdout or "")[:300]}
+    except Exception as e:
+        return {"ok": False, "status": "error", "detail": str(e)}
+
+
+def _ffmpeg_install_dir():
+    """ffmpeg 安装目录：打包态写用户目录（应用包内只读），开发态写 vendor/ffmpeg。"""
+    import sys
+    if getattr(sys, "frozen", False):
+        return tools_dir() / "ffmpeg"
+    return PROJECT_ROOT / "vendor" / "ffmpeg"
+
+
+def _download_zip_binaries(url: str, names, dest) -> None:
+    """下载 zip 并只提取指定文件名到 dest，POSIX 下补可执行权限。"""
+    import os
+    import tempfile
+    import urllib.request
+    import zipfile
+
+    dest.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(suffix=".zip")
+    os.close(fd)
+    try:
+        urllib.request.urlretrieve(url, tmp)
+        with zipfile.ZipFile(tmp) as zf:
+            for member in zf.namelist():
+                base = os.path.basename(member)
+                if base in names:
+                    with zf.open(member) as src, open(dest / base, "wb") as dst:
+                        dst.write(src.read())
+                    os.chmod(dest / base, 0o755)
+    finally:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+
+
+def _install_ffmpeg() -> dict:
+    """安装 ffmpeg/ffprobe：macOS 优先 brew、失败则下载静态二进制；Windows 下载 zip。"""
+    import shutil as sh
+    import subprocess
+    from api.doctor import _check_ffmpeg
+
+    # 先检查是否已可用
+    if _check_ffmpeg()["ok"]:
+        return {"ok": True, "status": "already_installed", "detail": "ffmpeg 已可用"}
+    system = _platform.system()
+    dest = _ffmpeg_install_dir()
+    try:
+        if system == "Darwin":
+            if sh.which("brew"):
+                proc = subprocess.run(["brew", "install", "ffmpeg"], capture_output=True, text=True, timeout=600)
+                if proc.returncode == 0 and _check_ffmpeg()["ok"]:
+                    return {"ok": True, "status": "installed", "detail": "ffmpeg 安装成功"}
+            # 无 brew 或 brew 失败：下载静态二进制到用户目录（不依赖 Homebrew）
+            try:
+                _download_zip_binaries("https://evermeet.cx/ffmpeg/getrelease/zip", {"ffmpeg"}, dest)
+                _download_zip_binaries("https://evermeet.cx/ffmpeg/getrelease/ffprobe/zip", {"ffprobe"}, dest)
+            except Exception as e:
+                return {"ok": False, "status": "error", "detail": f"静态下载失败: {e}"}
+            if _check_ffmpeg()["ok"]:
+                return {"ok": True, "status": "installed", "detail": f"ffmpeg 下载到 {dest}"}
+            return {"ok": False, "status": "install_failed", "detail": "下载完成但 ffmpeg 未被识别"}
+        elif system == "Windows":
+            url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
+            _download_zip_binaries(url, {"ffmpeg.exe", "ffprobe.exe"}, dest)
+            if _check_ffmpeg()["ok"]:
+                return {"ok": True, "status": "installed", "detail": f"ffmpeg 下载到 {dest}"}
+            return {"ok": False, "status": "install_failed", "detail": "下载完成但 ffmpeg 未被识别"}
+        else:
+            proc = subprocess.run(["sudo", "apt-get", "install", "-y", "ffmpeg"], capture_output=True, text=True, timeout=600)
+            if proc.returncode == 0 and _check_ffmpeg()["ok"]:
+                return {"ok": True, "status": "installed", "detail": "ffmpeg 安装成功"}
+            return {"ok": False, "status": "install_failed", "detail": (proc.stderr or proc.stdout or "")[:300]}
+    except Exception as e:
+        return {"ok": False, "status": "error", "detail": str(e)}
+
+
+def _install_whisper_weights() -> dict:
+    """下载 whisper 模型权重到 ~/.cache/whisper。
+
+    打包态 whisper 已内置（spec collect_all），直接进程内 load_model 触发下载；
+    开发态同样适用（未安装 whisper 时提示先安装该组件）。
+    """
+    from pathlib import Path
+    cache_dir = Path.home() / ".cache" / "whisper"
+    if cache_dir.is_dir() and any(cache_dir.glob("*.pt")):
+        return {"ok": True, "status": "already_installed", "detail": f"Whisper 权重已缓存: {cache_dir}"}
+    try:
+        import whisper
+    except ImportError:
+        return {"ok": False, "status": "manual", "detail": "whisper 未安装，请先下载 whisper 组件"}
+    try:
+        whisper.load_model("tiny")
+        return {"ok": True, "status": "installed", "detail": "Whisper tiny 权重下载成功"}
+    except Exception as e:
+        return {"ok": False, "status": "error", "detail": str(e)}
+
+
+def _install_embedding_models() -> dict:
+    """embedding 模型由后端启动时联网下载（sentence-transformers），不适合命令行触发。"""
+    return {
+        "ok": False,
+        "status": "manual",
+        "detail": "Embedding 模型由后端启动时联网自动下载，请重启后端（联网模式）；或从发布包 data/memory/embeddings/models 目录恢复",
+    }
+
+
+_INSTALLERS = {
+    "flac": _install_flac,
+    "ffmpeg": _install_ffmpeg,
+    "whisper_weights": _install_whisper_weights,
+    "embedding_models": _install_embedding_models,
+}
+
+
+@router.post("/install-component")
+async def install_component(body: dict = None):
+    """安装单个前置组件（系统体检卡片用）。
+
+    body: { "component": "pyaudio" | "pynput" | ... }
+    返回 { success, data: { ok, status, detail } }
+    """
+    component = (body or {}).get("component", "").strip()
+    if not component:
+        raise AppError(ErrorCode.VALIDATION_ERROR, "缺少 component 参数")
+
+    if component in _PIP_COMPONENTS:
+        result = _install_pip_pkg(_PIP_COMPONENTS[component], _PIP_IMPORTS[component])
+    elif component in _INSTALLERS:
+        result = _INSTALLERS[component]()
+    else:
+        raise AppError(ErrorCode.NOT_FOUND, f"不支持的组件: {component}")
+
+    return {"success": result["ok"], "data": result}
+
+
+@router.post("/install-all-components")
+async def install_all_components():
+    """一键安装全部缺失的前置组件。
+
+    先运行 doctor 体检判断缺失项，跳过已就绪的，逐个安装并聚合结果。
+    返回 { success, data: { results: [...], message } }
+    """
+    from api.doctor import run_doctor
+    doc = run_doctor()
+    checks = doc.get("data", {}).get("checks", [])
+
+    results = []
+    all_ok = True
+    for c in checks:
+        name = c.get("name", "")
+        if c.get("ok") or name not in _ALL_INSTALLABLE:
+            continue
+        if name in _PIP_COMPONENTS:
+            r = _install_pip_pkg(_PIP_COMPONENTS[name], _PIP_IMPORTS[name])
+        elif name in _INSTALLERS:
+            r = _INSTALLERS[name]()
+        else:
+            continue
+        results.append({"component": name, **r})
+        if not r["ok"]:
+            all_ok = False
+
+    return {
+        "success": all_ok,
+        "data": {
+            "results": results,
+            "message": "全部组件安装成功" if all_ok else "部分组件安装失败，请查看详情",
         }
     }
 
@@ -1044,10 +1332,10 @@ async def clear_perception():
 async def get_database_info():
     """获取数据库信息"""
     try:
-        from modules.database.disk_cache import disk_cache
+        from modules.database.disk_cache import get_disk_cache
         import sqlite3
         
-        stats = disk_cache.get_stats()
+        stats = get_disk_cache().get_stats()
         
         db_path = str(PROJECT_ROOT / "data" / "memory.db")
         tables_info = []

@@ -126,7 +126,7 @@ def test_find_anchor_bigram_boundary(graph):
     assert anchors
 
 
-def test_find_anchor_semantic_none_vec(graph, monkeypatch):
+def test_find_anchor_semantic_none_vec(graph, monkeypatch, take_over):
     class FakeEmbedder:
         def embed(self, text):
             return [1.0, 0.0]
@@ -135,13 +135,13 @@ def test_find_anchor_semantic_none_vec(graph, monkeypatch):
             return [None] * len(texts)  # 部分向量缺失 → continue
 
     import modules.memory.embedding as emb_mod
-    monkeypatch.setattr(emb_mod.EmbeddingEngine, "get_instance", staticmethod(lambda: FakeEmbedder()))
+    take_over("embedding_engine", lambda: FakeEmbedder())
     graph.save_node(CausalNode(label="延期"))
     anchors = graph.find_anchor_nodes("延期")
     assert anchors
 
 
-def test_find_anchor_semantic_error(graph, monkeypatch):
+def test_find_anchor_semantic_error(graph, monkeypatch, take_over):
     class BoomEmbedder:
         def embed(self, text):
             raise RuntimeError("embed down")
@@ -150,7 +150,7 @@ def test_find_anchor_semantic_error(graph, monkeypatch):
             raise RuntimeError("embed down")
 
     import modules.memory.embedding as emb_mod
-    monkeypatch.setattr(emb_mod.EmbeddingEngine, "get_instance", staticmethod(lambda: BoomEmbedder()))
+    take_over("embedding_engine", lambda: BoomEmbedder())
     graph.save_node(CausalNode(label="延期"))
     anchors = graph.find_anchor_nodes("延期")  # 语义失败 → 关键词兜底
     assert anchors

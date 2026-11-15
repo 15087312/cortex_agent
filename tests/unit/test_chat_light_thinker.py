@@ -21,7 +21,7 @@ def _thinker():
 
 
 @pytest.fixture
-def mem_store(tmp_path, monkeypatch):
+def mem_store(tmp_path, monkeypatch, take_over):
     """真实临时记忆库（确定性嵌入）"""
     import modules.database.connection as conn
     monkeypatch.setattr(conn.config, "sqlite_path", str(tmp_path / "clt.db"))
@@ -57,7 +57,7 @@ def mem_store(tmp_path, monkeypatch):
         return [x / norm for x in vec]
     eng.embed = _embed
     eng.embed_batch = lambda texts: [_embed(t) for t in texts]
-    monkeypatch.setattr(EmbeddingEngine, "get_instance", classmethod(lambda cls: eng))
+    take_over("embedding_engine", lambda: eng)
     return store
 
 

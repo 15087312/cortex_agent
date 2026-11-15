@@ -108,6 +108,21 @@ _security_api_lock = _threading.Lock()
 
 
 def get_security_api() -> SecurityAPI:
+    """端口优先取安全系统 API：接管 ``security_api`` 端口 = 换掉全部调用点。
+
+    取不到端口才回退内置单例（脚本、没跑过 bootstrap 的入口）。bootstrap 注册
+    的 provider 必须是 ``_default_security_api`` 而不是本函数，否则端口→本函数→端口
+    一调用就递归。
+    """
+    from infra.tool_manager.service_registry import get_capability
+
+    factory = get_capability("security_api")
+    if factory is None:
+        return _default_security_api()
+    return factory()
+
+
+def _default_security_api() -> SecurityAPI:
     """获取安全系统 API 单例"""
     global _security_api
     if _security_api is None:

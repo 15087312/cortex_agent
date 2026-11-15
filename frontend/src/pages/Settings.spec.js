@@ -15,7 +15,7 @@ function mockApi(cfg = {}) {
     USER_NAME: '测试用户',
     CORTEX_MODE: 'agent',
     EXECUTION_MODE: 'edit',
-    DESKTOP_PET_ENABLED: true,
+    DESKTOP_PET_ENABLED: false,
     LARGE_MODEL_API_URL: 'https://x/v1',
   }
   let currentLib = 'lib_a'  // 模拟后端当前记忆库状态
@@ -283,7 +283,7 @@ describe('Settings.vue', () => {
     mockApi({ config: { DEBUG: false } })
     const w = await mountSettings()
     await new Promise((r) => setTimeout(r, 30))
-    // 读取：未配置时用 fallback（DESKTOP_PET_ENABLED 已移至 Pet 页，这里用 OUTPUT_TTS_ENABLED 验证）
+    // 读取：未配置时用 fallback
     expect(w.vm.ttsEnabled).toBe(false)
     // 写入：setter → saveCfg → configStore.$patch + PUT
     w.vm.debugEnabled = true

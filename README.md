@@ -20,7 +20,7 @@ Cortex Agent 是一套可编排的多模型 Agent 工具，而不是一个简单
 | **多端交互** | Web / Qt 桌面 / 桌宠 / TUI | Vue 3 Web UI、PyQt6 桌面客户端、Live2D 桌宠、Textual 终端 |
 | **安全 fail-closed** | 分级审批 + 全链路审计 | 工具调用分级门控（LOW/HIGH/CRITICAL），权限/拦截异常一律拒绝（不静默放行） |
 | **工具系统** | 85 内置 + MCP + 运行时自建 | 文件/搜索/感知/代码执行/UI 检测；MCP 服务器扩展；模型运行时自建工具 |
-| **工程保障** | **5800+ 测试 · 99% 覆盖率 · mypy 0 errors** | 内存泄漏检测默认开启 + 看门狗；MCP 独立热插拔 + 自动重连；依赖注入端口；CI 五道门禁 |
+| **工程保障** | **6700+ 测试 · 99% 覆盖率 · mypy 0 errors** | 内存泄漏检测默认开启 + 看门狗；MCP 独立热插拔 + 自动重连；依赖注入端口；CI 五道门禁 |
 
 ---
 
@@ -123,7 +123,7 @@ cp .env.example .env        # 编辑填入 API Key
 | **Web UI（开发）** | `cd frontend && npm run dev` | Vite HMR，默认 5173，代理 `/api` → 8080 |
 | **Web UI（生产）** | `python frontend/server.py` | 静态服务默认 8765 |
 | **Qt 桌面客户端** | `python frontend/main.py` | macOS PyQt6+QtWebEngine，自动拉起桌宠 |
-| **桌宠** | `DESKTOP_PET_ENABLED=true` 启用 | 独立进程 `pet_launch.py`，透明置顶窗 Live2D |
+| **桌宠** | `DESKTOP_PET_ENABLED=false`（默认关闭；需要时在桌宠页开启） | 独立进程 `pet_launch.py`，透明置顶窗 Live2D |
 | **远程连接** | `cortex --api-url http://192.168.1.100:8080` | 连接已有后端 |
 
 **前端 API 约定**：所有请求用 `/api/` 前缀（代理去前缀到 8080）；WebSocket 直连
@@ -260,7 +260,7 @@ ai_backend/
 
 ## 测试与工程质量
 
-**全量 5800+ 项测试通过，代码覆盖率 99%**（unit / integration 分层，20+ 核心文件 100%）。
+**全量 6700+ 项测试通过，代码覆盖率 99%**（unit / integration 分层，20+ 核心文件 100%）。
 
 ```bash
 # 后端全量（推荐）
@@ -283,7 +283,7 @@ cd frontend && npm test
 
 | 门禁 | 内容 |
 |---|---|
-| **单元测试** | `pytest tests/unit`（5800+ 用例，随机挂起已根治） |
+| **单元测试** | `pytest tests/unit`（6700+ 用例，随机挂起已根治） |
 | **覆盖率门禁** | `--cov-fail-under=70`（实际 99%） |
 | **类型检查** | `mypy` 0 errors（配置见 `pyproject.toml [tool.mypy]`） |
 | **泄漏检测** | 默认开启：muppy 字节采样趋势判定 + pympler 类型 diff（含 bytes/numpy 原始内存） |
@@ -310,7 +310,7 @@ cd frontend && npm test
 - **MCP 生命周期**：独立热插拔（`remove_server`/`replace_server`）+ 断线指数退避自动重连——对齐 dsh mcp-client。
 - **后台线程安全**：屏幕源/事件总线/语音检测等类级 `weakref` 注册表 + conftest 统一清理，杜绝测试随机挂起。
 - **隔离原则**：绝不触碰生产库（临时 SQLite + monkeypatch 单例）；重库加载放宽 timeout；禁 `except: pass` 吞错掩盖；测试假对象须与真实模型字段一致。
-- **Bug 记录**：`docs/bugfixes/`（按模块拆分，§1-§103 含系统性模式审计，见 [总索引](docs/bugfixes/README.md)）；内存安全体系见 `docs/MEMORY_LEAK_TESTING.md`。
+- **Bug 记录**：`docs/bugfixes/`（按模块拆分，§1-§110 含系统性模式审计，见 [总索引](docs/bugfixes/README.md)）；内存安全体系见 `docs/MEMORY_LEAK_TESTING.md`。
 
 ---
 
@@ -375,7 +375,7 @@ PyInstaller 产出**单个启动文件**（`pyinstaller pyinstaller.spec --clean
 | [docs/THINKING_ARCHITECTURE.md](docs/THINKING_ARCHITECTURE.md) | 思考模块内部架构（双层 ReAct 循环） |
 | [docs/MEMORY_INJECTION.md](docs/MEMORY_INJECTION.md) | 记忆系统与注入链路 |
 | [docs/CONFIG_VALUE_EVOLUTION.md](docs/CONFIG_VALUE_EVOLUTION.md) | 价值观进化配置 |
-| [docs/bugfixes/README.md](docs/bugfixes/README.md) | 错误原因与修复记录总索引（按模块拆分，§1-§103，含假测试/安全/覆盖修复经验） |
+| [docs/bugfixes/README.md](docs/bugfixes/README.md) | 错误原因与修复记录总索引（按模块拆分，§1-§110，含假测试/安全/覆盖修复经验） |
 | [frontend/ARCHITECTURE.md](frontend/ARCHITECTURE.md) | 前端架构 |
 | [frontend/README.md](frontend/README.md) | 前端使用/开发 |
 

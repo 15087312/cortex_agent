@@ -52,9 +52,18 @@ def deep_recall(
     from modules.memory.depth_recall import DepthRecallScheduler
     from modules.memory.result_fusion import format_deep_recall_result
 
+    tmp_loop = None
     try:
         scheduler = DepthRecallScheduler()
-        loop = asyncio.get_event_loop()
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            # 本线程没有当前事件循环：asyncio.run() 收尾时会把当前循环置空，
+            # 工作线程本来就一个都没有。同步工具的入口不能因此报
+            # "There is no current event loop"——临时建一个，用完关掉。
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            tmp_loop = loop
         if loop.is_running():
             result = asyncio.run_coroutine_threadsafe(
                 scheduler.deep_recall(query, max_results=max_events, depth_level=depth_level),
@@ -81,6 +90,10 @@ def deep_recall(
     except Exception as e:
         logger.error(f"[deep_recall] 失败: {e}")
         return {"success": False, "error": str(e)}
+    finally:
+        if tmp_loop is not None:
+            tmp_loop.close()
+            asyncio.set_event_loop(None)
 
 
 # ============================================================================

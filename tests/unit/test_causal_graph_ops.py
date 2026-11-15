@@ -209,7 +209,7 @@ def test_find_anchor_no_keywords(graph):
     assert graph.find_anchor_nodes("a b", top_k=5) == []  # 短词被过滤
 
 
-def test_find_anchor_with_semantic(graph, monkeypatch):
+def test_find_anchor_with_semantic(graph, monkeypatch, take_over):
     class FakeEmbedder:
         def __init__(self):
             self._loaded = False
@@ -218,7 +218,7 @@ def test_find_anchor_with_semantic(graph, monkeypatch):
         def embed_batch(self, texts):
             return [[0.8, 0.2]] * len(texts)
     import modules.memory.embedding as emb_mod
-    monkeypatch.setattr(emb_mod.EmbeddingEngine, "get_instance", staticmethod(lambda: FakeEmbedder()))
+    take_over("embedding_engine", lambda: FakeEmbedder())
     node = CausalNode(label="延期")
     graph.save_node(node)
     anchors = graph.find_anchor_nodes("延期")

@@ -32,6 +32,16 @@ def _cleanup_singleton():
 
 
 @pytest.fixture(autouse=True)
+def _pet_enabled(monkeypatch):
+    """把总开关钉成「开」：chat() 先看 settings.DESKTOP_PET_ENABLED，
+    而真实 `~/.cortex/settings.json` 里用户可能关着 → 测试结果随本机配置漂移（§20）。
+    要测关闭分支的用例自己再 monkeypatch 一次即可。
+    """
+    from config.settings import settings
+    monkeypatch.setattr(settings, "DESKTOP_PET_ENABLED", True)
+
+
+@pytest.fixture(autouse=True)
 def _pet_db(tmp_path, monkeypatch):
     """隔离桌宠独立存储"""
     import modules.desktop_pet.store as store_mod
@@ -441,16 +451,8 @@ async def test_native_tools_fallback_to_text_listing(monkeypatch, _pet_db):
     _patch_tool_manager(monkeypatch)
     e = _engine(monkeypatch)
     # 让 _native_tools 失败 → 降级
-    import importlib
-    tm_mod = importlib.import_module("infra.tool_manager.tool_manager")
-    real_tm = tm_mod.ToolManager
-
-    def _boom():
-        raise RuntimeError("no tools")
-
     # _tool_listing 内部也用 ToolManager；mock list_available_tools 抛错前的行为不可行，
     # 直接把 _native_tools 打桩为空
-    import modules.desktop_pet.react_loop as rl
     monkeypatch.setattr(CustomLoop, "_native_tools", classmethod(lambda cls: []))
     e._client = _FakeClient(["你好呀"])
     loop = CustomLoop()

@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from infra.component_paths import tools_dir
 from utils.logger import setup_logger
 
 logger = setup_logger("video_analyzer")
@@ -47,11 +48,13 @@ _EXTRA_TOOL_DIRS: List[str] = []   # 运行时可追加（测试/嵌入环境）
 
 
 def bundled_tool_dirs() -> List[str]:
-    """应用内自带 ffmpeg 的候选目录（打包态 _MEIPASS/ffmpeg；开发态项目 vendor/ffmpeg）。
+    """自带/下载的 ffmpeg 候选目录。
 
-    spec 把 ffmpeg 作为 datas 收集 → `${_MEIPASS}/ffmpeg/`（.app 内 = Contents/Resources/ffmpeg）。
+    - 用户目录 ~/.cortex/tools/ffmpeg：设置页「下载」写入（打包态唯一可写位置）
+    - 打包态 _MEIPASS/ffmpeg：spec 把 vendor/ffmpeg 作为 datas 收集
+    - 开发态项目 vendor/ffmpeg
     """
-    dirs: List[str] = []
+    dirs: List[str] = [str(tools_dir() / "ffmpeg")]
     base = (getattr(sys, "_MEIPASS", "") or "").strip()
     if base:
         dirs.append(os.path.join(base, "ffmpeg"))
@@ -401,6 +404,21 @@ _analyzer: Optional[VideoAnalyzer] = None
 
 
 def get_video_analyzer() -> VideoAnalyzer:
+    """端口优先取视频分析器：接管 ``video_analyzer`` 端口 = 换掉全部调用点。
+
+    取不到端口才回退内置单例（脚本、没跑过 bootstrap 的入口）。bootstrap 注册
+    的 provider 必须是 ``_default_video_analyzer`` 而不是本函数，否则端口→本函数→端口
+    一调用就递归。
+    """
+    from infra.tool_manager.service_registry import get_capability
+
+    factory = get_capability("video_analyzer")
+    if factory is None:
+        return _default_video_analyzer()
+    return factory()
+
+
+def _default_video_analyzer() -> VideoAnalyzer:
     global _analyzer
     if _analyzer is None:
         _analyzer = VideoAnalyzer()

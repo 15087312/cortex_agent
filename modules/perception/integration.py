@@ -135,6 +135,21 @@ _perception_integrator_lock = threading.Lock()
 
 
 def get_perception_integrator() -> PerceptionIntegrator:
+    """端口优先取感知整合器：接管 ``perception_integrator`` 端口 = 换掉全部调用点。
+
+    取不到端口才回退内置单例（脚本、没跑过 bootstrap 的入口）。bootstrap 注册
+    的 provider 必须是 ``_default_perception_integrator`` 而不是本函数，否则端口→本函数→端口
+    一调用就递归。
+    """
+    from infra.tool_manager.service_registry import get_capability
+
+    factory = get_capability("perception_integrator")
+    if factory is None:
+        return _default_perception_integrator()
+    return factory()
+
+
+def _default_perception_integrator() -> PerceptionIntegrator:
     global _perception_integrator_instance
     if _perception_integrator_instance is None:
         with _perception_integrator_lock:

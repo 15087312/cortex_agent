@@ -43,6 +43,170 @@ def test_delete_persona_removes_files(bank, tmp_path):
     assert bank.stats(7)["memory_events"] == 0  # 可重新懒创建
 
 
+def test_get_instance_is_singleton(monkeypatch):
+    monkeypatch.setattr(mb.PetMemoryBank, "_instance", None)
+    first = mb.PetMemoryBank.get_instance()
+    assert mb.PetMemoryBank.get_instance() is first
+
+
+def test_store_graph_retrieval_are_cached_per_persona(bank):
+    assert bank.store(3) is bank.store(3)
+    assert bank.graph(3) is bank.graph(3)
+    assert bank.retrieval(3) is bank.retrieval(3)
+    assert bank.store(3) is not bank.store(4)
+
+
+def test_retrieve_uses_retriever_with_owner_scope(bank, monkeypatch):
+    class FakeRetriever:
+        def __init__(self):
+            self.calls = []
+
+        async def retrieve(self, query, max_results, owner_id):
+            self.calls.append((query, max_results, owner_id))
+            return ["event"]
+
+    class FakeStore:
+        def _get_conn(self):
+            class Conn:
+                def execute(self, sql):
+                    return self
+
+                def fetchone(self):
+                    return (1,)
+
+            return Conn()
+
+    fake = FakeRetriever()
+    monkeypatch.setattr(bank, "store", lambda pid: FakeStore())
+    monkeypatch.setattr(bank, "retrieval", lambda pid: fake)
+
+    assert asyncio.run(bank.retrieve(2, "", max_results=0)) == ["event"]
+    # 空 query 用默认语义，max_results 至少 1，owner 带人设前缀
+    assert fake.calls == [("用户与桌宠互动", 1, "pet:2")]
+
+
+def test_retrieve_swallows_backend_errors(bank, monkeypatch):
+    class FakeStore:
+        def _get_conn(self):
+            raise RuntimeError("db gone")
+
+    monkeypatch.setattr(bank, "store", lambda pid: FakeStore())
+    assert asyncio.run(bank.retrieve(1, "你好")) == []
+
+
+def test_causal_context_renders_one_hop_lines(bank, monkeypatch):
+    class Node:
+        def __init__(self, id_, label):
+            self.id, self.label = id_, label
+
+    class Edge:
+        def __init__(self, relation="causes", confidence=0.8):
+            self.relation, self.confidence = relation, confidence
+
+    anchor = Node(1, "下雨")
+    neighbour = Node(2, "地面湿")
+
+    graph = type("G", (), {})()
+    graph.list_nodes = lambda limit=None: [anchor]
+    graph.find_anchor_nodes = lambda query, top_k=None: [(anchor, 0.9)]
+    graph.get_neighbors = lambda node_id, hops=None: [(neighbour, Edge(), 1)]
+    monkeypatch.setattr(bank, "graph", lambda pid: graph)
+
+    lines = bank.causal_context(1, "下雨")
+    assert lines == ["下雨 --causes--> 地面湿 (置信度 0.80)"]
+
+
+def test_causal_context_empty_graph_and_no_anchor(bank, monkeypatch):
+    graph = type("G", (), {})()
+    graph.list_nodes = lambda limit=None: []
+    monkeypatch.setattr(bank, "graph", lambda pid: graph)
+    assert bank.causal_context(1, "q") == []
+
+    graph.list_nodes = lambda limit=None: [object()]
+    graph.find_anchor_nodes = lambda query, top_k=None: []
+    assert bank.causal_context(1, "q") == []
+
+
+def test_causal_context_dedupes_and_honours_limit(bank, monkeypatch):
+    class Node:
+        def __init__(self, id_, label):
+            self.id, self.label = id_, label
+
+    class Edge:
+        relation = "causes"
+        confidence = 0.5
+
+    a, shared = Node(1, "A"), Node(2, "共享")
+    extra = Node(3, "C")
+    graph = type("G", (), {})()
+    graph.list_nodes = lambda limit=None: [a]
+    graph.find_anchor_nodes = lambda query, top_k=None: [(a, 1.0), (shared, 0.5)]
+    graph.get_neighbors = lambda node_id, hops=None: [
+        (shared, Edge(), 1),
+        (extra, Edge(), 1),
+        (shared, Edge(), 1),
+    ]
+    monkeypatch.setattr(bank, "graph", lambda pid: graph)
+
+    lines = bank.causal_context(1, "q", limit=1)
+    assert len(lines) == 1
+    assert "共享" in lines[0]
+
+
+def test_causal_context_swallows_errors(bank, monkeypatch):
+    def boom(pid):
+        raise RuntimeError("graph broken")
+
+    monkeypatch.setattr(bank, "graph", boom)
+    assert bank.causal_context(1, "q") == []
+
+
+def test_schedule_extract_skips_incomplete_input(bank):
+    async def run():
+        bank.schedule_extract(1, "", "回复")
+        bank.schedule_extract(1, "你好", "  ")
+        bank.schedule_extract(1, "你好", "回复", model_client=None)
+        return list(bank._pending)
+
+    assert asyncio.run(run()) == []
+
+
+def test_schedule_extract_outside_event_loop_is_noop(bank):
+    bank.schedule_extract(1, "你好", "回复", model_client=object())
+    assert bank._pending == set()
+
+
+def test_schedule_extract_dedupes_per_persona(bank, monkeypatch):
+    started = []
+
+    async def fake_extract(pid, conversation, client):
+        started.append((pid, conversation))
+        await asyncio.sleep(0)
+
+    monkeypatch.setattr(bank, "_extract", fake_extract)
+
+    async def run():
+        bank.schedule_extract(1, " 你好 ", " 回复 ", model_client=object())
+        bank.schedule_extract(1, "再来", "一条", model_client=object())   # 同一人设：丢弃
+        bank.schedule_extract(2, "你好", "回复", model_client=object())
+        await asyncio.sleep(0.05)
+        return list(started)
+
+    started_calls = asyncio.run(run())
+    assert [pid for pid, _ in started_calls] == [1, 2]
+    assert started_calls[0][1] == "用户：你好\n桌宠：回复"
+    assert bank._pending == set()          # 完成后释放，可再次提炼
+    assert bank._tasks == set()
+
+
+def test_extract_swallows_reducer_errors(bank, monkeypatch):
+    class Boom:
+        def __init__(self, *a, **kw):
+            raise RuntimeError("reducer down")
+
+    monkeypatch.setattr("modules.memory.event_reducer.EventReducer", Boom)
+    asyncio.run(bank._extract(1, "用户：x\n桌宠：y", object()))   # 不抛异常
+
 def test_extraction_writes_user_persona_memory_and_causal_nodes(bank):
     """EventReducer + 独立 EventStore/CausalGraph 串联：事件与因果节点落到该人设。"""
     import json

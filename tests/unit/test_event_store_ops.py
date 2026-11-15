@@ -72,13 +72,13 @@ def test_get_delete_list_count(store):
     assert store.count_events() == 1
 
 
-def test_save_event_auto_embedding_paths(store, monkeypatch):
+def test_save_event_auto_embedding_paths(store, monkeypatch, take_over):
     # 模型已加载 → 直接向量化
     from modules.memory import embedding as emb_mod
     fake_eng = MagicMock()
     fake_eng._loaded = True
     fake_eng.embed = MagicMock(return_value=[0.1, 0.2])
-    monkeypatch.setattr(emb_mod.EmbeddingEngine, "get_instance", staticmethod(lambda: fake_eng))
+    take_over("embedding_engine", lambda: fake_eng)
     store._add_embedding_inner = MagicMock()
     ev = _event(fact="有内容")
     store.save_event(ev)
@@ -86,25 +86,25 @@ def test_save_event_auto_embedding_paths(store, monkeypatch):
     assert ev.embedding == [0.1, 0.2]
 
 
-def test_save_event_queues_embedding(store, monkeypatch):
+def test_save_event_queues_embedding(store, monkeypatch, take_over):
     # 模型未加载未尝试 → 入待处理队列
     from modules.memory import embedding as emb_mod
     fake_eng = MagicMock()
     fake_eng._loaded = False
     fake_eng._attempted = False
-    monkeypatch.setattr(emb_mod.EmbeddingEngine, "get_instance", staticmethod(lambda: fake_eng))
+    take_over("embedding_engine", lambda: fake_eng)
     store._pending_embeddings.clear()
     ev = _event(fact="有内容")
     store.save_event(ev)
     assert ev.id in store._pending_embeddings
 
 
-def test_save_event_embedding_exception(store, monkeypatch):
+def test_save_event_embedding_exception(store, monkeypatch, take_over):
     from modules.memory import embedding as emb_mod
     fake_eng = MagicMock()
     fake_eng._loaded = True
     fake_eng.embed = MagicMock(side_effect=RuntimeError("no"))
-    monkeypatch.setattr(emb_mod.EmbeddingEngine, "get_instance", staticmethod(lambda: fake_eng))
+    take_over("embedding_engine", lambda: fake_eng)
     store._add_embedding_inner = MagicMock()
     ev = _event(fact="有内容")
     assert store.save_event(ev) == ev.id

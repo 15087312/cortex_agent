@@ -57,6 +57,19 @@ def _pid_alive(pid: int) -> bool:
         return False
 
 
+def _settings_pet_enabled() -> bool:
+    """持久化的桌宠总开关（~/.cortex/settings.json，缺省 True）。
+
+    读取失败时按启用处理：调用方还有 CORTEX_DISABLE_PET 兜底，配置读不到
+    不应把桌宠永久卡死。
+    """
+    try:
+        from config.settings import settings as _settings
+        return bool(getattr(_settings, "DESKTOP_PET_ENABLED", True))
+    except Exception:
+        return True
+
+
 def _pid_is_pet(pid: int) -> bool:
     """校验 PID 确为桌宠进程（防 PID 复用误杀），失败时保守返回 False。"""
     try:
@@ -111,6 +124,21 @@ class PetWindowSupervisor:
 
     @classmethod
     def get_instance(cls) -> "PetWindowSupervisor":
+        """端口优先取桌宠窗口守护：接管 ``pet_window_supervisor`` 端口 = 换掉全部调用点。
+
+        内置单例挪进 ``_builtin_instance``，bootstrap 给这条端口的 provider 指的也是
+        它 —— 指回本函数就是 端口→本函数→端口 的一调用即递归，那种接线由
+        scripts/seam_catalogue.py 在生成目录时判错。
+        """
+        from infra.tool_manager.service_registry import get_capability
+
+        factory = get_capability("pet_window_supervisor")
+        if factory is not None:
+            return factory()
+        return cls._builtin_instance()
+
+    @classmethod
+    def _builtin_instance(cls) -> "PetWindowSupervisor":
         if cls._instance is None:
             with cls._instance_lock:
                 if cls._instance is None:
@@ -164,6 +192,10 @@ class PetWindowSupervisor:
         """确保桌宠窗口进程运行（已在跑则直接返回）。"""
         if os.environ.get("CORTEX_DISABLE_PET", "0") == "1":
             return {"ok": False, "reason": "CORTEX_DISABLE_PET=1，桌宠已禁用"}
+        # 遵循上次的设置：总开关关闭时不再拉起窗口进程。
+        # 否则前端每次启动都会自动弹出一个用户已经关掉的桌宠。
+        if not _settings_pet_enabled():
+            return {"ok": False, "reason": "DESKTOP_PET_ENABLED=false，桌宠已关闭（遵循上次设置）"}
         self._ensure_monitor()
         with self._lock:
             self._expected = True

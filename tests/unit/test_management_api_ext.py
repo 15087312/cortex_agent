@@ -246,12 +246,12 @@ def test_get_info_process_status(monkeypatch):
     assert out["data"]["speech_recognizer"]["model"] == "whisper"
 
 
-def test_get_perception_full(monkeypatch):
-    import modules.perception as perc_mod
+def test_get_perception_full(take_over_port):
     ps = MagicMock()
     ps._started = True
     ps.get_status.return_value = {"pipeline": "ok", "voice_available": True, "world_state": {}, "event_bus": {}}
-    monkeypatch.setattr(perc_mod, "get_perception_system", lambda: ps)
+    # 端点直接 resolve("perception.system")，桩必须打在端口上
+    take_over_port("perception.system", ps)
     out = _run(api_mod.get_perception_full())
     assert out["success"] is True
     assert out["data"]["status"] == "running"

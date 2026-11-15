@@ -55,6 +55,20 @@ _loader_lock = threading.Lock()
 
 # @link:block Loader_GetLoader = Emit
 def get_loader() -> PromptLoader:
+    """端口优先取提示词加载器：接管 ``prompt_loader`` 端口 = 换掉全部调用点。
+
+    取不到端口才回退内置单例（脚本、没跑过 bootstrap 的入口）。bootstrap 注册的
+    provider 必须是 ``_default_loader`` 而不是本函数，否则端口→本函数→端口一调用就递归。
+    """
+    from infra.tool_manager.service_registry import get_capability
+
+    factory = get_capability("prompt_loader")
+    if factory is None:
+        return _default_loader()
+    return factory()
+
+
+def _default_loader() -> PromptLoader:
     global _loader
     if _loader is None:
         with _loader_lock:

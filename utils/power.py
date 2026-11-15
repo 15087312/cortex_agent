@@ -61,3 +61,47 @@ def apply(enabled: bool) -> bool:
 
 def is_active() -> bool:
     return _proc is not None and _proc.poll() is None
+
+
+class _BuiltinPreventSleep:
+    """内置防休眠服务：方法转调模块级函数。
+
+    不直接把实现搬进来：既有测试与调用点 patch 的是 ``utils.power.apply`` 这些
+    名字，另起一份实现会让那些 patch 静默失效。
+    """
+
+    name = "caffeinate"
+
+    def apply(self, enabled: bool) -> bool:
+        return apply(enabled)
+
+    def process(self):
+        return get_process()
+
+    def is_active(self) -> bool:
+        return is_active()
+
+
+_builtin_prevent_sleep = _BuiltinPreventSleep()
+
+
+def get_prevent_sleep():
+    """端口优先取防休眠实现：接管 ``prevent_sleep`` 端口 = 换掉装配层用的那一整套。
+
+    装配层要的是**两件事**：应用设置（``apply``）和把拉起的常驻子进程交出去登记
+    （``process``）。只把 ``apply`` 做成端口的话，插件换了机制（不是 caffeinate）
+    之后，登记表里收编的还是内置那个子进程——旧进程留在机器上。
+
+    bootstrap 注册的 provider 必须是 ``_default_prevent_sleep`` 而不是本函数，
+    否则端口→本函数→端口 一调用就递归。
+    """
+    from infra.tool_manager.service_registry import get_capability
+
+    factory = get_capability("prevent_sleep")
+    if factory is None:
+        return _default_prevent_sleep()
+    return factory()
+
+
+def _default_prevent_sleep():
+    return _builtin_prevent_sleep

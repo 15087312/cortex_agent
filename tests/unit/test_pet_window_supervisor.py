@@ -48,6 +48,18 @@ class FakePopen:
         self._exit_code = code
 
 
+def _patch_switch(monkeypatch, enabled):
+    """替换全局 settings，控制持久化的桌宠总开关（不碰真实 ~/.cortex/settings.json）。"""
+    import importlib
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(
+        importlib.import_module("config.settings"),
+        "settings",
+        SimpleNamespace(DESKTOP_PET_ENABLED=enabled),
+    )
+
+
 @pytest.fixture(autouse=True)
 def isolated(monkeypatch, tmp_path):
     """隔离 HOME（pid/log 文件）+ mock Popen/ps 探测/进程登记"""
@@ -56,6 +68,8 @@ def isolated(monkeypatch, tmp_path):
     monkeypatch.setenv("CORTEX_DISABLE_PET", "0")
     monkeypatch.setattr(sup_mod.subprocess, "Popen", FakePopen)
     monkeypatch.setattr(sup_mod, "_pid_is_pet", lambda pid: True)
+    # 总开关视为开启（本机 ~/.cortex/settings.json 可能已关桌宠，避免测试依赖环境）
+    _patch_switch(monkeypatch, True)
     import cortex.process_registry as pr
     monkeypatch.setattr(pr, "register", lambda name, proc: None)
     monkeypatch.setattr(pr, "unregister", lambda name: None)
@@ -119,6 +133,32 @@ def test_start_refused_when_disabled(monkeypatch):
     r = s.start()
     assert r["ok"] is False
     assert len(FakePopen.instances) == 0
+
+
+def test_start_refused_when_switch_off(monkeypatch):
+    """上次关掉了桌宠（DESKTOP_PET_ENABLED=false）：不再拉起窗口进程"""
+    _patch_switch(monkeypatch, False)
+    s = _sup(monkeypatch)
+    r = s.start()
+    assert r["ok"] is False
+    assert "DESKTOP_PET_ENABLED" in r["reason"]
+    assert len(FakePopen.instances) == 0
+
+
+def test_settings_gate_reads_persisted_switch(monkeypatch):
+    """_settings_pet_enabled 读全局配置；读不到配置时按开启处理"""
+    _patch_switch(monkeypatch, False)
+    assert sup_mod._settings_pet_enabled() is False
+    _patch_switch(monkeypatch, True)
+    assert sup_mod._settings_pet_enabled() is True
+    # 取不到字段时保守放行，交给 CORTEX_DISABLE_PET 兜底
+    import importlib
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(
+        importlib.import_module("config.settings"), "settings", SimpleNamespace()
+    )
+    assert sup_mod._settings_pet_enabled() is True
 
 
 def test_adopt_live_pet_via_pidfile(monkeypatch, tmp_path):

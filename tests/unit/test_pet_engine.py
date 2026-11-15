@@ -9,6 +9,15 @@ from modules.desktop_pet.pet_engine import PetEngine
 
 
 @pytest.fixture(autouse=True)
+def _pet_enabled(monkeypatch):
+    """把总开关钉成「开」：chat()/stream_chat() 先看 settings.DESKTOP_PET_ENABLED，
+    而真实 `~/.cortex/settings.json` 里用户可能关着 → 测试结果随本机配置漂移（§20）。
+    要测关闭分支的用例自己再 monkeypatch 一次即可。
+    """
+    monkeypatch.setattr(settings, "DESKTOP_PET_ENABLED", True)
+
+
+@pytest.fixture(autouse=True)
 def pet_db(tmp_path, monkeypatch):
     """隔离桌宠独立存储：显式构造测试库并注入单例"""
     import modules.desktop_pet.store as store_mod

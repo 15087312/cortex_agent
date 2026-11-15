@@ -464,8 +464,8 @@ class DepthRecallScheduler:
 
         # 向量匹配：计算事件向量与节点向量的余弦相似度
         try:
-            from modules.memory.embedding import EmbeddingEngine
-            eng = EmbeddingEngine.get_instance()
+            from modules.memory.embedding import get_embedding_engine
+            eng = get_embedding_engine()
             if eng._loaded:
                 event_text = f"{event.fact} {event.thought} {event.lesson}"
                 event_vec = eng.embed(event_text)

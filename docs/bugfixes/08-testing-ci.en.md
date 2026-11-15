@@ -2,7 +2,7 @@
 
 [← Back to index](./README.en.md) | [简体中文](./08-testing-ci.md)
 
-> Split from `docs/ERRORS_AND_FIXES.en.md` by module; section numbers are unchanged (§104–§107 fix duplicated numbers in the original—see the index). 19 sections: §20、§27、§30、§31、§32、§33、§34、§35、§36、§37、§44、§45、§52、§53、§54、§55、§58、§66、§81.
+> Split from `docs/ERRORS_AND_FIXES.en.md` by module; section numbers are unchanged (§104–§107 fix duplicated numbers in the original—see the index). 20 sections: §20、§27、§30、§31、§32、§33、§34、§35、§36、§37、§44、§45、§52、§53、§54、§55、§58、§66、§81、§110.
 
 ---
 ## 20. Test fakes diverged from real model fields (backend)
@@ -677,3 +677,61 @@ help: `pyaudio` (v0.2.14) was included because `cortex-agent` depends on `pyaudi
 **Verification:** `test_detectors.py`/`test_voice_hotkey.py`/`test_perception.py` 107 tests pass; requirements.txt syntactically valid; voice/desktop modules all import lazily inside functions.
 
 **Lesson:** Server deployments (Vercel-like sandbox builds) cannot include local-hardware packages that depend on system C libraries/have no wheels. Such dependencies belong in an optional file (e.g., requirements-voice.txt), paired with lazy imports + graceful ImportError degradation in code, achieving "installed → feature present; missing → no crash".
+
+---
+## 110. All green, all broken: doubles that replace the conclusion / frontend mocks turning 404 into `{}` / real capabilities disabled by conftest (test methodology)
+
+**Symptom:** Every feature in §109 (pet voice, TTS, persona page, master switch) was unusable for users, while `pytest tests/unit` (166 pet-related cases) and `vitest` (647 frontend cases) were fully green.
+
+**Root causes (five methodology gaps):**
+
+1. **The double replaced the conclusion itself.** `tests/unit/test_tts.py` used `FakeCommunicate.save()` to write 12 bytes of `b"FAKE_MP3_DATA"` and then asserted "synthesis succeeded, file exists". The real edge-tts 403 could never surface through that fake — the test only verified that our own fake writes a file.
+2. **Synthetic data shared the implementation's wrong assumption.** The VAD case hand-built "loud frames / silent frames" and passed `energy_threshold=500` explicitly, so whether the threshold sits below the real ambient floor (375 > 300) was structurally invisible. The data was generated from the same assumption as the code: the implementation grading its own exam.
+3. **The frontend mock returned `{}` + 200 for unmatched URLs.** `routeFetch()`'s default branch made `GET /config/{key}` (which the backend does not have) "succeed" with an empty object, and the component silently kept defaults. Nothing compared frontend request paths with the real backend route table.
+4. **Real capabilities were disabled by the harness.** `tests/conftest.py::block_real_native_libs` (session-scoped autouse) sets `torch`/`transformers` to `None` to prevent OpenMP/GIL deadlocks; the side effect is that real Whisper can never load under pytest. The voice chain was therefore only testable through fakes, and no real-audio case existed under the `external` marker — nowhere for "no sound" to be caught.
+5. **Only operation paths were tested, not state invariants.** The old persona test asserted "the select changed → the activate API was called" but never "which entity does the editor hold", "did creating pollute the current persona", or "is the delete target the one being edited". Structural UI defects slipped through wholesale.
+
+**Fix (push verification down to artifacts and contracts, in four layers):**
+
+| Layer | File | What it guards |
+|-------|------|----------------|
+| Artifact-level unit tests | `tests/unit/test_pet_voice_tts_chain.py` | Fake backends still write **real WAVs**; `wav_is_audible()` checks duration/peak; silence, header-only files, zero frames, and Piper crashes must all fall over to the next backend and clean up partial output; the output directory must be the one mounted at `/audio` |
+| Cross-boundary contract | `tests/unit/test_frontend_api_contract.py` | Extracts `request('GET', …)` / `fetch(BASE + …)` / `fetch('/api/…')` literals (the `/api` prefix is stripped per the vite proxy) and compares them segment by segment with `api.main.app.routes` (`*` only matches route parameters); self-tests for `GET /config/{key}`, fetch argument parsing, ternary suffixes and query-string variables; asserts no call is silently dropped and at least 100 calls were extracted |
+| Real-device integration (`external`) | `tests/integration/test_pet_voice_real_audio.py` | Real `say` is audible (0.5–20 s, non-silent); a real Whisper round-trip reaches ≥0.6 character coverage; the real microphone opens and `last_error` is readable. ASR runs in a **subprocess**, dodging both conftest's `torch=None` and the real torch + faiss double-OpenMP deadlock. A missing backend or model **fails**, never skips |
+| UI state invariants | `frontend/src/pages/Pet.spec.js` | The editor follows "being edited", not "currently active"; renaming keeps the prompt; unsaved switching asks for confirmation and keeps the draft; delete targets the edited persona; bubbles strip `<say>`; not-listening ≠ idle; empty name/prompt sends no request |
+
+**Real defects the new tests caught:**
+
+- `voiceStateLabel` ignored `running`, showing "Idle" while not listening → added `pet.voiceOff` (未监听 / Not listening).
+- `BackendMicListener.stop()` closed the stream/terminated first while the capture thread was blocked in `read()` → the real-device case ended in `Bus error`. Changed to "join the thread, then close the device", with a unit assertion that the capture thread must be gone when `terminate` runs.
+- The noise-floor EMA decayed to denormals in absolute silence → the threshold fell back to the configured minimum, making false triggers more likely; clamped at 1.0 and added a "constant 375 floor must stay idle" regression.
+- `wav_is_audible()` stops silent `say`/Piper output from counting as success — but it only checked 16-bit audio (`width != 2` returned `True`), so a **silent 8-bit WAV (421 bytes of 128) also counted as audible**; added the 8-bit branch (peak relative to 128) and a regression.
+- The TTS output directory was relative (resolved against cwd) while `/audio` mounted the same string: starting the server from another directory made playback 404 while synthesis reported success. It is now absolute under the project root, with an assertion that the pet output directory equals the mounted `/audio` directory.
+- `PetTaskQueue`'s worker never shut down with `PetEngine.stop()`, leaving `Task was destroyed but it is pending` + `Event loop is closed` after the loop closed, and the singleton still referenced a dead loop. Added `shutdown()` (cancel the worker, drain queued tasks, fail their futures fast); `stop()` calls it.
+
+**Verification:** the 355 affected cases all pass; full `pytest tests/unit` is **6749 passed** (before the fixes: 4 failed — 3 depending on local config/history, 1 the same history-pollution class); full `pytest tests/integration` is **446 passed** (before: 9 failed, all caused by the local master switch being off → 409 / empty SSE); `-m external` is **5 passed** (real `say` audio, real Whisper at 0.87 coverage, 1.2 s of real microphone capture with a clean shutdown); `vitest` is **652 passed**; `mypy modules infra config utils api` and `mypy logiclink/src` report **0 errors**; `logiclink . --strict` reports **0 errors**.
+
+**How to verify day to day (affected tests only):**
+
+```
+python -m pytest tests/unit/test_pet_voice.py tests/unit/test_pet_voice_tts_chain.py \
+  tests/unit/test_frontend_api_contract.py tests/unit/test_pet_store_personas.py \
+  tests/unit/test_pet_task_queue.py -q
+python -m pytest tests/integration/test_pet_voice_real_audio.py -m external -q
+cd frontend && npx vitest run src/pages/Pet.spec.js
+```
+
+**Lessons / new testing rules:**
+
+1. **Substitute at the boundary, never at the conclusion.** External services (TTS/ASR/network) may have their transport mocked, but the test must generate and validate the artifact (audio duration + waveform, image size + pixels, file schema).
+2. **Synthetic data must be grounded in real sampling.** For environment-dependent parameters, keep at least one regression using measured values (ambient floor 375 vs threshold 300).
+3. **Cross-process/cross-end calls need contract tests.** An unmatched frontend fetch mock must fail loudly, or the backend route table must validate it; otherwise 404s masquerade as "empty data".
+4. **Layer real capabilities separately.** An `external` marker plus subprocess isolation keeps default CI fast without making them untestable forever (torch=None, no display, no microphone).
+5. **UI tests must assert state invariants** (which entity, dirty flag, target id), not just which API a click called.
+6. **The contract checker must itself be checked (assert how much it inspected).** The first version of `test_frontend_api_contract.py` had two silent holes: it was fully green while skipping most calls.
+   - The `fetch(` expression started one character too late (`line.index(raw)` without `- 1`), so `_STRING_LIT` never matched the path literal → **every `fetch(...)` call was dropped**;
+   - It only recognized `/stream`, `/config`, … prefixes, not `/api`, while `frontend/vite.config.js` proxies `rewrite: ^/api → ''`. Every `/api/...` call (Skills, Orchestration, Pet chat, Chat todos) was invisible.
+   - A third, subtler hole: **backtick template calls `fetch(`/stream/x/${id}`)` and `fetch(url)` were not covered by any regex at all**, so not even "could not extract" was reported — the most dangerous shape of this bug class.
+   After the fix the extracted count went 71 → 114, and `test_no_silently_dropped_calls` now fails on any `request(`/`fetch(` call whose path cannot be extracted, unless it is the `request(method, pathVar)` generic wrapper. Non-literal `fetch(` calls are checked one by one against two explicit allowlists (`BASE + path` forwarding in `api.js`, `/backend-port` discovery in `ws/client.js`), and the vendored `frontend/pet/lib` is excluded. Every rule has a self-test, including "a backtick fetch must be reported". **Lesson: a static analysis test must assert how much it inspected and turn "nothing was inspected" red; otherwise it is just another reassuring green light.**
+7. **The `external` layer must not use `skip` as its defence.** Real-device cases used `pytest.skip` for a missing TTS backend / Whisper model / subprocess failure, so `-m external` printed a row of skips that looked like "it ran". They now `assert`/`pytest.fail` with a remediation hint; to skip the whole layer, deselect it by marker instead of letting each case quietly opt out. The ASR round-trip also moved from "any keyword matched" to **normalized character coverage ≥ 0.6** (measured 0.87 on this machine, which heard 桌宠 as 捉蟲), with a self-test that unrelated text cannot clear that line.
+8. **Tests must not depend on the user's local config/database.** A full run failed 3 cases that were not code bugs: (1) `~/.cortex/settings.json` had `DESKTOP_PET_ENABLED` off, so `chat()` returned `""` immediately; (2) `_load_structured_history()` read real rows from the local session database, turning `messages` from `[system, user]` into `[system, <history>, user]`. Such assertions are green on the author's machine and red on the user's — the same class as §20. Fix: a module-level autouse fixture pins the master switch, and helpers like `_tool_runner()` stub database reads to empty; tests that need history override them. The integration layer was hit the same way: 9 cases across `tests/integration/test_pet.py`, `test_pet_custom_loop_e2e.py` and `test_frontend_proxy_stream.py` failed with `409 desktop pet disabled` / empty SSE streams — fixed with the same module-level switch fixture, not by loosening assertions.

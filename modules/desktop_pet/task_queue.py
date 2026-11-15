@@ -85,6 +85,21 @@ class PetTaskQueue:
 
     @classmethod
     def get_instance(cls) -> "PetTaskQueue":
+        """端口优先取桌宠任务队列：接管 ``pet_task_queue`` 端口 = 换掉全部调用点。
+
+        内置单例挪进 ``_builtin_instance``，bootstrap 给这条端口的 provider 指的也是
+        它 —— 指回本函数就是 端口→本函数→端口 的一调用即递归，那种接线由
+        scripts/seam_catalogue.py 在生成目录时判错。
+        """
+        from infra.tool_manager.service_registry import get_capability
+
+        factory = get_capability("pet_task_queue")
+        if factory is not None:
+            return factory()
+        return cls._builtin_instance()
+
+    @classmethod
+    def _builtin_instance(cls) -> "PetTaskQueue":
         if cls._instance is None:
             with cls._lock:
                 if cls._instance is None:
@@ -122,6 +137,34 @@ class PetTaskQueue:
 
     # ── worker ──
 
+    def shutdown(self) -> None:
+        """停掉 worker、清空队列（桌宠 stop / 事件循环切换时调用）
+
+        不取消 worker 的话，它会在循环关闭后作为 pending task 被 GC，
+        打出 `Task was destroyed but it is pending` + `Event loop is closed`，
+        单例还会一直引用已死的循环。
+        """
+        worker, self._worker = self._worker, None
+        q, self._queue = self._queue, None
+        self._loop = None
+        self._running_kind = ""
+        if q is not None:
+            abandoned: List[PetTask] = []
+            while True:
+                try:
+                    abandoned.append(q.get_nowait())
+                except asyncio.QueueEmpty:
+                    break
+            for t in abandoned:
+                logger.warning(f"[Pet] 队列关闭，丢弃未执行任务 kind={t.kind}")
+                t._set_exception(RuntimeError("pet task queue shut down"))
+        if worker is not None and not worker.done():
+            try:
+                worker.cancel()
+            except RuntimeError:
+                # 旧循环已关闭：cancel 无法投递，任务只能等 GC（原因见 docstring）
+                logger.debug("[Pet] worker 所在事件循环已关闭，取消未送达")
+
     def _ensure_worker(self) -> None:
         """确保 worker 在当前事件循环上运行；换循环时废弃旧 worker 重建"""
         loop = asyncio.get_running_loop()
@@ -129,18 +172,9 @@ class PetTaskQueue:
             self._worker = None
         if self._queue is not None and self._loop is loop and self._worker is not None:
             return
-        # 换循环（或首次调用）：旧队列里未执行的任务快速失败（其 future 绑定旧循环，
-        # 生产环境正常关闭时队列应为空；测试多次 asyncio.run 也走这里）
-        if self._queue is not None:
-            abandoned: List[PetTask] = []
-            while True:
-                try:
-                    abandoned.append(self._queue.get_nowait())
-                except asyncio.QueueEmpty:
-                    break
-            for t in abandoned:
-                logger.warning(f"[Pet] 循环切换，丢弃未执行任务 kind={t.kind}")
-                t._set_exception(RuntimeError("pet task queue restarted"))
+        # 换循环（或首次调用）：旧 worker/旧队列必须显式收尾，否则变成 pending task
+        if self._queue is not None or self._worker is not None:
+            self.shutdown()
         self._queue = asyncio.Queue()
         self._loop = loop
         self._worker = loop.create_task(self._run_worker())

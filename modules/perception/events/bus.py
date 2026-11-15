@@ -215,6 +215,21 @@ _init_lock = threading.Lock()
 
 
 def get_event_bus() -> PerceptionEventBus:
+    """端口优先取事件总线：接管 ``event_bus`` 端口 = 换掉全部调用点。
+
+    取不到端口才回退内置单例（脚本、没跑过 bootstrap 的入口）。bootstrap 注册的
+    provider 必须是 ``_default_event_bus`` 而不是本函数，否则端口→本函数→端口
+    一调用就递归。
+    """
+    from infra.tool_manager.service_registry import get_capability
+
+    factory = get_capability("event_bus")
+    if factory is None:
+        return _default_event_bus()
+    return factory()
+
+
+def _default_event_bus() -> PerceptionEventBus:
     """获取事件总线单例（线程安全）"""
     global _event_bus
     if _event_bus is None:

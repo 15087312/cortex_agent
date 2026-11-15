@@ -253,7 +253,7 @@ async def test_recall_events_semantic_not_in_merged(graph, store):
 
 # ── _causal_relevance embedding 路径 ────────────────────────────────────
 
-def test_causal_relevance_event_vec_none(graph, monkeypatch):
+def test_causal_relevance_event_vec_none(graph, monkeypatch, take_over):
     """embed 返回 None → 跳过向量路径（410->427）"""
     monkeypatch.setattr("modules.memory.causal_graph.CausalGraph.get_instance",
                         staticmethod(lambda: graph))
@@ -263,14 +263,13 @@ def test_causal_relevance_event_vec_none(graph, monkeypatch):
     fake_eng = MagicMock()
     fake_eng._loaded = True
     fake_eng.embed.return_value = None
-    monkeypatch.setattr("modules.memory.embedding.EmbeddingEngine.get_instance",
-                        lambda: fake_eng)
+    take_over("embedding_engine", lambda: fake_eng)
     s = _sched(graph, None, None)
     score = s._causal_relevance(ev, {node.id})
     assert score >= 0.0
 
 
-def test_causal_relevance_node_vec_none(graph, monkeypatch):
+def test_causal_relevance_node_vec_none(graph, monkeypatch, take_over):
     """节点向量为空 → continue（417->412）"""
     monkeypatch.setattr("modules.memory.causal_graph.CausalGraph.get_instance",
                         staticmethod(lambda: graph))
@@ -280,14 +279,13 @@ def test_causal_relevance_node_vec_none(graph, monkeypatch):
     fake_eng = MagicMock()
     fake_eng._loaded = True
     fake_eng.embed.side_effect = lambda text: [0.1, 0.2] if "事件" in text else None
-    monkeypatch.setattr("modules.memory.embedding.EmbeddingEngine.get_instance",
-                        lambda: fake_eng)
+    take_over("embedding_engine", lambda: fake_eng)
     s = _sched(graph, None, None)
     score = s._causal_relevance(ev, {node.id})
     assert score >= 0.0
 
 
-def test_causal_relevance_max_sim_zero(graph, monkeypatch):
+def test_causal_relevance_max_sim_zero(graph, monkeypatch, take_over):
     """最大相似度为 0 → 走文本兜底（421->427）"""
     monkeypatch.setattr("modules.memory.causal_graph.CausalGraph.get_instance",
                         staticmethod(lambda: graph))
@@ -297,14 +295,13 @@ def test_causal_relevance_max_sim_zero(graph, monkeypatch):
     fake_eng = MagicMock()
     fake_eng._loaded = True
     fake_eng.embed.side_effect = lambda text: [1.0, 1.0]
-    monkeypatch.setattr("modules.memory.embedding.EmbeddingEngine.get_instance",
-                        lambda: fake_eng)
+    take_over("embedding_engine", lambda: fake_eng)
     s = _sched(graph, None, None)
     score = s._causal_relevance(ev, {node.id})
     assert score > 0.0  # 文本匹配兜底命中
 
 
-def test_causal_relevance_embedding_missing_node(graph, monkeypatch):
+def test_causal_relevance_embedding_missing_node(graph, monkeypatch, take_over):
     """向量路径中节点不存在 → continue（414->412）"""
     monkeypatch.setattr("modules.memory.causal_graph.CausalGraph.get_instance",
                         staticmethod(lambda: graph))
@@ -314,14 +311,13 @@ def test_causal_relevance_embedding_missing_node(graph, monkeypatch):
     fake_eng = MagicMock()
     fake_eng._loaded = True
     fake_eng.embed.side_effect = lambda text: [0.1, 0.2]
-    monkeypatch.setattr("modules.memory.embedding.EmbeddingEngine.get_instance",
-                        lambda: fake_eng)
+    take_over("embedding_engine", lambda: fake_eng)
     s = _sched(graph, None, None)
     score = s._causal_relevance(ev, {"ghost-node"})
     assert score >= 0.0
 
 
-def test_causal_relevance_embedding_loaded(graph, monkeypatch):
+def test_causal_relevance_embedding_loaded(graph, monkeypatch, take_over):
     monkeypatch.setattr("modules.memory.causal_graph.CausalGraph.get_instance",
                         staticmethod(lambda: graph))
     node = CausalNode(label="原因")
@@ -330,14 +326,13 @@ def test_causal_relevance_embedding_loaded(graph, monkeypatch):
     fake_eng = MagicMock()
     fake_eng._loaded = True
     fake_eng.embed.side_effect = lambda text: [0.1, 0.2, 0.3]
-    monkeypatch.setattr("modules.memory.embedding.EmbeddingEngine.get_instance",
-                        lambda: fake_eng)
+    take_over("embedding_engine", lambda: fake_eng)
     s = _sched(graph, None, None)
     score = s._causal_relevance(ev, {node.id})
     assert score > 0.0
 
 
-def test_causal_relevance_embedding_error(graph, monkeypatch):
+def test_causal_relevance_embedding_error(graph, monkeypatch, take_over):
     monkeypatch.setattr("modules.memory.causal_graph.CausalGraph.get_instance",
                         staticmethod(lambda: graph))
     node = CausalNode(label="原因", keywords=["键"])
@@ -350,8 +345,7 @@ def test_causal_relevance_embedding_error(graph, monkeypatch):
         def embed(self, text):
             raise RuntimeError("embed down")
 
-    monkeypatch.setattr("modules.memory.embedding.EmbeddingEngine.get_instance",
-                        lambda: BoomEng())
+    take_over("embedding_engine", lambda: BoomEng())
     s = _sched(graph, None, None)
     score = s._causal_relevance(ev, {node.id})
     assert score >= 0.0

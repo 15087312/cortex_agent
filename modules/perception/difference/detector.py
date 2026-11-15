@@ -216,6 +216,20 @@ _detector_lock = threading.Lock()
 
 
 def get_detector() -> DifferenceDetector:
+    """端口优先取差异检测器：接管 ``difference_detector`` 端口 = 换掉全部调用点。
+
+    取不到端口才回退内置单例（脚本、没跑过 bootstrap 的入口）。bootstrap 注册的
+    provider 必须是 ``_default_detector`` 而不是本函数，否则端口→本函数→端口一调用就递归。
+    """
+    from infra.tool_manager.service_registry import get_capability
+
+    factory = get_capability("difference_detector")
+    if factory is None:
+        return _default_detector()
+    return factory()
+
+
+def _default_detector() -> DifferenceDetector:
     global _detector_instance
     if _detector_instance is None:
         with _detector_lock:

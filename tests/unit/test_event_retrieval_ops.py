@@ -7,7 +7,6 @@ import pytest
 from modules.memory.event_retrieval import (
     EventRetrieval,
     get_event_retrieval,
-    _retrieval_instance,
     MIN_SEMANTIC_SIMILARITY,
 )
 from modules.memory.event_store import EventStore, MemoryEvent
@@ -241,9 +240,11 @@ async def test_vector_search_and_compute_similarities(store):
 
 
 def test_get_event_retrieval_singleton(monkeypatch):
+    """访问器与类访问器共用那份单例（模块级第二套单例已经并进来了）。"""
     import modules.memory.event_retrieval as mod
-    monkeypatch.setattr(mod, "_retrieval_instance", None)
+    monkeypatch.setattr(mod.EventRetrieval, "_instance", None)
     a = get_event_retrieval()
     b = get_event_retrieval()
     assert a is b
-    assert mod._retrieval_instance is a
+    assert mod.EventRetrieval._instance is a
+    assert b is EventRetrieval.get_instance()

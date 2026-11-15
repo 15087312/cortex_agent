@@ -506,16 +506,16 @@ export const useChatStore = defineStore('chat', () => {
     return false
   }
 
-  async function sendMessage(content, attachments, webSearch = false) {
+  async function sendMessage(content, attachments, webSearch = false, skillId = '') {
     if (!session.sessionId) {
       await session.createSession()
     }
     _stopped.value = false
-    _lastInput.value = { content, attachments, webSearch }
+    _lastInput.value = { content, attachments, webSearch, skillId }
     trajectory.value = []
     _processingSids.value.add(session.sessionId)
     await _ensureConnected()
-    const ok = await _sendWithRetry({ type: 'input', content, model: currentModel.value, attachments, web_search: !!webSearch })
+    const ok = await _sendWithRetry({ type: 'input', content, model: currentModel.value, attachments, web_search: !!webSearch, skill_id: skillId || '' })
     if (!ok) {
       _processingSids.value.delete(session.sessionId)
       hint.value = ''
@@ -532,6 +532,7 @@ export const useChatStore = defineStore('chat', () => {
       model: currentModel.value,
       attachments: _lastInput.value.attachments,
       web_search: !!_lastInput.value.webSearch,
+      skill_id: _lastInput.value.skillId || '',
     })
   }
 

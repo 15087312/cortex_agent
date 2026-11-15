@@ -169,6 +169,21 @@ _init_lock = threading.Lock()
 
 
 def get_context_controller() -> ContextController:
+    """端口优先取上下文控制器：接管 ``context_controller`` 端口 = 换掉全部调用点。
+
+    取不到端口才回退内置单例（脚本、没跑过 bootstrap 的入口）。bootstrap 注册
+    的 provider 必须是 ``_default_context_controller`` 而不是本函数，否则端口→本函数→端口
+    一调用就递归。
+    """
+    from infra.tool_manager.service_registry import get_capability
+
+    factory = get_capability("context_controller")
+    if factory is None:
+        return _default_context_controller()
+    return factory()
+
+
+def _default_context_controller() -> ContextController:
     """获取全局 ContextController（token 计算器）实例"""
     global _instance
     if _instance is None:

@@ -302,6 +302,21 @@ _disk_cache_lock = _threading.Lock()
 
 
 def get_disk_cache() -> "DiskCache":
+    """端口优先取磁盘缓存：接管 ``disk_cache`` 端口 = 换掉全部调用点。
+
+    取不到端口才回退内置单例（脚本、没跑过 bootstrap 的入口）。bootstrap 注册
+    的 provider 必须是 ``_default_disk_cache`` 而不是本函数，否则端口→本函数→端口
+    一调用就递归。
+    """
+    from infra.tool_manager.service_registry import get_capability
+
+    factory = get_capability("disk_cache")
+    if factory is None:
+        return _default_disk_cache()
+    return factory()
+
+
+def _default_disk_cache() -> "DiskCache":
     """获取磁盘缓存单例"""
     global _disk_cache
     if _disk_cache is None:

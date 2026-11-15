@@ -173,8 +173,12 @@ def test_browser_disconnect_stops_pet_engine(monkeypatch, tmp_path):
     from unittest.mock import AsyncMock
 
     import modules.desktop_pet.store as store_mod
+    from config.settings import settings
     from modules.desktop_pet import api as pet_api
     from modules.desktop_pet.pet_engine import PetEngine
+
+    # 真实 settings 里用户可能关着桌宠；本条验的是断开/取消链路，不是总开关（§20）
+    monkeypatch.setattr(settings, "DESKTOP_PET_ENABLED", True)
 
     old_engine = PetEngine._instance
     PetEngine._instance = None

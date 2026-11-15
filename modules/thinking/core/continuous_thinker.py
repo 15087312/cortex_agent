@@ -26,7 +26,7 @@ from modules.thinking.core.process_collector import (
     ThinkingProcessSnapshot,
     create_thinking_process_collector,
 )
-from infra.error_bus import error_bus, ErrorContext
+from infra.error_bus import ErrorContext, get_error_bus
 
 
 logger = setup_logger(__name__)
@@ -708,7 +708,7 @@ class ContinuousThinker:
             elif getattr(_sk_cfg, "get_system_override", lambda _r: "")(role):
                 pass  # 完整系统提示词覆盖生效，不注入技能建议到 user 消息
             else:
-                from modules.thinking.skills import skill_manager
+                from modules.thinking.skills import get_skill_manager
                 runner = getattr(self, '_runner_ref', None)
                 if not (runner and getattr(runner, '_active_skill', None)):
                     forced = ""
@@ -719,11 +719,11 @@ class ContinuousThinker:
                         forced = ""
                     suggested = None
                     if forced:
-                        _fs = skill_manager.get_skill(forced)
+                        _fs = get_skill_manager().get_skill(forced)
                         # 强制技能已禁用时回退自动匹配（与注入/request_skill 权限一致）
                         suggested = _fs if (_fs and _fs.enabled) else None
                     if not suggested and not forced:
-                        suggested = skill_manager.match_skill(initial_question)
+                        suggested = get_skill_manager().match_skill(initial_question)
                     if suggested:
                         if forced:
                             pool.add(ContextFragment("skill_suggestion",
@@ -898,7 +898,7 @@ class ContinuousThinker:
                     self.logger.warning(
                         f"单次思考静默超时（>{_timeout}s 无任何产出），已达最大重试次数 {MAX_THINK_RETRIES}"
                     )
-                    error_bus.report_error(
+                    get_error_bus().report_error(
                         asyncio.TimeoutError(
                             f"单次思考静默超时（>{_timeout}s 无任何产出），已达最大重试次数 {MAX_THINK_RETRIES}"
                         ),
@@ -947,7 +947,7 @@ class ContinuousThinker:
                 # 断点续思考：设置 runner 从上次中断处继续（保留已完成的思考/工具结果），而非从头重试
                 self._request_resume()
                 clock.touch("timeout_retry")
-                error_bus.report_error(
+                get_error_bus().report_error(
                     asyncio.TimeoutError(f"单次思考静默超时（>{_timeout}s），第 {attempt} 次"),
                     ErrorContext(
                         module="continuous_thinker",
@@ -959,7 +959,7 @@ class ContinuousThinker:
             except Exception as e:
                 import traceback as _tb
                 self.logger.warning(f"单次思考发生异常: {e}\n{_tb.format_exc()}")
-                error_bus.report_error(
+                get_error_bus().report_error(
                     e,
                     ErrorContext(
                         module="continuous_thinker",
@@ -1093,7 +1093,7 @@ class ContinuousThinker:
                 self.set_think_fn(model.generate)
             except Exception as e:
                 self.logger.warning(f"模型初始化失败: {e}，返回占位符")
-                error_bus.report_error(
+                get_error_bus().report_error(
                     e,
                     ErrorContext(
                         module="continuous_thinker",
