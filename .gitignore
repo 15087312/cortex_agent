@@ -183,3 +183,12 @@ logiclink/logiclink-*.html
 frontend/test-results/
 frontend/playwright-report/
 frontend/.playwright/
+
+# 本地素材 / 安装包 / 临时产物（不入库）
+.dsh-*/
+_mptlibs/
+drawai-smoke/
+qa/
+cortex_agent_intro.mp4
+.codebuddy_plan.md
+1.py
