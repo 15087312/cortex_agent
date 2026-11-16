@@ -18,7 +18,7 @@ from utils.logger import setup_logger
 logger = setup_logger("projections")
 
 # 投影 key（前端按 key 覆盖，未知 key 直接忽略）
-PROJECTION_KEYS = ("todos", "runners", "tokenUsage", "contextPressure")
+PROJECTION_KEYS = ("todos", "runners", "tokenUsage", "contextPressure", "workflow")
 
 
 # ── 发射 ──────────────────────────────────────────────────────────────

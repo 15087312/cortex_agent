@@ -428,9 +428,18 @@ class ModelRunner:
         大模型/主管发出委托后退出思考循环，进入等待状态。当收到专家/主管的
         任务结果或用户新输入时，重新启动循环继续处理。专家单次执行后立即退出。
         """
-        # 延迟创建 ContinuousThinker
+        # 延迟创建思考内核（根据配置动态选择 ContinuousThinker 或 WorkflowThinker）
         if self._thinker is None:
-            from modules.thinking.core.continuous_thinker import ContinuousThinker
+            from config.settings import settings as _app_settings
+            engine_mode = getattr(_app_settings, "THINKING_ENGINE_MODE", "continuous")
+            if engine_mode == "workflow":
+                from modules.thinking.core.workflow_thinker import WorkflowThinker
+                thinker_cls = WorkflowThinker
+                logger.info(f"[ModelRunner] {self.model_id} 使用工作流思考内核 (WorkflowThinker)")
+            else:
+                from modules.thinking.core.continuous_thinker import ContinuousThinker
+                thinker_cls = ContinuousThinker
+                logger.info(f"[ModelRunner] {self.model_id} 使用传统连续思考内核 (ContinuousThinker)")
 
             # 旧版 MemoryManager 已废弃，事件记忆由 EventReducer 处理
 
@@ -446,7 +455,7 @@ class ModelRunner:
                 max_rounds_for_tier = 1
                 min_rounds_for_tier = 1
 
-            self._thinker = ContinuousThinker(
+            self._thinker = thinker_cls(
                 think_fn=self._generate,
                 max_rounds=max_rounds_for_tier,
                 min_rounds=min_rounds_for_tier,
@@ -2683,9 +2692,31 @@ class ModelRunner:
             full_context = system_prompt + "\n\n" + user_prompt
             for t in tools_with_control:
                 full_context += "\n" + str(t.get("function", {}).get("description", ""))  # type: ignore[union-attr]  # tools_with_control 混合 str/dict
-            self._thinker._context_tokens = engine.estimate_tokens(full_context)  # type: ignore[union-attr]
+            if self._thinker is not None:
+                self._thinker._context_tokens = engine.estimate_tokens(full_context)  # type: ignore[union-attr]
         except Exception as e:
             logger.debug(f"[ModelRunner] 上下文 token 估算失败 (非致命): {e}")
+
+        # ── 工作流模式分流：使用 ReAct 工作流子图执行 ──
+        if getattr(_settings, "THINKING_ENGINE_MODE", "continuous") == "workflow":
+            from modules.thinking.core.workflow_react import ReActSubflow
+            subflow = ReActSubflow(client=client, runner_ref=self)
+            init_state = {
+                "session_id": self.session_id,
+                "model_id": self.model_id,
+                "tier": self.tier,
+                "system_prompt": system_prompt,
+                "user_prompt": user_prompt,
+                "messages": messages,
+                "tools_with_control": tools_with_control,
+                "mcp": mcp,
+                "turn": 0,
+                "max_turns": self.MAX_CHAT_TOOL_TURNS,
+                "rejection_count": 0,
+                "expert_errors": [],
+            }
+            logger.info(f"[ModelRunner] {self.model_id} 使用 ReAct 工作流子图执行工具循环")
+            return await subflow.run(init_state)
 
         last_error = None
         expert_errors: list = []  # 收集专家工具调用失败信息，最终附给主管
@@ -2906,614 +2937,21 @@ class ModelRunner:
                             reasoning_content=getattr(response.message, "reasoning_content", None),
                         ))
 
-                    # ── query_tool_details → 把工具完整定义作为 tool 消息回传，
-                    #    让模型看到详情后在同一思考轮次内继续调用该工具（避免反复重查） ──
-                    for tc in query_calls:
-                        try:
-                            args = json.loads(tc.arguments) if isinstance(tc.arguments, str) and tc.arguments.strip() else {}
-                            target_name = str(args.get("tool_name", "")).strip()
-                            if not target_name:
-                                result = "【查询失败】缺少 tool_name 参数。请提供要查询的工具名称。"
-                            else:
-                                tool_info = ToolRegistry.get_tool(target_name)
-                                if not tool_info:
-                                    available = sorted(ToolRegistry._tools.keys())
-                                    hint = "、".join(available[:20])
-                                    if len(available) > 20:
-                                        hint += f" 等共 {len(available)} 个"
-                                    result = f"【查询失败】工具「{target_name}」不存在。可用工具：{hint}"
-                                else:
-                                    schema = tool_info.to_json_schema()
-                                    result_parts = [
-                                        f"【工具详情：{target_name}】",
-                                        f"描述：{tool_info.description}",
-                                        f"风险等级：{tool_info.risk_level}",
-                                        f"类别：{tool_info.category}",
-                                        f"参数 Schema：\n{json.dumps(schema, ensure_ascii=False, indent=2)}",
-                                    ]
-                                    result = "\n".join(result_parts)
-                        except Exception as e:
-                            result = f"【查询异常】{e}"
-                        messages.append(ChatMessage(
-                            role="tool",
-                            content=result[:4000] if len(result) > 4000 else result,
-                            tool_call_id=getattr(tc, 'id', None) or tc.name,
-                        ))
-                        logger.info(f"[ModelRunner] {self.model_id} 查询工具详情: {target_name}")
-
-                    # ── 处理工具调用接口（continue_thinking, delegate_task 等）──
-                    # 1. continue_thinking / respond_to_user 记录决策（由 thinker 决定终止，不结束工具循环）
-                    #    信息型工具（list_skills/request_skill/stop_skill/stop_task）结果作为 tool 消息回传后继续，
-                    #    避免模型看不到结果而重复调用（与 query_tool_details 同类 bug）
-                    for tc in control_calls:
-                        try:
-                            args = json.loads(tc.arguments) if isinstance(tc.arguments, str) and tc.arguments.strip() else {}
-                            result = ""
-                            if tc.name == "continue_thinking":
-                                ctrl = {"continue": args.get("continue", True)}
-                                if "wait_seconds" in args:
-                                    ctrl["wait_seconds"] = max(1, min(600, int(args["wait_seconds"])))
-                                if "result_summary" in args:
-                                    ctrl["result_summary"] = args["result_summary"]
-                                if self._thinker:
-                                    self._thinker.record_control_decision(ctrl)
-                            elif tc.name == "respond_to_user":
-                                content = args.get("content", "")
-                                if self._thinker:
-                                    self._thinker.record_control_decision({"continue": False, "result_summary": content})
-                            elif tc.name == "set_memory_focus":
-                                mix = args.get("mix", {})
-                                if self._thinker and isinstance(mix, dict):
-                                    self._thinker._memory_focus = mix
-                            elif tc.name == "request_skill":
-                                skill_id = args.get("skill_id", "")
-                                if skill_id:
-                                    # 技能总开关检查
-                                    try:
-                                        from config.settings import settings as _chk
-                                        _skills_on = getattr(_chk, "SKILLS_ENABLED", True)
-                                    except Exception:
-                                        _skills_on = True
-                                    if not _skills_on:
-                                        result = "【技能系统已关闭】管理员已关闭技能系统，无法激活技能。"
-                                    else:
-                                        # 强制技能锁定：用户设置了 forced_skill 时，不允许切换到其他技能
-                                        try:
-                                            from config.settings import settings as _settings
-                                            _forced = _settings.get_forced_skill()
-                                        except Exception:
-                                            _forced = ""
-                                        if _forced and _forced != skill_id:
-                                            result = f"【技能切换被拒绝】系统已强制使用技能 '{_forced}'，不可切换到其他技能。使用 list_skills 查看当前可用技能。"
-                                        else:
-                                            from modules.thinking.skills import get_skill_manager
-                                            skill = get_skill_manager().get_skill(skill_id)
-                                            role = getattr(self.identity, "role", "")
-                                            allowed = skill and skill.enabled and (
-                                                skill in get_skill_manager().list_skills_for_role(role)
-                                            )
-                                            if allowed:
-                                                self._set_active_skill(skill)
-                                                logger.info(f"[ModelRunner] 技能已切换: {skill_id}")
-                                                preview = skill.description[:120].replace("\n", " ")  # type: ignore[union-attr]
-                                                result = f"【技能已激活】{skill.name}\n{preview}"  # type: ignore[union-attr]
-                                            else:
-                                                result = f"【技能不可用】skill_id={skill_id} 不存在、已禁用或当前角色不可用。使用 list_skills 查看可用技能。"
-                            elif tc.name == "stop_skill":
-                                # 强制技能锁定：forced_skill 不可停用
-                                try:
-                                    from config.settings import settings as _settings
-                                    _forced = _settings.get_forced_skill()
-                                except Exception:
-                                    _forced = ""
-                                if _forced:
-                                    result = f"【技能停用被拒绝】系统已强制使用技能 '{_forced}'，不可停用。"
-                                elif self._active_skill:
-                                    skill_name = self._active_skill.name
-                                    reason = args.get("reason", "")
-                                    logger.info(f"[ModelRunner] 技能已停用: {self._active_skill.id} ({reason})")
-                                    self._set_active_skill(None)
-                                    result = f"【技能已停用】{skill_name}，已恢复默认角色。"
-                                else:
-                                    result = "【无活跃技能】当前没有激活的技能。"
-                            elif tc.name == "list_skills":
-                                from modules.thinking.skills import get_skill_manager
-                                skills = get_skill_manager().list_skills_for_role(getattr(self.identity, "role", ""))
-                                logger.info(f"[ModelRunner] 列出技能: {len(skills)} 个")
-                                result = "【可用技能】" + (
-                                    "\n" + "\n".join(f"- {s.id}: {s.name} — {s.description[:80]}" for s in skills)
-                                    if skills else "暂无可用技能"
-                                )
-                            elif tc.name == "stop_task":
-                                target = args.get("target_model_id", "").strip()
-                                reason = args.get("reason", "").strip()
-                                if target and reason:
-                                    logger.info(
-                                        f"[ModelRunner] {self.model_id} 停止任务: {target} ({reason})"
-                                    )
-                                    if self.manager and hasattr(self.manager, 'stop_runner'):
-                                        success = await self.manager.stop_runner(target)
-                                        if success:
-                                            result = (
-                                                f"【任务已停止】已停止 {target}，原因: {reason}\n"
-                                                f"你可以重新 delegate_task 来分派任务。"
-                                            )
-                                        else:
-                                            result = (
-                                                f"【停止失败】无法找到 {target}，"
-                                                f"可能已自然结束或被其他主管停止。"
-                                            )
-                                    else:
-                                        result = "【停止失败】当前上下文无法操作 runner 管理器。"
-                                else:
-                                    result = "【停止失败】缺少 target_model_id 或 reason 参数。"
-                            elif tc.name == "query_delegation":
-                                result = await self._handle_query_delegation(args)
-                            elif tc.name == "resume_delegation":
-                                result = await self._handle_resume_delegation(args)
-                            elif tc.name == "inspect_delegation":
-                                result = await self._handle_inspect_delegation(args)
-                            elif tc.name == "read_context":
-                                result = await self._handle_read_context(args)
-                            elif tc.name == "narrow_my_tools":
-                                result = self._handle_narrow_my_tools(args)
-                            elif tc.name == "reset_my_tools":
-                                result = self._handle_reset_my_tools()
-                            if result:
-                                messages.append(ChatMessage(
-                                    role="tool",
-                                    content=result[:4000] if len(result) > 4000 else result,
-                                    tool_call_id=getattr(tc, 'id', None) or tc.name,
-                                ))
-                        except Exception as e:
-                            logger.debug(f"[ModelRunner] 控制工具处理异常 (非致命): {e}")
-                            # 若该工具已被 assistant.tool_calls 声明，必须补回 tool 响应，
-                            # 否则 OpenAI 报"未应答的 tool_calls"并在下一轮重复调用
-                            if tc.name in _CONTROL_RESULT_TOOLS:
-                                messages.append(ChatMessage(
-                                    role="tool",
-                                    content=f"[{tc.name} 执行异常: {e}]",
-                                    tool_call_id=getattr(tc, 'id', None) or tc.name,
-                                ))
-
-                    # 2. delegate_task → 执行模式检查 + 委托 + 记录到 thinker
-                    if delegate_calls:
-                        logger.info(f"[ModelRunner] {self.model_id} 检测到 delegate_task 工具调用: {len(delegate_calls)} 个")
-                    for tc in delegate_calls:
-                        try:
-                            args = json.loads(tc.arguments) if isinstance(tc.arguments, str) and tc.arguments.strip() else {}
-                            role = args.get("role", "").strip()
-                            task = args.get("task", "").strip()
-                            if role and task:
-                                # ── 执行模式检查：plan 模式拦截写操作委派 ──
-                                try:
-                                    from config.settings import settings
-                                    exec_mode = settings.effective_execution_mode
-                                except Exception:
-                                    exec_mode = "edit"
-                                if exec_mode == "plan":
-                                    from infra.security_gate import DELEGATE_WRITE_KEYWORDS
-                                    task_lower = task.lower()
-                                    matched = [kw for kw in DELEGATE_WRITE_KEYWORDS if kw in task_lower]
-                                    if matched:
-                                        logger.warning(
-                                            f"[ModelRunner] plan 模式拦截写操作委派: "
-                                            f"model={self.model_id} role={role} keywords={matched}"
-                                        )
-                                        # 记录 plan 模式拦截的委托
-                                        if self._thinker:
-                                            from modules.thinking.core.delegation_port import DelegationResult
-                                            self._thinker.record_delegation(role, task, DelegationResult(
-                                                success=False, error="plan 模式拦截"
-                                            ))
-                                        return (
-                                            f"[安全门控拦截] 当前为 plan 模式（只读），检测到写操作关键词: {', '.join(matched)}。"
-                                            f"禁止委派写操作任务给「{role}」。\n"
-                                            "如需执行写操作，请切换到 edit 或 yolo 模式：输入 /mode edit 或 /mode yolo"
-                                        )
-
-                                from modules.thinking.core.delegation_port import (
-                                    ProbeDelegationAdapter, DelegationRequest,
-                                )
-                                wait_seconds = args.get("wait_seconds")
-                                try:
-                                    wait_seconds = max(1, min(600, int(wait_seconds))) if wait_seconds else None
-                                except Exception:
-                                    wait_seconds = None
-                                request = DelegationRequest(
-                                    role=role,
-                                    task=task,
-                                    session_id=self.session_id,
-                                    caller_model_id=self.model_id,
-                                    caller_tier=self.tier,
-                                    return_to_model_id=self.model_id,
-                                    return_to_session_id=self._return_to_session_id,
-                                    task_id=self._task_id,
-                                    wait_seconds=wait_seconds,
-                                    metadata={
-                                        "parent_delegation_id": getattr(self, "_delegation_id", ""),
-                                        "origin_task_id": getattr(self, "_origin_task_id", "") or self._task_id,
-                                    },
-                                )
-                                dlg_result = await ProbeDelegationAdapter().delegate(request)
-                                if not dlg_result.success:
-                                    # 委托失败 → 记录到 thinker 以便跟踪状态
-                                    error_msg = dlg_result.error or f"未找到匹配的角色 '{role}'"
-                                    logger.warning(f"[ModelRunner] 直通委托失败: role={role}, error={error_msg}")
-                                    if self._thinker:
-                                        self._thinker.record_delegation(role, task, dlg_result)
-                                    # 获取可用角色列表
-                                    try:
-                                        from modules.thinking.identity import get_identities
-                                        available_roles = sorted(set(
-                                            t.get("role", "") for t in get_identities().values()
-                                            if t.get("role")
-                                        ))
-                                        role_hint = "、".join(available_roles) if available_roles else "（无可用角色）"
-                                    except Exception:
-                                        role_hint = "（无法获取角色列表）"
-                                    return (
-                                        f"【委托失败】角色「{role}」不存在或不可用。错误：{error_msg}\n"
-                                        f"可用角色：{role_hint}\n"
-                                        f"请使用正确的角色名重新调用 delegate_task。"
-                                    )
-                                if self._thinker:
-                                    self._thinker.record_delegation(role, task, dlg_result)
-                                self._status = "waiting_delegation"
-                                self._status_detail = f"委托 {role}"
-                                # 记录完整委托链到黑板（供 query_delegation / resume_delegation 使用）
-                                self._record_delegation_chain(
-                                    role=role,
-                                    task=task,
-                                    probe_id=dlg_result.metadata.get("probe_id", ""),
-                                    target_tier=dlg_result.metadata.get("target_tier", ""),
-                                    wait_seconds=wait_seconds,
-                                )
-                                logger.info(f"[ModelRunner] 直通委托: role={role}, success={dlg_result.success}")
-                        except Exception as e:
-                            logger.warning(f"[ModelRunner] 直通委托失败: {e}")
-
-                    # 3. create_supervisor → 直接创建主管模型
-                    sv_result = ""
-                    for tc in supervisor_calls:
-                        try:
-                            args = json.loads(tc.arguments) if isinstance(tc.arguments, str) and tc.arguments.strip() else {}
-                            role = args.get("role", "").strip()
-                            template_key = args.get("template_key", "").strip()
-                            task = args.get("task", "").strip()
-                            if role and template_key:
-                                from modules.thinking.model_factory import get_model_factory
-                                from modules.thinking.identity import ModelIdentity
-                                factory = get_model_factory()
-                                # 先基于模板创建基础实例，再自定义 role
-                                identity = ModelIdentity.from_template(template_key)
-                                identity.role = role
-                                # 如果 identity 的 name 还是模板默认名，改成自定义 role
-                                from modules.thinking.identity import get_identities
-                                get_identities().get(template_key, {})
-                                identity.name = f"{role}_{self.session_id[:8]}"
-                                instance = factory.create_supervisor(identity=identity)
-                                sv_result = (
-                                    f"【创建主管成功】角色「{role}」已创建，model_id={instance.model_id}\n"
-                                )
-                                if task:
-                                    sv_result += f"初始任务：{task}\n"
-                                    sv_result += f"请使用 delegate_task(role=\"{role}\", task=\"{task}\") 来委托。"
-                                else:
-                                    sv_result += f"现在可以通过 delegate_task(role=\"{role}\", task=...) 来委托。"
-                                logger.info(f"[ModelRunner] create_supervisor: role={role}, model_id={instance.model_id}")
-                            else:
-                                sv_result = "【创建主管失败】缺少必填参数 role 或 template_key"
-                        except Exception as e:
-                            sv_result = f"【创建主管异常】{e}"
-                            logger.warning(f"[ModelRunner] create_supervisor 异常: {e}")
-
-                    if delegate_calls and not normal_calls and not supervisor_calls:
-                        # 仅有 delegate_task，生成通知文本供 thinking_step 展示
-                        delegate_notices = []
-                        for tc in delegate_calls:
-                            try:
-                                args = json.loads(tc.arguments) if isinstance(tc.arguments, str) and tc.arguments.strip() else {}
-                                role = args.get("role", "").strip()
-                                task = args.get("task", "").strip()
-                                if role:
-                                    delegate_notices.append(f"委托给 {role}：{task}")
-                                else:
-                                    delegate_notices.append("正在委托任务")
-                            except Exception:
-                                delegate_notices.append("正在委托任务")
-                        logger.info(f"[ModelRunner] {self.model_id} ⭐ DELEGATE_ONLY: {len(delegate_calls)} 个 delegate_task")
-                        return "【委托】" + "；".join(delegate_notices)
-
-                    if supervisor_calls and not normal_calls and not delegate_calls:
-                        # 仅有 create_supervisor，返回创建结果给模型
-                        return sv_result
-
-                    if control_calls and not normal_calls and not delegate_calls:
-                        # 控制工具（continue_thinking / respond_to_user / request_skill / list_skills）
-                        ctrl_notifications = []
-                        has_respond = False
-                        respond_content = ""
-                        skill_feedback = ""
-                        for tc in control_calls:
-                            try:
-                                args = json.loads(tc.arguments) if isinstance(tc.arguments, str) and tc.arguments.strip() else {}
-                                if tc.name == "respond_to_user":
-                                    respond_content = args.get("content", "")
-                                    ctrl_notifications.append(f"回复用户：{respond_content[:80]}")
-                                    has_respond = True
-                                elif tc.name == "request_skill":
-                                    skill_id = args.get("skill_id", "")
-                                    if self._active_skill and self._active_skill.id == skill_id:
-                                        preview = self._active_skill.description[:120].replace("\n", " ")
-                                        skill_feedback = f"【技能已激活】{self._active_skill.name}\n{preview}"
-                                    else:
-                                        skill_feedback = f"【技能未找到】skill_id={skill_id} 不存在。使用 list_skills 查看可用技能。"
-                                elif tc.name == "stop_skill":
-                                    if self._active_skill:
-                                        skill_feedback = f"【技能已停用】{self._active_skill.name}，已恢复默认角色。"
-                                    else:
-                                        skill_feedback = "【无活跃技能】当前没有激活的技能。"
-                                elif tc.name == "list_skills":
-                                    from modules.thinking.skills import get_skill_manager
-                                    all_skills = get_skill_manager().list_skills()
-                                    if all_skills:
-                                        lines = [f"- {s.id}: {s.name} — {s.description}" for s in all_skills]
-                                        skill_feedback = "【可用技能】\n" + "\n".join(lines)
-                                    else:
-                                        skill_feedback = "【可用技能】暂无可用技能"
-                                elif tc.name == "request_mode_change":
-                                    # 请求模式切换 — 暂停等待用户选择
-                                    reason = args.get("reason", "")
-                                    suggested = args.get("suggested_mode", "edit")
-                                    mode_result = await self._handle_mode_change_request(reason, suggested)
-                                    return mode_result
-                                elif tc.name == "ask_user_intent":
-                                    # 询问用户意图 — 暂停等待用户选择
-                                    question = args.get("question", "")
-                                    options = args.get("options", [])
-                                    context = args.get("context", "")
-                                    intent_result = await self._handle_ask_user_intent(question, options, context)
-                                    return intent_result
-                                else:
-                                    c = args.get("continue", True)
-                                    if c:
-                                        ctrl_notifications.append("继续思考")
-                                    else:
-                                        summary = args.get("result_summary", "")
-                                        if summary:
-                                            ctrl_notifications.append(f"思考结束：{summary}")
-                                        else:
-                                            ctrl_notifications.append("思考结束，准备输出结果")
-                            except Exception:
-                                ctrl_notifications.append("继续思考")
-                        if has_respond:
-                            return respond_content
-                        if skill_feedback:
-                            return skill_feedback
-                        # continue_thinking(continue=false): 优先返回模型的实际内容
-                        if ctrl_notifications:
-                            # 如果模型有实际内容（非空），返回内容而非控制摘要
-                            if content and content.strip():
-                                return content
-                            return "【思考控制】" + "；".join(ctrl_notifications)
-                        return content
-
-                    # ── 原有逻辑：构建 assistant 消息（只包含正常工具调用）──
-                    # 注意：assistant 消息已在上面统一构建（含 query/control 结果回传），
-                    # 此处仅执行 normal 工具并回传结果。
-                    if normal_calls:
-                        from infra.mcp.types import ToolCallRequest
-                        for tc in normal_calls:
-                            # ── 结构化工具轨迹（Phase 0）：开始/结束各发一条事件，
-                            #    前端据此渲染名称、参数、状态、耗时、结果预览 ──
-                            _tool_started = time.perf_counter()
-                            _tool_status = "ok"
-                            _tool_error = ""
-                            tool_args: Dict[str, Any] = {}
-                            try:
-                                self._status_detail = tc.name
-                                tool_args = json.loads(tc.arguments) if isinstance(tc.arguments, str) and tc.arguments.strip() else {}
-                                self._push_tool_call(tc, tool_args)
-                                missing = self._missing_required_tool_args(tc.name, tool_args)
-                                if missing:
-                                    _tool_status = "invalid"
-                                    _tool_error = f"缺少必填参数: {', '.join(missing)}"
-                                    # 生成友好提示，告诉模型正确的参数名
-                                    hint = ""
-                                    if tc.name == "keyboard_hotkey":
-                                        hint = " 正确用法: keyboard_hotkey(keys=['enter']) 或 keyboard_hotkey(key='enter')"
-                                    elif tc.name == "keyboard_press":
-                                        hint = " 正确用法: keyboard_press(key='enter')"
-                                    result = (
-                                        f"[工具 {tc.name} 调用被拦截: 缺少必填参数 {', '.join(missing)}。"
-                                        f"{hint}"
-                                    )
-                                    logger.warning(
-                                        f"[ModelRunner] 拦截无效工具调用: model={self.model_id} "
-                                        f"tool={tc.name} missing={missing}"
-                                    )
-                                else:
-                                    # ── 安全门控：所有工具调用经过安全审查 ──
-                                    gate = get_tool_security_gate()
-                                    # 构建审查上下文：任务描述 + 最近对话历史
-                                    ctx_parts = [f"当前任务: {self._task_description}"]
-                                    msgs = await self._check_messages()
-                                    if msgs:
-                                        ctx_parts.append(self._format_messages_for_context(msgs[-10:]))
-                                    dialog_ctx = "\n".join(ctx_parts)
-                                    try:
-                                        allowed, reason = await gate.check(
-                                            tool_name=tc.name,
-                                            tool_params=tool_args,
-                                            caller_tier=self.tier,
-                                            caller_model_id=self.model_id,
-                                            dialog_context=dialog_ctx,
-                                            caller_role=getattr(self.identity, "role", ""),
-                                            session_id=self.session_id,
-                                        )
-                                    except Exception as gate_err:
-                                        # Gate 异常 → 硬停，报错到 TUI
-                                        error_msg = f"安全门控异常，停止执行: {gate_err}"
-                                        logger.error(f"[ModelRunner] {error_msg}", exc_info=True)
-                                        if self.blackboard:
-                                            self.blackboard.add_observation(
-                                                "system", f"[严重错误] {error_msg}"
-                                            )
-                                        raise RuntimeError(error_msg) from gate_err
-
-                                    if not allowed:
-                                        _tool_status = "denied"
-                                        _tool_error = str(reason or "安全门控拒绝")
-                                        result = (
-                                            f"[安全门控拦截] {reason}\n"
-                                            f"请调整你的工具调用参数或选择其他工具来完成任务。"
-                                            f"如果被拒绝的是写操作，请先用只读工具（tools_search）确认目标。"
-                                        )
-                                        logger.warning(
-                                            f"[ModelRunner] 安全门控拦截: model={self.model_id} "
-                                            f"tool={tc.name} reason={reason}"
-                                        )
-                                    else:
-                                        # todo 工具：注入当前会话，任务列表按会话隔离（对齐主流 AI 的 per-task todo）
-                                        if tc.name == "todo":
-                                            tool_args.setdefault("session_id", self.session_id)
-                                        tool_request = ToolCallRequest(
-                                            tool_name=tc.name,
-                                            params=tool_args,
-                                            caller_role=self.tier,
-                                            caller_model_id=self.model_id,
-                                            source="model_runner",
-                                        )
-                                        # 同步 MCP execute 会阻塞事件循环（工具可能耗时 20-30s），
-                                        # 导致 WebSocket 无法处理 ping 而断开。用 to_thread 避免阻塞。
-                                        #
-                                        # 工具独立计时：执行期间冻结 AI 的静默计时（activity.pause），
-                                        # 工具超时只结束本次调用并把错误回传给模型，不占用整轮思考预算。
-                                        self.activity.pause()
-                                        mcp_result: Any = None
-                                        try:
-                                            mcp_result = await asyncio.wait_for(
-                                                asyncio.to_thread(mcp.execute, tool_request),
-                                                timeout=self.TOOL_CALL_TIMEOUT,
-                                            )
-                                        except asyncio.TimeoutError:
-                                            # 注意：to_thread 的底层线程无法被强杀，这里只是不再等待它，
-                                            # 把超时结果回传给模型，让 AI 自己换方案。
-                                            _tool_status = "timeout"
-                                            _tool_error = f"执行超时（>{self.TOOL_CALL_TIMEOUT:.0f}s）"
-                                            from types import SimpleNamespace
-                                            logger.warning(
-                                                f"[ModelRunner] 工具执行超时: model={self.model_id} "
-                                                f"tool={tc.name} timeout={self.TOOL_CALL_TIMEOUT:.0f}s"
-                                            )
-                                            if self.blackboard:
-                                                try:
-                                                    self.blackboard.add_observation(
-                                                        "system",
-                                                        f"工具 {tc.name} 执行超过 "
-                                                        f"{self.TOOL_CALL_TIMEOUT:.0f}s，已中止等待",
-                                                    )
-                                                except Exception as _swallowed_err:
-                                                    logger.debug(
-                                                        f"[tool_timeout] 黑板写入失败 (非致命): {_swallowed_err}"
-                                                    )
-                                            mcp_result = SimpleNamespace(
-                                                success=False,
-                                                result=None,
-                                                error=(
-                                                    f"执行超时（>{self.TOOL_CALL_TIMEOUT:.0f}s），已中止等待。"
-                                                    "请缩小范围/减少输出后重试，或换用其他工具。"
-                                                ),
-                                            )
-                                        finally:
-                                            self.activity.resume()
-                                        if mcp_result.success:
-                                            result = str(mcp_result.result) if mcp_result.result is not None else "(无返回值)"
-                                            # todo 变更 → 推送前端（替代前端轮询），按需刷新 todo 面板
-                                            if tc.name == "todo":
-                                                self._push_todo_update()
-                                        else:
-                                            error_msg = mcp_result.error or f"MCP 执行失败（无错误信息）: {tc.name}"
-                                            result = f"[错误: {error_msg}]"
-                                            if _tool_status == "ok":
-                                                _tool_status = "error"
-                                            _tool_error = error_msg
-                                            if self.tier == "expert":
-                                                expert_errors.append(f"{tc.name}: {mcp_result.error}")
-                                        # 审批结果回传：让模型明确知道该工具经过了用户审批
-                                        # （gate.check 的 reason 以"用户批准/用户拒绝"开头表示走了用户审批）
-                                        if reason and reason.startswith("用户批准"):
-                                            result = f"[用户审批已通过] {reason}\n{result}"
-                            except Exception as e:
-                                _tool_status = "error"
-                                _tool_error = str(e)
-                                result = f"[工具 {tc.name} 执行失败: {e}]"
-                                if self.tier == "expert":
-                                    expert_errors.append(f"{tc.name}: {e}")
-
-                            self._push_tool_result(
-                                tc, result,
-                                status=_tool_status,
-                                duration_ms=(time.perf_counter() - _tool_started) * 1000,
-                                error=_tool_error,
-                                args=tool_args,
-                            )
-                            logger.info(f"[ModelRunner] {self.model_id} 第{turn}轮 {tc.name} → {result[:400]}")
-                            # 写入 Blackboard — 简洁的一行摘要，让 TUI 直观显示
-                            if self.blackboard and tc.name not in ("continue_thinking", "respond_to_user", "delegate_task", "create_supervisor", "request_skill", "list_skills"):
-                                try:
-                                    # 生成简洁摘要
-                                    if tc.name == "web_search":
-                                        count = result.count("'title':") if result else 0
-                                        summary = f"web_search: {count} results"
-                                    elif tc.name == "exec_command" or tc.name == "run_command":
-                                        cmd = tool_args.get("command", "")[:60]
-                                        exit_code = "?"
-                                        try:
-                                            import json as _json
-                                            r = _json.loads(result) if result.startswith("{") else {}
-                                            exit_code = r.get("exit_code", "?")
-                                        except Exception as _swallowed_err:
-                                            logger.debug(f"[_on_token] ignored Exception: {_swallowed_err}")
-                                        summary = f"{tc.name}: {cmd} → exit={exit_code}"
-                                    elif tc.name == "git_status":
-                                        summary = "git_status: ok"
-                                    elif result and len(result) <= 80:
-                                        summary = f"{tc.name}: {result}"
-                                    else:
-                                        summary = f"{tc.name}: done ({len(result)} chars)"
-                                    self.blackboard.write_thought(
-                                        model_id=self.model_id,
-                                        tier=self.tier,
-                                        content=summary,
-                                        round_num=turn,
-                                        metadata={
-                                            "return_to_model_id": self._return_to_model_id,
-                                        },
-                                    )
-                                except Exception as e:
-                                    logger.debug(f"[Blackboard] 工具结果写入失败 (非致命): {e}")
-                            # Web 工具返回结果需用不可信块包裹（防 prompt 注入）
-                            WEB_TOOLS = {"web_search", "web_fetch"}
-                            if tc.name in WEB_TOOLS:
-                                wrapped_content = (
-                                    "=== UNTRUSTED_WEB_CONTENT_START ===\n"
-                                    + (result if len(result) <= 3800 else result[:3800] + "...[截断]")
-                                    + "\n=== UNTRUSTED_WEB_CONTENT_END ==="
-                                )
-                                messages.append(ChatMessage(
-                                    role="tool",
-                                    content=wrapped_content,
-                                    tool_call_id=getattr(tc, 'id', None) or tc.name,
-                                ))
-                            else:
-                                messages.append(ChatMessage(
-                                    role="tool",
-                                    content=result[:4000] if len(result) > 4000 else result,
-                                    tool_call_id=getattr(tc, 'id', None) or tc.name,
-                                ))
-                        continue
+                    early_return = await self._execute_react_turn_tools(
+                        messages=messages,
+                        content=content,
+                        turn=turn,
+                        mcp=mcp,
+                        query_calls=query_calls,
+                        control_calls=control_calls,
+                        delegate_calls=delegate_calls,
+                        supervisor_calls=supervisor_calls,
+                        normal_calls=normal_calls,
+                        expert_errors=expert_errors,
+                    )
+                    if early_return is not None:
+                        return early_return
+                    continue
 
                 # MAX_CHAT_TOOL_TURNS 耗尽
                 logger.warning(f"[ModelRunner] {self.model_id} 工具调用达到最大轮次")
@@ -3533,6 +2971,636 @@ class ModelRunner:
         if last_error and "503" in str(last_error):
             return "[系统] 模型 API 服务暂时繁忙（503），请稍后重试。"
         return f"[模型调用失败: {last_error}]"
+
+    async def _execute_react_turn_tools(
+        self,
+        *,
+        messages: list,
+        content: str,
+        turn: int,
+        mcp: Any,
+        query_calls: list,
+        control_calls: list,
+        delegate_calls: list,
+        supervisor_calls: list,
+        normal_calls: list,
+        expert_errors: list,
+    ) -> Optional[str]:
+        """执行单轮 ReAct 工具调用（query/control/delegate/supervisor/normal），与工作流节点共享。"""
+        from infra.model.base_model import ChatMessage
+        _CONTROL_RESULT_TOOLS = (
+            "request_skill", "stop_skill", "list_skills", "stop_task",
+            "query_delegation", "resume_delegation", "inspect_delegation",
+            "read_context", "narrow_my_tools", "reset_my_tools",
+        )
+        # ── query_tool_details → 把工具完整定义作为 tool 消息回传，
+        #    让模型看到详情后在同一思考轮次内继续调用该工具（避免反复重查） ──
+        for tc in query_calls:
+            try:
+                args = json.loads(tc.arguments) if isinstance(tc.arguments, str) and tc.arguments.strip() else {}
+                target_name = str(args.get("tool_name", "")).strip()
+                if not target_name:
+                    result = "【查询失败】缺少 tool_name 参数。请提供要查询的工具名称。"
+                else:
+                    tool_info = ToolRegistry.get_tool(target_name)
+                    if not tool_info:
+                        available = sorted(ToolRegistry._tools.keys())
+                        hint = "、".join(available[:20])
+                        if len(available) > 20:
+                            hint += f" 等共 {len(available)} 个"
+                        result = f"【查询失败】工具「{target_name}」不存在。可用工具：{hint}"
+                    else:
+                        schema = tool_info.to_json_schema()
+                        result_parts = [
+                            f"【工具详情：{target_name}】",
+                            f"描述：{tool_info.description}",
+                            f"风险等级：{tool_info.risk_level}",
+                            f"类别：{tool_info.category}",
+                            f"参数 Schema：\n{json.dumps(schema, ensure_ascii=False, indent=2)}",
+                        ]
+                        result = "\n".join(result_parts)
+            except Exception as e:
+                result = f"【查询异常】{e}"
+            messages.append(ChatMessage(
+                role="tool",
+                content=result[:4000] if len(result) > 4000 else result,
+                tool_call_id=getattr(tc, 'id', None) or tc.name,
+            ))
+            logger.info(f"[ModelRunner] {self.model_id} 查询工具详情: {target_name}")
+
+        # ── 处理工具调用接口（continue_thinking, delegate_task 等）──
+        # 1. continue_thinking / respond_to_user 记录决策（由 thinker 决定终止，不结束工具循环）
+        #    信息型工具（list_skills/request_skill/stop_skill/stop_task）结果作为 tool 消息回传后继续，
+        #    避免模型看不到结果而重复调用（与 query_tool_details 同类 bug）
+        for tc in control_calls:
+            try:
+                args = json.loads(tc.arguments) if isinstance(tc.arguments, str) and tc.arguments.strip() else {}
+                result = ""
+                if tc.name == "continue_thinking":
+                    ctrl = {"continue": args.get("continue", True)}
+                    if "wait_seconds" in args:
+                        ctrl["wait_seconds"] = max(1, min(600, int(args["wait_seconds"])))
+                    if "result_summary" in args:
+                        ctrl["result_summary"] = args["result_summary"]
+                    if self._thinker:
+                        self._thinker.record_control_decision(ctrl)
+                elif tc.name == "respond_to_user":
+                    content = args.get("content", "")
+                    if self._thinker:
+                        self._thinker.record_control_decision({"continue": False, "result_summary": content})
+                elif tc.name == "set_memory_focus":
+                    mix = args.get("mix", {})
+                    if self._thinker and isinstance(mix, dict):
+                        self._thinker._memory_focus = mix
+                elif tc.name == "request_skill":
+                    skill_id = args.get("skill_id", "")
+                    if skill_id:
+                        # 技能总开关检查
+                        try:
+                            from config.settings import settings as _chk
+                            _skills_on = getattr(_chk, "SKILLS_ENABLED", True)
+                        except Exception:
+                            _skills_on = True
+                        if not _skills_on:
+                            result = "【技能系统已关闭】管理员已关闭技能系统，无法激活技能。"
+                        else:
+                            # 强制技能锁定：用户设置了 forced_skill 时，不允许切换到其他技能
+                            try:
+                                from config.settings import settings as _settings
+                                _forced = _settings.get_forced_skill()
+                            except Exception:
+                                _forced = ""
+                            if _forced and _forced != skill_id:
+                                result = f"【技能切换被拒绝】系统已强制使用技能 '{_forced}'，不可切换到其他技能。使用 list_skills 查看当前可用技能。"
+                            else:
+                                from modules.thinking.skills import get_skill_manager
+                                skill = get_skill_manager().get_skill(skill_id)
+                                role = getattr(self.identity, "role", "")
+                                allowed = skill and skill.enabled and (
+                                    skill in get_skill_manager().list_skills_for_role(role)
+                                )
+                                if allowed:
+                                    self._set_active_skill(skill)
+                                    logger.info(f"[ModelRunner] 技能已切换: {skill_id}")
+                                    preview = skill.description[:120].replace("\n", " ")  # type: ignore[union-attr]
+                                    result = f"【技能已激活】{skill.name}\n{preview}"  # type: ignore[union-attr]
+                                else:
+                                    result = f"【技能不可用】skill_id={skill_id} 不存在、已禁用或当前角色不可用。使用 list_skills 查看可用技能。"
+                elif tc.name == "stop_skill":
+                    # 强制技能锁定：forced_skill 不可停用
+                    try:
+                        from config.settings import settings as _settings
+                        _forced = _settings.get_forced_skill()
+                    except Exception:
+                        _forced = ""
+                    if _forced:
+                        result = f"【技能停用被拒绝】系统已强制使用技能 '{_forced}'，不可停用。"
+                    elif self._active_skill:
+                        skill_name = self._active_skill.name
+                        reason = args.get("reason", "")
+                        logger.info(f"[ModelRunner] 技能已停用: {self._active_skill.id} ({reason})")
+                        self._set_active_skill(None)
+                        result = f"【技能已停用】{skill_name}，已恢复默认角色。"
+                    else:
+                        result = "【无活跃技能】当前没有激活的技能。"
+                elif tc.name == "list_skills":
+                    from modules.thinking.skills import get_skill_manager
+                    skills = get_skill_manager().list_skills_for_role(getattr(self.identity, "role", ""))
+                    logger.info(f"[ModelRunner] 列出技能: {len(skills)} 个")
+                    result = "【可用技能】" + (
+                        "\n" + "\n".join(f"- {s.id}: {s.name} — {s.description[:80]}" for s in skills)
+                        if skills else "暂无可用技能"
+                    )
+                elif tc.name == "stop_task":
+                    target = args.get("target_model_id", "").strip()
+                    reason = args.get("reason", "").strip()
+                    if target and reason:
+                        logger.info(
+                            f"[ModelRunner] {self.model_id} 停止任务: {target} ({reason})"
+                        )
+                        if self.manager and hasattr(self.manager, 'stop_runner'):
+                            success = await self.manager.stop_runner(target)
+                            if success:
+                                result = (
+                                    f"【任务已停止】已停止 {target}，原因: {reason}\n"
+                                    f"你可以重新 delegate_task 来分派任务。"
+                                )
+                            else:
+                                result = (
+                                    f"【停止失败】无法找到 {target}，"
+                                    f"可能已自然结束或被其他主管停止。"
+                                )
+                        else:
+                            result = "【停止失败】当前上下文无法操作 runner 管理器。"
+                    else:
+                        result = "【停止失败】缺少 target_model_id 或 reason 参数。"
+                elif tc.name == "query_delegation":
+                    result = await self._handle_query_delegation(args)
+                elif tc.name == "resume_delegation":
+                    result = await self._handle_resume_delegation(args)
+                elif tc.name == "inspect_delegation":
+                    result = await self._handle_inspect_delegation(args)
+                elif tc.name == "read_context":
+                    result = await self._handle_read_context(args)
+                elif tc.name == "narrow_my_tools":
+                    result = self._handle_narrow_my_tools(args)
+                elif tc.name == "reset_my_tools":
+                    result = self._handle_reset_my_tools()
+                if result:
+                    messages.append(ChatMessage(
+                        role="tool",
+                        content=result[:4000] if len(result) > 4000 else result,
+                        tool_call_id=getattr(tc, 'id', None) or tc.name,
+                    ))
+            except Exception as e:
+                logger.debug(f"[ModelRunner] 控制工具处理异常 (非致命): {e}")
+                # 若该工具已被 assistant.tool_calls 声明，必须补回 tool 响应，
+                # 否则 OpenAI 报"未应答的 tool_calls"并在下一轮重复调用
+                if tc.name in _CONTROL_RESULT_TOOLS:
+                    messages.append(ChatMessage(
+                        role="tool",
+                        content=f"[{tc.name} 执行异常: {e}]",
+                        tool_call_id=getattr(tc, 'id', None) or tc.name,
+                    ))
+
+        # 2. delegate_task → 执行模式检查 + 委托 + 记录到 thinker
+        if delegate_calls:
+            logger.info(f"[ModelRunner] {self.model_id} 检测到 delegate_task 工具调用: {len(delegate_calls)} 个")
+        for tc in delegate_calls:
+            try:
+                args = json.loads(tc.arguments) if isinstance(tc.arguments, str) and tc.arguments.strip() else {}
+                role = args.get("role", "").strip()
+                task = args.get("task", "").strip()
+                if role and task:
+                    # ── 执行模式检查：plan 模式拦截写操作委派 ──
+                    try:
+                        from config.settings import settings
+                        exec_mode = settings.effective_execution_mode
+                    except Exception:
+                        exec_mode = "edit"
+                    if exec_mode == "plan":
+                        from infra.security_gate import DELEGATE_WRITE_KEYWORDS
+                        task_lower = task.lower()
+                        matched = [kw for kw in DELEGATE_WRITE_KEYWORDS if kw in task_lower]
+                        if matched:
+                            logger.warning(
+                                f"[ModelRunner] plan 模式拦截写操作委派: "
+                                f"model={self.model_id} role={role} keywords={matched}"
+                            )
+                            # 记录 plan 模式拦截的委托
+                            if self._thinker:
+                                from modules.thinking.core.delegation_port import DelegationResult
+                                self._thinker.record_delegation(role, task, DelegationResult(
+                                    success=False, error="plan 模式拦截"
+                                ))
+                            return (
+                                f"[安全门控拦截] 当前为 plan 模式（只读），检测到写操作关键词: {', '.join(matched)}。"
+                                f"禁止委派写操作任务给「{role}」。\n"
+                                "如需执行写操作，请切换到 edit 或 yolo 模式：输入 /mode edit 或 /mode yolo"
+                            )
+
+                    from modules.thinking.core.delegation_port import (
+                        ProbeDelegationAdapter, DelegationRequest,
+                    )
+                    wait_seconds = args.get("wait_seconds")
+                    try:
+                        wait_seconds = max(1, min(600, int(wait_seconds))) if wait_seconds else None
+                    except Exception:
+                        wait_seconds = None
+                    request = DelegationRequest(
+                        role=role,
+                        task=task,
+                        session_id=self.session_id,
+                        caller_model_id=self.model_id,
+                        caller_tier=self.tier,
+                        return_to_model_id=self.model_id,
+                        return_to_session_id=self._return_to_session_id,
+                        task_id=self._task_id,
+                        wait_seconds=wait_seconds,
+                        metadata={
+                            "parent_delegation_id": getattr(self, "_delegation_id", ""),
+                            "origin_task_id": getattr(self, "_origin_task_id", "") or self._task_id,
+                        },
+                    )
+                    dlg_result = await ProbeDelegationAdapter().delegate(request)
+                    if not dlg_result.success:
+                        # 委托失败 → 记录到 thinker 以便跟踪状态
+                        error_msg = dlg_result.error or f"未找到匹配的角色 '{role}'"
+                        logger.warning(f"[ModelRunner] 直通委托失败: role={role}, error={error_msg}")
+                        if self._thinker:
+                            self._thinker.record_delegation(role, task, dlg_result)
+                        # 获取可用角色列表
+                        try:
+                            from modules.thinking.identity import get_identities
+                            available_roles = sorted(set(
+                                t.get("role", "") for t in get_identities().values()
+                                if t.get("role")
+                            ))
+                            role_hint = "、".join(available_roles) if available_roles else "（无可用角色）"
+                        except Exception:
+                            role_hint = "（无法获取角色列表）"
+                        return (
+                            f"【委托失败】角色「{role}」不存在或不可用。错误：{error_msg}\n"
+                            f"可用角色：{role_hint}\n"
+                            f"请使用正确的角色名重新调用 delegate_task。"
+                        )
+                    if self._thinker:
+                        self._thinker.record_delegation(role, task, dlg_result)
+                    self._status = "waiting_delegation"
+                    self._status_detail = f"委托 {role}"
+                    # 记录完整委托链到黑板（供 query_delegation / resume_delegation 使用）
+                    self._record_delegation_chain(
+                        role=role,
+                        task=task,
+                        probe_id=dlg_result.metadata.get("probe_id", ""),
+                        target_tier=dlg_result.metadata.get("target_tier", ""),
+                        wait_seconds=wait_seconds,
+                    )
+                    logger.info(f"[ModelRunner] 直通委托: role={role}, success={dlg_result.success}")
+            except Exception as e:
+                logger.warning(f"[ModelRunner] 直通委托失败: {e}")
+
+        # 3. create_supervisor → 直接创建主管模型
+        sv_result = ""
+        for tc in supervisor_calls:
+            try:
+                args = json.loads(tc.arguments) if isinstance(tc.arguments, str) and tc.arguments.strip() else {}
+                role = args.get("role", "").strip()
+                template_key = args.get("template_key", "").strip()
+                task = args.get("task", "").strip()
+                if role and template_key:
+                    from modules.thinking.model_factory import get_model_factory
+                    from modules.thinking.identity import ModelIdentity
+                    factory = get_model_factory()
+                    # 先基于模板创建基础实例，再自定义 role
+                    identity = ModelIdentity.from_template(template_key)
+                    identity.role = role
+                    # 如果 identity 的 name 还是模板默认名，改成自定义 role
+                    from modules.thinking.identity import get_identities
+                    get_identities().get(template_key, {})
+                    identity.name = f"{role}_{self.session_id[:8]}"
+                    instance = factory.create_supervisor(identity=identity)
+                    sv_result = (
+                        f"【创建主管成功】角色「{role}」已创建，model_id={instance.model_id}\n"
+                    )
+                    if task:
+                        sv_result += f"初始任务：{task}\n"
+                        sv_result += f"请使用 delegate_task(role=\"{role}\", task=\"{task}\") 来委托。"
+                    else:
+                        sv_result += f"现在可以通过 delegate_task(role=\"{role}\", task=...) 来委托。"
+                    logger.info(f"[ModelRunner] create_supervisor: role={role}, model_id={instance.model_id}")
+                else:
+                    sv_result = "【创建主管失败】缺少必填参数 role 或 template_key"
+            except Exception as e:
+                sv_result = f"【创建主管异常】{e}"
+                logger.warning(f"[ModelRunner] create_supervisor 异常: {e}")
+
+        if delegate_calls and not normal_calls and not supervisor_calls:
+            # 仅有 delegate_task，生成通知文本供 thinking_step 展示
+            delegate_notices = []
+            for tc in delegate_calls:
+                try:
+                    args = json.loads(tc.arguments) if isinstance(tc.arguments, str) and tc.arguments.strip() else {}
+                    role = args.get("role", "").strip()
+                    task = args.get("task", "").strip()
+                    if role:
+                        delegate_notices.append(f"委托给 {role}：{task}")
+                    else:
+                        delegate_notices.append("正在委托任务")
+                except Exception:
+                    delegate_notices.append("正在委托任务")
+            logger.info(f"[ModelRunner] {self.model_id} ⭐ DELEGATE_ONLY: {len(delegate_calls)} 个 delegate_task")
+            return "【委托】" + "；".join(delegate_notices)
+
+        if supervisor_calls and not normal_calls and not delegate_calls:
+            # 仅有 create_supervisor，返回创建结果给模型
+            return sv_result
+
+        if control_calls and not normal_calls and not delegate_calls:
+            # 控制工具（continue_thinking / respond_to_user / request_skill / list_skills）
+            ctrl_notifications = []
+            has_respond = False
+            respond_content = ""
+            skill_feedback = ""
+            for tc in control_calls:
+                try:
+                    args = json.loads(tc.arguments) if isinstance(tc.arguments, str) and tc.arguments.strip() else {}
+                    if tc.name == "respond_to_user":
+                        respond_content = args.get("content", "")
+                        ctrl_notifications.append(f"回复用户：{respond_content[:80]}")
+                        has_respond = True
+                    elif tc.name == "request_skill":
+                        skill_id = args.get("skill_id", "")
+                        if self._active_skill and self._active_skill.id == skill_id:
+                            preview = self._active_skill.description[:120].replace("\n", " ")
+                            skill_feedback = f"【技能已激活】{self._active_skill.name}\n{preview}"
+                        else:
+                            skill_feedback = f"【技能未找到】skill_id={skill_id} 不存在。使用 list_skills 查看可用技能。"
+                    elif tc.name == "stop_skill":
+                        if self._active_skill:
+                            skill_feedback = f"【技能已停用】{self._active_skill.name}，已恢复默认角色。"
+                        else:
+                            skill_feedback = "【无活跃技能】当前没有激活的技能。"
+                    elif tc.name == "list_skills":
+                        from modules.thinking.skills import get_skill_manager
+                        all_skills = get_skill_manager().list_skills()
+                        if all_skills:
+                            lines = [f"- {s.id}: {s.name} — {s.description}" for s in all_skills]
+                            skill_feedback = "【可用技能】\n" + "\n".join(lines)
+                        else:
+                            skill_feedback = "【可用技能】暂无可用技能"
+                    elif tc.name == "request_mode_change":
+                        # 请求模式切换 — 暂停等待用户选择
+                        reason = args.get("reason", "")
+                        suggested = args.get("suggested_mode", "edit")
+                        mode_result = await self._handle_mode_change_request(reason, suggested)
+                        return mode_result
+                    elif tc.name == "ask_user_intent":
+                        # 询问用户意图 — 暂停等待用户选择
+                        question = args.get("question", "")
+                        options = args.get("options", [])
+                        context = args.get("context", "")
+                        intent_result = await self._handle_ask_user_intent(question, options, context)
+                        return intent_result
+                    else:
+                        c = args.get("continue", True)
+                        if c:
+                            ctrl_notifications.append("继续思考")
+                        else:
+                            summary = args.get("result_summary", "")
+                            if summary:
+                                ctrl_notifications.append(f"思考结束：{summary}")
+                            else:
+                                ctrl_notifications.append("思考结束，准备输出结果")
+                except Exception:
+                    ctrl_notifications.append("继续思考")
+            if has_respond:
+                return respond_content
+            if skill_feedback:
+                return skill_feedback
+            # continue_thinking(continue=false): 优先返回模型的实际内容
+            if ctrl_notifications:
+                # 如果模型有实际内容（非空），返回内容而非控制摘要
+                if content and content.strip():
+                    return content
+                return "【思考控制】" + "；".join(ctrl_notifications)
+            return content
+
+        # ── 原有逻辑：构建 assistant 消息（只包含正常工具调用）──
+        # 注意：assistant 消息已在上面统一构建（含 query/control 结果回传），
+        # 此处仅执行 normal 工具并回传结果。
+        if normal_calls:
+            from infra.mcp.types import ToolCallRequest
+            for tc in normal_calls:
+                # ── 结构化工具轨迹（Phase 0）：开始/结束各发一条事件，
+                #    前端据此渲染名称、参数、状态、耗时、结果预览 ──
+                _tool_started = time.perf_counter()
+                _tool_status = "ok"
+                _tool_error = ""
+                tool_args: Dict[str, Any] = {}
+                try:
+                    self._status_detail = tc.name
+                    tool_args = json.loads(tc.arguments) if isinstance(tc.arguments, str) and tc.arguments.strip() else {}
+                    self._push_tool_call(tc, tool_args)
+                    missing = self._missing_required_tool_args(tc.name, tool_args)
+                    if missing:
+                        _tool_status = "invalid"
+                        _tool_error = f"缺少必填参数: {', '.join(missing)}"
+                        # 生成友好提示，告诉模型正确的参数名
+                        hint = ""
+                        if tc.name == "keyboard_hotkey":
+                            hint = " 正确用法: keyboard_hotkey(keys=['enter']) 或 keyboard_hotkey(key='enter')"
+                        elif tc.name == "keyboard_press":
+                            hint = " 正确用法: keyboard_press(key='enter')"
+                        result = (
+                            f"[工具 {tc.name} 调用被拦截: 缺少必填参数 {', '.join(missing)}。"
+                            f"{hint}"
+                        )
+                        logger.warning(
+                            f"[ModelRunner] 拦截无效工具调用: model={self.model_id} "
+                            f"tool={tc.name} missing={missing}"
+                        )
+                    else:
+                        # ── 安全门控：所有工具调用经过安全审查 ──
+                        gate = get_tool_security_gate()
+                        # 构建审查上下文：任务描述 + 最近对话历史
+                        ctx_parts = [f"当前任务: {self._task_description}"]
+                        msgs = await self._check_messages()
+                        if msgs:
+                            ctx_parts.append(self._format_messages_for_context(msgs[-10:]))
+                        dialog_ctx = "\n".join(ctx_parts)
+                        try:
+                            allowed, reason = await gate.check(
+                                tool_name=tc.name,
+                                tool_params=tool_args,
+                                caller_tier=self.tier,
+                                caller_model_id=self.model_id,
+                                dialog_context=dialog_ctx,
+                                caller_role=getattr(self.identity, "role", ""),
+                                session_id=self.session_id,
+                            )
+                        except Exception as gate_err:
+                            # Gate 异常 → 硬停，报错到 TUI
+                            error_msg = f"安全门控异常，停止执行: {gate_err}"
+                            logger.error(f"[ModelRunner] {error_msg}", exc_info=True)
+                            if self.blackboard:
+                                self.blackboard.add_observation(
+                                    "system", f"[严重错误] {error_msg}"
+                                )
+                            raise RuntimeError(error_msg) from gate_err
+
+                        if not allowed:
+                            _tool_status = "denied"
+                            _tool_error = str(reason or "安全门控拒绝")
+                            result = (
+                                f"[安全门控拦截] {reason}\n"
+                                f"请调整你的工具调用参数或选择其他工具来完成任务。"
+                                f"如果被拒绝的是写操作，请先用只读工具（tools_search）确认目标。"
+                            )
+                            logger.warning(
+                                f"[ModelRunner] 安全门控拦截: model={self.model_id} "
+                                f"tool={tc.name} reason={reason}"
+                            )
+                        else:
+                            # todo 工具：注入当前会话，任务列表按会话隔离（对齐主流 AI 的 per-task todo）
+                            if tc.name == "todo":
+                                tool_args.setdefault("session_id", self.session_id)
+                            tool_request = ToolCallRequest(
+                                tool_name=tc.name,
+                                params=tool_args,
+                                caller_role=self.tier,
+                                caller_model_id=self.model_id,
+                                source="model_runner",
+                            )
+                            # 同步 MCP execute 会阻塞事件循环（工具可能耗时 20-30s），
+                            # 导致 WebSocket 无法处理 ping 而断开。用 to_thread 避免阻塞。
+                            #
+                            # 工具独立计时：执行期间冻结 AI 的静默计时（activity.pause），
+                            # 工具超时只结束本次调用并把错误回传给模型，不占用整轮思考预算。
+                            self.activity.pause()
+                            mcp_result: Any = None
+                            try:
+                                mcp_result = await asyncio.wait_for(
+                                    asyncio.to_thread(mcp.execute, tool_request),
+                                    timeout=self.TOOL_CALL_TIMEOUT,
+                                )
+                            except asyncio.TimeoutError:
+                                # 注意：to_thread 的底层线程无法被强杀，这里只是不再等待它，
+                                # 把超时结果回传给模型，让 AI 自己换方案。
+                                _tool_status = "timeout"
+                                _tool_error = f"执行超时（>{self.TOOL_CALL_TIMEOUT:.0f}s）"
+                                from types import SimpleNamespace
+                                logger.warning(
+                                    f"[ModelRunner] 工具执行超时: model={self.model_id} "
+                                    f"tool={tc.name} timeout={self.TOOL_CALL_TIMEOUT:.0f}s"
+                                )
+                                if self.blackboard:
+                                    try:
+                                        self.blackboard.add_observation(
+                                            "system",
+                                            f"工具 {tc.name} 执行超过 "
+                                            f"{self.TOOL_CALL_TIMEOUT:.0f}s，已中止等待",
+                                        )
+                                    except Exception as _swallowed_err:
+                                        logger.debug(
+                                            f"[tool_timeout] 黑板写入失败 (非致命): {_swallowed_err}"
+                                        )
+                                mcp_result = SimpleNamespace(
+                                    success=False,
+                                    result=None,
+                                    error=(
+                                        f"执行超时（>{self.TOOL_CALL_TIMEOUT:.0f}s），已中止等待。"
+                                        "请缩小范围/减少输出后重试，或换用其他工具。"
+                                    ),
+                                )
+                            finally:
+                                self.activity.resume()
+                            if mcp_result.success:
+                                result = str(mcp_result.result) if mcp_result.result is not None else "(无返回值)"
+                                # todo 变更 → 推送前端（替代前端轮询），按需刷新 todo 面板
+                                if tc.name == "todo":
+                                    self._push_todo_update()
+                            else:
+                                error_msg = mcp_result.error or f"MCP 执行失败（无错误信息）: {tc.name}"
+                                result = f"[错误: {error_msg}]"
+                                if _tool_status == "ok":
+                                    _tool_status = "error"
+                                _tool_error = error_msg
+                                if self.tier == "expert":
+                                    expert_errors.append(f"{tc.name}: {mcp_result.error}")
+                            # 审批结果回传：让模型明确知道该工具经过了用户审批
+                            # （gate.check 的 reason 以"用户批准/用户拒绝"开头表示走了用户审批）
+                            if reason and reason.startswith("用户批准"):
+                                result = f"[用户审批已通过] {reason}\n{result}"
+                except Exception as e:
+                    _tool_status = "error"
+                    _tool_error = str(e)
+                    result = f"[工具 {tc.name} 执行失败: {e}]"
+                    if self.tier == "expert":
+                        expert_errors.append(f"{tc.name}: {e}")
+
+                self._push_tool_result(
+                    tc, result,
+                    status=_tool_status,
+                    duration_ms=(time.perf_counter() - _tool_started) * 1000,
+                    error=_tool_error,
+                    args=tool_args,
+                )
+                logger.info(f"[ModelRunner] {self.model_id} 第{turn}轮 {tc.name} → {result[:400]}")
+                # 写入 Blackboard — 简洁的一行摘要，让 TUI 直观显示
+                if self.blackboard and tc.name not in ("continue_thinking", "respond_to_user", "delegate_task", "create_supervisor", "request_skill", "list_skills"):
+                    try:
+                        # 生成简洁摘要
+                        if tc.name == "web_search":
+                            count = result.count("'title':") if result else 0
+                            summary = f"web_search: {count} results"
+                        elif tc.name == "exec_command" or tc.name == "run_command":
+                            cmd = tool_args.get("command", "")[:60]
+                            exit_code = "?"
+                            try:
+                                import json as _json
+                                r = _json.loads(result) if result.startswith("{") else {}
+                                exit_code = r.get("exit_code", "?")
+                            except Exception as _swallowed_err:
+                                logger.debug(f"[_on_token] ignored Exception: {_swallowed_err}")
+                            summary = f"{tc.name}: {cmd} → exit={exit_code}"
+                        elif tc.name == "git_status":
+                            summary = "git_status: ok"
+                        elif result and len(result) <= 80:
+                            summary = f"{tc.name}: {result}"
+                        else:
+                            summary = f"{tc.name}: done ({len(result)} chars)"
+                        self.blackboard.write_thought(
+                            model_id=self.model_id,
+                            tier=self.tier,
+                            content=summary,
+                            round_num=turn,
+                            metadata={
+                                "return_to_model_id": self._return_to_model_id,
+                            },
+                        )
+                    except Exception as e:
+                        logger.debug(f"[Blackboard] 工具结果写入失败 (非致命): {e}")
+                # Web 工具返回结果需用不可信块包裹（防 prompt 注入）
+                WEB_TOOLS = {"web_search", "web_fetch"}
+                if tc.name in WEB_TOOLS:
+                    wrapped_content = (
+                        "=== UNTRUSTED_WEB_CONTENT_START ===\n"
+                        + (result if len(result) <= 3800 else result[:3800] + "...[截断]")
+                        + "\n=== UNTRUSTED_WEB_CONTENT_END ==="
+                    )
+                    messages.append(ChatMessage(
+                        role="tool",
+                        content=wrapped_content,
+                        tool_call_id=getattr(tc, 'id', None) or tc.name,
+                    ))
+                else:
+                    messages.append(ChatMessage(
+                        role="tool",
+                        content=result[:4000] if len(result) > 4000 else result,
+                        tool_call_id=getattr(tc, 'id', None) or tc.name,
+                    ))
+        return None
 
     @staticmethod
     def _format_messages_for_context(messages: list) -> str:

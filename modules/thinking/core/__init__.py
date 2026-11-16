@@ -9,6 +9,7 @@
 模型生命周期由 modules.thinking.model_factory.ModelInstanceFactory 统一管理。
 """
 from .continuous_thinker import ContinuousThinker
+from .workflow_thinker import WorkflowThinker
 from .delegation_port import (
     DelegationPort,
     DelegationRequest,
@@ -29,6 +30,7 @@ from .process_collector import (
 )
 
 __all__ = [
+    "WorkflowThinker",
     "ContinuousThinker",
     "ThinkingProcessCollector",
     "ThinkingProcessCollectorFactory",

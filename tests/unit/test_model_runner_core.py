@@ -275,7 +275,9 @@ def test_think_loop_expert_single_round(monkeypatch):
     thinker._running = False
     CT = MagicMock(return_value=thinker)
     import modules.thinking.core.continuous_thinker as ct_mod
+    import modules.thinking.core.workflow_thinker as wf_mod
     monkeypatch.setattr(ct_mod, "ContinuousThinker", CT)
+    monkeypatch.setattr(wf_mod, "WorkflowThinker", CT)
     import modules.thinking.communication.interface as iface_mod
     bus = MagicMock()
     bus.subscribe = AsyncMock()
@@ -305,7 +307,9 @@ def test_think_loop_large_with_pending_waits(monkeypatch):
     thinker._running = True
     CT = MagicMock(return_value=thinker)
     import modules.thinking.core.continuous_thinker as ct_mod
+    import modules.thinking.core.workflow_thinker as wf_mod
     monkeypatch.setattr(ct_mod, "ContinuousThinker", CT)
+    monkeypatch.setattr(wf_mod, "WorkflowThinker", CT)
     import modules.thinking.communication.interface as iface_mod
     bus = MagicMock()
     bus.subscribe = AsyncMock()
@@ -336,7 +340,9 @@ def test_think_loop_cancelled_saves(monkeypatch):
     thinker._running = True
     CT = MagicMock(return_value=thinker)
     import modules.thinking.core.continuous_thinker as ct_mod
+    import modules.thinking.core.workflow_thinker as wf_mod
     monkeypatch.setattr(ct_mod, "ContinuousThinker", CT)
+    monkeypatch.setattr(wf_mod, "WorkflowThinker", CT)
     import modules.thinking.communication.interface as iface_mod
     bus = MagicMock()
     bus.subscribe = AsyncMock()

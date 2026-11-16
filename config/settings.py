@@ -41,6 +41,7 @@ class Settings(BaseSettings):
         "CAUSAL_CONFIDENCE_BOOST_DELTA", "CAUSAL_CONFIDENCE_MAX",
         "EXECUTION_MODE",
         "CORTEX_MODE",   # 对话模式: agent(智能体) / chatonly(纯对话)
+        "THINKING_ENGINE_MODE", # 思考内核引擎: continuous(传统循环) / workflow(工作流状态图)
         "USER_NAME",     # 用户称呼（大模型如何称呼用户）
         "USER_LANGUAGE", # 用户界面语言（AI 回复语言跟随此设置）
 
@@ -323,6 +324,11 @@ class Settings(BaseSettings):
     # "agent":    完整多模型编排路线（默认，走 modules/thinking/api_stream）
     # "chatonly": 简化单模型对话路线（走 backend/，懒加载，不影响其他模块）
     CORTEX_MODE: str = "agent"
+
+    # 思考内核引擎模式 — 由 ModelRunner 在初始化思考循环时读取
+    # "continuous": 经典多轮短思考命令式循环 (ContinuousThinker)
+    # "workflow":   状态图与事件流式工作流内核 (WorkflowThinker，已全面作为默认引擎)
+    THINKING_ENGINE_MODE: str = "workflow"
 
     # 安全审查模式: "llm"=安全专家LLM审批, "user"=用户手动审批, "auto"=LLM可用时用LLM否则拒绝
 
