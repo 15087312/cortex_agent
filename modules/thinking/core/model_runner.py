@@ -542,6 +542,27 @@ class ModelRunner:
                 # 无待处理委托，直接退出
                 break
 
+            # 工作流检查点挂起落盘（防止进程重启后委托上下文丢失）
+            _waiting_did = ""
+            _cp_mgr = None
+            try:
+                from modules.thinking.core.workflow_checkpoint import get_checkpoint_manager
+                _cp_mgr = get_checkpoint_manager()
+                _pending_map = getattr(self._thinker, "_pending_delegations", None) or {}
+                _waiting_did = next(iter(_pending_map.keys()), "") or f"deleg_{self.session_id[:8]}"
+                _cp_mgr.suspend(
+                    session_id=self.session_id,
+                    model_id=self.model_id,
+                    node_id="control",
+                    state={
+                        "task_description": self._task_description,
+                        "history_thoughts": list(getattr(self._thinker, "history_thoughts", []) or []),
+                    },
+                    waiting_delegation_id=_waiting_did,
+                )
+            except Exception as _cp_err:
+                logger.debug(f"[ModelRunner] 工作流检查点挂起保存跳过 (非致命): {_cp_err}")
+
             # 等待超时由工具（continue_thinking wait_seconds）自行设置，不再硬编码
             # 模型未设置时用默认（模型输入上下文长度无关的等待兜底）
             wait_timeout = 300.0
@@ -564,6 +585,13 @@ class ModelRunner:
                 await self._notify_timeout_to_parent()
                 break
 
+            # 唤醒工作流检查点
+            if _cp_mgr is not None and _waiting_did:
+                try:
+                    _cp_mgr.resume(_waiting_did, str(wakeup)[:500])
+                except Exception as _cp_err:
+                    logger.debug(f"[ModelRunner] 工作流检查点唤醒跳过 (非致命): {_cp_err}")
+
             # 重置状态，用唤醒消息重启循环
             self._thinker.reset_for_continuation()
 
@@ -581,6 +609,13 @@ class ModelRunner:
         except Exception as e:
             logger.debug(f"[ModelRunner] {self.model_id} MessageBus 取消订阅失败 (非致命): {e}")
         self._wakeup_event = None
+
+        # 清理本轮会话临时检查点（正常结束）
+        try:
+            from modules.thinking.core.workflow_checkpoint import get_checkpoint_manager
+            get_checkpoint_manager().delete_checkpoint(f"{self.session_id}_{self.model_id}")
+        except Exception:
+            pass
 
         # 通知 orchestrator 思考已完成
         await self._notify_thinking_complete()

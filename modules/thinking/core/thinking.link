@@ -1,8 +1,11 @@
-# 连续思考循环的结构骨架：上层只组合抽象积木，不展开实现细节
+# 连续思考与工作流思维内核的结构骨架：上层只组合抽象积木，不展开实现细节
+# v0.1.0 (纯代码循环) 与 v0.2.0 (工作流状态图) 同构等价
+
 export ThinkLoop
 input ThinkLoop: [Think]
 output ThinkLoop: [Write]
 # 每轮 = 检索→思考→守卫→落盘→节流（写是必走路径，非可选）；Emit 在循环结束后一次性触发
+# v0.2.0 工作流版中由 WorkflowThinker 的 ContextPrepNode / ModelInferenceNode / ControlEvaluationNode / FinalizeNode 承担
 eq ThinkLoop = Loop(Retrieve · Think · Guard · Write · Throttle) · Emit
 
 export ThinkStep
@@ -11,6 +14,10 @@ eq ThinkStep = Guard · Loop(Think) · (Write | Emit)
 export RunnerLoop
 # 每轮 = 思考→落盘→守卫（专家/无待处理则退出）；Emit 在循环结束后一次性触发
 eq RunnerLoop = Loop(Think · Write · Guard) · Emit
+
+export ReActSubflow
+# v0.2.0 内层工作流子图：推理(推流)→工具分流(无工具退出/拒绝重试)→安全门控与工具执行→回环
+eq ReActSubflow = Loop(Infer · Dispatch · Exec) · Emit
 
 # L2 数据流：think(user_message) -> assistant_content；recall(query) -> memory_context
 eq ThinkFlow = Retrieve(user_message) · Guard(user_message) · Emit(assistant_content) · Write(assistant_content)

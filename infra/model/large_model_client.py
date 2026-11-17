@@ -99,7 +99,7 @@ class LargeModelClient(BaseModelClient):
         # 格式层统一由 Provider 构建（anthropic system 提取 / openai messages / dashscope input）
         headers = self._provider.build_headers()
         provider_kwargs: Dict[str, Any] = (
-            {"enable_thinking": self.enable_thinking}
+            {"enable_thinking": kwargs.get("enable_thinking", self.enable_thinking)}
             if self._api_format == "openai" else {}
         )
         payload = self._provider.build_request(
@@ -318,6 +318,8 @@ class LargeModelClient(BaseModelClient):
                     continue
             except Exception as e:
                 last_error = e
+                if isinstance(e, aiohttp.ClientError) or "ssl" in str(e).lower() or "connect" in str(e).lower():
+                    self._reset_session()
                 if attempt < max_retries:
                     # 503 服务繁忙：使用更长退避 (5s, 15s, 30s)
                     is_service_busy = "503" in str(e)
@@ -413,6 +415,8 @@ class LargeModelClient(BaseModelClient):
 
             except Exception as e:
                 last_error = e
+                if isinstance(e, aiohttp.ClientError) or "ssl" in str(e).lower() or "connect" in str(e).lower():
+                    self._reset_session()
                 if attempt < max_retries:
                     # 503 服务繁忙：使用更长退避 (5s, 15s, 30s)
                     is_service_busy = "503" in str(e)

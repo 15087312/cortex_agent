@@ -101,6 +101,7 @@ def _safe_emit_bg(ctx: NodeContext, event_type: EventType, payload: Dict[str, An
         pass
 
 
+# @link:block ReActSubflow_Infer = Think · Emit
 class ReActInferenceNode(StreamingNode):
     """ReAct 推理节点：断点/压缩维护 + 实时流式输出（同时推给前端通道与工作流事件流）"""
 
@@ -254,6 +255,7 @@ class ReActInferenceNode(StreamingNode):
         }
 
 
+# @link:block ReActSubflow_Dispatch = Guard
 class ReActToolDispatchNode(StreamingNode):
     """工具分流与控制节点：将 tool_calls 分类并判定是否应结束或继续"""
 
@@ -361,6 +363,7 @@ class ReActToolDispatchNode(StreamingNode):
         }
 
 
+# @link:block ReActSubflow_Exec = Guard · Tool · Write
 class ReActToolExecutionNode(StreamingNode):
     """工具安全审查与实际执行节点：优先复用 ModelRunner._execute_react_turn_tools"""
 
@@ -494,6 +497,7 @@ class ReActToolExecutionNode(StreamingNode):
         }
 
 
+# @link:block ReActSubflow
 class ReActSubflow:
     """ReAct 工具循环工作流管理器
 
@@ -572,8 +576,12 @@ class ReActSubflow:
                     logger.warning(f"[ReActSubflow] {initial_state.get('model_id')} 工具调用达到最大轮次")
                     expert_errors = final_state.get("expert_errors") or []
                     if initial_state.get("tier") == "expert" and expert_errors:
-                        return "[工具调用达到上限]\n\n[工具调用失败记录]\n" + "\n".join(f"  - {e}" for e in expert_errors)
-                    return "[工具调用达到上限，返回当前结果]"
+                        msg = "[工具调用达到上限]\n\n[工具调用失败记录]\n" + "\n".join(f"  - {e}" for e in expert_errors)
+                    else:
+                        msg = "[工具调用达到上限，返回当前结果]"
+                    if runner and getattr(runner, "_thinker", None):
+                        runner._thinker.record_control_decision({"continue": False, "result_summary": msg})
+                    return msg
 
                 return final_state.get("final_output", "") or final_state.get("current_content", "")
 
@@ -588,7 +596,11 @@ class ReActSubflow:
                         logger.error(f"[ReActSubflow] {runner.model_id} 工具调用失败: {e}")
 
         if last_error and "503" in str(last_error):
-            return "[系统] 模型 API 服务暂时繁忙（503），请稍后重试。"
-        if last_error is not None:
-            return f"[模型调用失败: {last_error}]"
-        return ""
+            err_out = "[系统] 模型 API 服务暂时繁忙（503），请稍后重试。"
+        elif last_error is not None:
+            err_out = f"[模型调用失败: {last_error}]"
+        else:
+            return ""
+        if runner and getattr(runner, "_thinker", None):
+            runner._thinker.record_control_decision({"continue": False, "result_summary": err_out})
+        return err_out

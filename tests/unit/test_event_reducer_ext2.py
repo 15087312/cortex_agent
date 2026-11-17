@@ -1,13 +1,17 @@
 """event_reducer 补测：因果-only / 共现异常 / JSON 边界 / 降级摘要分支 / 默认注入"""
 import asyncio
 import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from config.settings import settings
 from modules.memory.event_reducer import (
     EventReducer,
+    get_memory_model_client,
     get_reducer,
+    reset_memory_model_client,
 )
 from modules.memory.event_store import EventStore, MemoryEvent
 
@@ -23,6 +27,48 @@ def store(tmp_path):
         faiss_index_path=str(tmp_path / "er.faiss"),
         id_map_path=str(tmp_path / "er.json"),
     )
+
+
+def test_get_memory_model_client_uses_dedicated_settings(monkeypatch):
+    """记忆提取模型必须与主聊天模型解耦，避免主供应商波动影响记忆写入。"""
+    class FakeClient:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.max_tokens = 0
+            self._provider = SimpleNamespace(openrouter_supplier="main-supplier")
+
+    monkeypatch.setattr("infra.model.large_model_client.LargeModelClient", FakeClient)
+    monkeypatch.setattr(settings, "MEMORY_MODEL_API_KEY", "mem-key", raising=False)
+    monkeypatch.setattr(settings, "MEMORY_MODEL_API_URL", "https://openrouter.ai/api/v1/chat/completions", raising=False)
+    monkeypatch.setattr(settings, "MEMORY_MODEL_NAME", "dots-studio/dots-3-note-preview:free", raising=False)
+    monkeypatch.setattr(settings, "MEMORY_MODEL_API_FORMAT", "", raising=False)
+    monkeypatch.setattr(settings, "MEMORY_MODEL_PROVIDER", "", raising=False)
+    monkeypatch.setattr(settings, "MEMORY_MODEL_OPENROUTER_SUPPLIER", "", raising=False)
+    monkeypatch.setattr(settings, "MEMORY_MODEL_MAX_TOKENS", 8192, raising=False)
+    monkeypatch.setattr(settings, "MEMORY_MODEL_TIMEOUT", 180, raising=False)
+    reset_memory_model_client()
+
+    client = get_memory_model_client()
+    assert client is not None
+    assert client.kwargs["api_key"] == "mem-key"
+    assert client.kwargs["model_name"] == "dots-studio/dots-3-note-preview:free"
+    assert client.kwargs["api_provider"] == "openrouter"
+    assert client.kwargs["enable_thinking"] is False
+    assert client.max_tokens == 8192
+    assert client._provider.openrouter_supplier == ""
+
+    reset_memory_model_client()
+
+
+def test_get_memory_model_client_none_when_unconfigured(monkeypatch):
+    for key in (
+        "MEMORY_MODEL_API_KEY", "MEMORY_MODEL_API_URL", "MEMORY_MODEL_NAME",
+        "VISION_API_KEY", "VISION_API_URL",
+    ):
+        monkeypatch.setattr(settings, key, "", raising=False)
+    reset_memory_model_client()
+    assert get_memory_model_client() is None
+    reset_memory_model_client()
 
 
 # ── reduce：仅有因果节点 / 共现失败 ───────────────────────────────────

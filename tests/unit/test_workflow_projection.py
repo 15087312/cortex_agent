@@ -71,3 +71,21 @@ def test_default_engine_mode_is_valid(monkeypatch):
     assert settings.THINKING_ENGINE_MODE in ("continuous", "workflow")
     monkeypatch.setattr(settings, "THINKING_ENGINE_MODE", "workflow")
     assert settings.THINKING_ENGINE_MODE == "workflow"
+
+
+def test_workflow_thinker_emits_topology_projection_during_run():
+    """验证 WorkflowThinker 运行 continuous_think 时自动触发拓扑节点投影"""
+    import asyncio
+    from unittest.mock import AsyncMock, patch
+    from modules.thinking.core.workflow_thinker import WorkflowThinker
+
+    wt = WorkflowThinker(session_id="sess_auto_topo", think_fn=AsyncMock(return_value="完成"))
+    wt._node_context_prep = AsyncMock()
+
+    with patch("modules.thinking.projections.emit_projection") as mock_emit:
+        asyncio.run(wt.continuous_think("测试拓扑", max_rounds=1))
+        assert mock_emit.call_count >= 6  # prep/inference/control/finalize start & end
+        keys = [c[0][1] for c in mock_emit.call_args_list]
+        assert all(k == "workflow" for k in keys)
+        last_snap = mock_emit.call_args_list[-1][0][2]
+        assert last_snap["nodes"]["finalize"]["status"] == "completed"

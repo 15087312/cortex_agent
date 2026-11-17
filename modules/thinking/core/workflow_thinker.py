@@ -85,6 +85,7 @@ class WorkflowThinkingState:
     should_break: bool = False
     break_reason: str = ""
     consecutive_dup_count: int = 0
+    wait_seconds_override: Optional[float] = None
 
 
 class WorkflowThinker:
@@ -155,6 +156,21 @@ class WorkflowThinker:
         self._consecutive_new_delegation_rounds: int = 0
         self._last_sd_read_count: int = 0
         self._context_tokens: int = 0
+        self._topology_projector: Optional[Any] = None
+        try:
+            from modules.thinking.core.workflow_projection import WorkflowTopologyProjector
+            self._topology_projector = WorkflowTopologyProjector(self._session_id)
+            self._topology_projector.set_topology(
+                nodes=["prep", "inference", "control", "finalize"],
+                edges=[
+                    {"from": "prep", "to": "inference"},
+                    {"from": "inference", "to": "control"},
+                    {"from": "control", "to": "prep"},
+                    {"from": "control", "to": "finalize"},
+                ],
+            )
+        except Exception:
+            self._topology_projector = None
 
     # ── 外部属性与接口对齐 ──
 
@@ -352,7 +368,7 @@ class WorkflowThinker:
             return res
 
     # ── 节点 1：上下文准备工作流节点 (ContextPrepNode) ──
-
+    # @link:block ThinkLoop_Retrieve = Retrieve
     async def _node_context_prep(self, state: WorkflowThinkingState) -> None:
         """从各上下文源（记忆、黑板、感知、记事本）拉取数据并拼装 Prompt"""
         state.current_prompt = await self._build_prompt(state.question, round_num=state.round_num)
@@ -459,17 +475,33 @@ class WorkflowThinker:
 
     # ── 节点 2：单步思考执行节点 (ModelInferenceNode) ──
 
+    # @link:block ThinkStep
     async def think_once(self, prompt: str, question: str = "") -> Dict[str, Any]:
-        """执行单次思考生成，带重试与兜底"""
+        """执行单次思考生成，带活动时钟静默超时与重试兜底"""
+        # @link:block ThinkStep_Guard = Guard
         if not self.think_fn:
             self.logger.warning("未配置思考函数")
             return {"thought": "", "duration_ms": 0, "error": "思考函数未配置"}
 
+        try:
+            runner = getattr(self, "_runner_ref", None)
+            if runner is not None:
+                runner._current_question = question or ""
+        except Exception:
+            pass
+
+        _timeout = getattr(getattr(self, "_runner_ref", None), "THINK_TIMEOUT", None) or self.SINGLE_THINK_TIMEOUT
+        _max_wall = self._think_max_wall()
+        clock = self._activity_clock()
+
         retries = 0
         last_error = ""
+        # @link:block ThinkStep_Think = Think
         while retries < self.MAX_THINK_RETRIES:
             try:
                 start_time = time.time()
+                if hasattr(clock, "touch"):
+                    clock.touch("think_once_start")
                 # 兼容 monkeypatch 的 pausable_wait_for
                 import sys
                 ctc_mod = sys.modules.get("modules.thinking.core.continuous_thinker")
@@ -477,12 +509,51 @@ class WorkflowThinker:
 
                 thought = await pwf(
                     self.think_fn(prompt),
-                    timeout=self.SINGLE_THINK_TIMEOUT,
+                    timeout=_timeout,
+                    activity=clock if hasattr(clock, "touch") else None,
+                    max_wall=_max_wall,
                 )
                 duration_ms = (time.time() - start_time) * 1000
+                thought_str = str(thought or "")
+
+                # @link:block ThinkStep_Write = Write
                 if hasattr(self, "history_thoughts"):
-                    self.history_thoughts.append(thought)
-                return {"thought": thought, "duration_ms": duration_ms}
+                    self.history_thoughts.append(thought_str)
+                dialog = getattr(self, "_get_dialog", None)
+                if dialog and getattr(self, "_model_id", "") and thought_str:
+                    try:
+                        dialog.write_thought(
+                            model_id=self._model_id,
+                            tier=getattr(self, "_tier", "large"),
+                            content=thought_str,
+                            round_num=len(self.history_thoughts),
+                        )
+                    except Exception as _dlg_err:
+                        self.logger.debug(f"[SharedDialog] 写入失败 (非致命): {_dlg_err}")
+                return {"thought": thought_str, "duration_ms": duration_ms}
+            except asyncio.TimeoutError:
+                retries += 1
+                last_error = f"单次思考静默超时（>{_timeout}s）"
+                self.logger.warning(f"[工作流思考] {last_error} (第 {retries}/{self.MAX_THINK_RETRIES} 次)")
+                if retries < self.MAX_THINK_RETRIES:
+                    self._notify_timeout_retry(retries)
+                    await asyncio.sleep(0.5)
+                else:
+                    try:
+                        get_error_bus().report_error(
+                            asyncio.TimeoutError(last_error),
+                            ErrorContext(module="workflow_thinker", function="think_once"),
+                        )
+                    except Exception:
+                        pass
+                    if hasattr(self, "history_thoughts"):
+                        self.history_thoughts.append("[思考超时]")
+                    return {
+                        "thought": "[思考超时]",
+                        "duration_ms": 0,
+                        "error": last_error,
+                        "is_finished": True,
+                    }
             except Exception as e:
                 retries += 1
                 last_error = str(e)
@@ -491,6 +562,7 @@ class WorkflowThinker:
                     break
                 await asyncio.sleep(0.5)
 
+        # @link:block ThinkStep_Emit = Emit
         return {
             "thought": f"思考异常: {last_error}",
             "duration_ms": 0,
@@ -516,6 +588,7 @@ class WorkflowThinker:
         prompt = await self._build_prompt(question)
         return await self.think_once(prompt, question)
 
+    # @link:block ThinkLoop_Think = Think
     async def _node_model_inference(self, state: WorkflowThinkingState) -> None:
         """执行模型推理节点"""
         raw_result = await self.think_once(state.current_prompt, state.question)
@@ -526,7 +599,7 @@ class WorkflowThinker:
         state.results.append(state.current_result)
 
     # ── 节点 3：控制流与状态转移判定节点 (ControlEvaluationNode) ──
-
+    # @link:block ThinkLoop_Guard = Guard
     async def _node_control_evaluation(self, state: WorkflowThinkingState) -> None:
         """评估控制工具、委托事件、去重、终止条件"""
         # 1. 从 _last_control_data 读取控制决策
@@ -567,6 +640,7 @@ class WorkflowThinker:
             return
 
         # 3. 记录记事本与过程收集器
+        # @link:block ThinkLoop_Write = Write
         cleaned = self._strip_control_markers(state.current_thought)
         self._process_collector.record_step(
             round_num=state.round_num,
@@ -596,20 +670,27 @@ class WorkflowThinker:
             state.break_reason = "text_fallback_stop"
             return
 
-        # 6. 重复思考死循环熔断
-        if self.history_thoughts:
-            sim = self._jaccard_similarity(state.current_thought, self.history_thoughts[-1])
-            if sim > 0.85:
-                state.consecutive_dup_count += 1
-                if state.consecutive_dup_count >= 2:
-                    self.logger.warning(f"第 {state.round_num} 轮：连续产生高度重复思考，触发安全熔断")
-                    state.should_break = True
-                    state.break_reason = "duplicate_break"
-                    return
-            else:
-                state.consecutive_dup_count = 0
-
-        self.history_thoughts.append(state.current_thought)
+        # 6. 重复思考死循环熔断（对比上一轮 results[-2] 与本轮，不与自己比较）
+        if len(state.results) >= 2:
+            prev_thought = str(state.results[-2].get("thought", "") or "").strip()
+            if prev_thought and state.current_thought:
+                sim = self._jaccard_similarity(prev_thought, state.current_thought)
+                avg_len = (len(prev_thought) + len(state.current_thought)) / 2
+                dup_threshold = 0.30 if avg_len < 80 else (0.40 if avg_len < 200 else 0.50)
+                if sim > dup_threshold:
+                    state.consecutive_dup_count += 1
+                    self.logger.info(
+                        f"第 {state.round_num} 轮：检测到重复思考 (sim={sim:.2f}, 阈值={dup_threshold})，"
+                        f"连续第 {state.consecutive_dup_count} 次"
+                    )
+                    if state.consecutive_dup_count >= 2:
+                        self.logger.warning(f"第 {state.round_num} 轮：连续产生高度重复思考，触发安全熔断")
+                        state.should_break = True
+                        state.break_reason = "duplicate_break"
+                        return
+                    state.wait_seconds_override = 15.0
+                else:
+                    state.consecutive_dup_count = 0
 
     def _sanitize_final_context_text(self, text: str, limit: int = 4000) -> str:
         """构建最终整合可见上下文时的安全清洗。"""
@@ -877,7 +958,7 @@ class WorkflowThinker:
             self.logger.debug(f"[思考结果回传] 失败 (非致命): {e}")
 
     # ── 节点 4：收尾节点 (FinalizeNode) ──
-
+    # @link:block ThinkLoop_Emit = Emit
     async def _finalize_thinking_results(
         self,
         question: str,
@@ -928,7 +1009,7 @@ class WorkflowThinker:
         return final_summary
 
     # ── 主工作流调度器 (Workflow Orchestrator) ──
-
+    # @link:block ThinkLoop
     async def continuous_think(
         self,
         question: str,
@@ -980,6 +1061,16 @@ class WorkflowThinker:
             f"[工作流思维内核] 会话[{self._session_id[:8]}] 启动: max_rounds={rounds}, min_rounds={min_rounds_req}"
         )
 
+        projector = getattr(self, "_topology_projector", None)
+
+        def _emit_topo(method_name: str, *args: Any, **kwargs: Any) -> None:
+            if projector is None:
+                return
+            try:
+                getattr(projector, method_name)(*args, **kwargs)
+            except Exception:
+                pass
+
         try:
             for r in range(rounds):
                 if not self._running:
@@ -989,13 +1080,23 @@ class WorkflowThinker:
                 state.round_num = r + 1
 
                 # 1. 节点 1：上下文准备工作流节点
+                _emit_topo("on_node_start", "prep")
                 await self._node_context_prep(state)
+                _emit_topo("on_node_end", "prep")
 
                 # 2. 节点 2：模型推理与工具决策节点
+                _emit_topo("on_node_start", "inference")
                 await self._node_model_inference(state)
+                _emit_topo("on_node_end", "inference", duration_ms=state.current_duration_ms)
 
                 # 3. 节点 3：控制流评估节点
+                _emit_topo("on_node_start", "control")
                 await self._node_control_evaluation(state)
+                if state.break_reason == "delegation":
+                    _did = next(iter(self._pending_delegations.keys()), "") if self._pending_delegations else ""
+                    _emit_topo("on_node_suspended", "control", delegation_id=_did)
+                else:
+                    _emit_topo("on_node_end", "control")
 
                 # 触发每轮异步回调
                 if callback:
@@ -1010,11 +1111,15 @@ class WorkflowThinker:
                     break
 
                 # 计算轮间等待秒数并通知 runner 更新循环状态
+                # @link:block ThinkLoop_Throttle = Throttle
                 wait_seconds = self.interval
                 if state.control_decision and state.control_decision.wait_seconds is not None:
                     wait_seconds = float(state.control_decision.wait_seconds)
                 elif self._pending_delegations:
                     wait_seconds = max(wait_seconds, 8.0)
+                if state.wait_seconds_override is not None:
+                    wait_seconds = max(wait_seconds, state.wait_seconds_override)
+                    state.wait_seconds_override = None
 
                 runner = getattr(self, "_runner_ref", None)
                 if runner is not None:
@@ -1029,7 +1134,9 @@ class WorkflowThinker:
                     await asyncio.sleep(wait_seconds)
 
             # 4. 节点 4：收尾处理
+            _emit_topo("on_node_start", "finalize")
             await self._finalize_thinking_results(question, state.results)
+            _emit_topo("on_node_end", "finalize")
 
         except Exception as e:
             self.logger.error(f"[工作流思维内核] 连续思考异常: {e}")
@@ -1046,11 +1153,29 @@ class WorkflowThinker:
 
     # ── 兼容性与辅助 API ──
 
-    def _activity_clock(self) -> float:
-        return time.monotonic()
+    def _activity_clock(self):
+        """取本次思考共享的活动时钟：优先用 runner 的，否则按会话创建。"""
+        clock = getattr(self, "_clock_ref", None)
+        if clock is None:
+            runner = getattr(self, "_runner_ref", None)
+            clock = getattr(runner, "activity", None)
+            if clock is None:
+                try:
+                    from utils.activity import get_activity_clock
+                    clock = get_activity_clock(getattr(self, "_session_id", "") or "")
+                except Exception:
+                    return None
+            self._clock_ref = clock
+        return clock
 
-    def _think_max_wall(self) -> float:
-        return 1800.0
+    def _think_max_wall(self) -> Optional[float]:
+        """整体墙钟上限（防止无限循环），0/未配置表示不限制。"""
+        try:
+            from config.settings import settings as _s
+            value = float(getattr(_s, "MODEL_THINK_MAX_WALL", 0) or 0)
+            return value or None
+        except Exception:
+            return None
 
     def _notify_timeout_retry(self, round_num: int) -> None:
         self.logger.debug(f"[WorkflowThinker] 超时重试记录: round={round_num}")

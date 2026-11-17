@@ -191,3 +191,14 @@ class WorkflowCheckpointManager:
             except Exception as e:
                 logger.warning(f"[Checkpoint] 删除文件失败: {e}")
         return False
+
+
+_default_checkpoint_manager: Optional[WorkflowCheckpointManager] = None
+
+
+def get_checkpoint_manager() -> WorkflowCheckpointManager:
+    """获取进程级共享的工作流检查点管理器单例"""
+    global _default_checkpoint_manager
+    if _default_checkpoint_manager is None:
+        _default_checkpoint_manager = WorkflowCheckpointManager()
+    return _default_checkpoint_manager

@@ -330,9 +330,13 @@ class ContinuousThinker:
             if len(conversation_text.strip()) < 50:
                 return
 
-            from modules.memory.event_reducer import EventReducer
-            # 复用 ContinuousThinker 单例内 ModelRunner 的 client，避免每轮新建 aiohttp session 泄漏
-            reducer = EventReducer(model_client=self._runner.client)
+            from modules.memory.event_reducer import EventReducer, get_memory_model_client
+            # 记忆提取优先走独立模型（OpenRouter 免费模型）；未配置时复用主模型 client。
+            model_client = get_memory_model_client() or self._runner.client
+            reducer = EventReducer(
+                model_client=model_client,
+                max_tokens=settings.MEMORY_MODEL_MAX_TOKENS,
+            )
             events = await reducer.reduce(session_id, conversation_text)
 
             if events:

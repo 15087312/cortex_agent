@@ -4,16 +4,8 @@
 """
 from typing import Tuple, List
 
-# 默认敏感词 — 运行时可通过 add_keyword()/remove_keyword() 动态调整
-_DEFAULT_SENSITIVE_KEYWORDS = [
-    "system prompt",
-    "系统提示词",
-    "内部指令",
-    "ignore previous instructions",
-    "忽略之前的指令",
-    "jailbreak",
-    "越狱模式",
-]
+# 默认敏感词 — 默认留空，避免误杀正常对话与提示词调试；运行时可通过 add_keyword()/remove_keyword() 动态调整
+_DEFAULT_SENSITIVE_KEYWORDS = []
 
 
 class ContentValidator:

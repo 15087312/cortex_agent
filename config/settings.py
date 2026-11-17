@@ -1025,6 +1025,17 @@ class Settings(BaseSettings):
     # ── 思考辅助（可自由开关）────────────────────────────────
     MENTAL_ACTIVITY_ENABLED: bool = False                # 心理活动：良知系统内心独白（生成+推送）
     MEMORY_SUMMARY_ENABLED: bool = True                  # 记忆总结：会话结束后自动提炼为事件记忆（EventReducer）
+
+    # ── 记忆提取模型（独立于主聊天模型，避免主模型额度/供应商波动影响记忆写入）──
+    # 留空时由 EventReducer 回退到调用方传入的主模型。
+    MEMORY_MODEL_API_KEY: str = ""
+    MEMORY_MODEL_API_URL: str = ""
+    MEMORY_MODEL_NAME: str = ""
+    MEMORY_MODEL_API_FORMAT: str = ""
+    MEMORY_MODEL_PROVIDER: str = ""
+    MEMORY_MODEL_OPENROUTER_SUPPLIER: str = ""
+    MEMORY_MODEL_MAX_TOKENS: int = 8192
+    MEMORY_MODEL_TIMEOUT: int = 180
     SKILLS_ENABLED: bool = True                          # 技能系统总开关（关闭后模型不加载/不激活任何技能）
 
     # ── 语音输出（TTS） ──────────────────────────────────────

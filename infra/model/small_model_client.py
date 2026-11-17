@@ -104,7 +104,7 @@ class SmallModelClient(BaseModelClient):
         if model != self._provider.model_name:
             self._provider.model_name = model
         provider_kwargs: Dict[str, Any] = (
-            {"enable_thinking": self.enable_thinking}
+            {"enable_thinking": kwargs.get("enable_thinking", self.enable_thinking)}
             if self._api_format == "openai" else {}
         )
         payload = self._provider.build_request(
@@ -184,7 +184,7 @@ class SmallModelClient(BaseModelClient):
         max_tokens = kwargs.get("max_tokens", self.max_tokens)
         temp = kwargs.get("temperature", self.temperature)
         provider_kwargs: Dict[str, Any] = (
-            {"enable_thinking": self.enable_thinking}
+            {"enable_thinking": kwargs.get("enable_thinking", self.enable_thinking)}
             if self._api_format == "openai" else {}
         )
         payload = self._provider.build_request(

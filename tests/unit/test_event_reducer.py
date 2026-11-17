@@ -111,7 +111,7 @@ def test_reduce_uses_dedicated_system_prompt():
 
     kwargs = client.generate.call_args.kwargs
     assert kwargs.get("system_prompt") == MEMORY_REDUCE_SYSTEM_PROMPT
-    assert kwargs.get("max_tokens") == 2048
+    assert kwargs.get("max_tokens") == 4096
     # user 提示词仍基于 REDUCE_PROMPT_TEMPLATE 组装
     assert kwargs.get("temperature") == 0.3
     prompt = client.generate.call_args.args[0]

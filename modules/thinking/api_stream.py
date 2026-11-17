@@ -1348,18 +1348,38 @@ class StreamThinkingSystem:
         """
         await asyncio.sleep(30 if owner_id is None else 0)
         try:
+            # 记忆总结开关：关闭则跳过自动提炼事件记忆（EventReducer），避免误标 _processed_hashes
+            try:
+                from config.settings import settings as _cfg
+                if not getattr(_cfg, "MEMORY_SUMMARY_ENABLED", True):
+                    return
+            except Exception as _swallowed_err:
+                logger.debug(f"[_post_task_extraction] ignored Exception: {_swallowed_err}")
+
             session = self.sessions.get(session_id)
             if not session:
                 return
 
             messages = session.get("messages", [])
-            # 取最近 20 条消息构造文本
+            # 取最近 20 条消息构造文本；若为主管/专家独立触发且传入完整任务与结论，优先提取其自身产出
             parts = []
-            for msg in messages[-20:]:
-                role = msg.get("role", "unknown")
-                content = msg.get("content", "")
-                if content and isinstance(content, str):
-                    parts.append(f"{role}: {content}")
+            is_sub_runner = bool(
+                owner_id
+                and (owner_id.startswith("supervisor::") or owner_id.startswith("expert::"))
+                and (user_input or final_response)
+                and len(f"{user_input or ''}\n{final_response or ''}".strip()) >= 50
+            )
+            if is_sub_runner:
+                if user_input:
+                    parts.append(f"user: {user_input}")
+                if final_response:
+                    parts.append(f"{owner_id}: {final_response}")
+            else:
+                for msg in messages[-20:]:
+                    role = msg.get("role", "unknown")
+                    content = msg.get("content", "")
+                    if content and isinstance(content, str):
+                        parts.append(f"{role}: {content}")
 
             conversation_text = "\n".join(parts)
             if len(conversation_text.strip()) < 50:
@@ -1396,27 +1416,31 @@ class StreamThinkingSystem:
                     owner_id = "large::large_primary"
 
             # 获取 EventReducer（依赖注入）
-            from modules.memory.event_reducer import EventReducer
+            from modules.memory.event_reducer import EventReducer, get_memory_model_client
             from modules.memory.event_store import EventStore
             from modules.memory.embedding import get_embedding_engine
-            
-            # 尝试创建模型客户端
-            model_client = None
-            try:
-                from infra.model.small_model_client import SmallModelClient
-                from config.settings import settings
-                model_client = SmallModelClient(
-                    api_key=settings.SMALL_MODEL_API_KEY or settings.LARGE_MODEL_API_KEY,
-                    api_url=settings.SMALL_MODEL_API_URL or settings.LARGE_MODEL_API_URL,
-                )
-            except Exception as e:
-                logger.debug(f"[事件记忆] 模型客户端创建失败: {e}")
-            
+            from config.settings import settings
+
+            # 记忆提取优先走独立模型（OpenRouter 免费模型），与主聊天模型解耦；
+            # 未配置时回退到小模型，保持旧部署兼容。
+            model_client = get_memory_model_client()
+            if model_client is None:
+                try:
+                    from infra.model.small_model_client import SmallModelClient
+                    model_client = SmallModelClient(
+                        api_key=settings.SMALL_MODEL_API_KEY or settings.LARGE_MODEL_API_KEY,
+                        api_url=settings.SMALL_MODEL_API_URL or settings.LARGE_MODEL_API_URL,
+                        enable_thinking=False,
+                    )
+                except Exception as e:
+                    logger.debug(f"[事件记忆] 模型客户端创建失败: {e}")
+
             # 使用依赖注入创建 reducer
             reducer = EventReducer(
                 model_client=model_client,
                 store=EventStore.get_instance(),
                 embedder=get_embedding_engine(),
+                max_tokens=settings.MEMORY_MODEL_MAX_TOKENS,
             )
             # 同步到模块级单例，供 Conscience 反馈闭环复用
             if model_client:
@@ -1425,14 +1449,6 @@ class StreamThinkingSystem:
                     get_reducer()._model_client = model_client
                 except Exception as _swallowed_err:
                     logger.debug(f"[_post_task_extraction] ignored Exception: {_swallowed_err}")
-
-            # 记忆总结开关：关闭则跳过自动提炼事件记忆（EventReducer）
-            try:
-                from config.settings import settings as _cfg
-                if not getattr(_cfg, "MEMORY_SUMMARY_ENABLED", True):
-                    return
-            except Exception as _swallowed_err:
-                logger.debug(f"[_post_task_extraction] ignored Exception: {_swallowed_err}")
 
             events = await reducer.reduce(session_id, conversation_text, owner_id=owner_id)
             if events:

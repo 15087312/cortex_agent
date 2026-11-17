@@ -329,6 +329,18 @@ CATALOG: dict[str, "ProviderSpec | None"] = {
         aliases=["cloudflare"],
         doc="Cloudflare Workers AI（OpenAI 兼容）",
     ),
+
+    # ── 聚合网关（第三方中转） ─────────────────────────────────────────────
+    "numes": ProviderSpec(
+        name="numes",
+        base_url="https://api.numes.ai/api/v1",
+        api_format="openai",
+        default_model="deepseek/deepseek-v4-pro",
+        env_key="NUMES_API_KEY",
+        aliases=["numes-ai", "numesai"],
+        supports_reasoning=True,
+        doc="Numes 聚合网关（OpenAI 兼容，含 deepseek / claude / gpt / glm 等 150+ 模型，模型名带命名空间如 deepseek/deepseek-v4-pro）",
+    ),
 }
 
 #: 名称 → 别名映射（含中文别名），用于宽松匹配

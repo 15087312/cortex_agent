@@ -17,6 +17,72 @@ from utils.logger import setup_logger
 
 logger = setup_logger("event_reducer")
 
+# 记忆提取专用模型客户端（默认 OpenRouter 免费模型）。
+# 与主聊天模型解耦：主模型换供应商/额度耗尽时，记忆写入仍走独立通道。
+_memory_client = None
+_memory_client_key = None
+_memory_client_lock = threading.Lock()
+
+
+def reset_memory_model_client() -> None:
+    """清空记忆模型客户端缓存（配置变更/测试用）。"""
+    global _memory_client, _memory_client_key
+    with _memory_client_lock:
+        _memory_client = None
+        _memory_client_key = None
+
+
+def get_memory_model_client():
+    """返回记忆提取专用客户端；未配置时返回 None，由调用方回退主模型。
+
+    优先读取 MEMORY_MODEL_*；为空时兼容复用 VISION_API_*（OpenRouter）配置。
+    """
+    global _memory_client, _memory_client_key
+
+    from config.settings import settings
+
+    api_url = settings.MEMORY_MODEL_API_URL or settings.VISION_API_URL or ""
+    model_name = settings.MEMORY_MODEL_NAME or ""
+    api_key = settings.MEMORY_MODEL_API_KEY or settings.VISION_API_KEY or ""
+    if not (api_url and model_name and api_key):
+        return None
+
+    provider = settings.MEMORY_MODEL_PROVIDER or (
+        "openrouter" if "openrouter" in api_url.lower() else ""
+    )
+    cache_key = (
+        api_url,
+        model_name,
+        api_key,
+        settings.MEMORY_MODEL_API_FORMAT,
+        provider,
+        settings.MEMORY_MODEL_OPENROUTER_SUPPLIER,
+        settings.MEMORY_MODEL_MAX_TOKENS,
+        settings.MEMORY_MODEL_TIMEOUT,
+    )
+    with _memory_client_lock:
+        if _memory_client is not None and _memory_client_key == cache_key:
+            return _memory_client
+
+        from infra.model.large_model_client import LargeModelClient
+
+        client = LargeModelClient(
+            api_key=api_key,
+            api_url=api_url,
+            model_name=model_name,
+            api_format=settings.MEMORY_MODEL_API_FORMAT,
+            api_provider=provider,
+            enable_thinking=False,
+            timeout=settings.MEMORY_MODEL_TIMEOUT,
+        )
+        client.max_tokens = settings.MEMORY_MODEL_MAX_TOKENS
+        # 记忆模型不走主模型的 OpenRouter 上游偏好，避免把 DeepSeek 的供应商带过来。
+        client._provider.openrouter_supplier = settings.MEMORY_MODEL_OPENROUTER_SUPPLIER
+        _memory_client = client
+        _memory_client_key = cache_key
+        return client
+
+
 # ── 离散重要性等级（LLM 分类比回归可靠）──
 _IMPORTANCE_MAP = {
     "critical": 1.0,
@@ -91,18 +157,21 @@ class EventReducer:
     """会话 → 事件提炼器"""
 
     def __init__(self, model_client=None, store: EventStore = None,
-                 embedder: EmbeddingEngine = None, graph=None):
+                 embedder: EmbeddingEngine = None, graph=None,
+                 max_tokens: int = 4096):
         """
         Args:
             model_client: LLM 客户端（依赖注入）
             store: EventStore 实例（依赖注入，测试/桌宠独立记忆库用）
             embedder: EmbeddingEngine 实例（依赖注入，测试用）
             graph: CausalGraph 实例（依赖注入，桌宠按人设隔离用）
+            max_tokens: 单次记忆提炼的最大输出 token（推理型模型建议 8192）
         """
         self._model_client = model_client
         self._store = store
         self._embedder = embedder
         self._graph = graph
+        self._max_tokens = max(512, int(max_tokens or 4096))
 
     def set_model(self, client):
         """注入 LLM 客户端（兼容旧 API）"""
@@ -248,10 +317,15 @@ class EventReducer:
 
         prompt = REDUCE_PROMPT_TEMPLATE.format(conversation_text=conversation_text)
 
+        has_thinking_attr = hasattr(self._model_client, "enable_thinking")
+        orig_thinking = getattr(self._model_client, "enable_thinking", None) if has_thinking_attr else None
         try:
+            # 结构化 JSON 提取禁用 thinking 模式，避免思维链耗尽 max_tokens 导致 JSON 半截截断
+            if has_thinking_attr:
+                self._model_client.enable_thinking = False
             response = await self._model_client.generate(
                 prompt,
-                max_tokens=2048,
+                max_tokens=self._max_tokens,
                 temperature=0.3,
                 system_prompt=MEMORY_REDUCE_SYSTEM_PROMPT,
             )
@@ -259,6 +333,9 @@ class EventReducer:
         except Exception as e:
             logger.warning(f"[EventReducer] LLM 调用失败: {e}")
             return {"events": [], "causal_nodes": [], "causal_edges": []}
+        finally:
+            if has_thinking_attr and orig_thinking is not None:
+                self._model_client.enable_thinking = orig_thinking
 
     def _parse_response(self, text: str) -> dict:
         """解析 LLM 返回的 JSON（包含 events + causal_nodes + causal_edges）"""
@@ -512,5 +589,9 @@ def _default_reducer() -> EventReducer:
     if _reducer_instance is None:
         with _reducer_lock:
             if _reducer_instance is None:
-                _reducer_instance = EventReducer()
+                from config.settings import settings
+                _reducer_instance = EventReducer(
+                    model_client=get_memory_model_client(),
+                    max_tokens=settings.MEMORY_MODEL_MAX_TOKENS,
+                )
     return _reducer_instance

@@ -187,11 +187,14 @@ class PetMemoryBank:
 
     async def _extract(self, pid: int, conversation: str, model_client) -> None:
         try:
-            from modules.memory.event_reducer import EventReducer
+            from modules.memory.event_reducer import EventReducer, get_memory_model_client
+            from config.settings import settings
+            # 记忆提取优先走独立模型（OpenRouter 免费模型）；未配置时用桌宠主模型。
             reducer = EventReducer(
-                model_client=model_client,
+                model_client=get_memory_model_client() or model_client,
                 store=self.store(pid),
                 graph=self.graph(pid),
+                max_tokens=settings.MEMORY_MODEL_MAX_TOKENS,
             )
             saved = await reducer.reduce(
                 session_id=f"pet:{pid}",
