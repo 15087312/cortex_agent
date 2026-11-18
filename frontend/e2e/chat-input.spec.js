@@ -6,8 +6,10 @@ test('联网搜索按钮有可见激活态，发送载荷带 webSearch', async (
   const before = await globe.evaluate((el) => getComputedStyle(el).backgroundColor)
   await globe.click()
   await expect(globe).toHaveClass(/chat-btn-active/)
-  const after = await globe.evaluate((el) => getComputedStyle(el).backgroundColor)
-  expect(after).not.toBe(before)
+  // 激活态背景有 transition，点击后立刻读取仍是过渡起点；轮询到样式真正生效。
+  await expect.poll(
+    () => globe.evaluate((el) => getComputedStyle(el).backgroundColor),
+  ).not.toBe(before)
 
   await page.locator('.chat-input-field').fill('查一下最新消息')
   await page.locator('.chat-send-btn').click()
@@ -94,6 +96,7 @@ test('麦克风按钮进入可见录音态', async ({ page }) => {
   const mic = page.locator('.chat-input-toolbar .chat-btn-icon').nth(1)
   await mic.click()
   await expect(mic).toHaveClass(/chat-btn-recording/, { timeout: 10_000 })
-  const bg = await mic.evaluate((el) => getComputedStyle(el).backgroundColor)
-  expect(bg).not.toBe('rgba(0, 0, 0, 0)')
+  await expect.poll(
+    () => mic.evaluate((el) => getComputedStyle(el).backgroundColor),
+  ).not.toBe('rgba(0, 0, 0, 0)')
 })

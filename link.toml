@@ -6,6 +6,9 @@ extensions = [".py", ".link"]
 
 [arch]
 forbid_eq_change = true
+# api 的 management 路由导入 api.doctor 做运行时自检；这是进程内路由聚合，
+# 不是分层调用。显式白名单降级为 W304，避免把导入方向误判成架构环。
+allow_cycles = [["api", "management"]]
 # W011（弱证据债）的机器上限：超过即 E011。降一条就把这个数字跟着降；
 # 想放宽必须有意识地改这一行（而不是靠「大家都记得别加」）。
 max_weak_evidence = 6
@@ -33,7 +36,7 @@ weak_calls = ["get", "to_dict", "wait_for", "get_instance"]
 calls = ["sleep"]
 
 [atoms.Tool]
-calls = ["_run_tool", "subprocess.run", "Popen", "click", "typewrite", "type_text", "press", "key_down", "key_up", "moveTo", "scroll"]
+calls = ["_run_tool", "_execute_react_turn_tools", "subprocess.run", "Popen", "click", "typewrite", "type_text", "press", "key_down", "key_up", "moveTo", "scroll"]
 
 [atoms.Observe]
 calls = ["_observe"]

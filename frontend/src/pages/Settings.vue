@@ -259,12 +259,11 @@ const modelTiers = [
   { key: 'SMALL', labelKey: 'settings.modelTiers.small', hintKey: 'settings.modelTiers.smallHint' },
 ]
 const modelForm = ref({
-  LARGE: { API_KEY: '', API_URL: '', NAME: '', API_FORMAT: '', SUPPLIER: '', ENABLE_THINKING: true, ENABLE_IMAGE: true },
-  MEDIUM: { API_KEY: '', API_URL: '', NAME: '', SUPPLIER: '', ENABLE_THINKING: true, ENABLE_IMAGE: true },
-  SMALL: { API_KEY: '', API_URL: '', NAME: '', SUPPLIER: '', ENABLE_THINKING: true, ENABLE_IMAGE: true },
+  LARGE: { API_KEY: '', API_URL: '', NAME: '', API_FORMAT: '', PROVIDER: '', CONTEXT_LENGTH: 0, SUPPLIER: '', ENABLE_THINKING: true, ENABLE_IMAGE: true },
+  MEDIUM: { API_KEY: '', API_URL: '', NAME: '', PROVIDER: '', CONTEXT_LENGTH: 0, SUPPLIER: '', ENABLE_THINKING: true, ENABLE_IMAGE: true },
+  SMALL: { API_KEY: '', API_URL: '', NAME: '', PROVIDER: '', CONTEXT_LENGTH: 0, SUPPLIER: '', ENABLE_THINKING: true, ENABLE_IMAGE: true },
 })
 const modelSaving = ref(false)
-const contextWindowSize = numCfg('CONTEXT_WINDOW_SIZE', 128000)
 // 上下文管理：注入口径（ratio 窗口比例 / messages 条数 / tokens 数）
 const contextLimitMode = segCfg('CONTEXT_LIMIT_MODE', 'ratio')
 const contextMaxMessages = numCfg('CHAT_CONTEXT_MAX_MESSAGES', 20)
@@ -283,6 +282,8 @@ function loadModelForm() {
     modelForm.value[t.key].API_KEY = _str(c[t.key + '_MODEL_API_KEY'], '')
     modelForm.value[t.key].API_URL = _str(c[t.key + '_MODEL_API_URL'], '')
     modelForm.value[t.key].NAME = _str(c[t.key + '_MODEL_NAME'], '')
+    modelForm.value[t.key].PROVIDER = _str(c[t.key + '_MODEL_PROVIDER'], '')
+    modelForm.value[t.key].CONTEXT_LENGTH = Number(c[t.key + '_MODEL_CONTEXT_LENGTH'] ?? 0) || 0
     modelForm.value[t.key].SUPPLIER = _str(c[t.key + '_MODEL_OPENROUTER_SUPPLIER'], '')
     if (t.key === 'LARGE') modelForm.value[t.key].API_FORMAT = _str(c.LARGE_MODEL_API_FORMAT, '')
     modelForm.value[t.key].ENABLE_THINKING = c[t.key + '_MODEL_ENABLE_THINKING'] !== false && c[t.key + '_MODEL_ENABLE_THINKING'] !== 'false'
@@ -294,6 +295,8 @@ function loadModelForm() {
 function tierIsOpenRouter(tier) {
   const url = (modelForm.value[tier.key].API_URL || '').toLowerCase()
   if (url.includes('openrouter')) return true
+  const formProv = (modelForm.value[tier.key].PROVIDER || '').toLowerCase()
+  if (formProv.includes('openrouter')) return true
   const prov = _str(configStore.config[tier.key + '_MODEL_PROVIDER'], '').toLowerCase()
   return prov.includes('openrouter')
 }
@@ -309,6 +312,7 @@ async function saveModelForm() {
         ['API_KEY', 'API_KEY'],
         ['API_URL', 'API_URL'],
         ['NAME', 'NAME'],
+        ['PROVIDER', 'PROVIDER'],
         ['SUPPLIER', 'OPENROUTER_SUPPLIER'],
       ]
       if (t.key === 'LARGE') fields.push(['API_FORMAT', 'API_FORMAT'])
@@ -318,6 +322,11 @@ async function saveModelForm() {
         const old = _str(c[t.key + '_MODEL_' + cfgSuffix], '')
         if (val !== old) updates.push([key, val])
       }
+      // 上下文窗口：按模型层级独立配置（0 = 回退全局 CONTEXT_WINDOW_SIZE）
+      const ctxKey = t.key + '_MODEL_CONTEXT_LENGTH'
+      const ctxVal = Math.max(0, Math.round(Number(modelForm.value[t.key].CONTEXT_LENGTH) || 0))
+      const ctxOld = Math.max(0, Math.round(Number(c[ctxKey]) || 0))
+      if (ctxVal !== ctxOld) updates.push([ctxKey, ctxVal])
       // 布尔字段：ENABLE_THINKING, ENABLE_IMAGE
       for (const boolField of ['ENABLE_THINKING', 'ENABLE_IMAGE']) {
         const key = t.key + '_MODEL_' + boolField
@@ -336,6 +345,60 @@ async function saveModelForm() {
     loadModelForm()
   } catch (e) { toast.show(t('settings.saveFailed') + ': ' + (e.body?.error?.message || e.status), 'error') }
   finally { modelSaving.value = false }
+}
+
+/* ── 记忆总结专用模型 API（留空则回退视觉模型/小模型）── */
+const memoryModelForm = ref({
+  PROVIDER: '',
+  API_URL: '',
+  API_KEY: '',
+  NAME: '',
+  API_FORMAT: '',
+  SUPPLIER: '',
+})
+const memoryModelSaving = ref(false)
+const memoryModelIsOpenRouter = computed(() => {
+  const url = (memoryModelForm.value.API_URL || '').toLowerCase()
+  const prov = (memoryModelForm.value.PROVIDER || '').toLowerCase()
+  return url.includes('openrouter') || prov.includes('openrouter')
+})
+
+function loadMemoryModelForm() {
+  const c = configStore.config
+  memoryModelForm.value.PROVIDER = _str(c.MEMORY_MODEL_PROVIDER, '')
+  memoryModelForm.value.API_URL = _str(c.MEMORY_MODEL_API_URL, '')
+  memoryModelForm.value.API_KEY = _str(c.MEMORY_MODEL_API_KEY, '')
+  memoryModelForm.value.NAME = _str(c.MEMORY_MODEL_NAME, '')
+  memoryModelForm.value.API_FORMAT = _str(c.MEMORY_MODEL_API_FORMAT, '')
+  memoryModelForm.value.SUPPLIER = _str(c.MEMORY_MODEL_OPENROUTER_SUPPLIER, '')
+}
+
+async function saveMemoryModelForm() {
+  const c = configStore.config
+  memoryModelSaving.value = true
+  try {
+    const fields = [
+      ['PROVIDER', 'MEMORY_MODEL_PROVIDER'],
+      ['API_URL', 'MEMORY_MODEL_API_URL'],
+      ['API_KEY', 'MEMORY_MODEL_API_KEY'],
+      ['NAME', 'MEMORY_MODEL_NAME'],
+      ['API_FORMAT', 'MEMORY_MODEL_API_FORMAT'],
+      ['SUPPLIER', 'MEMORY_MODEL_OPENROUTER_SUPPLIER'],
+    ]
+    const updates = []
+    for (const [field, cfgKey] of fields) {
+      const val = (memoryModelForm.value[field] || '').trim()
+      const old = _str(c[cfgKey], '')
+      if (val !== old) updates.push([cfgKey, val])
+    }
+    if (updates.length === 0) { toast.show(t('settings.model.noChange'), 'info'); return }
+    for (const [k, v] of updates) {
+      await configStore.updateConfig(k, v)
+    }
+    toast.show(t('settings.perception.memoryModelSaved'), 'success')
+    loadMemoryModelForm()
+  } catch (e) { toast.show(t('settings.saveFailed') + ': ' + (e.body?.error?.message || e.status), 'error') }
+  finally { memoryModelSaving.value = false }
 }
 
 /* ── 视觉模型 ── */
@@ -454,6 +517,7 @@ onMounted(async () => {
   await configStore.loadConfig()
   await configStore.loadModelStatus()
   loadModelForm()
+  loadMemoryModelForm()
   const cfgPath = _str(configStore.config[CK.storagePath], '')
   if (cfgPath) { storagePath.value = cfgPath; return }
   try { const info = await endpoints.systemInfo(); storagePath.value = info?.data?.storage_path || info?.storage_path || '' } catch {}
@@ -553,6 +617,14 @@ onMounted(async () => {
               <div class="lbl"><div class="t">{{ $t('settings.model.name') }}</div></div>
               <div class="setting-ctl"><input class="input w-220" v-model="modelForm[tier.key].NAME" placeholder="deepseek-v4-flash" /></div>
             </div>
+            <div class="setting-row">
+              <div class="lbl"><div class="t">{{ $t('settings.model.provider') }}</div><div class="d">{{ $t('settings.model.providerDesc') }}</div></div>
+              <div class="setting-ctl"><input class="input w-200" v-model="modelForm[tier.key].PROVIDER" placeholder="openrouter" /></div>
+            </div>
+            <div class="setting-row">
+              <div class="lbl"><div class="t">{{ $t('settings.model.contextLength') }}</div><div class="d">{{ $t('settings.model.contextLengthDesc') }}</div></div>
+              <div class="setting-ctl"><input class="input w-160" type="number" min="0" step="1000" v-model.number="modelForm[tier.key].CONTEXT_LENGTH" placeholder="128000" /></div>
+            </div>
             <div v-if="tierIsOpenRouter(tier)" class="setting-row">
               <div class="lbl"><div class="t">{{ $t('settings.model.openRouterSupplier') }}</div><div class="d">{{ $t('settings.model.openRouterSupplierDesc') }}</div></div>
               <div class="setting-ctl"><input class="input w-280" v-model="modelForm[tier.key].SUPPLIER" placeholder="DeepInfra, Together, Groq" /></div>
@@ -569,10 +641,6 @@ onMounted(async () => {
               <div class="lbl"><div class="t">{{ $t('settings.model.enableImage') }}</div><div class="d">{{ $t('settings.model.enableImageDesc') }}</div></div>
               <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" v-model="modelForm[tier.key].ENABLE_IMAGE" /><span class="toggle-slider"></span></label></div>
             </div>
-          </div>
-          <div class="setting-row">
-            <div class="lbl"><div class="t">{{ $t('settings.model.contextWindow') }}</div><div class="d">{{ $t('settings.model.contextWindowDesc') }}</div></div>
-            <div class="setting-ctl"><input class="input w-140" type="number" min="0" step="1000" v-model.number="contextWindowSize" /></div>
           </div>
         </div>
         <div class="settings-divider"></div>
@@ -910,6 +978,47 @@ onMounted(async () => {
               <button v-if="lib.name !== '默认'" class="btn btn-sm danger" @click="deleteLib(lib)">{{ $t('common.delete') }}</button>
             </div>
           </div>
+        </div>
+        <div class="settings-divider"></div>
+        <div class="settings-group">
+          <div class="settings-group-title">{{ $t('settings.perception.memoryModelTitle') }}</div>
+          <p class="settings-hint">{{ $t('settings.perception.memoryModelHint') }}</p>
+          <div class="setting-row">
+            <div class="lbl"><div class="t">{{ $t('settings.perception.memorySummary') }}</div><div class="d">{{ $t('settings.perception.memorySummaryDesc') }}</div></div>
+            <div class="setting-ctl"><label class="toggle-switch"><input type="checkbox" :checked="memorySummaryEnabled" @change="memorySummaryEnabled = !memorySummaryEnabled" /><span class="toggle-slider"></span></label></div>
+          </div>
+          <template v-if="memorySummaryEnabled">
+            <div class="setting-row">
+              <div class="lbl"><div class="t">{{ $t('settings.perception.memoryModelProvider') }}</div><div class="d">{{ $t('settings.perception.memoryModelProviderDesc') }}</div></div>
+              <div class="setting-ctl"><input class="input w-200" v-model="memoryModelForm.PROVIDER" placeholder="openrouter" /></div>
+            </div>
+            <div class="setting-row">
+              <div class="lbl"><div class="t">{{ $t('settings.model.apiUrl') }}</div></div>
+              <div class="setting-ctl"><input class="input w-360" v-model="memoryModelForm.API_URL" placeholder="https://openrouter.ai/api/v1/chat/completions" /></div>
+            </div>
+            <div class="setting-row">
+              <div class="lbl"><div class="t">{{ $t('settings.model.apiKey') }}</div></div>
+              <div class="setting-ctl"><input class="input w-280" type="password" v-model="memoryModelForm.API_KEY" placeholder="sk-..." autocomplete="off" /></div>
+            </div>
+            <div class="setting-row">
+              <div class="lbl"><div class="t">{{ $t('settings.model.name') }}</div></div>
+              <div class="setting-ctl"><input class="input w-240" v-model="memoryModelForm.NAME" placeholder="dots-studio/dots-3-note-preview:free" /></div>
+            </div>
+            <div class="setting-row">
+              <div class="lbl"><div class="t">{{ $t('settings.model.apiFormat') }}</div><div class="d">{{ $t('settings.model.apiFormatDesc') }}</div></div>
+              <div class="setting-ctl"><input class="input w-200" v-model="memoryModelForm.API_FORMAT" placeholder="openai" /></div>
+            </div>
+            <div v-if="memoryModelIsOpenRouter" class="setting-row">
+              <div class="lbl"><div class="t">{{ $t('settings.model.openRouterSupplier') }}</div><div class="d">{{ $t('settings.model.openRouterSupplierDesc') }}</div></div>
+              <div class="setting-ctl"><input class="input w-280" v-model="memoryModelForm.SUPPLIER" placeholder="DeepInfra, Together, Groq" /></div>
+            </div>
+            <div class="setting-row">
+              <div class="lbl"></div>
+              <div class="setting-ctl">
+                <button class="btn btn-sm btn-primary" :disabled="memoryModelSaving" @click="saveMemoryModelForm">{{ memoryModelSaving ? $t('settings.model.saving') : $t('settings.perception.saveMemoryModel') }}</button>
+              </div>
+            </div>
+          </template>
         </div>
       </div>
 

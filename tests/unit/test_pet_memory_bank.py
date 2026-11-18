@@ -207,9 +207,15 @@ def test_extract_swallows_reducer_errors(bank, monkeypatch):
     monkeypatch.setattr("modules.memory.event_reducer.EventReducer", Boom)
     asyncio.run(bank._extract(1, "用户：x\n桌宠：y", object()))   # 不抛异常
 
-def test_extraction_writes_user_persona_memory_and_causal_nodes(bank):
+def test_extraction_writes_user_persona_memory_and_causal_nodes(bank, monkeypatch):
     """EventReducer + 独立 EventStore/CausalGraph 串联：事件与因果节点落到该人设。"""
     import json
+
+    # 该用例验证注入 FakeClient 的落库链路；禁用本机用户配置里的专用记忆模型，
+    # 否则单测会走真实 OpenRouter 请求。
+    monkeypatch.setattr(
+        "modules.memory.event_reducer.get_memory_model_client", lambda: None
+    )
 
     class FakeClient:
         async def generate(self, prompt, **kwargs):

@@ -1481,6 +1481,20 @@ JUDGED_BYPASS = {
         "files": {"config/settings.py", "modules/desktop_pet/memory_bank.py"},
         "why": "同上：因果图跟记忆库走，切库时按类名清单例",
     },
+    "modules.memory.event_reducer:get_memory_model_client": {
+        "files": {
+            "modules/desktop_pet/memory_bank.py",
+            "modules/thinking/api_stream.py",
+            "modules/thinking/chat_light/continuous_thinker.py",
+        },
+        "why": "记忆提炼使用独立的 OpenRouter 客户端，与主聊天模型解耦；"
+               "这三处都要拿「记忆专用」单例，不能走主模型端口",
+    },
+    "modules.thinking.core.workflow_checkpoint:get_checkpoint_manager": {
+        "files": {"modules/thinking/core/model_runner.py"},
+        "why": "思考循环挂起/唤醒时直接读写检查点单例，属于内核内部状态，"
+               "目前不对外提供可接管端口",
+    },
 }
 
 

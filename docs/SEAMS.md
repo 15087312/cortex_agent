@@ -7,9 +7,9 @@
 import/调用关系算出来的，不是人写的。它按「今天能不能真的接管」分三档：
 
 - 端口 73 个（业务 58 / 门面 15）：有人经端口取用 73 个，**死端口 0 个**
-- 候选缝隙 180 处：单例访问器 62 处，端口优先访问器 76 处，端口包装的对象 39 处，import 期快照 4 处
+- 候选缝隙 182 处：单例访问器 64 处，端口优先访问器 76 处，端口包装的对象 39 处，import 期快照 4 处
 - ✅ 已可接管（端口在用、无人硬 import）：**137 处**
-- ❌ 还没有端口、又被别的文件硬 import：**0 处**
+- ❌ 还没有端口、又被别的文件硬 import：**2 处**
 - ⚠️ 有端口但代码**行为上**绕过它（只接了一半）：**2 处**
 - 只在类型标注里点名、行为不绕过的：3 处（见文末附表）
 
@@ -134,7 +134,7 @@ import/调用关系算出来的，不是人写的。它按「今天能不能真�
 | `infra.error_bus:get_error_bus` | 端口访问器 | `error_bus` | 2 | — |
 | `infra.mcp.factory:_default_mcp_tool_service` | 访问器 | `mcp_tool_service` | — | — |
 | `infra.mcp.factory:_default_server_manager` | 访问器 | `mcp_server_manager` | — | — |
-| `infra.mcp.factory:get_mcp_tool_service` | 端口访问器 | `mcp_tool_service` | 3 | — |
+| `infra.mcp.factory:get_mcp_tool_service` | 端口访问器 | `mcp_tool_service` | 4 | — |
 | `infra.mcp.factory:get_server_manager` | 端口访问器 | `mcp_server_manager` | 1 | — |
 | `infra.security_gate:get_control_tools` | 端口访问器 | `thinking.control_tools` | 1 | — |
 | `infra.security_gate:get_identities` | 端口访问器 | `security.identities` | 1 | — |
@@ -213,8 +213,10 @@ import/调用关系算出来的，不是人写的。它按「今天能不能真�
 
 | 访问器 | 文件 | 硬 import 的读者 |
 |---|---|---|
+| `modules.memory.event_reducer:get_memory_model_client` | `modules/memory/event_reducer.py` | `modules/desktop_pet/memory_bank.py`, `modules/thinking/api_stream.py`, `modules/thinking/chat_light/continuous_thinker.py` |
+| `modules.thinking.core.workflow_checkpoint:get_checkpoint_manager` | `modules/thinking/core/workflow_checkpoint.py` | `modules/thinking/core/model_runner.py` |
 
-（本表列前 60 行，共 0 处；完整数据用 `--json` 取。）
+（本表列前 60 行，共 2 处；完整数据用 `--json` 取。）
 
 ## ⚠️ 三、有端口、但代码绕过它的（只接了一半）
 

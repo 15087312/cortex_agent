@@ -58,6 +58,7 @@
     "PetToOutput": "c6308e0d33313df2",
     "PetToPerceive": "2e418b85ba423740",
     "PetToThink": "6ad6a8be7913c56b",
+    "ReActSubflow": "c9a6eda72453756e",
     "RecallFlow": "f35a01e5ac413fbf",
     "RunnerLoop": "6dc66b4a737ebbbc",
     "SenseScan": "a0a7eebd73903121",
@@ -74,7 +75,7 @@
     "ThinkFlow": "9f4c97cff73ec462",
     "ThinkLoop": "9b3d46077825dcb5",
     "ThinkModule": "9b3d46077825dcb5",
-    "ThinkStep": "b15758dca3202d5e",
+    "ThinkStep": "1c37d8ebe49a4c83",
     "TimeRange": "853bc17c8987c2d3",
     "ValidateInput": "6a08904871ef58fa",
     "WsDispatch": "c8d3fc567bbcbf38"

@@ -6,6 +6,6 @@ try:
 except ImportError:
     __version__ = "unknown"
     __version_name__ = "unknown"
-    def get_version_string():
+    def get_version_string() -> str:
         return f"v{__version__}"
 

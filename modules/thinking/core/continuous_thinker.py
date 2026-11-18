@@ -6,6 +6,7 @@ v0.1.0 传统阻塞循环实现已归档至 git tag `v0.1.0`。
 """
 from __future__ import annotations
 
+import asyncio  # noqa: F401 - 测试会 monkeypatch continuous_thinker.asyncio.sleep
 import logging
 from typing import Any, Awaitable, Callable, Dict, Optional
 

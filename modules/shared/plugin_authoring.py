@@ -113,7 +113,7 @@ class SourcePlugin(Plugin):
     version: ClassVar[str] = "authored"
 
     def __init__(self, *, name: str, source: str) -> None:
-        self.name = _check_name(name)
+        self.name = _check_name(name)  # type: ignore[misc]
         if not (source or "").strip():
             raise PluginSourceError(f"插件 {self.name!r} 没有带源码来")
         self.source = source

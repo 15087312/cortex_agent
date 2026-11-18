@@ -15,6 +15,9 @@ import sys
 
 from PyInstaller.utils.hooks import collect_all, collect_submodules, collect_data_files
 
+# torch / transformers 的依赖图很深，CI 上默认递归上限可能触发 RecursionError
+sys.setrecursionlimit(max(10000, sys.getrecursionlimit() * 4))
+
 block_cipher = None
 ROOT = os.path.abspath(".")
 
@@ -140,6 +143,12 @@ a = Analysis(
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
+# Windows 的 EXE 只接受 .ico，macOS 的 BUNDLE 只接受 .icns
+_icon_path = os.path.join(
+    ROOT,
+    'frontend/public/icon.ico' if sys.platform == 'win32' else 'frontend/public/cortex.icns',
+)
+
 # ── 桌面客户端（入口 = frontend/main.py，内置后端线程）──
 exe_client = EXE(
     pyz,
@@ -157,32 +166,43 @@ exe_client = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=os.path.join(ROOT, 'frontend/public/cortex.icns') if os.path.exists(
-        os.path.join(ROOT, 'frontend/public/cortex.icns')) else None,
+    icon=_icon_path if os.path.exists(_icon_path) else None,
 )
 
-# ── macOS 应用包（.app，可拖入 /Applications，双击如正常 App 启动，无终端）──
-# onedir 模式：exe 依赖由 BUNDLE 收集到 Contents/Frameworks
-app = BUNDLE(
-    exe_client,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
-    name='cortex.app',
-    icon=os.path.join(ROOT, 'frontend/public/cortex.icns') if os.path.exists(
-        os.path.join(ROOT, 'frontend/public/cortex.icns')) else None,
-    bundle_identifier='com.cortex.app',
-    info_plist={
-        'CFBundleName': 'cortex',
-        'CFBundleDisplayName': 'cortex',
-        'CFBundleShortVersionString': APP_VERSION,
-        'CFBundleVersion': APP_VERSION,
-        'NSHighResolutionCapable': True,
-        'NSMicrophoneUsageDescription': 'cortex 需要麦克风用于聊天语音输入与语音唤醒。',
-        'LSMinimumSystemVersion': '11.0',
-        'NSPrincipalClass': 'NSApplication',
-    },
-)
+if sys.platform == 'darwin':
+    # ── macOS 应用包（.app，可拖入 /Applications，双击如正常 App 启动，无终端）──
+    # onedir 模式：exe 依赖由 BUNDLE 收集到 Contents/Frameworks
+    app = BUNDLE(
+        exe_client,
+        a.binaries,
+        a.zipfiles,
+        a.datas,
+        name='cortex.app',
+        icon=_icon_path if os.path.exists(_icon_path) else None,
+        bundle_identifier='com.cortex.app',
+        info_plist={
+            'CFBundleName': 'cortex',
+            'CFBundleDisplayName': 'cortex',
+            'CFBundleShortVersionString': APP_VERSION,
+            'CFBundleVersion': APP_VERSION,
+            'NSHighResolutionCapable': True,
+            'NSMicrophoneUsageDescription': 'cortex 需要麦克风用于聊天语音输入与语音唤醒。',
+            'LSMinimumSystemVersion': '11.0',
+            'NSPrincipalClass': 'NSApplication',
+        },
+    )
+else:
+    # ── Windows / Linux：onedir 目录（BUNDLE 在非 macOS 上是 no-op）──
+    coll = COLLECT(
+        exe_client,
+        a.binaries,
+        a.zipfiles,
+        a.datas,
+        strip=False,
+        upx=True,
+        upx_exclude=[],
+        name='cortex',
+    )
 
 
 # ── 打包后修复：QtWebEngine macOS framework ──────────────────────

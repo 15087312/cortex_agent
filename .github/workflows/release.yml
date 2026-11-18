@@ -36,7 +36,7 @@ jobs:
         run: |
           # Windows 上 pip.exe 无法自升级，必须用 python -m pip
           python -m pip install --upgrade pip
-          python -m pip install pyinstaller PyQt6 PyQt6-WebEngine
+          python -m pip install "pyinstaller>=6.10,<7" PyQt6 PyQt6-WebEngine
           # macOS 无 portaudio，pyaudio 无法编译 → 移除；其余照装
           if [ "$RUNNER_OS" = "macOS" ]; then
             grep -v -E '^pyaudio|pyaudio[<>=]' requirements.txt > reqs.tmp
@@ -60,42 +60,55 @@ jobs:
           mkdir -p vendor/ffmpeg
           if [ "$RUNNER_OS" = "Windows" ]; then
             curl -fsSL -o ffbin.zip "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip" || echo SKIP
-          else
-            brew install ffmpeg || echo SKIP
-          fi
-          if [ "$RUNNER_OS" = "Windows" ]; then
             if [ -s ffbin.zip ]; then
-              unzip -p ffbin.zip "*bin/ffmpeg.exe" > vendor/ffmpeg/ffmpeg.exe
-              unzip -p ffbin.zip "*bin/ffprobe.exe" > vendor/ffmpeg/ffprobe.exe
+              # Windows Git Bash 不保证有 unzip；用系统自带的 PowerShell 解压
+              powershell -Command "Expand-Archive -Path ffbin.zip -DestinationPath ffbin -Force" || echo "ffmpeg unzip failed, fallback to user-installed"
+              FFMPEG_BIN=$(find ffbin -type f -name ffmpeg.exe 2>/dev/null | head -n 1)
+              FFPROBE_BIN=$(find ffbin -type f -name ffprobe.exe 2>/dev/null | head -n 1)
+              if [ -n "$FFMPEG_BIN" ] && [ -n "$FFPROBE_BIN" ]; then
+                cp "$FFMPEG_BIN" vendor/ffmpeg/ffmpeg.exe
+                cp "$FFPROBE_BIN" vendor/ffmpeg/ffprobe.exe
+              fi
+              rm -rf ffbin
               rm -f ffbin.zip
+            fi
+            if [ -s vendor/ffmpeg/ffmpeg.exe ] && [ -s vendor/ffmpeg/ffprobe.exe ]; then
               echo "Vendored Windows ffmpeg"
             else
-              rmdir vendor/ffmpeg
+              rm -rf vendor/ffmpeg
             fi
           else
+            brew install ffmpeg || echo SKIP
             PREFIX=$(brew --prefix 2>/dev/null)
             if [ -x "$PREFIX/bin/ffmpeg" ] && [ -x "$PREFIX/bin/ffprobe" ]; then
               cp "$PREFIX/bin/ffmpeg" "$PREFIX/bin/ffprobe" vendor/ffmpeg/
               echo "Vendored macOS ffmpeg"
             else
-              rmdir vendor/ffmpeg
+              rm -rf vendor/ffmpeg
             fi
           fi
 
       - name: PyInstaller
         shell: bash
         run: |
-          pyinstaller pyinstaller.spec --clean --noconfirm
+          # 用 python -m 调起，避免 pip 脚本目录不在 PATH（尤其 macOS runner）
+          python -m PyInstaller pyinstaller.spec --clean --noconfirm
 
       - name: Package zip
         shell: bash
         run: |
           cd dist
           if [ "$RUNNER_OS" = "Windows" ]; then
-            powershell -Command "Compress-Archive -Path CortexAgent -DestinationPath ../CortexAgent-windows-${{ github.ref_name }}.zip -Force"
+            # spec 在 Windows 上走 COLLECT，产物是 dist/cortex/cortex.exe
+            test -f cortex/cortex.exe
+            powershell -Command "Compress-Archive -Path cortex -DestinationPath ../CortexAgent-windows-${{ github.ref_name }}.zip -Force"
           else
-            zip -r "../CortexAgent-macos-${{ github.ref_name }}.zip" CortexAgent
+            # spec 在 macOS 上走 BUNDLE，产物是 dist/cortex.app
+            test -d cortex.app
+            zip -r "../CortexAgent-macos-${{ github.ref_name }}.zip" cortex.app
           fi
+          cd ..
+          ls -lh CortexAgent-*.zip
 
       - name: Upload to Release
         uses: softprops/action-gh-release@v2

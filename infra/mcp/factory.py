@@ -48,7 +48,7 @@ def _default_server_manager() -> MCPServerManager:
     return _manager
 
 
-# @link:block get_mcp_tool_service_Emit = Emit · Think
+# @link:block get_mcp_tool_service_Emit = Emit
 def get_mcp_tool_service() -> MCPToolService:
     """端口优先取全局 MCP 工具服务：接管 ``mcp_tool_service`` 端口 = 换掉全部调用点。
 

@@ -2141,6 +2141,8 @@ def test_run_runtime_expert_on_demand_wakeup_fail(monkeypatch):
 
 async def test_think_loop_continuation(monkeypatch):
     """large 委托后等待唤醒 → 续接一轮后退出（474-492）"""
+    from config.settings import settings as _test_settings
+    monkeypatch.setattr(_test_settings, "THINKING_ENGINE_MODE", "continuous", raising=False)
     r = _runner(tier="large")
     r._running = True
     r._task_description = "任务"
@@ -2987,6 +2989,8 @@ async def test_maybe_summarize_system_prompt_fallback(monkeypatch):
 
 async def test_think_loop_wait_timeout_uses_tool_wait(monkeypatch):
     """委托等待超时使用工具设置的 wait_seconds（非硬编码）；超时后自动激活上级"""
+    from config.settings import settings as _test_settings
+    monkeypatch.setattr(_test_settings, "THINKING_ENGINE_MODE", "continuous", raising=False)
     r = _runner(tier="large")
     r._running = True
     r._task_description = "任务"

@@ -101,7 +101,6 @@ def _safe_emit_bg(ctx: NodeContext, event_type: EventType, payload: Dict[str, An
         pass
 
 
-# @link:block ReActSubflow_Infer = Think · Emit
 class ReActInferenceNode(StreamingNode):
     """ReAct 推理节点：断点/压缩维护 + 实时流式输出（同时推给前端通道与工作流事件流）"""
 
@@ -115,6 +114,7 @@ class ReActInferenceNode(StreamingNode):
         self.client = client
         self.runner_ref = runner_ref
 
+    # @link:block ReActSubflow_Infer = Think · Emit
     async def execute(self, state: Dict[str, Any], ctx: NodeContext) -> Dict[str, Any]:
         messages: List[ChatMessage] = list(state.get("messages", []))
         tools = state.get("tools_with_control", [])
@@ -255,7 +255,6 @@ class ReActInferenceNode(StreamingNode):
         }
 
 
-# @link:block ReActSubflow_Dispatch = Guard
 class ReActToolDispatchNode(StreamingNode):
     """工具分流与控制节点：将 tool_calls 分类并判定是否应结束或继续"""
 
@@ -263,6 +262,7 @@ class ReActToolDispatchNode(StreamingNode):
         super().__init__(node_id)
         self.runner_ref = runner_ref
 
+    # @link:block ReActSubflow_Dispatch = Guard
     async def execute(self, state: Dict[str, Any], ctx: NodeContext) -> Dict[str, Any]:
         tool_calls = state.get("current_tool_calls") or []
         content = state.get("current_content") or ""
@@ -363,7 +363,6 @@ class ReActToolDispatchNode(StreamingNode):
         }
 
 
-# @link:block ReActSubflow_Exec = Guard · Tool · Write
 class ReActToolExecutionNode(StreamingNode):
     """工具安全审查与实际执行节点：优先复用 ModelRunner._execute_react_turn_tools"""
 
@@ -371,6 +370,7 @@ class ReActToolExecutionNode(StreamingNode):
         super().__init__(node_id)
         self.runner_ref = runner_ref
 
+    # @link:block ReActSubflow_Exec = Guard · Tool · Write
     async def execute(self, state: Dict[str, Any], ctx: NodeContext) -> Dict[str, Any]:
         messages: List[ChatMessage] = list(state.get("messages", []))
         normal_calls = state.get("normal_calls") or []
@@ -497,7 +497,6 @@ class ReActToolExecutionNode(StreamingNode):
         }
 
 
-# @link:block ReActSubflow
 class ReActSubflow:
     """ReAct 工具循环工作流管理器
 

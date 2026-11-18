@@ -281,8 +281,11 @@ async def lifespan(app: FastAPI):
             get_model_factory().ensure_ready()
             print("[DEBUG] 模型实例工厂就绪", flush=True)
             logger.info("✓ 模型实例工厂已就绪")
-            _push(stack, lambda: (get_model_factory().shutdown(),
-                                  logger.info("✓ 模型实例已关闭")))
+            def _shutdown_models() -> None:
+                get_model_factory().shutdown()
+                logger.info("✓ 模型实例已关闭")
+
+            _push(stack, _shutdown_models)
         except Exception as e:
             logger.error(f"✗ 模型调度管理器初始化失败: {e}")
 
@@ -307,8 +310,11 @@ async def lifespan(app: FastAPI):
             logger.info("✓ 全局错误总线已初始化")
             # 这个 handler 是装在事件循环上的，原来没人摘：Loop 之后被别的
             # 入口复用时（测试、嵌入式起停）还带着本进程的 error_bus。
-            _push(stack, lambda: (bus.restore_asyncio_handler(loop),
-                                  logger.info("✓ 全局错误总线 handler 已摘除")))
+            def _restore_error_bus() -> None:
+                bus.restore_asyncio_handler(loop)
+                logger.info("✓ 全局错误总线 handler 已摘除")
+
+            _push(stack, _restore_error_bus)
         except Exception as e:
             logger.error(f"✗ 全局错误总线初始化失败: {e}")
 
@@ -478,14 +484,22 @@ async def lifespan(app: FastAPI):
 
 _MODIFIABLE_CONFIG_KEYS = settings._MODIFIABLE_FIELDS
 
+# 记忆总结专用模型配置键：变更后需重置内存缓存，下一轮自动按新配置重建
+_MEMORY_MODEL_CONFIG_KEYS = {
+    "MEMORY_MODEL_API_KEY", "MEMORY_MODEL_API_URL", "MEMORY_MODEL_NAME",
+    "MEMORY_MODEL_API_FORMAT", "MEMORY_MODEL_PROVIDER",
+    "MEMORY_MODEL_OPENROUTER_SUPPLIER", "MEMORY_MODEL_MAX_TOKENS", "MEMORY_MODEL_TIMEOUT",
+}
+
 # 主模型配置键：变更后需重建模型实例（客户端在构造时读取配置）
 _MODEL_CONFIG_KEYS = {
     "LARGE_MODEL_API_KEY", "LARGE_MODEL_API_URL", "LARGE_MODEL_NAME", "LARGE_MODEL_API_FORMAT",
-    "LARGE_MODEL_PROVIDER", "LARGE_MODEL_OPENROUTER_SUPPLIER",
+    "LARGE_MODEL_PROVIDER", "LARGE_MODEL_CONTEXT_LENGTH", "LARGE_MODEL_OPENROUTER_SUPPLIER",
     "MEDIUM_MODEL_API_KEY", "MEDIUM_MODEL_API_URL", "MEDIUM_MODEL_NAME",
-    "MEDIUM_MODEL_PROVIDER", "MEDIUM_MODEL_OPENROUTER_SUPPLIER",
+    "MEDIUM_MODEL_PROVIDER", "MEDIUM_MODEL_CONTEXT_LENGTH", "MEDIUM_MODEL_OPENROUTER_SUPPLIER",
     "SMALL_MODEL_API_KEY", "SMALL_MODEL_API_URL", "SMALL_MODEL_NAME",
-    "SMALL_MODEL_PROVIDER", "SMALL_MODEL_OPENROUTER_SUPPLIER",
+    "SMALL_MODEL_PROVIDER", "SMALL_MODEL_CONTEXT_LENGTH", "SMALL_MODEL_OPENROUTER_SUPPLIER",
+    *_MEMORY_MODEL_CONFIG_KEYS,
 }
 
 
@@ -1579,6 +1593,16 @@ async def update_config(key: str, body: PutConfigRequest):
                 logger.info(f"模型配置已变更，重建模型实例: {key_upper}")
             except Exception as _reload_err:
                 logger.warning(f"模型实例重建失败（可手动重启后端）: {_reload_err}")
+        # 记忆模型（或回退用的视觉模型）配置变更 → 重置记忆提取模型客户端缓存
+        if key_upper in _MEMORY_MODEL_CONFIG_KEYS or key_upper in {
+            "VISION_API_KEY", "VISION_API_URL", "VISION_API_MODEL", "VISION_API_FORMAT"
+        }:
+            try:
+                from modules.memory.event_reducer import reset_memory_model_client
+                reset_memory_model_client()
+                logger.info(f"记忆模型配置已变更，重置记忆模型客户端缓存: {key_upper}")
+            except Exception as _mem_reload_err:
+                logger.warning(f"记忆模型缓存重置失败: {_mem_reload_err}")
         # 系统级配置：变更时立即生效（防休眠 caffeinate / 开机启动 LaunchAgent / 感知系统开关）
         try:
             if key_upper == "PREVENT_SLEEP":

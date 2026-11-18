@@ -71,7 +71,7 @@ def provide_capability(name: str, provider: Callable[..., Any]) -> Callable[[], 
     def undo() -> None:
         if _capabilities.get(name) is not provider:
             return
-        if had:
+        if had and previous is not None:
             _capabilities[name] = previous
         else:
             _capabilities.pop(name, None)

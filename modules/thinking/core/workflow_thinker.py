@@ -140,11 +140,12 @@ class WorkflowThinker:
         self._running = False
         self.logger = setup_logger("workflow_thinker")
 
+        self.notebook: Optional[Any] = None
         try:
             from modules.memory.utils.task_notebook import TaskNotebook
             self.notebook = TaskNotebook(self._session_id)
         except Exception:
-            self.notebook = None
+            pass
 
         self._pending_delegations: Dict[str, Dict[str, Any]] = {}
         self._delegation_results: List[Dict[str, Any]] = []
@@ -156,6 +157,13 @@ class WorkflowThinker:
         self._consecutive_new_delegation_rounds: int = 0
         self._last_sd_read_count: int = 0
         self._context_tokens: int = 0
+
+        # 兼容旧版传入的 MemoryManager：把本次会话 ID 同步给它
+        if self.memory is not None:
+            try:
+                self.memory.set_session_id(self._session_id)
+            except Exception as e:
+                self.logger.debug(f"[WorkflowThinker] memory.set_session_id 跳过: {e}")
         self._topology_projector: Optional[Any] = None
         try:
             from modules.thinking.core.workflow_projection import WorkflowTopologyProjector
@@ -195,14 +203,38 @@ class WorkflowThinker:
             self._pending_delegations[delegation_id]["response"] = response_msg[:500]
             self.logger.info(f"[委托响应处理] 本地记录已更新: {delegation_id} → completed")
 
-    def clear_memory(self) -> None:
-        """清除记忆"""
-        self.history_thoughts.clear()
-        if self.memory and hasattr(self.memory, "clear"):
+        # 同步黑板状态（如果存在且能匹配）；失败不影响本地追踪
+        blackboard = getattr(self, "_blackboard", None)
+        if blackboard is not None:
             try:
-                self.memory.clear()
+                blackboard.update_delegation_status(
+                    delegation_id=delegation_id,
+                    status="completed",
+                    metadata={"response": response_msg[:1000]},
+                )
+            except Exception as e:
+                self.logger.debug(f"[Blackboard] 委托状态更新失败 (非致命): {e}")
+
+    def clear_memory(self) -> None:
+        """清除短期记忆和记事本（兼容旧版 MemoryManager 接口）"""
+        history = getattr(self, "history_thoughts", None)
+        if history is not None:
+            history.clear()
+        if self.memory is not None:
+            try:
+                clear_short = getattr(self.memory, "clear_short_term", None)
+                if callable(clear_short):
+                    clear_short()
+                elif hasattr(self.memory, "clear"):
+                    self.memory.clear()
             except Exception as e:
                 self.logger.debug(f"[WorkflowThinker] 清除记忆异常: {e}")
+        notebook = getattr(self, "notebook", None)
+        if notebook is not None:
+            try:
+                notebook.clear()
+            except Exception as e:
+                self.logger.debug(f"[WorkflowThinker] 清除记事本异常: {e}")
 
     async def close(self) -> None:
         """关闭资源"""
@@ -249,9 +281,11 @@ class WorkflowThinker:
         if isinstance(result, dict):
             probe_id = result.get("probe_id", "") or result.get("metadata", {}).get("probe_id", "")
             task_id = result.get("task_id", "") or result.get("metadata", {}).get("task_id", "")
-        elif hasattr(result, "metadata") and isinstance(result.metadata, dict):
-            probe_id = result.metadata.get("probe_id", "")
-            task_id = result.metadata.get("task_id", "")
+        else:
+            meta = getattr(result, "metadata", None)
+            if isinstance(meta, dict):
+                probe_id = meta.get("probe_id", "")
+                task_id = meta.get("task_id", "")
 
         delegation_key = probe_id or task_id or f"{role}::{task[:60]}"
         is_success = True
@@ -260,7 +294,7 @@ class WorkflowThinker:
             is_success = result.get("success", True)
             error_msg = result.get("error", "")
         elif hasattr(result, "success"):
-            is_success = bool(result.success)
+            is_success = bool(getattr(result, "success", True))
             error_msg = getattr(result, "error", "")
 
         if is_success:
@@ -374,19 +408,8 @@ class WorkflowThinker:
         state.current_prompt = await self._build_prompt(state.question, round_num=state.round_num)
 
     async def _build_prompt(self, initial_question: str, round_num: int = 0) -> str:
-        ext_builder = getattr(self, "_external_prompt_builder", None)
-        if callable(ext_builder):
-            try:
-                sig = inspect.signature(ext_builder)
-                if len(sig.parameters) >= 2:
-                    res = ext_builder(initial_question, round_num)
-                else:
-                    res = ext_builder(initial_question)
-                if inspect.isawaitable(res):
-                    return await res
-                return str(res)
-            except Exception as e:
-                self.logger.warning(f"[工作流上下文] 外部 prompt_builder 失败，回退默认: {e}")
+        """构建当前轮 prompt — TurnContext 池化 + PromptComposer"""
+        import inspect
 
         from config.prompts.composer import PromptComposer
         from modules.thinking.context.pool import ContextFragment, TurnContext
@@ -397,37 +420,32 @@ class WorkflowThinker:
         if initial_question:
             pool.add(ContextFragment("task", initial_question, ("large", "supervisor", "expert"), "用户提问", 5))
 
-        if hasattr(self, "_consume_external_guidance"):
-            external_guidance = self._consume_external_guidance()
-        else:
-            persistent = getattr(self, "_persistent_prompts", [])
-            transient = getattr(self, "_transient_prompts", [])
-            external_guidance = "\n".join(persistent + transient).strip()
-            if hasattr(self, "_transient_prompts"):
-                self._transient_prompts.clear()
+        # 外部引导
+        external_guidance = self._consume_external_guidance()
         if external_guidance:
             pool.add(ContextFragment("guidance", external_guidance, ("large", "supervisor"), "系统指令", 10))
 
+        # 任务契约
         task_contract = self._build_task_contract_section(getattr(self, "_task_context", None))
         if task_contract:
             pool.add(ContextFragment("task_contract", task_contract, ("large", "supervisor", "expert"), "任务契约", 12))
 
-        delegation_status = self._build_delegation_status_section()
-        if delegation_status:
-            pool.add(ContextFragment("delegation_status", delegation_status, ("large", "supervisor", "expert"), "委托状态", 18))
-
-        notebook_status = self.notebook.content if getattr(self, "notebook", None) is not None else ""
-        if getattr(self, "notebook", None) is not None and notebook_status.strip() != "任务刚开始，请制定初步计划。":
+        # 记事本
+        notebook = getattr(self, "notebook", None)
+        notebook_status = notebook.content if notebook is not None else ""
+        if notebook is not None and notebook_status.strip() != "任务刚开始，请制定初步计划。":
             pool.add(ContextFragment("notebook", notebook_status, ("large",), "当前任务进度记事本", 15))
 
+        # 历史输出
         history = getattr(self, "history_thoughts", [])
         history_output = "\n".join(history[:-1]) if len(history) > 1 else ""
         if history_output:
             pool.add(ContextFragment("history", history_output, ("large",), "历史输出（不得重复）", 20))
 
-        # 召回事件记忆（全局事件）
+        # 事件记忆（全局记忆）注入
         try:
             from modules.memory.event_retrieval import get_event_retrieval
+
             retrieval = get_event_retrieval()
             tier = getattr(self, "_tier", "large")
             model_id = getattr(self, "_model_id", "")
@@ -446,32 +464,131 @@ class WorkflowThinker:
                     timeout=10,
                 )
             if events:
-                parts = ["【曾经发生的事】（过去的历史事件记忆，仅供参考）"]
+                parts = [
+                    "【曾经发生的事】",
+                    "（以下为曾经发生的事，是过去的历史事件记忆，仅供参考。"
+                    "回答请优先基于当前会话的【对话历史】进行，不要把下列过去的任务当作当前任务执行）",
+                ]
                 for i, ev in enumerate(events, 1):
                     date = str(getattr(ev, "time", "") or "")[:10] or "未知日期"
-                    parts.append(f"  [{i}] (日期={date}, 内容={getattr(ev, 'fact', '')})")
-                pool.add(ContextFragment("event_memory", "\n".join(parts), ("large", "supervisor"), "事件记忆", 35))
+                    ev_type = getattr(ev, "type", "fact")
+                    importance = getattr(ev, "importance", 0.0)
+                    parts.append(f"  [{i}] (日期={date}, 类型={ev_type}, 重要性={importance:.1f})")
+                    parts.append(f"    内容: {getattr(ev, 'fact', '')}")
+                    lesson = getattr(ev, "lesson", "")
+                    if lesson:
+                        parts.append(f"    经验: {lesson}")
+                    keywords = getattr(ev, "keywords", None)
+                    if keywords:
+                        parts.append(f"    标签: {', '.join(keywords)}")
+                pool.add(ContextFragment("memory", "\n".join(parts), ("orchestrator", "supervisor", "expert"), "历史记忆", 30))
+                try:
+                    from modules.thinking.core.model_runner import _session_memory_context
+                    _session_memory_context[self._session_id] = "\n".join(parts)
+                except Exception as e:
+                    self.logger.debug(f"[记忆上下文缓存] 失败 (非致命): {e}")
         except Exception as e:
-            self.logger.debug(f"[工作流上下文] 记忆检索跳过: {e}")
+            self.logger.debug(f"[事件检索] 失败: {e}")
 
         # 感知上下文
         try:
             from modules.thinking.context.sources.perception_source import PerceptionSource
             res = PerceptionSource().collect()
             frag = await res if inspect.isawaitable(res) else res
-            if frag and getattr(frag, "content", ""):
+            if frag is not None and getattr(frag, "content", None):
                 pool.add(frag)
         except Exception as e:
-            self.logger.debug(f"[工作流上下文] 感知收集跳过: {e}")
+            self.logger.debug(f"[感知上下文] 收集失败: {e}")
+
+        # 外部 prompt builder（黑板）
+        ext_builder = getattr(self, "_external_prompt_builder", None)
+        if ext_builder is not None:
+            try:
+                if inspect.iscoroutinefunction(ext_builder):
+                    external_section = await ext_builder(round_num=round_num)
+                else:
+                    external_section = ext_builder(round_num=round_num)
+                if external_section:
+                    pool.add(ContextFragment("blackboard", str(external_section).strip(), ("large",), "协作上下文", 50))
+            except Exception as e:
+                self.logger.debug(f"[黑板外部 prompt builder] 调用失败: {e}")
+
+        # 委托状态
+        delegation_status = self._build_delegation_status_section()
+        if delegation_status:
+            pool.add(ContextFragment("delegation", delegation_status, ("large", "supervisor"), "委托链（协作过程）", 60))
+
+        # 技能建议
+        try:
+            from config.settings import settings as _sk_cfg
+            if not getattr(_sk_cfg, "SKILLS_ENABLED", True):
+                pass
+            elif getattr(_sk_cfg, "get_system_override", lambda _r: "")(role):
+                pass
+            else:
+                from modules.thinking.skills import get_skill_manager
+                runner = getattr(self, "_runner_ref", None)
+                if not (runner and getattr(runner, "_active_skill", None)):
+                    forced = ""
+                    try:
+                        forced = _sk_cfg.get_forced_skill()
+                    except Exception:
+                        forced = ""
+                    suggested = None
+                    if forced:
+                        _fs = get_skill_manager().get_skill(forced)
+                        suggested = _fs if (_fs and _fs.enabled) else None
+                    if not suggested and not forced:
+                        suggested = get_skill_manager().match_skill(initial_question)
+                    if suggested:
+                        if forced:
+                            pool.add(ContextFragment(
+                                "skill_suggestion",
+                                f"【强制技能】系统已强制使用技能「{suggested.name}」，无需手动激活。",
+                                ("large",), "技能建议", 70,
+                            ))
+                        else:
+                            pool.add(ContextFragment(
+                                "skill_suggestion",
+                                f"【建议技能】当前场景推荐激活「{suggested.name}」，可用 request_skill(skill_id='{suggested.id}') 激活",
+                                ("large",), "技能建议", 70,
+                            ))
+        except Exception as e:
+            self.logger.debug(f"[技能建议] 跳过: {e}")
 
         composer = PromptComposer()
-        return composer.build(
+        prompt = composer.build(
             pool,
             role=role,
             tier=getattr(self, "_tier", "large"),
             question=initial_question,
             context_length=getattr(self, "_context_window_size", 0),
         )
+
+        try:
+            from config.settings import settings as _cfg
+            from modules.thinking.identity import ModelIdentity
+
+            runner = getattr(self, "_runner_ref", None)
+            identity = getattr(getattr(runner, "instance", None), "identity", None)
+            if (
+                isinstance(identity, ModelIdentity)
+                and isinstance(getattr(identity, "context_length", 0), int)
+                and identity.context_length > 0
+            ):
+                self._context_window_size = identity.context_length
+            else:
+                self._context_window_size = _cfg.get_context_length(self._tier)
+        except Exception:
+            self._context_window_size = 128000
+
+        try:
+            from modules.thinking.context.compression import get_compression_engine
+            self._context_tokens = get_compression_engine().estimate_tokens(prompt)
+        except Exception:
+            self._context_tokens = 0
+
+        return prompt
 
     # ── 节点 2：单步思考执行节点 (ModelInferenceNode) ──
 
@@ -516,7 +633,7 @@ class WorkflowThinker:
                 duration_ms = (time.time() - start_time) * 1000
                 thought_str = str(thought or "")
 
-                # @link:block ThinkStep_Write = Write
+                # @link:block ThinkStep_Write = Write · Throttle
                 if hasattr(self, "history_thoughts"):
                     self.history_thoughts.append(thought_str)
                 dialog = getattr(self, "_get_dialog", None)
@@ -548,6 +665,17 @@ class WorkflowThinker:
                         pass
                     if hasattr(self, "history_thoughts"):
                         self.history_thoughts.append("[思考超时]")
+                    dialog = getattr(self, "_get_dialog", None)
+                    if dialog and getattr(self, "_model_id", ""):
+                        try:
+                            dialog.write_thought(
+                                model_id=self._model_id,
+                                tier=getattr(self, "_tier", "large"),
+                                content="[思考超时]",
+                                round_num=len(getattr(self, "history_thoughts", [])),
+                            )
+                        except Exception as _dlg_err:
+                            self.logger.debug(f"[SharedDialog] 超时写入失败 (非致命): {_dlg_err}")
                     return {
                         "thought": "[思考超时]",
                         "duration_ms": 0,
@@ -576,7 +704,7 @@ class WorkflowThinker:
             try:
                 import modules.thinking.model_factory as mf_mod
                 factory = mf_mod.get_model_factory()
-                client = factory.get_client(self._tier, self._model_id) if factory else None
+                client = factory.get_client(self._tier) if factory else None
                 if client and hasattr(client, "generate"):
                     self.think_fn = client.generate
                 else:
@@ -599,7 +727,7 @@ class WorkflowThinker:
         state.results.append(state.current_result)
 
     # ── 节点 3：控制流与状态转移判定节点 (ControlEvaluationNode) ──
-    # @link:block ThinkLoop_Guard = Guard
+    # @link:block ThinkLoop_Guard = Guard · Write
     async def _node_control_evaluation(self, state: WorkflowThinkingState) -> None:
         """评估控制工具、委托事件、去重、终止条件"""
         # 1. 从 _last_control_data 读取控制决策
@@ -640,7 +768,7 @@ class WorkflowThinker:
             return
 
         # 3. 记录记事本与过程收集器
-        # @link:block ThinkLoop_Write = Write
+        # @link:block ThinkLoop_Write = Guard · Write
         cleaned = self._strip_control_markers(state.current_thought)
         self._process_collector.record_step(
             round_num=state.round_num,
@@ -984,7 +1112,7 @@ class WorkflowThinker:
             }
             results.append(final_synthesis)
 
-        final_summary = self._select_final_result(results, control_decision=self._last_control_decision)
+        final_summary = self._select_final_result(results, self._last_control_decision)
         metadata: Dict[str, Any] = {
             "rounds": len(results),
             "has_final_synthesis": final_synthesis is not None,
@@ -999,9 +1127,10 @@ class WorkflowThinker:
                 metadata=metadata,
             )
 
-        if self.gcm_pool is not None and final_summary:
+        gcm_pool = getattr(self, "gcm_pool", None)
+        if gcm_pool is not None and final_summary:
             try:
-                self.gcm_pool.update(self._session_id, {"final_thought": final_summary})
+                gcm_pool.update(self._session_id, {"final_thought": final_summary})
             except Exception as e:
                 self.logger.debug(f"[工作流收尾] GCM 更新跳过: {e}")
 
@@ -1009,7 +1138,6 @@ class WorkflowThinker:
         return final_summary
 
     # ── 主工作流调度器 (Workflow Orchestrator) ──
-    # @link:block ThinkLoop
     async def continuous_think(
         self,
         question: str,
@@ -1181,13 +1309,76 @@ class WorkflowThinker:
         self.logger.debug(f"[WorkflowThinker] 超时重试记录: round={round_num}")
 
     def _request_resume(self) -> None:
-        self.logger.debug("[WorkflowThinker] 请求断点唤醒")
+        """请求 runner 从断点续思考（保留已完成的思考/工具结果，而非从头重试）"""
+        runner = getattr(self, "_runner_ref", None)
+        if runner is None:
+            return
+        try:
+            runner._resume_requested = True
+            if getattr(runner, "_resume_context", None):
+                self.logger.info(
+                    f"[WorkflowThinker] 超时重试将从断点续思考 "
+                    f"({len(runner._resume_context)} 条上下文消息)"
+                )
+        except Exception as e:
+            self.logger.debug(f"[WorkflowThinker] 断点续思考设置失败 (非致命): {e}")
 
-    async def deep_think(self, *args, **kwargs) -> Any:
-        return await self.continuous_think(*args, **kwargs)
+    def deep_think(self, question: str, max_rounds: int = 10, min_rounds: int = 1) -> List[Dict[str, Any]]:
+        """同步版本的深度思考 — 兼容事件循环内/外调用"""
+        import concurrent.futures
 
-    def produce_intermediate_response(self) -> Optional[str]:
-        return self.history_thoughts[-1] if self.history_thoughts else None
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(self.continuous_think(question, max_rounds, min_rounds))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(
+                asyncio.run,
+                self.continuous_think(question, max_rounds, min_rounds),
+            ).result()
+
+    def produce_intermediate_response(self, max_length: int = 500) -> str:
+        """从已完成的思考轮次中提取当前最佳中间回复
+
+        用于中途回复场景：大模型在主管/专家仍在工作时，
+        可以先给用户一个初步答案。
+
+        策略：
+        1. 取最近一轮有实质内容的思考
+        2. 提取"回答"或"结论"相关段落
+        3. 截断到 max_length 并加 [preliminary] 标记
+        """
+        if not self.history_thoughts:
+            return ""
+
+        max_chars = max(max_length // 4, 50) * 2
+        import re
+
+        for thought in reversed(self.history_thoughts):
+            thought = thought.strip()
+            if len(thought) < 30:
+                continue
+
+            patterns = [
+                r'(?:【回答】|【结论】|【建议】|【初步回复】|【当前答案】)\s*(.+?)(?:\n\n|\n【|$)',
+                r'(?:回答[：:]|结论[：:]|建议[：:]|初步回复[：:])\s*(.+?)(?:\n\n|\n(?:回答|结论|建议|初步)|$)',
+            ]
+            for pat in patterns:
+                matches = re.findall(pat, thought, re.DOTALL)
+                if matches:
+                    combined = " ".join(m.strip() for m in matches if m.strip())
+                    if len(combined) > 20:
+                        return f"[preliminary] {combined[:max_chars]}"
+
+            cleaned = re.sub(r'【[^】]+】', '', thought)
+            cleaned = re.sub(r'<tool_use>.*?</tool_use>', '', cleaned, flags=re.DOTALL)
+            paragraphs = [p.strip() for p in cleaned.split('\n\n') if len(p.strip()) > 20]
+            if paragraphs:
+                last = paragraphs[-1]
+                if len(last) > 30:
+                    return f"[preliminary] {last[:max_chars]}"
+
+        return ""
 
     def write_final_response(self, content: str) -> None:
         """向共享对话框写入最终回复（供外部调用者使用）"""
@@ -1200,11 +1391,6 @@ class WorkflowThinker:
                 )
             except Exception as e:
                 self.logger.debug(f"[Blackboard] 最终回复写入失败 (非致命): {e}")
-        if self.notebook is not None and content:
-            self.notebook.append(content, is_finished=True)
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        await self.close()
+        notebook = getattr(self, "notebook", None)
+        if notebook is not None and content:
+            notebook.append(content, is_finished=True)

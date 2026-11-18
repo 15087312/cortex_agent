@@ -312,7 +312,7 @@ class StreamingModelNode(StreamingNode):
                 accumulated_text.append(text)
             await asyncio.sleep(0.01)  # 模拟网络流式延迟
 
-        delta = {
+        delta: dict[str, Any] = {
             "thought": "".join(accumulated_thought),
             "output": "".join(accumulated_text),
         }
