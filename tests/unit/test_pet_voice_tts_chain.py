@@ -226,8 +226,14 @@ def test_output_dir_is_the_one_mounted_at_audio():
 
 def test_active_backend_stops_claiming_edge_after_real_failure(monkeypatch, _isolate):
     """edge-tts 服务端 403：验证过一次失败后状态不能再声称 edge 可用"""
+    from modules.output_system.tts import TTSEngine
+
     monkeypatch.setattr(tts_mod, "_say_voice", lambda: None)
     monkeypatch.setattr(tts_mod, "_EDGE_HINT", {"ok": None})
+    # edge-tts 是可选依赖（requirements 里不装，CI 机器必然没有）。
+    # 这里显式打开「依赖可用」这个前提，测试只验证失败后的状态切换，
+    # 否则会因为环境没装 edge-tts 而退化成 'none'（与被测逻辑无关）。
+    monkeypatch.setattr(TTSEngine, "available", property(lambda self: True))
     assert tts_mod.active_backend() == "edge"      # 未尝试前：import 成功即视为兜底
     tts_mod._EDGE_HINT["ok"] = False               # 真实请求已失败
     assert tts_mod.active_backend() == "none"

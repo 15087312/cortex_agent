@@ -255,11 +255,30 @@ def _collect():
     return calls, unexplained
 
 
+def _iter_routes(routes):
+    """递归展开 fastapi>=0.141 的惰性 include_router 包装
+
+    fastapi 0.141+ 的 `app.include_router(router)` 不再立刻把 APIRoute 摊进
+    `app.routes`，而是塞一个 `_IncludedRouter`（自身没有 .path，真实路由在
+    `original_router.routes` 里）。只遍历 `app.routes` 会把整个模块的路由
+    （桌宠 /stream/pet/*、工具、记忆…）误判成「后端没有这个路由」。
+
+    与 `tests/unit/test_api_main.py::_collect_route_paths` 同一套兼容逻辑：
+    旧版 fastapi 直接就是 APIRoute，递归会原样返回。
+    """
+    for r in routes or []:
+        inner = getattr(r, "original_router", None)
+        if inner is not None:
+            yield from _iter_routes(getattr(inner, "routes", None) or [])
+        else:
+            yield r
+
+
 def _app_routes():
     from api.main import app
 
     out = set()
-    for r in app.routes:
+    for r in _iter_routes(app.routes):
         path = getattr(r, "path", None)
         if not path:
             continue

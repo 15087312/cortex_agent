@@ -46,7 +46,9 @@ class TestSemanticSimilarity:
         n2 = graph.save_node(CausalNode(label="项目延期", keywords=["延期"]))
 
         # 模拟 embedding 失败
-        with patch("modules.memory.embedding.EmbeddingEngine.get_instance") as MockEmbedding:
+        # patch 点：causal_graph 取的是模块级 get_embedding_engine（端口优先接线），
+        # patch EmbeddingEngine.get_instance 不生效，真实模型会被拉起来。
+        with patch("modules.memory.embedding.get_embedding_engine") as MockEmbedding:
             mock_embedder = MagicMock()
             mock_embedder.embed.side_effect = Exception("测试异常")
             MockEmbedding.return_value = mock_embedder
@@ -79,7 +81,8 @@ class TestSemanticSimilarity:
             graph.save_node(n)
 
         # 测试语义查询（没有关键词匹配，但语义相关）
-        with patch("modules.memory.embedding.EmbeddingEngine.get_instance") as MockEmbedding:
+        # patch 点同上：get_embedding_engine 是端口优先的真实入口。
+        with patch("modules.memory.embedding.get_embedding_engine") as MockEmbedding:
             # 模拟 embedding 返回
             mock_embedder = MagicMock()
             mock_embedder.embed.return_value = [0.1] * 768  # 简化向量

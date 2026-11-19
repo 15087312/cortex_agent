@@ -91,8 +91,25 @@ jobs:
       - name: PyInstaller
         shell: bash
         run: |
+          set -o pipefail
           # 用 python -m 调起，避免 pip 脚本目录不在 PATH（尤其 macOS runner）
-          python -m PyInstaller pyinstaller.spec --clean --noconfirm
+          python -V
+          # PyInstaller 拒绝与 obsolete `typing` backport 共存：
+          # PyPI 上的 typing 3.7.4.3 是 Python 2/3.4 的历史遗留（被 Resemblyzer 拉进来），
+          # 装了它 PyInstaller 直接报 "The 'typing' package is an obsolete backport ..." 退出 1。
+          python -m pip uninstall -y typing || true
+          python -m PyInstaller --version
+          python -m PyInstaller pyinstaller.spec --clean --noconfirm 2>&1 | tee pyinstaller.log
+
+      - name: Upload PyInstaller log
+        # 失败时把完整日志留成 artifact：Actions 日志页对未登录用户不可见，
+        # 下次排查不用再盲猜。
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pyinstaller-log-${{ matrix.os }}
+          path: pyinstaller.log
+          if-no-files-found: ignore
 
       - name: Package zip
         shell: bash

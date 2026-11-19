@@ -461,6 +461,11 @@ class EventStore:
             self._load_faiss()
             if self._faiss_index is None:
                 return
+            # 幂等：同一事件重复向量化时先删掉旧向量。
+            # FAISS 不支持删除，id_map 与向量必须一一对应；否则会出现
+            # 「搜索返回同一个 id 两次」「删除后仍能搜到」的脏数据。
+            if event_id in self._id_map:
+                self.remove_embedding(event_id)
             vec = np.array([embedding], dtype=np.float32)
             faiss.normalize_L2(vec)
             self._faiss_index.add(vec)
@@ -473,37 +478,41 @@ class EventStore:
         """从 FAISS 移除向量（重建索引，低频操作）"""
         # 跨实例锁：覆盖 读-改-写 全过程，防止与其他实例的写竞争
         with faiss_file_lock(self._faiss_index_path):
-            try:
-                import numpy as np
-                import faiss
-                self._load_faiss()
-                if self._faiss_index is None or event_id not in self._id_map:
-                    return
-                dim = self._get_embedding_dim()
-                idx = self._id_map.index(event_id)
-                # FAISS 不支持删除，重建索引跳过该向量
-                vectors = []
-                new_id_map = []
-                old_index = self._faiss_index
-                for i in range(old_index.ntotal):
-                    if i == idx:
-                        continue
-                    vec = np.zeros((1, dim), dtype=np.float32)
-                    old_index.reconstruct(i, vec[0])
-                    vectors.append(vec[0])
-                    new_id_map.append(self._id_map[i])
-                if vectors:
-                    new_index = faiss.IndexFlatIP(dim)
-                    stacked = np.array(vectors, dtype=np.float32)
-                    faiss.normalize_L2(stacked)
-                    new_index.add(stacked)
-                    self._faiss_index = new_index
-                else:
-                    self._faiss_index = faiss.IndexFlatIP(self._embedding_dim)
-                self._id_map = new_id_map
-                self._save_faiss()
-            except Exception as e:
-                self.logger.warning(f"[EventStore] 移除向量失败: {e}")
+            self._remove_embedding_inner(event_id)
+
+    def _remove_embedding_inner(self, event_id: str):
+        """内部移除向量（调用方需持有 faiss 文件锁；_write_lock 由调用方保证）"""
+        try:
+            import numpy as np
+            import faiss
+            self._load_faiss()
+            if self._faiss_index is None or event_id not in self._id_map:
+                return
+            dim = self._get_embedding_dim()
+            idx = self._id_map.index(event_id)
+            # FAISS 不支持删除，重建索引跳过该向量
+            vectors = []
+            new_id_map = []
+            old_index = self._faiss_index
+            for i in range(old_index.ntotal):
+                if i == idx:
+                    continue
+                vec = np.zeros((1, dim), dtype=np.float32)
+                old_index.reconstruct(i, vec[0])
+                vectors.append(vec[0])
+                new_id_map.append(self._id_map[i])
+            if vectors:
+                new_index = faiss.IndexFlatIP(dim)
+                stacked = np.array(vectors, dtype=np.float32)
+                faiss.normalize_L2(stacked)
+                new_index.add(stacked)
+                self._faiss_index = new_index
+            else:
+                self._faiss_index = faiss.IndexFlatIP(self._embedding_dim)
+            self._id_map = new_id_map
+            self._save_faiss()
+        except Exception as e:
+            self.logger.warning(f"[EventStore] 移除向量失败: {e}")
 
     def search_by_vector(self, query_embedding: List[float], top_k: int = 10) -> List[tuple]:
         """向量搜索，返回 [(event_id, score), ...]"""

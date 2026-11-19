@@ -299,11 +299,19 @@ class TestVectorSearch:
         self.store._embedding_dim = 16
         # 隔离全局 EmbeddingEngine：禁用 save_event 自动向量化（其状态受其他测试/真实模型加载影响），
         # 否则同事件会被自动 add + 手动 add_embedding 各加一次，导致 search 返回重复 id。
+        #
+        # 注意 patch 点：EventStore.save_event 里是运行时
+        # `from modules.memory.embedding import get_embedding_engine`，
+        # 而 get_embedding_engine 走的是「端口优先」接线（bootstrap 注册的 provider），
+        # 根本不会经过 EmbeddingEngine.get_instance —— patch 类方法等于没 patch，
+        # 真实模型会被加载、自动向量化照跑，测试必然出现重复 id。
         from modules.memory.embedding import EmbeddingEngine
         _em = EmbeddingEngine()  # 真实新实例（不加载模型），仅禁自动向量化
         _em._loaded = False
         _em._attempted = True
-        self._emb_patch = patch.object(EmbeddingEngine, "get_instance", return_value=_em)
+        self._emb_patch = patch(
+            "modules.memory.embedding.get_embedding_engine", return_value=_em
+        )
         self._emb_patch.start()
 
     def teardown_method(self):

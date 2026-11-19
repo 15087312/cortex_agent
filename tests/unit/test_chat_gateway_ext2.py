@@ -340,7 +340,19 @@ async def test_chatonly_sse_heartbeat_and_timeout(monkeypatch):
     thinker.think = fake_think
     monkeypatch.setattr(cg, "_get_chat_thinker", lambda: thinker)
     times = iter([0.0, 1.0, 1.5, 301.0, 301.5, 301.6])
-    monkeypatch.setattr(cg.time, "time", lambda: next(times))
+    # 假时钟：按预设推进；预设用完后停在最后一个值（301.6）而不是抛 StopIteration。
+    # 不同 Python 版本 / 调度下 time.time() 的调用次数会变（3.11 CI 上多调一次），
+    # 固定长度迭代器会把"调用次数"变成测试的隐式前提。
+    _last = [301.6]
+
+    def _fake_time():
+        try:
+            _last[0] = next(times)
+        except StopIteration:
+            pass
+        return _last[0]
+
+    monkeypatch.setattr(cg.time, "time", _fake_time)
     events = [e async for e in cg._chatonly_sse("s1", "问题")]
     events_type = [e["event"] for e in events]
     assert "thinking_progress" in events_type
