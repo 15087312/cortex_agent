@@ -20,7 +20,7 @@
 | §6–§7、§14、§22–§23、§75 | Frontend · Pages / Styling / Build / Buttons | [05-frontend-ui.en.md](./bugfixes/05-frontend-ui.en.md) |
 | §12、§24、§68、§82、§98–§100、§104 | Realtime · WS / SSE / Push / Proxy / TUI | [06-realtime-streaming.en.md](./bugfixes/06-realtime-streaming.en.md) |
 | §103、§109 | Desktop Pet | [07-desktop-pet.en.md](./bugfixes/07-desktop-pet.en.md) |
-| §20、§27、§30–§37、§44–§45、§52–§55、§58、§66、§81、§110 | Testing / CI / Environment / Dependencies | [08-testing-ci.en.md](./bugfixes/08-testing-ci.en.md) |
+| §20、§27、§30–§37、§44–§45、§52–§55、§58、§66、§81、§110、§111–§113 | Testing / CI / Environment / Dependencies | [08-testing-ci.en.md](./bugfixes/08-testing-ci.en.md) |
 | §15、§38 | Process · Audit Methodology / Doc Governance | [09-process-docs.en.md](./bugfixes/09-process-docs.en.md) |
 
 ## Other bug documents

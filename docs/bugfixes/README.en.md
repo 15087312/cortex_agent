@@ -18,7 +18,7 @@
 | [Frontend · Pages / Styling / Build / Buttons](./05-frontend-ui.en.md) | 7 |
 | [Realtime · WS / SSE / Push / Proxy / TUI](./06-realtime-streaming.en.md) | 8 |
 | [Desktop Pet](./07-desktop-pet.en.md) | 2 |
-| [Testing / CI / Environment / Dependencies](./08-testing-ci.en.md) | 20 |
+| [Testing / CI / Environment / Dependencies](./08-testing-ci.en.md) | 23 |
 | [Process · Audit Methodology / Doc Governance](./09-process-docs.en.md) | 2 |
 
 > The memory-safety testing framework lives in [`../MEMORY_LEAK_TESTING.en.md`](../MEMORY_LEAK_TESTING.en.md).
@@ -159,4 +159,7 @@ in code comments and other docs therefore remain valid.
 | §103 | Pet | Desktop pet "frontend receives no messages": proxy leaks the upstream SSE + native tool_calls missing the assistant echo (frontend proxy + pet loop) | [07-desktop-pet](./07-desktop-pet.en.md) |
 | §109 | Pet | Pet voice fully broken while tests were green — fake audio/fake routes/wrong VAD assumption + mic stop order crashing the process (pet + frontend) | [07-desktop-pet](./07-desktop-pet.en.md) |
 | §110 | Testing | Post-mortem on "all green, all broken" — doubles replacing the conclusion, frontend mocks turning 404 into `{}`, real ASR disabled by conftest, contract checker silently skipping calls, tests depending on local config/database (testing) | [08-testing-ci](./08-testing-ci.en.md) |
+| §111 | Release/packaging | Release upload rejected with `size must be less than 2147483648` — `.app` symlinks expanded into a 5.4GB zip (release) | [08-testing-ci](./08-testing-ci.en.md) |
+| §112 | Release/encoding | Windows PyInstaller dies in seconds — CJK `print` in the spec vs the cp1252 console (release) | [08-testing-ci](./08-testing-ci.en.md) |
+| §113 | Testing/CI | coverage job killed by the global 60s timeout — real-tree scans + coverage tracer (testing/CI) | [08-testing-ci](./08-testing-ci.en.md) |
 | §108 | Pages/Styling | Session list / input widened by long text — missing units in Vue inline sizes + flex children without min-width:0 (frontend styling) | [05-frontend-ui](./05-frontend-ui.en.md) |

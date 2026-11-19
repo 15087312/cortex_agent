@@ -3,7 +3,7 @@
 **Language / 语言**: [简体中文](./README.md) | [English](./README.en.md)
 
 > 本目录集中存放项目的 bug 修复记录，由原 `docs/ERRORS_AND_FIXES.md`（107 节）按模块拆分而成，
-> 后续新增 §108–§110。
+> 后续新增 §108–§113。
 > 章节编号与原文一致，历史引用（`ERRORS_AND_FIXES.md §N`）仍然可用——旧路径现在是一个跳转页。
 > 待确认的高危行为变更见 [`pending.md`](./pending.md)。
 
@@ -18,7 +18,7 @@
 | [前端 · 页面 / 样式 / 构建 / 按钮](./05-frontend-ui.md) | 7 |
 | [实时链路 · WS / SSE / 推送 / 代理 / TUI](./06-realtime-streaming.md) | 8 |
 | [桌宠](./07-desktop-pet.md) | 2 |
-| [测试 / CI / 环境 / 依赖](./08-testing-ci.md) | 20 |
+| [测试 / CI / 环境 / 依赖](./08-testing-ci.md) | 23 |
 | [流程 · 审计方法论 / 文档治理](./09-process-docs.md) | 2 |
 
 > 测试基建/内存安全测试框架另见 [`../MEMORY_LEAK_TESTING.md`](../MEMORY_LEAK_TESTING.md)。
@@ -158,3 +158,6 @@
 | §108 | 页面/样式 | 会话列表/输入框被长文本撑宽 —— Vue 内联尺寸缺单位 + flex 子项未设 min-width:0（前端样式） | [05-frontend-ui](./05-frontend-ui.md) |
 | §109 | 桌宠 | 桌宠语音全跑不通而测试全绿 —— 假音频/假路由/错误 VAD 假设 + 麦克风停止顺序崩进程（桌宠 + 前端） | [07-desktop-pet](./07-desktop-pet.md) |
 | §110 | 测试 | 全绿却全坏的方法论复盘 —— 替身替到结论层、前端 mock 把 404 变成 `{}`、真机 ASR 被 conftest 关死、契约检查器静默漏检、测试依赖本机配置/数据库（测试） | [08-testing-ci](./08-testing-ci.md) |
+| §111 | 发布/打包 | Release 上传被拒 `size must be less than 2147483648` —— `.app` 软链接被 zip 展开成 5.4GB（发布） | [08-testing-ci](./08-testing-ci.md) |
+| §112 | 发布/编码 | Windows PyInstaller 秒退 —— spec 里 print 中文撞上 cp1252 控制台（发布） | [08-testing-ci](./08-testing-ci.md) |
+| §113 | 测试/CI | coverage job 被全局 60s timeout 误杀 —— 真实仓库扫描 + coverage tracer（测试/CI） | [08-testing-ci](./08-testing-ci.md) |

@@ -2,7 +2,7 @@
 
 [← 返回总索引](./README.md) | [English](./08-testing-ci.en.md)
 
-> 由 `docs/ERRORS_AND_FIXES.md` 按模块拆分；章节编号沿用原文（§104–§107 为原文重复编号的修订，见总索引）。本文件共 20 节：§20、§27、§30、§31、§32、§33、§34、§35、§36、§37、§44、§45、§52、§53、§54、§55、§58、§66、§81、§110。
+> 由 `docs/ERRORS_AND_FIXES.md` 按模块拆分；章节编号沿用原文（§104–§107 为原文重复编号的修订，见总索引）。本文件共 23 节：§20、§27、§30、§31、§32、§33、§34、§35、§36、§37、§44、§45、§52、§53、§54、§55、§58、§66、§81、§110、§111、§112、§113。
 
 ---
 ## 20. 测试假对象与真实模型字段脱节（后端）
@@ -789,3 +789,135 @@ cd frontend && npx vitest run src/pages/Pet.spec.js
    集成层同样中招：`tests/integration/test_pet.py`、`test_pet_custom_loop_e2e.py`、
    `test_frontend_proxy_stream.py` 共 **9 个用例**因 `409 desktop pet disabled` / 空 SSE
    流挂掉——同样用模块级 fixture 钉开关，而不是把断言改宽。
+
+---
+
+## 111. Release 上传被拒：`size must be less than 2147483648` —— `.app` 软链接被 zip 展开（发布/打包）
+
+**现象：** `v0.2.3` 的 `Upload to Release` 失败：
+
+```
+Release 450787728 is not yet discoverable by tag v0.2.3, retrying... (2 retries remaining)
+⬆️ Uploading CortexAgent-macos-v0.2.3.zip...
+Error: Validation Failed: {"resource":"ReleaseAsset","code":"custom","field":"size","message":"size must be less than 2147483648"}
+```
+
+同一 tag 的 Windows 侧没走到上传（PyInstaller 先挂了，见 §112），所以问题被掩盖了半轮。
+
+**根因（两层，必须分开看）：**
+
+1. **GitHub Release 单个 asset 上限是 2GiB**（2147483648 字节），不是"2GB 左右"。
+2. **macOS 的 `.app` 被 `zip -r` 打成了 5.4GB。** `.app` 里
+   `QtWebEngineCore.framework/Versions/A`、`Resources`、`Headers` 等大量条目是指向
+   `Versions/A` 的**软链接**（该产物共 1880 个），`zip -r` 默认跟随软链接、把目标内容
+   各存一份——目录本身 3.2GB，压缩后反而 5.4GB。**压缩包比源目录还大**是这条 bug 最
+   反直觉的地方：看到这种体积，先查软链接，不要先怀疑"包真的太大"。
+
+**修复：**
+
+- 新增 `scripts/make_release_zip.py`：用 Python `zipfile` 打 zip，
+  - 软链接按 Unix symlink 条目写入（`ZipInfo.create_system = 3`，
+    `external_attr = (S_IFLNK | 0o777) << 16`，内容是链接目标），
+  - `allowZip64=True` + deflate，兼顾大文件与体积；
+- workflow 的 `Package zip` 两个平台都改用它。Windows 侧顺带避开两个坑：
+  `Compress-Archive` 对几万个小文件极慢；Git Bash 里的 `tar` 可能是 GNU tar，
+  `tar -a` 不支持 zip 输出，会产出"tar 改名成 .zip"的假包（能上传、用户解不开）；
+- 新增 `Check asset size`：打包后按字节校验，超过 2147483648 直接报明确错误，
+  不再等上传阶段才看到含糊的 `Validation Failed`；
+- 上传加 `overwrite_files: true`，同一 tag 重跑不会因 asset 已存在而失败。
+
+**验证：** 同一个 `.app`（1.95GB）打成 **708MB**；用 `ditto -x -k`（等价访达解压）
+解开后文件数 9540、软链接数 1880，与原产物完全一致；`Contents/MacOS/cortex`、
+`libtorch_cpu.dylib`、`QtWebEngineProcess` 三个关键二进制 md5 也一致。
+`v0.2.4` 两个平台（macOS 708MB / Windows 937MB）均上传成功。
+
+**教训：** 判断"包能不能上传"要看**最终上传的 zip 字节数**，不是 `.app`/`dist` 目录大小；
+压缩包比源目录大，先查软链接/硬链接。打包脚本也不要用"看起来能打 zip"的通用工具
+（`tar -a`、`Compress-Archive`），跨平台可靠性不如直接用 Python `zipfile`。
+
+---
+
+## 112. Windows PyInstaller 秒退：spec 里 print 中文 + cp1252 控制台（发布/编码）
+
+**现象：** Windows job 在 PyInstaller 启动约 1 分钟后退出 1，最后一行是：
+
+```
+File "pyinstaller.spec", line 111, in <module>
+    print(f"[spec] 打包应用内 ffmpeg: {_ffmpeg_vendor}")
+File "...\Lib\encodings\cp1252.py", line 19, in encode
+UnicodeEncodeError: 'charmap' codec can't encode characters in position 7-11: character maps to <undefined>
+```
+
+**根因：** GitHub Actions 的 windows runner 里 Python stdout 编码是 **cp1252**（不是 UTF-8），
+而 `pyinstaller.spec` 在构建阶段直接 `print` 中文，编码失败把整个构建打断。macOS/Linux
+runner 默认 UTF-8，所以只有 Windows 挂——本地复现不出来。
+
+同类的第二颗雷：`_post_fix_qtwebengine()` 里"未找到 framework…"这类 print 在 Windows 上
+也会走到（`dist/cortex` 分支），修掉 ffmpeg 那行后还会继续崩。**spec 里的 print 必须全部
+是 ASCII**，不是只改报错那一行。
+
+**修复：**
+
+- spec 内所有 `print` 改成 ASCII 英文（包括打包后修复函数的日志），并在关键位置留注释
+  "Windows console is cp1252, keep prints ASCII-only"；
+- workflow 加 job 级 `PYTHONIOENCODING: utf-8` 兜底。
+
+**顺带修掉的打包问题（同一轮 Release）：**
+
+- spec 用 `collect_all()` 把 polars / pyarrow / torch 的头文件与编译器子模块
+  （`torch/include`、`_inductor`、`distributed`、`_dynamo`、`testing`）也收了进来；
+  这些运行期用不到（项目代码没有 import），全部剔除（`_EXCLUDE_PATH_FRAGMENTS` /
+  `_EXCLUDE_MODULES`）；
+- PyInstaller hook 额外塞进来的 `av` / `pandas` 用 `_drop_excluded()` 拦不住，
+  改为产物落地后再扫一遍删除（`_cleanup_unused_payload()`）；
+- **patchright 保留**：它是 Crawl4AI 的浏览器后端，网页 JS 抓取要用；实测 zip 只有
+  700MB 出头，为省几十 MB 让功能降级不划算。瘦身只删"项目代码确实没有 import"的东西。
+
+**验证：** Windows job 首次完整构建成功，`CortexAgent-windows-v0.2.4.zip` 937MB 正常上传；
+macOS 侧同样构建成功。
+
+**教训：** CI 上"本地跑得好好的脚本"崩在 `print`/路径编码上，优先怀疑 locale：
+`PYTHONIOENCODING=utf-8` 是保险，但 **spec 本身不写非 ASCII** 才是根治。
+顺带一条：体积优化只删确定没用的（`grep` 过项目代码），可选功能的大依赖宁可留着。
+
+---
+
+## 113. coverage job 被全局 60s timeout 误杀 —— 真实仓库扫描 + coverage tracer（测试/CI）
+
+**现象：** `v0.2.4` 提交后 CI 里 `Backend tests` 全绿、`Backend coverage` 失败（exit 1），
+注解只有一句 `Process completed with exit code 1.`；失败 job 跑了 **21:37**，而此前成功的
+同类 job 是 24–25 分钟（差 3 分钟，说明是跑到后段才死）。
+
+**排查：**
+
+- 同一份代码的 `Backend tests`（不带 `--cov`）能过，说明不是逻辑问题；
+- `pytest.ini` 的 `addopts` 里有 **`--timeout=60`**（全局 60 秒，机制见 §58）；
+- 本地用 CI 同款命令加 `--durations=40` 量化，发现 `tests/unit/test_seam_catalogue.py`
+  的「真实仓库」用例是唯一 `call` 超过 30s 的一批：`test_real_tree_output_is_deterministic`
+  **92s**，其余 7 条 29–42s。这些用例要扫全仓源码做 AST 分析，coverage tracer 让每条语句
+  都多一次回调，CI runner 又比开发机慢一倍以上 → 必然突破 60s；
+- 失败点在 21:37 / 约 85%，正好对上这些用例在收集顺序里的位置（80% 附近），而紧跟其后的
+  `test_speech_recognizer*`（import whisper→torch）也在高危区。
+
+**修复：**
+
+- `test_seam_catalogue.py` 整文件加 `pytestmark = pytest.mark.timeout(300)`（原来只有两条
+  单独标注，其余吃全局 60s）；
+- 其他重型 import 的测试文件统一 300s：`test_speech_recognizer*.py`（whisper→torch）、
+  `test_speaker_classifier.py`（librosa/resemblyzer）、`test_image_analyzer.py`（mlx）、
+  `test_frontend_api_contract.py`（import 整个 `api.main`）、`test_memory_matcher.py`
+  （工具链 import）；
+- coverage job 追加 `--timeout=180` 兜底：tracer 下所有用例都变慢，但其他 job 仍保留
+  60s 的快速反馈；
+- coverage job 失败时把输出 `tee` 到 `pytest-coverage.log`、上传 artifact，并用
+  `github-script` 自动贴成公开 issue（与 release workflow 的 PyInstaller 失败上报一致）:
+  Actions 日志页未登录看不到，artifact 也要登录才能下，否则下次还是只能靠猜。
+
+**验证：** 本地 CI 同款命令 `7198 passed, 1 skipped`，覆盖率 92.96%；修复后 main 上 CI
+三个 job 全绿（`2ef4d6b`）。
+
+**教训：** 全局 timeout 不是"兜底"，而是"谁慢谁死"。凡是扫真实仓库、import 重模型/整个
+app 的用例，都要显式写死更宽的 timeout 并注明理由；排查超时不要猜，用 `--durations=N`
+拿数据。另注意 pytest-timeout 默认 `timeout_func_only=False`，**teardown 也计入超时**——
+本仓库有大量 `asyncio.sleep(30)` 遗留任务，会在 teardown 里把 30 秒吃满（本次
+`--durations` 里 25–56s 的 `teardown` 多是这一类，后续可单独治理）。

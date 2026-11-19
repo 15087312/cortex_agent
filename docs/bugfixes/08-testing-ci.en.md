@@ -2,7 +2,7 @@
 
 [← Back to index](./README.en.md) | [简体中文](./08-testing-ci.md)
 
-> Split from `docs/ERRORS_AND_FIXES.en.md` by module; section numbers are unchanged (§104–§107 fix duplicated numbers in the original—see the index). 20 sections: §20、§27、§30、§31、§32、§33、§34、§35、§36、§37、§44、§45、§52、§53、§54、§55、§58、§66、§81、§110.
+> Split from `docs/ERRORS_AND_FIXES.en.md` by module; section numbers are unchanged (§104–§107 fix duplicated numbers in the original—see the index). 23 sections: §20、§27、§30、§31、§32、§33、§34、§35、§36、§37、§44、§45、§52、§53、§54、§55、§58、§66、§81、§110、§111、§112、§113.
 
 ---
 ## 20. Test fakes diverged from real model fields (backend)
@@ -735,3 +735,91 @@ cd frontend && npx vitest run src/pages/Pet.spec.js
    After the fix the extracted count went 71 → 114, and `test_no_silently_dropped_calls` now fails on any `request(`/`fetch(` call whose path cannot be extracted, unless it is the `request(method, pathVar)` generic wrapper. Non-literal `fetch(` calls are checked one by one against two explicit allowlists (`BASE + path` forwarding in `api.js`, `/backend-port` discovery in `ws/client.js`), and the vendored `frontend/pet/lib` is excluded. Every rule has a self-test, including "a backtick fetch must be reported". **Lesson: a static analysis test must assert how much it inspected and turn "nothing was inspected" red; otherwise it is just another reassuring green light.**
 7. **The `external` layer must not use `skip` as its defence.** Real-device cases used `pytest.skip` for a missing TTS backend / Whisper model / subprocess failure, so `-m external` printed a row of skips that looked like "it ran". They now `assert`/`pytest.fail` with a remediation hint; to skip the whole layer, deselect it by marker instead of letting each case quietly opt out. The ASR round-trip also moved from "any keyword matched" to **normalized character coverage ≥ 0.6** (measured 0.87 on this machine, which heard 桌宠 as 捉蟲), with a self-test that unrelated text cannot clear that line.
 8. **Tests must not depend on the user's local config/database.** A full run failed 3 cases that were not code bugs: (1) `~/.cortex/settings.json` had `DESKTOP_PET_ENABLED` off, so `chat()` returned `""` immediately; (2) `_load_structured_history()` read real rows from the local session database, turning `messages` from `[system, user]` into `[system, <history>, user]`. Such assertions are green on the author's machine and red on the user's — the same class as §20. Fix: a module-level autouse fixture pins the master switch, and helpers like `_tool_runner()` stub database reads to empty; tests that need history override them. The integration layer was hit the same way: 9 cases across `tests/integration/test_pet.py`, `test_pet_custom_loop_e2e.py` and `test_frontend_proxy_stream.py` failed with `409 desktop pet disabled` / empty SSE streams — fixed with the same module-level switch fixture, not by loosening assertions.
+
+---
+
+## 111. Release upload rejected: `size must be less than 2147483648` — `.app` symlinks expanded by zip (release/packaging)
+
+**Symptom:** the `v0.2.3` `Upload to Release` step failed:
+
+```
+Release 450787728 is not yet discoverable by tag v0.2.3, retrying... (2 retries remaining)
+⬆️ Uploading CortexAgent-macos-v0.2.3.zip...
+Error: Validation Failed: {"resource":"ReleaseAsset","code":"custom","field":"size","message":"size must be less than 2147483648"}
+```
+
+The Windows leg of the same tag never reached the upload step (PyInstaller died first, see §112), so the failure looked like a single-platform problem.
+
+**Root cause (two layers, keep them separate):**
+
+1. **The GitHub Release per-asset limit is 2GiB** (2147483648 bytes), not "about 2GB".
+2. **`zip -r` turned the macOS `.app` into 5.4GB.** Inside the bundle, many entries under `QtWebEngineCore.framework` (`Versions/A`, `Resources`, `Headers`, …) are **symlinks** into `Versions/A` (1880 of them in this artifact). `zip -r` follows symlinks by default and stores a full copy of each target — a 3.2GB directory became a **5.4GB archive**. "The zip is bigger than the source directory" is the counter-intuitive part: when you see that, suspect symlinks before concluding the app is genuinely too large.
+
+**Fix:**
+
+- New `scripts/make_release_zip.py`: builds the zip with Python's `zipfile`,
+  - symlinks are written as Unix symlink entries (`ZipInfo.create_system = 3`, `external_attr = (S_IFLNK | 0o777) << 16`, content = link target),
+  - `allowZip64=True` + deflate;
+- The workflow's `Package zip` step uses it on both platforms. On Windows this also avoids two traps: `Compress-Archive` is extremely slow for tens of thousands of small files, and Git Bash's `tar` may be GNU tar whose `-a` does not support zip output — it happily produces a *tar file renamed to .zip* (uploads fine, users can't open it);
+- New `Check asset size` step: validates the byte count right after packaging and fails with a clear message instead of the vague `Validation Failed` at upload time;
+- Upload now sets `overwrite_files: true`, so re-running the same tag no longer fails with "asset already exists".
+
+**Verification:** the same `.app` (1.95GB) packs to **708MB**; after `ditto -x -k` (the Finder-equivalent extraction) the file count is 9540 and the symlink count is 1880 — identical to the original — and the md5 of `Contents/MacOS/cortex`, `libtorch_cpu.dylib` and `QtWebEngineProcess` matches. `v0.2.4` uploaded both assets (macOS 708MB / Windows 937MB).
+
+**Lesson:** what must fit under 2GiB is the **uploaded zip**, not the `.app`/`dist` directory. If the archive is larger than the source tree, check symlinks/hardlinks first. Don't reach for a generic tool that "looks like it can make zips" (`tar -a`, `Compress-Archive`); Python's `zipfile` is more predictable across runners.
+
+---
+
+## 112. Windows PyInstaller dies in seconds: CJK `print` in the spec + cp1252 console (release/encoding)
+
+**Symptom:** the Windows job failed about one minute into PyInstaller with:
+
+```
+File "pyinstaller.spec", line 111, in <module>
+    print(f"[spec] 打包应用内 ffmpeg: {_ffmpeg_vendor}")
+File "...\Lib\encodings\cp1252.py", line 19, in encode
+UnicodeEncodeError: 'charmap' codec can't encode characters in position 7-11: character maps to <undefined>
+```
+
+**Root cause:** on GitHub's windows runner the Python stdout encoding is **cp1252** (not UTF-8), and `pyinstaller.spec` prints Chinese during the build. The encoding error aborts the whole build. macOS/Linux runners default to UTF-8, which is why this never reproduced locally.
+
+There is a second landmine of the same kind: `_post_fix_qtwebengine()` also prints Chinese ("framework not found …") and *is reached on Windows* via the `dist/cortex` branch — fixing only the ffmpeg line would just move the crash. **Every `print` in the spec must be ASCII**, not just the one in the traceback.
+
+**Fix:**
+
+- Convert every `print` in the spec to ASCII English (including the post-build fix helpers) and leave a comment at those spots: "Windows console is cp1252, keep prints ASCII-only";
+- Add a job-level `PYTHONIOENCODING: utf-8` in the workflow as a second line of defence.
+
+**Packaging problems fixed in the same release:**
+
+- `collect_all()` was pulling polars / pyarrow and torch's headers & compiler submodules (`torch/include`, `_inductor`, `distributed`, `_dynamo`, `testing`) into the bundle; none of them are imported by project code at runtime, so they are excluded (`_EXCLUDE_PATH_FRAGMENTS` / `_EXCLUDE_MODULES`);
+- PyInstaller hooks add extra payload (`av`, `pandas`) that `_drop_excluded()` cannot see; a post-build pass now removes them from the artifact (`_cleanup_unused_payload()`);
+- **patchright is kept**: it is Crawl4AI's browser backend used for JS-rendered web crawling, and the zip is only ~700MB anyway — losing a feature to save tens of MB is a bad trade. Only remove what project code provably does not import (verify with `grep`).
+
+**Verification:** the Windows job completed a full build for the first time and uploaded `CortexAgent-windows-v0.2.4.zip` (937MB); the macOS leg also succeeded.
+
+**Lesson:** when a script that works locally dies in CI on `print`/path encoding, suspect the locale first. `PYTHONIOENCODING=utf-8` is a safety net, but **keeping the build script itself ASCII** is the actual fix.
+
+---
+
+## 113. coverage job killed by the global 60s timeout — real-tree scans + coverage tracer (testing/CI)
+
+**Symptom:** after the `v0.2.4` commit, `Backend tests` was green but `Backend coverage` failed (exit 1) with a single annotation: `Process completed with exit code 1.` The failed job ran **21:37**, while previous successful runs of the same job took 24–25 minutes (i.e. it died in the last third).
+
+**Investigation:**
+
+- `Backend tests` (same code, no `--cov`) passed → not a logic problem;
+- `pytest.ini`'s `addopts` contains **`--timeout=60`** (global, see §58);
+- Running the exact CI command locally with `--durations=40` showed that `tests/unit/test_seam_catalogue.py`'s "real tree" cases are the only ones with `call` > 30s: `test_real_tree_output_is_deterministic` took **92s**, the other seven 29–42s. They scan the whole repository and run AST analysis; coverage's tracer adds a callback per line, and CI runners are >2× slower than a dev machine → 60s is guaranteed to be exceeded;
+- The failure point (21:37, ~85% of the suite) matches where these cases sit in collection order (~80%), with the `test_speech_recognizer*` cases (importing whisper→torch) right behind them.
+
+**Fix:**
+
+- `test_seam_catalogue.py`: module-level `pytestmark = pytest.mark.timeout(300)` (previously only two cases had an explicit mark; the rest inherited the global 60s);
+- Other heavy-import test files raised to 300s: `test_speech_recognizer*.py` (whisper→torch), `test_speaker_classifier.py` (librosa/resemblyzer), `test_image_analyzer.py` (mlx), `test_frontend_api_contract.py` (imports the whole `api.main`), `test_memory_matcher.py` (toolchain imports);
+- The coverage job now passes `--timeout=180` as headroom (the tracer slows every test down) while the other jobs keep the strict 60s for fast feedback;
+- On failure the coverage job `tee`s output to `pytest-coverage.log`, uploads it as an artifact, and creates/updates a public issue via `github-script` (same approach as the release workflow's PyInstaller reporting): Actions logs require login and artifacts require login too, so without this the next failure is another guessing game.
+
+**Verification:** the exact CI command locally: `7198 passed, 1 skipped`, coverage 92.96%; after the fix all three CI jobs on `main` are green (`2ef4d6b`).
+
+**Lesson:** a global timeout is not a safety net — it is "the slowest test dies". Any test that scans the real repository or imports heavy models/the whole app must carry an explicit, documented, wider timeout. Don't guess when debugging timeouts: measure with `--durations=N`. Also note pytest-timeout defaults to `timeout_func_only=False`, so **teardown counts against the timeout** — this repo has many leftover `asyncio.sleep(30)` tasks that eat ~30s in teardown (the 25–56s `teardown` entries in the `--durations` output); worth a separate cleanup pass.
