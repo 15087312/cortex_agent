@@ -1498,6 +1498,7 @@ JUDGED_BYPASS = {
 }
 
 
+@pytest.mark.timeout(300)
 def test_real_tree_bypasses_are_all_judged():
     """目录里不许出现没记录在案的「接管不到的读者」。
 
@@ -1517,6 +1518,7 @@ def test_real_tree_bypasses_are_all_judged():
         assert JUDGED_BYPASS[symbol]["why"], symbol
 
 
+@pytest.mark.timeout(300)
 def test_real_tree_output_is_deterministic():
     """同一份代码两次生成必须逐字节一样，否则 --check 的绿没有意义。
 
