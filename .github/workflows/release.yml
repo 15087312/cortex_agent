@@ -18,6 +18,10 @@ jobs:
       matrix:
         os: [windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    env:
+      # Windows runner 的 stdout 默认是 cp1252，PyInstaller spec 里的 print 若含中文
+      # 会抛 UnicodeEncodeError 直接打断构建（v0.2.3 就是这么挂的）。
+      PYTHONIOENCODING: utf-8
     steps:
       - uses: actions/checkout@v4
 
@@ -161,21 +165,48 @@ jobs:
       - name: Package zip
         shell: bash
         run: |
-          cd dist
           if [ "$RUNNER_OS" = "Windows" ]; then
             # spec 在 Windows 上走 COLLECT，产物是 dist/cortex/cortex.exe
-            test -f cortex/cortex.exe
-            powershell -Command "Compress-Archive -Path cortex -DestinationPath ../CortexAgent-windows-${{ github.ref_name }}.zip -Force"
+            test -f dist/cortex/cortex.exe
+            # 用 Python 的 zipfile 打 zip（Zip64 + deflate）：
+            # PowerShell 的 Compress-Archive 对几万个小文件极慢，
+            # Git Bash 的 tar 可能是 GNU tar（不支持 zip 输出，会生成假 zip）。
+            python scripts/make_release_zip.py dist/cortex "CortexAgent-windows-${{ github.ref_name }}.zip"
           else
             # spec 在 macOS 上走 BUNDLE，产物是 dist/cortex.app
-            test -d cortex.app
-            zip -r "../CortexAgent-macos-${{ github.ref_name }}.zip" cortex.app
+            test -d dist/cortex.app
+            du -sh dist/cortex.app
+            # 软链接必须原样保留：.app 里 QtWebEngineCore 等 framework 有大量指向
+            # Versions/A 的软链接，默认 zip 会把链接目标逐个展开存一份，
+            # 3.2GB 的 .app 会被打成 5.4GB，直接超过 GitHub Release 单文件 2GiB 上限。
+            python scripts/make_release_zip.py dist/cortex.app "CortexAgent-macos-${{ github.ref_name }}.zip"
           fi
-          cd ..
           ls -lh CortexAgent-*.zip
+
+      - name: Check asset size
+        # GitHub Release 单个 asset 上限 2GiB；上传阶段才发现超限只能看到一条
+        # 含糊的 Validation Failed。这里提前检查并给出明确原因。
+        shell: bash
+        run: |
+          LIMIT=2147483648
+          for f in CortexAgent-*.zip; do
+            [ -f "$f" ] || continue
+            SIZE=$(wc -c < "$f" | tr -d ' ')
+            echo "$f = $SIZE bytes"
+            if [ "$SIZE" -ge "$LIMIT" ]; then
+              echo "::error::asset $f exceeds GitHub Release limit ($SIZE >= $LIMIT)"
+              exit 1
+            fi
+            if [ "$SIZE" -ge 1900000000 ]; then
+              echo "::warning::asset $f is close to the 2GiB release limit"
+            fi
+          done
 
       - name: Upload to Release
         uses: softprops/action-gh-release@v2
         with:
           files: CortexAgent-*.zip
           generate_release_notes: true
+          # 同一个 tag 重跑（例如换了依赖后重新打包）时覆盖旧 asset，
+          # 否则会因为 asset 已存在而失败。
+          overwrite_files: true

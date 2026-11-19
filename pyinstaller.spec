@@ -83,6 +83,65 @@ for pkg in (
         except Exception:
             pass
 
+# ── 瘦身：剔除运行期用不到的大块依赖 ──────────────────────
+# GitHub Release 单个 asset 上限 2GiB。下面这些是「装了但桌面端运行期用不到」
+# 的部分（项目代码没有 import），剔掉可以显著减小安装包：
+#   polars / _polars_runtime_32  — ultralytics 的可选 dataframe 支持（OmniParser 独立部署才用）
+#   pyarrow                       — datasets 的 parquet 读写
+#   torch/include|_inductor|distributed|_dynamo|testing — 头文件/编译器/分布式与测试代码
+# 注意：patchright（Crawl4AI 的浏览器后端）保留 —— 网页抓取的 JS 渲染要用它，
+# 压掉 zip 后的收益很小，不值得为此让功能降级。
+_EXCLUDE_PATH_FRAGMENTS = (
+    "polars",
+    "_polars_runtime_32",
+    "pyarrow",
+    "torch/include",
+    "torch/_inductor",
+    "torch/distributed",
+    "torch/_dynamo",
+    "torch/testing",
+)
+_EXCLUDE_MODULES = (
+    "polars",
+    "pyarrow",
+    "torch.include",
+    "torch._inductor",
+    "torch.distributed",
+    "torch._dynamo",
+    "torch.testing",
+)
+
+
+def _excluded_path(src):
+    """判断收集到的文件是否属于要剔除的大块依赖"""
+    try:
+        norm = os.path.normpath(str(src)).replace("\\", "/").lower()
+    except Exception:
+        return False
+    for frag in _EXCLUDE_PATH_FRAGMENTS:
+        if ("/" + frag) in ("/" + norm):
+            return True
+    return False
+
+
+def _drop_excluded(entries):
+    out = []
+    for entry in entries or []:
+        src = entry[0] if isinstance(entry, (tuple, list)) and entry else entry
+        try:
+            if _excluded_path(src):
+                continue
+        except Exception:
+            pass
+        out.append(entry)
+    return out
+
+
+datas = _drop_excluded(datas)
+binaries = _drop_excluded(binaries)
+hiddenimports = [h for h in hiddenimports if not any(h == m or h.startswith(m + ".") for m in _EXCLUDE_MODULES)]
+print(f"[spec] slimmed: datas={len(datas)} binaries={len(binaries)} hiddenimports={len(hiddenimports)}")
+
 # ── 前端产物 / 桌宠资源 / 默认配置 ────────────────────────
 datas += [
     (os.path.join(ROOT, "frontend/dist"), "frontend/dist"),
@@ -100,7 +159,9 @@ datas += [
 _embed_models = os.path.join(ROOT, "data", "memory", "embeddings", "models")
 if os.path.isdir(_embed_models):
     datas.append((_embed_models, "data/memory/embeddings/models"))
-    print(f"[spec] 打包 Embedding 模型: {_embed_models}")
+    # NOTE: keep this print ASCII-only. Windows runners use cp1252 for stdout and
+    # print() of a CJK string raises UnicodeEncodeError, which kills the build.
+    print(f"[spec] bundling embedding models: {_embed_models}")
 
 # ── 应用内 ffmpeg（CI 在 vendor/ffmpeg 放置 ffmpeg+ffprobe；本地开发可手动放同目录）──
 # 作为 datas 收集 → _MEIPASS/ffmpeg/，由 video_analyzer.bundled_tool_dirs() 发现。
@@ -108,9 +169,9 @@ if os.path.isdir(_embed_models):
 _ffmpeg_vendor = os.path.join(ROOT, "vendor", "ffmpeg")
 if os.path.isdir(_ffmpeg_vendor) and any(os.scandir(_ffmpeg_vendor)):
     datas.append((_ffmpeg_vendor, "ffmpeg"))
-    print(f"[spec] 打包应用内 ffmpeg: {_ffmpeg_vendor}")
+    print(f"[spec] bundling bundled ffmpeg: {_ffmpeg_vendor}")
 else:
-    print("[spec] 无 vendor/ffmpeg，跳过应用内 ffmpeg（终端用户需自装）")
+    print("[spec] no vendor/ffmpeg found, skipping bundled ffmpeg (users install it themselves)")
 
 # ── Windows VC 运行库 ─────────────────────────────────────
 if sys.platform == "win32":
@@ -137,6 +198,8 @@ a = Analysis(
         'IPython',
         'jupyter',
         'notebook',
+        # 体积瘦身：这些包运行期用不到（见 _EXCLUDE_PATH_FRAGMENTS 的说明）
+        *_EXCLUDE_MODULES,
     ],
     noarchive=False,
 )
@@ -221,7 +284,8 @@ def _post_fix_qtwebengine(outdir):
             fw = cand
             break
     if fw is None:
-        print(f"[spec] QtWebEngineCore.framework 未找到，跳过 WebEngine 修复: {outdir}")
+        # NOTE: ASCII-only print (Windows console is cp1252; CJK raises UnicodeEncodeError).
+        print(f"[spec] QtWebEngineCore.framework not found, skipping WebEngine fix: {outdir}")
         return
 
     src_fw = None
@@ -235,7 +299,7 @@ def _post_fix_qtwebengine(outdir):
     except Exception:
         pass
     if not src_fw:
-        print("[spec] 未定位源 QtWebEngineCore.framework，跳过资源复制", flush=True)
+        print("[spec] source QtWebEngineCore.framework not located, skipping resource copy", flush=True)
 
     # 1) 确保 Versions/A 下有 Helpers 与 Resources（symlink Helpers/Resources 指向这里）
     import shutil
@@ -245,7 +309,7 @@ def _post_fix_qtwebengine(outdir):
         src = os.path.join(src_fw, sub) if src_fw else None
         if not os.path.isdir(dst) and src and os.path.isdir(src):
             shutil.copytree(src, dst)
-            print(f"[spec] 已复制 QtWebEngineCore {sub} -> {dst}")
+            print(f"[spec] copied QtWebEngineCore {sub} -> {dst}")
         elif os.path.isdir(dst) and src and os.path.isdir(src):
             # 已存在：补全缺失资源（framework 收集可能只留了部分文件）
             for name in os.listdir(src):
@@ -269,9 +333,9 @@ def _post_fix_qtwebengine(outdir):
         )
         if need not in rpaths:
             subprocess.call(["install_name_tool", "-add_rpath", need, proc])
-            print(f"[spec] 已给 QtWebEngineProcess 添加 rpath {need}")
+            print(f"[spec] added rpath {need} to QtWebEngineProcess")
         else:
-            print("[spec] QtWebEngineProcess rpath 已存在")
+            print("[spec] QtWebEngineProcess rpath already present")
 
     # 3) 重新签名（关键！）：install_name_tool 会破坏代码签名，未重新签名时
     #    macOS 以 "SIGKILL (Code Signature Invalid)" 杀掉渲染进程 → 黑屏。
@@ -279,10 +343,10 @@ def _post_fix_qtwebengine(outdir):
     proc_app = os.path.join(fw, "Versions", "A", "Helpers", "QtWebEngineProcess.app")
     if os.path.isdir(proc_app):
         subprocess.call(["codesign", "--force", "--deep", "--sign", "-", proc_app])
-        print("[spec] 已重新签名 QtWebEngineProcess.app")
+        print("[spec] re-signed QtWebEngineProcess.app")
         if os.path.isdir(fw):
             subprocess.call(["codesign", "--force", "--deep", "--sign", "-", fw])
-            print("[spec] 已重新签名 QtWebEngineCore.framework")
+            print("[spec] re-signed QtWebEngineCore.framework")
 
 
 # 尝试修复 .app（BUNDLE）或 onedir（COLLECT）产物
@@ -290,4 +354,48 @@ for _out in (os.path.join(ROOT, "dist", "cortex.app"), os.path.join(ROOT, "dist"
     if os.path.isdir(_out):
         _post_fix_qtwebengine(_out)
         break
-print("[spec] 打包后修复完成")
+
+
+# ── 打包后清理：剔除 hook 阶段塞进来的大块可选依赖 ─────────────
+# 上面 _drop_excluded 只作用于我们自己 collect 出来的 datas/binaries；
+# PyInstaller 的 hook 追加的内容不经过那里，会把 av、pandas 这类
+# 运行期用不到的库一起带进产物（项目代码没有 import 它们）。
+# 这里在产物落地后再扫一遍删掉。
+_CLEANUP_NAMES = (
+    "_polars_runtime_32",
+    "polars",
+    "pyarrow",
+    "av",
+    "pandas",
+)
+_CLEANUP_ROOTS = (
+    os.path.join("Contents", "Frameworks"),
+    os.path.join("Contents", "Resources"),
+    "_internal",
+)
+
+
+def _cleanup_unused_payload(outdir):
+    import shutil
+    removed = []
+    for rel in _CLEANUP_ROOTS:
+        root = os.path.join(outdir, rel)
+        if not os.path.isdir(root):
+            continue
+        for name in _CLEANUP_NAMES:
+            target = os.path.join(root, name)
+            if os.path.isdir(target):
+                shutil.rmtree(target, ignore_errors=True)
+                removed.append(rel.replace(os.sep, "/") + "/" + name)
+    if removed:
+        print("[spec] removed unused payload: " + ", ".join(removed))
+    else:
+        print("[spec] no unused payload to remove")
+
+
+for _out in (os.path.join(ROOT, "dist", "cortex.app"), os.path.join(ROOT, "dist", "cortex")):
+    if os.path.isdir(_out):
+        _cleanup_unused_payload(_out)
+        break
+
+print("[spec] post-build fixes done")
