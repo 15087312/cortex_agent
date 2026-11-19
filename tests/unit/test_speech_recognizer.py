@@ -2,7 +2,13 @@
 import asyncio
 from unittest.mock import MagicMock
 
+import pytest
+
 from infra.data_process.core.speech_recognizer import SpeechRecognizer
+
+# speech_recognizer 会 import whisper（连带 torch），本机冷启动 ~10s，
+# CI runner 上更慢；pytest.ini 的全局 60s 在带 coverage tracer 时不够用。
+pytestmark = pytest.mark.timeout(300)
 
 
 def _sr(model=None, initialized=False, language="zh", model_name="base"):

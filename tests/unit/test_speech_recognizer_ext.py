@@ -13,6 +13,10 @@ import infra.data_process.core.speech_recognizer as sr_mod
 from config.settings import settings
 from infra.data_process.core.speech_recognizer import SpeechRecognizer
 
+# 同一模块的 import 链会拉起 torch（whisper），CI runner 上比本机慢，
+# 全局 60s 在带 coverage tracer 时不够用。
+pytestmark = pytest.mark.timeout(300)
+
 
 def _run(coro):
     return asyncio.run(coro)

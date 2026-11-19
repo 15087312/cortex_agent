@@ -13,6 +13,10 @@ import pytest
 from infra.data_process.core import speaker_classifier as sc_mod
 from infra.data_process.core.speaker_classifier import SpeakerClassifier, get_default_classifier
 
+# speaker_classifier 会 import librosa / resemblyzer（连带 scipy、numba），
+# CI runner 上比本机慢；全局 60s 在带 coverage tracer 时不够用。
+pytestmark = pytest.mark.timeout(300)
+
 DIM = 8
 
 

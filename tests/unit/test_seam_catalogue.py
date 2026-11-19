@@ -17,6 +17,12 @@ import pytest
 
 import scripts.seam_catalogue as sc
 
+# 本文件的「真实树」用例会扫描整个仓库源码（几十个文件）并做 AST 分析：
+# 本机一次 ~34s，带 coverage tracer 时最慢的一条 ~96s，而 pytest.ini 的全局
+# timeout 只有 60s —— CI runner 比本机慢一倍以上，必然被全局 timeout 误杀
+# （v0.2.4 的 coverage job 就是这么挂的）。这里整文件放宽到 300s。
+pytestmark = pytest.mark.timeout(300)
+
 
 @pytest.fixture
 def tree(tmp_path, monkeypatch):

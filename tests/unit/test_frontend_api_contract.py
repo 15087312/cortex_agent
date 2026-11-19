@@ -39,7 +39,8 @@ _VENDOR_DIRS = {FRONTEND / "pet" / "lib"}
 
 # 本文件要 import api.main（挂载全部路由，连带加载业务模块），比普通单测慢；
 # 按 §27.6 线索③的做法放宽 timeout，避免在慢机器/CI 上被全局 60s 误杀。
-pytestmark = pytest.mark.timeout(120)
+# 300s：CI runner 比本机慢一倍以上，带 coverage tracer 时还会再慢一截。
+pytestmark = pytest.mark.timeout(300)
 
 _SKIP_PARTS = {"node_modules", "dist", "coverage", "test-results", "__pycache__"}
 _SKIP_SUFFIX = (".spec.js", ".test.js")

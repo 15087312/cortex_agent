@@ -84,6 +84,10 @@ jobs:
     name: Backend coverage (pytest-cov)
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    permissions:
+      contents: read
+      # 失败时把日志贴成公开 issue（Actions 日志页要登录才能看，排查时经常卡住）
+      issues: write
     steps:
       - uses: actions/checkout@v4
 
@@ -103,13 +107,71 @@ jobs:
 
       # 覆盖率门禁：低于阈值 CI 失败（阈值随覆盖提升逐步上调）
       - name: Coverage gate
+        id: coverage
         shell: bash
         env:
           CORTEX_TEST_MEM_LIMIT_MB: "4096"
         run: |
+          set -o pipefail
+          # --timeout=180：覆盖率 tracer 会让用例慢一截，CI runner 又比开发机慢，
+          # pytest.ini 的全局 60s 在这里太紧（v0.2.4 的 coverage job 就是这么挂的）。
+          # 真正需要严格超时的重用例已单独在测试文件里放宽到 300s。
           pytest tests/unit -q -p no:cacheprovider \
             --cov=modules --cov=infra --cov=config --cov=api --cov=utils \
-            --cov-report=term-missing --cov-fail-under=70
+            --cov-report=term-missing --cov-fail-under=70 --timeout=180 2>&1 | tee pytest-coverage.log
+
+      - name: Upload coverage log
+        # Actions 日志页对未登录用户不可见，失败时留一份 artifact 便于排查。
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-coverage-log-${{ github.run_id }}
+          path: pytest-coverage.log
+          if-no-files-found: ignore
+
+      - name: Report coverage failure
+        # artifact / Actions 日志页都需要登录才能下载，排查时经常卡在"拿不到日志"。
+        # 这里把失败日志自动贴成一个公开 issue（同一轮重跑会更新同一条）。
+        if: ${{ failure() && steps.coverage.outcome == 'failure' }}
+        continue-on-error: true
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let log = fs.existsSync('pytest-coverage.log')
+              ? fs.readFileSync('pytest-coverage.log', 'utf8')
+              : '(pytest-coverage.log 不存在：失败发生在生成日志之前)';
+            if (log.length > 60000) log = log.slice(-60000);
+            const title = `CI ${context.sha.slice(0, 7)} · coverage 失败日志`;
+            const body = [
+              `自动上报：commit \`${context.sha}\` 的 Backend coverage job 失败。`,
+              `run: ${context.runId}`,
+              '',
+              '```',
+              log,
+              '```',
+            ].join('\n');
+            const list = await github.paginate(github.rest.issues.listForRepo, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+            });
+            const found = list.find((i) => i.title === title);
+            if (found) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: found.number,
+                body,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+              });
+            }
 
   frontend:
     name: Frontend tests (Vitest + Playwright)

@@ -3,7 +3,7 @@ import math
 import numpy as np
 import pytest
 
-pytestmark = pytest.mark.timeout(60)  # 工具链 import 较重
+pytestmark = pytest.mark.timeout(300)  # 工具链 import 较重（CI runner 上更慢）
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
 

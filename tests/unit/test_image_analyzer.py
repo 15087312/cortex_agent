@@ -15,7 +15,7 @@ from infra.data_process.core import image_analyzer as ia_mod
 
 # _detect_available_model 会真实 import mlx_vlm → transformers 重库，
 # 超过 pytest 全局 --timeout=10（与 conscience 测试同款），放宽到 60s
-pytestmark = pytest.mark.timeout(60)
+pytestmark = pytest.mark.timeout(300)
 
 
 def _png_bytes() -> bytes:
